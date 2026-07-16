@@ -1,0 +1,10 @@
+/target/
+**/*.rs.bk
+.idea/
+.vscode/
+*.pdb
+config.json
+*.db
+monitor.log
+log/
+scope_captures/

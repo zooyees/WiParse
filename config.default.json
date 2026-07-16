@@ -1,0 +1,50 @@
+{
+  "system": {
+    "db_name": "charging_data.db",
+    "log_file": "monitor.log",
+    "log_level": "INFO",
+    "db_commit_interval_sec": 1.0,
+    "db_commit_batch_size": 100
+  },
+  "ui": {
+    "render_interval_ms": 100,
+    "chart_render_interval_ms": 200,
+    "chart_max_points": 500,
+    "default_window_size_sec": 60.0,
+    "language": "en",
+    "menu_bar_auto_hide": false,
+    "theme": "dark",
+    "panels": {
+      "serial_tool": true,
+      "calculator": true,
+      "tektronix_scope": true
+    }
+  },
+  "alerts": {
+    "temp_warning_threshold": 60,
+    "temp_recovery_threshold": 55,
+    "ovp_threshold": 25.0,
+    "ocp_threshold": 3.0,
+    "full_charge_debounce_sec": 20.0
+  },
+  "serial": {
+    "default_baudrates": ["115200", "1000000", "2000000"],
+    "demo_mode": false,
+    "auto_reconnect": true,
+    "reconnect_interval_sec": 3.0,
+    "max_reconnect_attempts": 5,
+    "port_poll_interval_ms": 2000
+  },
+  "log_monitor": {
+    "default_filename": "Live Packet Log",
+    "save_dir": "log",
+    "file_extension": "txt",
+    "open_log_files": [],
+    "last_open_dir": ""
+  },
+  "apps": {
+    "tektronix_scope": {
+      "save_dir": "scope_captures"
+    }
+  }
+}

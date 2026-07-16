@@ -1,0 +1,23 @@
+[package]
+name = "wiparse-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WiParse shared library: config, protocol, metrics, serial helpers"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+serialport = { workspace = true }
+dirs = { workspace = true }
+tracing = { workspace = true }
+rusqlite = { workspace = true }
+uuid = { workspace = true }
+crossbeam-channel = { workspace = true }
+libloading = "0.8"
+memmap2 = "0.9"
+
+[dev-dependencies]
+serde_json = { workspace = true }

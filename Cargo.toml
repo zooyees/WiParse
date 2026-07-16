@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/wiparse-core",
+    "crates/wiparse-cli",
+    "crates/wiparse-gui",
+]
+default-members = ["crates/wiparse-cli", "crates/wiparse-gui"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+license = "Proprietary"
+authors = ["WiParse"]
+repository = "https://github.com/windlink/WiParse"
+
+[workspace.dependencies]
+wiparse-core = { path = "crates/wiparse-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serialport = "4"
+dirs = "6"
+eframe = { version = "0.31", default-features = true }
+egui = "0.31"
+egui_plot = "0.31"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+crossbeam-channel = "0.5"
+rfd = "0.15"
+
+# Patch winit mixed-DPI drag runaway resize (Win11 24H2). Remove when upstream ships fix.
+[patch.crates-io]
+winit = { path = "third_party/winit" }
+
+[profile.release]
+# Preserve runtime behavior while removing linker-visible dead code and symbols.
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
