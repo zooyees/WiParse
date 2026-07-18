@@ -4,25 +4,27 @@
 //! root items with ▶ flyouts (Panels / Language / Theme), accent hover, checkmarks.
 
 use crate::calculator::CalculatorPanel;
+use crate::instrument_control::InstrumentControlPanel;
 use crate::serial_tool::SerialToolPanel;
-use crate::tektronix::TektronixPanel;
 use crate::theme::{self as ui_theme, Tokens};
 use egui::{Color32, CornerRadius, FontId, Frame, Margin, Pos2, Rect, Sense, Stroke, Vec2};
 use wiparse_core::config::{save_config, AppConfig};
 use wiparse_core::i18n::{parse_lang, tr, Lang};
 
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MainTab {
     Serial,
     Calculator,
-    Tektronix,
+    Instruments,
 }
 
-fn initial_tab(show_serial: bool, show_tektronix: bool) -> MainTab {
+fn initial_tab(show_serial: bool, show_instruments: bool) -> MainTab {
     if show_serial {
         MainTab::Serial
-    } else if show_tektronix {
-        MainTab::Tektronix
+    } else if show_instruments {
+        MainTab::Instruments
     } else {
         MainTab::Calculator
     }
@@ -43,10 +45,10 @@ pub struct WiParseApp {
     active: MainTab,
     show_serial: bool,
     show_calculator: bool,
-    show_tektronix: bool,
+    show_instruments: bool,
     calculator: CalculatorPanel,
     serial: SerialToolPanel,
-    tektronix: TektronixPanel,
+    instruments: InstrumentControlPanel,
     settings_open: bool,
     settings_sub: SettingsSub,
     /// Anchor Y for the open submenu (top of parent row).
@@ -55,6 +57,7 @@ pub struct WiParseApp {
     settings_root_rect: Option<Rect>,
     settings_sub_rect: Option<Rect>,
     settings_leave_since: Option<f64>,
+    about_open: bool,
     tokens: Tokens,
     theme_applied_light: Option<bool>,
     taskbar_icon_applied: bool,
@@ -66,18 +69,18 @@ impl WiParseApp {
         let lang = parse_lang(&cfg.ui.language);
         let show_serial = cfg.ui.panels.serial_tool;
         let show_calculator = cfg.ui.panels.calculator;
-        let show_tektronix = cfg.ui.panels.tektronix_scope;
-        let active = initial_tab(show_serial, show_tektronix);
+        let show_instruments = cfg.ui.panels.instrument_control;
+        let active = initial_tab(show_serial, show_instruments);
         let light = cfg.ui.theme == "light";
         Self {
             serial: SerialToolPanel::new(&cfg, lang),
-            tektronix: TektronixPanel::new(),
+            instruments: InstrumentControlPanel::new(&cfg),
             cfg,
             lang,
             active,
             show_serial,
             show_calculator,
-            show_tektronix,
+            show_instruments,
             calculator: CalculatorPanel::new(),
             settings_open: false,
             settings_sub: SettingsSub::None,
@@ -86,6 +89,7 @@ impl WiParseApp {
             settings_root_rect: None,
             settings_sub_rect: None,
             settings_leave_since: None,
+            about_open: false,
             tokens: if light {
                 Tokens::light()
             } else {
@@ -101,15 +105,15 @@ impl WiParseApp {
         let visible = match self.active {
             MainTab::Serial => self.show_serial,
             MainTab::Calculator => self.show_calculator,
-            MainTab::Tektronix => self.show_tektronix,
+            MainTab::Instruments => self.show_instruments,
         };
         if visible {
             return;
         }
         if self.show_serial {
             self.active = MainTab::Serial;
-        } else if self.show_tektronix {
-            self.active = MainTab::Tektronix;
+        } else if self.show_instruments {
+            self.active = MainTab::Instruments;
         } else if self.show_calculator {
             self.active = MainTab::Calculator;
         } else {
@@ -121,7 +125,7 @@ impl WiParseApp {
     fn persist_ui_prefs(&mut self) {
         self.cfg.ui.panels.serial_tool = self.show_serial;
         self.cfg.ui.panels.calculator = self.show_calculator;
-        self.cfg.ui.panels.tektronix_scope = self.show_tektronix;
+        self.cfg.ui.panels.instrument_control = self.show_instruments;
         let _ = save_config(&self.cfg);
     }
 
@@ -190,11 +194,19 @@ impl WiParseApp {
             self.settings_sub = SettingsSub::Theme;
             self.settings_sub_anchor_y = theme_row.rect.top();
         }
+
+        menu_separator(ui, t, ROOT_W);
+
+        let about_l = tr(self.lang, "menu.about");
+        if menu_action_row(ui, t, &about_l, ROOT_W).clicked() {
+            self.about_open = true;
+            self.close_settings();
+        }
     }
 
     fn settings_sub_ui(&mut self, ui: &mut egui::Ui, t: &Tokens) {
-        // Fit longest panel label ("Tektronix Scope" / "计算器") + checkbox.
-        const SUB_W: f32 = 148.0;
+        // Fit longest panel label ("Instrument Control" / "仪表控制") + checkbox.
+        const SUB_W: f32 = 174.0;
         ui.set_width(SUB_W);
         ui.set_max_width(SUB_W);
         ui.set_min_width(SUB_W);
@@ -206,7 +218,7 @@ impl WiParseApp {
             SettingsSub::Panels => {
                 let serial_name = tr(self.lang, "tool.serial_tool.name");
                 let calculator_name = tr(self.lang, "tool.calculator.name");
-                let tek_name = tr(self.lang, "tool.tektronix_scope.name");
+                let instrument_name = tr(self.lang, "tool.instrument_control.name");
 
                 if menu_check_row(ui, t, &serial_name, self.show_serial, SUB_W).clicked() {
                     self.show_serial = !self.show_serial;
@@ -222,14 +234,14 @@ impl WiParseApp {
                     }
                     dirty = true;
                 }
-                if menu_check_row(ui, t, &tek_name, self.show_tektronix, SUB_W).clicked() {
-                    self.show_tektronix = !self.show_tektronix;
-                    if self.show_tektronix {
-                        self.active = MainTab::Tektronix;
+                if menu_check_row(ui, t, &instrument_name, self.show_instruments, SUB_W).clicked() {
+                    self.show_instruments = !self.show_instruments;
+                    if self.show_instruments {
+                        self.active = MainTab::Instruments;
                     }
                     dirty = true;
                 }
-                if !self.show_serial && !self.show_calculator && !self.show_tektronix {
+                if !self.show_serial && !self.show_calculator && !self.show_instruments {
                     self.show_serial = true;
                     self.active = MainTab::Serial;
                 }
@@ -358,6 +370,50 @@ impl WiParseApp {
             }
         }
     }
+
+    fn paint_about_dialog(&mut self, ctx: &egui::Context, t: &Tokens) {
+        let mut open = self.about_open;
+        let mut close_requested = false;
+        egui::Window::new(tr(self.lang, "about.title"))
+            .id(egui::Id::new("about_dialog"))
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .frame(
+                Frame::window(&ctx.style())
+                    .fill(t.panel_bg)
+                    .stroke(Stroke::new(1.0_f32, t.border))
+                    .corner_radius(CornerRadius::same(6))
+                    .inner_margin(Margin::same(16)),
+            )
+            .show(ctx, |ui| {
+                ui.set_min_width(280.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(
+                        egui::RichText::new("WiParse")
+                            .size(22.0)
+                            .strong()
+                            .color(t.text_primary),
+                    );
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} {}",
+                            tr(self.lang, "about.version"),
+                            APP_VERSION
+                        ))
+                        .size(13.0)
+                        .color(t.text_muted),
+                    );
+                    ui.add_space(14.0);
+                    if ui.button(tr(self.lang, "about.close")).clicked() {
+                        close_requested = true;
+                    }
+                });
+            });
+        self.about_open = open && !close_requested;
+    }
 }
 
 impl eframe::App for WiParseApp {
@@ -370,18 +426,18 @@ impl eframe::App for WiParseApp {
             }
         }
         self.serial.drain_events();
-        // The scope worker can deliver large waveform/image payloads. Do not
+        // Instrument workers can deliver large waveform/image payloads. Do not
         // deserialize, rebuild plots, or schedule its live repaint loop while
         // the user is working in another tool.
-        if self.active == MainTab::Tektronix && self.show_tektronix {
-            self.tektronix.pump(ctx);
+        if self.active == MainTab::Instruments && self.show_instruments {
+            self.instruments.pump(ctx);
         }
 
         let pump_serial = self.serial.is_monitoring() || self.serial.has_background_io();
-        let pump_tek = self.active == MainTab::Tektronix
-            && self.show_tektronix
-            && self.tektronix.live_active();
-        if pump_serial || pump_tek {
+        let pump_instruments = self.active == MainTab::Instruments
+            && self.show_instruments
+            && self.instruments.live_active();
+        if pump_serial || pump_instruments {
             let ms = if self.active == MainTab::Serial && self.show_serial {
                 33
             } else {
@@ -430,9 +486,9 @@ impl eframe::App for WiParseApp {
                         ui,
                         &t,
                         &mut self.active,
-                        MainTab::Tektronix,
-                        self.show_tektronix,
-                        &tr(self.lang, "tool.tektronix_scope.name"),
+                        MainTab::Instruments,
+                        self.show_instruments,
+                        &tr(self.lang, "tool.instrument_control.name"),
                     );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -493,6 +549,9 @@ impl eframe::App for WiParseApp {
         if self.settings_open {
             self.paint_settings_menus(ctx, &t);
         }
+        if self.about_open {
+            self.paint_about_dialog(ctx, &t);
+        }
 
         egui::TopBottomPanel::bottom("status_bar")
             .exact_height(26.0)
@@ -510,9 +569,9 @@ impl eframe::App for WiParseApp {
                                 .size(12.0)
                                 .color(t.text_muted),
                         );
-                    } else if self.active == MainTab::Tektronix {
+                    } else if self.active == MainTab::Instruments {
                         ui.label(
-                            egui::RichText::new(self.tektronix.status_text())
+                            egui::RichText::new(self.instruments.status_text())
                                 .size(12.0)
                                 .color(t.text_muted),
                         );
@@ -535,8 +594,8 @@ impl eframe::App for WiParseApp {
                 MainTab::Calculator if self.show_calculator => {
                     self.calculator.ui(ui, self.lang, &t);
                 }
-                MainTab::Tektronix if self.show_tektronix => {
-                    self.tektronix.ui(ui, self.lang, &t);
+                MainTab::Instruments if self.show_instruments => {
+                    self.instruments.ui(ui, self.lang, &t);
                 }
                 _ => {
                     ui.centered_and_justified(|ui| {
@@ -550,7 +609,7 @@ impl eframe::App for WiParseApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.serial.on_exit();
-        self.tektronix.on_exit();
+        self.instruments.on_exit();
     }
 }
 
@@ -609,6 +668,20 @@ fn menu_cascade_row(
         ag,
         fg,
     );
+    resp
+}
+
+fn menu_action_row(ui: &mut egui::Ui, t: &Tokens, label: &str, width: f32) -> egui::Response {
+    let h = 28.0;
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, h), Sense::click());
+    let hot = resp.hovered();
+    if hot {
+        ui.painter().rect_filled(rect, CornerRadius::ZERO, t.accent);
+    }
+    let fg = if hot { t.accent_text } else { t.text_primary };
+    let galley = ui.fonts(|f| f.layout_no_wrap(label.to_string(), FontId::proportional(13.0), fg));
+    let text_pos = Pos2::new(rect.left() + 12.0, rect.center().y - galley.size().y * 0.5);
+    ui.painter().galley(text_pos, galley, fg);
     resp
 }
 
@@ -744,7 +817,7 @@ mod tests {
     #[test]
     fn calculator_visibility_does_not_force_startup_tab() {
         assert_eq!(initial_tab(true, true), MainTab::Serial);
-        assert_eq!(initial_tab(false, true), MainTab::Tektronix);
+        assert_eq!(initial_tab(false, true), MainTab::Instruments);
         assert_eq!(initial_tab(false, false), MainTab::Calculator);
     }
 }

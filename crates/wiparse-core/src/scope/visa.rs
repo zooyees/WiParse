@@ -144,11 +144,14 @@ struct VisaApi {
 }
 
 impl VisaApi {
-    fn load() -> Result<Arc<Self>, VisaError> {
+    fn load(preferred: Option<&str>) -> Result<Arc<Self>, VisaError> {
         let mut tried = Vec::new();
         // Match Python PyVISA on this machine (visa32.dll in System32).
         // Prefer PYVISA_LIBRARY when set.
         let mut names: Vec<String> = Vec::new();
+        if let Some(preferred) = preferred.filter(|value| !value.trim().is_empty()) {
+            names.push(preferred.to_owned());
+        }
         if let Ok(env) = std::env::var("PYVISA_LIBRARY") {
             if !env.is_empty() {
                 names.push(env);
@@ -261,7 +264,11 @@ pub struct ResourceManager {
 
 impl ResourceManager {
     pub fn new() -> Result<Self, VisaError> {
-        let api = VisaApi::load()?;
+        Self::new_with_library(None)
+    }
+
+    pub fn new_with_library(preferred: Option<&str>) -> Result<Self, VisaError> {
+        let api = VisaApi::load(preferred)?;
         let mut session = 0;
         let st = unsafe { (api.open_default_rm)(&mut session) };
         api.check(VI_NULL, st)?;

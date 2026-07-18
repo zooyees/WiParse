@@ -64,8 +64,8 @@ pub struct PanelFlags {
     /// `waveform_scope` is accepted for migration from pre-calculator configs.
     #[serde(default = "default_true", alias = "waveform_scope")]
     pub calculator: bool,
-    #[serde(default = "default_true")]
-    pub tektronix_scope: bool,
+    #[serde(default = "default_true", alias = "tektronix_scope")]
+    pub instrument_control: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,12 +112,30 @@ pub struct LogMonitorConfig {
 pub struct AppsConfig {
     #[serde(default)]
     pub tektronix_scope: TektronixScopeConfig,
+    #[serde(default)]
+    pub instruments: InstrumentControlConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TektronixScopeConfig {
     #[serde(default = "default_scope_dir")]
     pub save_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstrumentControlConfig {
+    #[serde(default)]
+    pub visa_library: String,
+    #[serde(default = "default_instrument_timeout")]
+    pub timeout_ms: u32,
+    #[serde(default = "default_sample_interval")]
+    pub sample_interval_ms: u64,
+    #[serde(default = "default_instrument_points")]
+    pub max_points: usize,
+    #[serde(default = "default_instrument_dir")]
+    pub save_dir: String,
+    #[serde(default)]
+    pub known_tcpip_resources: Vec<String>,
 }
 
 fn default_db_name() -> String {
@@ -177,6 +195,18 @@ fn default_ext() -> String {
 fn default_scope_dir() -> String {
     "scope_captures".into()
 }
+fn default_instrument_timeout() -> u32 {
+    5_000
+}
+fn default_sample_interval() -> u64 {
+    1_000
+}
+fn default_instrument_points() -> usize {
+    10_000
+}
+fn default_instrument_dir() -> String {
+    "instrument_data".into()
+}
 
 impl Default for SystemConfig {
     fn default() -> Self {
@@ -195,7 +225,7 @@ impl Default for PanelFlags {
         Self {
             serial_tool: true,
             calculator: true,
-            tektronix_scope: true,
+            instrument_control: true,
         }
     }
 }
@@ -253,10 +283,24 @@ impl Default for TektronixScopeConfig {
     }
 }
 
+impl Default for InstrumentControlConfig {
+    fn default() -> Self {
+        Self {
+            visa_library: String::new(),
+            timeout_ms: default_instrument_timeout(),
+            sample_interval_ms: default_sample_interval(),
+            max_points: default_instrument_points(),
+            save_dir: default_instrument_dir(),
+            known_tcpip_resources: Vec::new(),
+        }
+    }
+}
+
 impl Default for AppsConfig {
     fn default() -> Self {
         Self {
             tektronix_scope: TektronixScopeConfig::default(),
+            instruments: InstrumentControlConfig::default(),
         }
     }
 }
@@ -308,6 +352,9 @@ fn migrate_legacy_panel_key(value: &mut Value) {
     };
     if let Some(legacy) = panels.remove("waveform_scope") {
         panels.entry("calculator").or_insert(legacy);
+    }
+    if let Some(legacy) = panels.remove("tektronix_scope") {
+        panels.entry("instrument_control").or_insert(legacy);
     }
 }
 
@@ -373,6 +420,14 @@ mod tests {
         migrate_legacy_panel_key(&mut value);
         assert_eq!(value["ui"]["panels"]["calculator"], true);
         assert!(value["ui"]["panels"].get("waveform_scope").is_none());
+    }
+
+    #[test]
+    fn migrates_tektronix_panel_to_instrument_control() {
+        let mut value = json!({"ui": {"panels": {"tektronix_scope": false}}});
+        migrate_legacy_panel_key(&mut value);
+        assert_eq!(value["ui"]["panels"]["instrument_control"], false);
+        assert!(value["ui"]["panels"].get("tektronix_scope").is_none());
     }
 
     #[test]

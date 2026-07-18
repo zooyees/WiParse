@@ -1,8 +1,8 @@
 //! Tektronix scope: VISA transport, SCPI client, CURVe / HARDCopy.
 
-mod binary;
+pub(crate) mod binary;
 mod client;
-mod visa;
+pub(crate) mod visa;
 
 pub use client::{
     capture_shot, default_save_dir, list_scopes, read_waveform_json, scope_capabilities,

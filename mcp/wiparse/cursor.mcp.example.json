@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "wiparse": {
+      "command": "node",
+      "args": ["D:/windlink/windlink/WiParse-R/mcp/wiparse/dist/index.js"],
+      "env": {
+        "WIPARSE_CLI_PATH": "D:/windlink/windlink/WiParse-R/dist/WiParse-CLI.exe",
+        "WIPARSE_CWD": "D:/windlink/windlink/WiParse-R"
+      }
+    }
+  }
+}

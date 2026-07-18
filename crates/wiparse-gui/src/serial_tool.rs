@@ -39,6 +39,7 @@ pub struct SerialToolPanel {
     selected_port: usize,
     baud: String,
     baud_options: Vec<String>,
+    baud_custom: bool,
     monitoring: bool,
     live_name: String,
     committed_live_name: String,
@@ -75,6 +76,7 @@ impl SerialToolPanel {
             .first()
             .cloned()
             .unwrap_or_else(|| "115200".into());
+        let baud_custom = !baud_options.iter().any(|b| b == &baud);
         let live_dir = cfg.log_monitor.save_dir.clone();
         let live_name = cfg.log_monitor.default_filename.clone();
         let mut tabs = vec![LogTabPage::live_tab(lang)];
@@ -84,6 +86,7 @@ impl SerialToolPanel {
             selected_port: 0,
             baud,
             baud_options,
+            baud_custom,
             monitoring: false,
             committed_live_name: live_name.clone(),
             live_name,
@@ -634,14 +637,61 @@ impl SerialToolPanel {
                                     }
                                 });
 
+                            let baud_display = if self.baud_custom {
+                                format!(
+                                    "{} ({})",
+                                    tr(lang, "serial.baud_custom"),
+                                    if self.baud.is_empty() {
+                                        "—"
+                                    } else {
+                                        &self.baud
+                                    }
+                                )
+                            } else {
+                                self.baud.clone()
+                            };
                             egui::ComboBox::from_id_salt("serial_baud")
                                 .width(ctrl_w)
-                                .selected_text(&self.baud)
+                                .selected_text(baud_display)
                                 .show_ui(ui, |ui| {
-                                    for b in self.baud_options.iter() {
-                                        ui.selectable_value(&mut self.baud, b.clone(), b.as_str());
+                                    for b in self.baud_options.clone() {
+                                        if ui
+                                            .selectable_label(!self.baud_custom && self.baud == b, &b)
+                                            .clicked()
+                                        {
+                                            self.baud = b;
+                                            self.baud_custom = false;
+                                        }
+                                    }
+                                    ui.separator();
+                                    if ui
+                                        .selectable_label(
+                                            self.baud_custom,
+                                            tr(lang, "serial.baud_custom"),
+                                        )
+                                        .clicked()
+                                    {
+                                        self.baud_custom = true;
+                                        if self
+                                            .baud_options
+                                            .iter()
+                                            .any(|b| b == &self.baud)
+                                        {
+                                            self.baud.clear();
+                                        }
                                     }
                                 });
+                            if self.baud_custom {
+                                let baud_edit = ui.add(
+                                    egui::TextEdit::singleline(&mut self.baud)
+                                        .desired_width(ctrl_w)
+                                        .hint_text(tr(lang, "serial.baud_custom_hint"))
+                                        .margin(egui::vec2(6.0, 4.0)),
+                                );
+                                if baud_edit.changed() {
+                                    self.baud = self.baud.chars().filter(|c| c.is_ascii_digit()).collect();
+                                }
+                            }
 
                             if self.monitoring {
                                 ui.horizontal(|ui| {
@@ -768,6 +818,8 @@ impl SerialToolPanel {
                             const TAB_TITLE_W: f32 = 132.0;
                             const TAB_CLOSE_W: f32 = 22.0;
                             let row_w = ui.available_width();
+                            let tab_stride = TAB_TITLE_W + TAB_CLOSE_W + 4.0;
+                            let tab_lane_w = (row_w - NAV_W * 2.0 - 8.0).max(80.0);
                             ui.allocate_ui_with_layout(
                                 egui::vec2(row_w, TAB_ROW_H),
                                 egui::Layout::right_to_left(egui::Align::Center),
@@ -808,7 +860,8 @@ impl SerialToolPanel {
                                     .clicked();
 
                                 // Remaining width is a fixed lane for scrolling tabs.
-                                let scroll_w = (ui.available_width() - 2.0).max(80.0);
+                                let scroll_w =
+                                    tab_lane_w.min((ui.available_width() - 2.0).max(80.0));
                                 let scroll_out = ui
                                     .allocate_ui_with_layout(
                                         egui::vec2(scroll_w, TAB_ROW_H),
@@ -910,7 +963,7 @@ impl SerialToolPanel {
                                                                 egui::Align2::LEFT_CENTER,
                                                                 elide_tab_title_to_width(
                                                                     ui,
-                                                                    &tab.title,
+                                                                    &tab.display_title(),
                                                                     title_rect.width() - 8.0,
                                                                     egui::FontId::proportional(TAB_FONT),
                                                                 ),
@@ -1072,6 +1125,14 @@ impl SerialToolPanel {
                                     wheel_tab_direction,
                                 );
                                 self.activate_tab(next);
+                                self.tab_scroll_x = reveal_tab_scroll_offset(
+                                    self.tab_scroll_x,
+                                    tab_lane_w,
+                                    tab_stride,
+                                    TAB_TITLE_W + TAB_CLOSE_W,
+                                    next,
+                                    self.tabs.len(),
+                                );
                                 self.tab_wheel_last_switch_at = Some(wheel_event_time);
                             }
                             if let Some(action) = menu_action {
@@ -1179,6 +1240,31 @@ fn adjacent_tab_index(current: usize, count: usize, direction: i8) -> usize {
 fn tab_wheel_switch_allowed(last_switch: Option<f64>, now: f64) -> bool {
     const TAB_WHEEL_COOLDOWN_SECONDS: f64 = 0.24;
     last_switch.is_none_or(|last| now - last >= TAB_WHEEL_COOLDOWN_SECONDS)
+}
+
+fn reveal_tab_scroll_offset(
+    current: f32,
+    viewport_width: f32,
+    tab_stride: f32,
+    tab_width: f32,
+    active_index: usize,
+    tab_count: usize,
+) -> f32 {
+    if tab_count == 0 || viewport_width <= 0.0 {
+        return 0.0;
+    }
+    let content_width = tab_count as f32 * tab_stride;
+    let max_scroll = (content_width - viewport_width).max(0.0);
+    let tab_left = active_index.min(tab_count - 1) as f32 * tab_stride;
+    let tab_right = tab_left + tab_width;
+    let next = if tab_left < current {
+        tab_left
+    } else if tab_right > current + viewport_width {
+        tab_right - viewport_width
+    } else {
+        current
+    };
+    next.clamp(0.0, max_scroll)
 }
 
 fn rename_log_path(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
@@ -1345,6 +1431,28 @@ mod tests {
         assert!(tab_wheel_switch_allowed(None, 1.0));
         assert!(!tab_wheel_switch_allowed(Some(1.0), 1.1));
         assert!(tab_wheel_switch_allowed(Some(1.0), 1.24));
+    }
+
+    #[test]
+    fn active_tab_scrolls_into_the_visible_lane() {
+        let stride = 158.0;
+        let width = 154.0;
+        let viewport = 320.0;
+        assert_eq!(
+            reveal_tab_scroll_offset(0.0, viewport, stride, width, 0, 6),
+            0.0
+        );
+        assert_eq!(
+            reveal_tab_scroll_offset(0.0, viewport, stride, width, 2, 6),
+            150.0
+        );
+        assert_eq!(
+            reveal_tab_scroll_offset(300.0, viewport, stride, width, 1, 6),
+            158.0
+        );
+        assert!(
+            reveal_tab_scroll_offset(0.0, viewport, stride, width, 5, 6) <= 6.0 * stride - viewport
+        );
     }
 
     #[test]

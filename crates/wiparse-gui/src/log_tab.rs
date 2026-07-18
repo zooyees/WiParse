@@ -1,17 +1,19 @@
 //! Log tab — disk-backed file store + live ring buffer, virtualized viewport.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 
 use crossbeam_channel::Receiver;
-use egui::{Color32, CornerRadius, Frame, Margin, Pos2, RichText, Stroke};
+use egui::text::{CCursor, CCursorRange};
+use egui::{Align2, Color32, CornerRadius, FontId, Frame, Margin, Pos2, RichText, Stroke, Vec2};
 use wiparse_core::i18n::{tr, tr_fmt, Lang};
 use wiparse_core::log::{
-    collect_match_indices, parse_filter_patterns, prepared_needles, FileLogStore, LiveLogStore,
-    LogStore,
+    build_file_store_worker, collect_match_indices, parse_filter_patterns, prepared_needles,
+    FileBuildEvent, FileLogStore, LiveLogStore, LogStore,
 };
 use wiparse_core::protocol::{decode_qi_message, format_qi_tooltip, QiTipLine, QiTipRole};
 
@@ -219,6 +221,17 @@ pub struct LogTabPage {
     panes: Vec<PaneState>,
     selected_pane: usize,
     auto_scroll: bool,
+    edit_mode: bool,
+    edit_buffer: String,
+    edit_dirty: bool,
+    edit_status: String,
+    edit_find: String,
+    edit_replace: String,
+    edit_show_find: bool,
+    edit_match_status: String,
+    edit_cursor_status: String,
+    edit_exit_confirm_open: bool,
+    file_reload_rx: Option<Receiver<FileBuildEvent>>,
 }
 
 impl LogTabPage {
@@ -256,6 +269,194 @@ impl LogTabPage {
             panes: Vec::new(),
             selected_pane: 0,
             auto_scroll: true,
+            edit_mode: false,
+            edit_buffer: String::new(),
+            edit_dirty: false,
+            edit_status: String::new(),
+            edit_find: String::new(),
+            edit_replace: String::new(),
+            edit_show_find: false,
+            edit_match_status: String::new(),
+            edit_cursor_status: String::new(),
+            edit_exit_confirm_open: false,
+            file_reload_rx: None,
+        }
+    }
+
+    pub fn display_title(&self) -> String {
+        if self.edit_dirty {
+            format!("{} *", self.title)
+        } else {
+            self.title.clone()
+        }
+    }
+
+    fn enter_edit_mode(&mut self) -> bool {
+        if self.live || self.loading {
+            return false;
+        }
+        if self.has_background_filter() {
+            self.edit_status = "Wait for the active filter task to finish.".into();
+            return false;
+        }
+        let Some(path) = self.filepath.as_ref() else {
+            return false;
+        };
+        match std::fs::read_to_string(path) {
+            Ok(text) => {
+                // FileLogStore owns a read-only mmap. Drop it before editing so
+                // Windows allows the document to be truncated and rewritten.
+                self.backend = TabBackend::Pending;
+                for pane in &mut self.panes {
+                    pane.filter_rx = None;
+                    pane.filter_busy = false;
+                    pane.clear_sel();
+                }
+                self.edit_buffer = text;
+                self.edit_dirty = false;
+                self.edit_status.clear();
+                self.edit_match_status.clear();
+                self.edit_cursor_status.clear();
+                self.edit_mode = true;
+                true
+            }
+            Err(e) => {
+                self.edit_status = e.to_string();
+                false
+            }
+        }
+    }
+
+    fn clear_edit_ui_state(&mut self) {
+        self.edit_buffer.clear();
+        self.edit_status.clear();
+        self.edit_match_status.clear();
+        self.edit_cursor_status.clear();
+    }
+
+    fn exit_edit_mode(&mut self) {
+        self.edit_mode = false;
+        self.edit_dirty = false;
+        self.edit_exit_confirm_open = false;
+        self.clear_edit_ui_state();
+        if let Some(path) = self.filepath.as_ref().map(PathBuf::from) {
+            self.start_file_reload(path);
+        }
+    }
+
+    fn request_exit_edit_mode(&mut self) {
+        if self.edit_dirty {
+            self.edit_exit_confirm_open = true;
+        } else {
+            self.exit_edit_mode();
+        }
+    }
+
+    fn save_and_exit_edit_mode(&mut self) -> bool {
+        if !self.save_edit() {
+            return false;
+        }
+        self.edit_mode = false;
+        self.edit_exit_confirm_open = false;
+        self.clear_edit_ui_state();
+        true
+    }
+
+    fn discard_edit(&mut self) {
+        if let Some(path) = self.filepath.as_ref() {
+            if let Ok(text) = std::fs::read_to_string(path) {
+                self.edit_buffer = text;
+            }
+        }
+        self.edit_dirty = false;
+        self.edit_status.clear();
+        self.edit_match_status.clear();
+    }
+
+    fn save_edit(&mut self) -> bool {
+        let Some(path) = self.filepath.as_ref() else {
+            return false;
+        };
+        let path = PathBuf::from(path);
+        match std::fs::write(&path, &self.edit_buffer) {
+            Ok(()) => {
+                self.edit_dirty = false;
+                self.edit_status.clear();
+                self.start_file_reload(path);
+                true
+            }
+            Err(e) => {
+                self.edit_status = e.to_string();
+                false
+            }
+        }
+    }
+
+    fn save_edit_as(&mut self, path: PathBuf) -> bool {
+        match std::fs::write(&path, &self.edit_buffer) {
+            Ok(()) => {
+                self.filepath = Some(path.to_string_lossy().into_owned());
+                self.title = path
+                    .file_stem()
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.to_string_lossy().into_owned());
+                self.edit_dirty = false;
+                self.edit_status.clear();
+                self.start_file_reload(path);
+                true
+            }
+            Err(error) => {
+                self.edit_status = error.to_string();
+                false
+            }
+        }
+    }
+
+    fn start_file_reload(&mut self, path: PathBuf) {
+        if !self.edit_mode {
+            self.backend = TabBackend::Pending;
+            self.loading = true;
+            self.index_progress = 0;
+        }
+        let (tx, rx) = crossbeam_channel::unbounded();
+        self.file_reload_rx = Some(rx);
+        thread::spawn(move || build_file_store_worker(path, tx));
+    }
+
+    fn poll_file_reload(&mut self) {
+        let Some(rx) = self.file_reload_rx.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(FileBuildEvent::Progress { lines }) => {
+                if !self.edit_mode {
+                    self.set_index_progress(lines);
+                }
+                self.file_reload_rx = Some(rx);
+            }
+            Ok(FileBuildEvent::Done(store)) => {
+                if self.edit_mode {
+                    self.backend = TabBackend::File(store);
+                    self.loading = false;
+                    self.index_progress = self.line_count();
+                } else {
+                    self.set_file_store(store);
+                }
+            }
+            Ok(FileBuildEvent::Err(e)) => {
+                self.edit_status = e;
+                if !self.edit_mode {
+                    self.finish_loading();
+                }
+            }
+            Err(crossbeam_channel::TryRecvError::Empty) => {
+                self.file_reload_rx = Some(rx);
+            }
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                if !self.edit_mode {
+                    self.finish_loading();
+                }
+            }
         }
     }
 
@@ -359,6 +560,7 @@ impl LogTabPage {
     }
 
     pub fn poll_background_tasks(&mut self) {
+        self.poll_file_reload();
         for pane in &mut self.panes {
             let Some(rx) = pane.filter_rx.take() else {
                 continue;
@@ -527,12 +729,71 @@ impl LogTabPage {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(33));
         }
+        self.paint_edit_exit_confirm(ui.ctx(), lang, t);
+    }
+
+    fn paint_edit_exit_confirm(&mut self, ctx: &egui::Context, lang: Lang, t: &Tokens) {
+        if !self.edit_exit_confirm_open {
+            return;
+        }
+        let mut open = true;
+        let mut dismiss = false;
+        egui::Window::new(tr(lang, "log.unsaved_title"))
+            .id(egui::Id::new(("log-edit-exit-confirm", self.view_id)))
+            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .frame(
+                Frame::window(&ctx.style())
+                    .fill(t.panel_bg)
+                    .stroke(Stroke::new(1.0_f32, t.border))
+                    .corner_radius(CornerRadius::same(6))
+                    .inner_margin(Margin::same(16)),
+            )
+            .show(ctx, |ui| {
+                ui.set_min_width(320.0);
+                ui.label(tr(lang, "log.unsaved_message"));
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button(tr(lang, "log.save")).clicked() {
+                        if self.save_and_exit_edit_mode() {
+                            dismiss = true;
+                        }
+                    }
+                    if ui.button(tr(lang, "log.discard_exit")).clicked() {
+                        self.exit_edit_mode();
+                        dismiss = true;
+                    }
+                    if ui.button(tr(lang, "log.cancel")).clicked() {
+                        dismiss = true;
+                    }
+                });
+            });
+        if !open || dismiss {
+            self.edit_exit_confirm_open = false;
+        }
     }
 
     fn toolbar_body(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
-        let focus_filter = ui.input(|input| {
-            (input.modifiers.ctrl || input.modifiers.command) && input.key_pressed(egui::Key::F)
-        });
+        let focus_edit_find = self.edit_mode
+            && !self.live
+            && ui.input(|input| {
+                (input.modifiers.ctrl || input.modifiers.command) && input.key_pressed(egui::Key::F)
+            });
+        if focus_edit_find {
+            self.edit_show_find = true;
+        }
+
+        let focus_filter = !self.edit_mode
+            && ui.input(|input| {
+                (input.modifiers.ctrl || input.modifiers.command) && input.key_pressed(egui::Key::F)
+            });
+
+        if !self.live && !self.loading {
+            self.toolbar_edit_controls(ui, lang, t);
+            ui.separator();
+        }
 
         let was_split = self.split_enabled;
         ui.checkbox(
@@ -704,6 +965,294 @@ impl LogTabPage {
         }
     }
 
+    fn toolbar_edit_controls(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
+        let before = self.edit_mode;
+        if ui
+            .checkbox(
+                &mut self.edit_mode,
+                RichText::new(tr(lang, "log.edit_mode")).size(12.5),
+            )
+            .changed()
+        {
+            if self.edit_mode && !before {
+                if !self.enter_edit_mode() {
+                    self.edit_mode = false;
+                }
+            } else if !self.edit_mode && before {
+                self.edit_mode = true;
+                self.request_exit_edit_mode();
+            }
+        }
+
+        if self.edit_mode
+            && ui
+                .button(tr(lang, "log.exit_edit"))
+                .on_hover_text(tr(lang, "log.exit_edit_hint"))
+                .clicked()
+        {
+            self.request_exit_edit_mode();
+        }
+
+        if !self.edit_mode {
+            return;
+        }
+
+        let save_shortcut = ui.input(|input| {
+            (input.modifiers.ctrl || input.modifiers.command)
+                && input.key_pressed(egui::Key::S)
+                && !input.modifiers.shift
+        });
+        let save_as_shortcut = ui.input(|input| {
+            (input.modifiers.ctrl || input.modifiers.command)
+                && input.modifiers.shift
+                && input.key_pressed(egui::Key::S)
+        });
+        if save_shortcut
+            || ui
+                .add_enabled(
+                    self.edit_dirty,
+                    egui::Button::new(tr(lang, "log.save")).min_size(egui::vec2(46.0, 24.0)),
+                )
+                .clicked()
+        {
+            self.save_edit();
+        }
+        if save_as_shortcut
+            || ui
+                .add(egui::Button::new(tr(lang, "log.save_as")).min_size(egui::vec2(64.0, 24.0)))
+                .clicked()
+        {
+            let mut dialog = rfd::FileDialog::new().add_filter("Log/Text", &["log", "txt"]);
+            if let Some(path) = self.filepath.as_ref().map(PathBuf::from) {
+                if let Some(parent) = path.parent() {
+                    dialog = dialog.set_directory(parent);
+                }
+                if let Some(name) = path.file_name() {
+                    dialog = dialog.set_file_name(name.to_string_lossy());
+                }
+            }
+            if let Some(path) = dialog.save_file() {
+                self.save_edit_as(path);
+            }
+        }
+        if self.edit_dirty
+            && ui
+                .add(egui::Button::new(tr(lang, "log.discard")).min_size(egui::vec2(64.0, 24.0)))
+                .clicked()
+        {
+            self.discard_edit();
+        }
+        if self.edit_dirty {
+            ui.label(
+                RichText::new(tr(lang, "log.unsaved"))
+                    .size(11.0)
+                    .color(Color32::from_rgb(0xF5, 0x9E, 0x0B)),
+            );
+        }
+        ui.label(
+            RichText::new(tr(lang, "log.edit_hint"))
+                .size(11.0)
+                .color(t.text_muted),
+        );
+        if !self.edit_status.is_empty() {
+            ui.label(
+                RichText::new(&self.edit_status)
+                    .size(11.0)
+                    .color(Color32::from_rgb(0xEF, 0x44, 0x44)),
+            );
+        }
+    }
+
+    fn edit_body(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
+        let font_size = self
+            .panes
+            .first()
+            .map(|p| p.font_size)
+            .unwrap_or(LOG_FONT_DEFAULT);
+        let save_shortcut = ui.input(|input| {
+            (input.modifiers.ctrl || input.modifiers.command)
+                && input.key_pressed(egui::Key::S)
+                && !input.modifiers.shift
+        });
+        if save_shortcut {
+            self.save_edit();
+        }
+
+        #[derive(Clone, Copy)]
+        enum FindAction {
+            Next,
+            Replace,
+            ReplaceAll,
+        }
+        let mut find_action = None;
+        if self.edit_show_find {
+            Frame::NONE
+                .fill(t.surface_bg)
+                .stroke(Stroke::new(1.0_f32, t.border))
+                .corner_radius(CornerRadius::same(4))
+                .inner_margin(Margin::symmetric(8, 5))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(tr(lang, "log.find"));
+                        let find = ui.add(
+                            egui::TextEdit::singleline(&mut self.edit_find)
+                                .desired_width(180.0)
+                                .hint_text(tr(lang, "log.find_placeholder")),
+                        );
+                        if find.lost_focus()
+                            && ui.input(|input| input.key_pressed(egui::Key::Enter))
+                        {
+                            find_action = Some(FindAction::Next);
+                        }
+                        ui.label(tr(lang, "log.replace"));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.edit_replace).desired_width(180.0),
+                        );
+                        if ui.button(tr(lang, "log.find_next")).clicked() {
+                            find_action = Some(FindAction::Next);
+                        }
+                        if ui.button(tr(lang, "log.replace_one")).clicked() {
+                            find_action = Some(FindAction::Replace);
+                        }
+                        if ui.button(tr(lang, "log.replace_all")).clicked() {
+                            find_action = Some(FindAction::ReplaceAll);
+                        }
+                        ui.checkbox(&mut self.case_sensitive, tr(lang, "log.case_sensitive"));
+                        if ui.small_button("×").clicked() {
+                            self.edit_show_find = false;
+                        }
+                        if !self.edit_match_status.is_empty() {
+                            ui.label(
+                                RichText::new(&self.edit_match_status)
+                                    .small()
+                                    .color(t.text_muted),
+                            );
+                        }
+                    });
+                });
+            ui.add_space(4.0);
+        }
+
+        let editor_id = ui.make_persistent_id(("log-document-editor", self.view_id));
+        let available_height = ui.available_height().max(120.0);
+        let desired_rows = ((available_height - 28.0) / (font_size + 4.0)).max(4.0) as usize;
+        let mut output = egui::ScrollArea::both()
+            .id_salt(("log-document-scroll", self.view_id))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_min_size(egui::vec2(
+                    ui.available_width().max(320.0),
+                    available_height - 28.0,
+                ));
+                egui::TextEdit::multiline(&mut self.edit_buffer)
+                    .id(editor_id)
+                    .font(FontId::monospace(font_size))
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(desired_rows)
+                    .code_editor()
+                    .show(ui)
+            })
+            .inner;
+
+        if output.response.changed() {
+            self.edit_dirty = true;
+        }
+        if output.response.clicked() {
+            if let Some(pointer) = output.response.interact_pointer_pos() {
+                let cursor = output.galley.cursor_from_pos(pointer - output.galley_pos);
+                output
+                    .state
+                    .cursor
+                    .set_char_range(Some(CCursorRange::one(cursor.ccursor)));
+                output.state.clone().store(ui.ctx(), output.response.id);
+                output.response.request_focus();
+            }
+        }
+
+        let current_range = output
+            .cursor_range
+            .map(|range| range.as_ccursor_range())
+            .unwrap_or_else(|| CCursorRange::one(CCursor::new(0)));
+        if let Some(action) = find_action {
+            match action {
+                FindAction::Next => {
+                    if let Some((start, end, ordinal, total)) = find_next_range(
+                        &self.edit_buffer,
+                        &self.edit_find,
+                        current_range.primary.index,
+                        self.case_sensitive,
+                    ) {
+                        output.state.cursor.set_char_range(Some(CCursorRange::two(
+                            CCursor::new(start),
+                            CCursor::new(end),
+                        )));
+                        output.state.store(ui.ctx(), editor_id);
+                        output.response.request_focus();
+                        self.edit_match_status = format!("{ordinal}/{total}");
+                    } else {
+                        self.edit_match_status = tr(lang, "log.no_matches");
+                    }
+                }
+                FindAction::Replace => {
+                    let (start, end) = sorted_char_range(current_range);
+                    let selected = char_slice(&self.edit_buffer, start, end);
+                    if !self.edit_find.is_empty()
+                        && text_equals(selected, &self.edit_find, self.case_sensitive)
+                    {
+                        replace_char_range(&mut self.edit_buffer, start, end, &self.edit_replace);
+                        self.edit_dirty = true;
+                        let replacement_end = start + self.edit_replace.chars().count();
+                        output.state.cursor.set_char_range(Some(CCursorRange::two(
+                            CCursor::new(start),
+                            CCursor::new(replacement_end),
+                        )));
+                        output.state.store(ui.ctx(), editor_id);
+                    } else {
+                        self.edit_match_status = tr(lang, "log.select_match");
+                    }
+                }
+                FindAction::ReplaceAll => {
+                    let count = replace_all_matches(
+                        &mut self.edit_buffer,
+                        &self.edit_find,
+                        &self.edit_replace,
+                        self.case_sensitive,
+                    );
+                    if count > 0 {
+                        self.edit_dirty = true;
+                    }
+                    self.edit_match_status = format!("{}: {count}", tr(lang, "log.replaced"));
+                }
+            }
+        }
+
+        if let Some(range) = output.cursor_range {
+            let index = range.primary.ccursor.index;
+            let (line, column) = line_column_at(&self.edit_buffer, index);
+            self.edit_cursor_status = format!(
+                "{} {line}, {} {column}  |  {} {}",
+                tr(lang, "log.line"),
+                tr(lang, "log.column"),
+                tr(lang, "log.characters"),
+                self.edit_buffer.chars().count()
+            );
+        }
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(&self.edit_cursor_status)
+                    .small()
+                    .color(t.text_muted),
+            );
+            if self.edit_dirty {
+                ui.label(
+                    RichText::new(tr(lang, "log.unsaved"))
+                        .small()
+                        .color(Color32::from_rgb(0xF5, 0x9E, 0x0B)),
+                );
+            }
+        });
+    }
+
     fn content_body(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
         let content_h = ui.available_height().max(120.0);
         let frame = Frame::NONE
@@ -714,6 +1263,10 @@ impl LogTabPage {
 
         frame.show(ui, |ui| {
             ui.set_min_height(content_h);
+            if self.edit_mode && !self.live {
+                self.edit_body(ui, lang, t);
+                return;
+            }
             if self.split_enabled && self.same_page {
                 let n = self.pane_count;
                 ui.columns(n, |cols| {
@@ -1164,6 +1717,102 @@ fn show_qi_tip_ui(ui: &mut egui::Ui, lines: &[QiTipLine], light: bool, font_size
     }
 }
 
+fn char_to_byte(text: &str, char_index: usize) -> usize {
+    text.char_indices()
+        .nth(char_index)
+        .map(|(byte, _)| byte)
+        .unwrap_or(text.len())
+}
+
+fn byte_to_char(text: &str, byte_index: usize) -> usize {
+    text[..byte_index.min(text.len())].chars().count()
+}
+
+fn sorted_char_range(range: CCursorRange) -> (usize, usize) {
+    let a = range.primary.index;
+    let b = range.secondary.index;
+    (a.min(b), a.max(b))
+}
+
+fn char_slice(text: &str, start: usize, end: usize) -> &str {
+    &text[char_to_byte(text, start)..char_to_byte(text, end)]
+}
+
+fn replace_char_range(text: &mut String, start: usize, end: usize, replacement: &str) {
+    let byte_start = char_to_byte(text, start);
+    let byte_end = char_to_byte(text, end);
+    text.replace_range(byte_start..byte_end, replacement);
+}
+
+fn text_equals(left: &str, right: &str, case_sensitive: bool) -> bool {
+    if case_sensitive {
+        left == right
+    } else {
+        left.eq_ignore_ascii_case(right)
+    }
+}
+
+fn find_match_ranges(text: &str, needle: &str, case_sensitive: bool) -> Vec<(usize, usize)> {
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let (haystack, needle) = if case_sensitive {
+        (text.to_owned(), needle.to_owned())
+    } else {
+        (text.to_ascii_lowercase(), needle.to_ascii_lowercase())
+    };
+    haystack
+        .match_indices(&needle)
+        .map(|(byte_start, value)| {
+            let byte_end = byte_start + value.len();
+            (
+                byte_to_char(&haystack, byte_start),
+                byte_to_char(&haystack, byte_end),
+            )
+        })
+        .collect()
+}
+
+fn find_next_range(
+    text: &str,
+    needle: &str,
+    after: usize,
+    case_sensitive: bool,
+) -> Option<(usize, usize, usize, usize)> {
+    let ranges = find_match_ranges(text, needle, case_sensitive);
+    let total = ranges.len();
+    let index = ranges
+        .iter()
+        .position(|(start, _)| *start >= after)
+        .unwrap_or(0);
+    ranges
+        .get(index)
+        .map(|(start, end)| (*start, *end, index + 1, total))
+}
+
+fn replace_all_matches(
+    text: &mut String,
+    needle: &str,
+    replacement: &str,
+    case_sensitive: bool,
+) -> usize {
+    let ranges = find_match_ranges(text, needle, case_sensitive);
+    for (start, end) in ranges.iter().rev().copied() {
+        replace_char_range(text, start, end, replacement);
+    }
+    ranges.len()
+}
+
+fn line_column_at(text: &str, char_index: usize) -> (usize, usize) {
+    let prefix = char_slice(text, 0, char_index.min(text.chars().count()));
+    let line = prefix.chars().filter(|value| *value == '\n').count() + 1;
+    let column = prefix
+        .rsplit_once('\n')
+        .map(|(_, tail)| tail.chars().count() + 1)
+        .unwrap_or_else(|| prefix.chars().count() + 1);
+    (line, column)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1186,6 +1835,12 @@ mod tests {
         assert_ne!(first.view_id, second.view_id);
         assert!(first.panes[0].reset_horizontal_scroll);
         assert!(second.panes[0].reset_horizontal_scroll);
+    }
+
+    #[test]
+    fn file_tab_opens_in_view_mode_by_default() {
+        let page = LogTabPage::file_tab_empty("sample.log".into());
+        assert!(!page.edit_mode);
     }
 
     #[test]
@@ -1278,5 +1933,29 @@ mod tests {
 
         pane.sel_focus = Some(TextCaret { row: 2, col: 7 });
         assert!(pane.has_text_selection());
+    }
+
+    #[test]
+    fn document_find_wraps_and_tracks_unicode_characters() {
+        let text = "第一行 ASK\n第二行 ASK";
+        let first = find_next_range(text, "ASK", 0, true).unwrap();
+        let second = find_next_range(text, "ASK", first.1, true).unwrap();
+        let wrapped = find_next_range(text, "ASK", second.1, true).unwrap();
+        assert_eq!(first.2, 1);
+        assert_eq!(second.2, 2);
+        assert_eq!((wrapped.0, wrapped.1), (first.0, first.1));
+    }
+
+    #[test]
+    fn document_replace_all_supports_case_insensitive_matches() {
+        let mut text = "Ask ASK ask".to_owned();
+        let count = replace_all_matches(&mut text, "ask", "FSK", false);
+        assert_eq!(count, 3);
+        assert_eq!(text, "FSK FSK FSK");
+    }
+
+    #[test]
+    fn document_cursor_reports_line_and_column() {
+        assert_eq!(line_column_at("abc\n中文", 6), (2, 3));
     }
 }

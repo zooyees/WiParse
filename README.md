@@ -39,6 +39,10 @@ Compatible with Python `WiParseCLI` shape:
 { "ok": true, "cmd": "version", "ts": "...", "data": { ... } }
 ```
 
+Full command reference: [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md).
+
+MCP server for agents: [`mcp/wiparse/README.md`](mcp/wiparse/README.md).
+
 ```powershell
 cargo run -p wiparse-cli -- version
 cargo run -p wiparse-cli -- ports

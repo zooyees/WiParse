@@ -4,6 +4,7 @@ pub mod charge_state;
 pub mod config;
 pub mod db;
 pub mod i18n;
+pub mod instrument;
 pub mod log;
 pub mod metrics;
 pub mod paths;

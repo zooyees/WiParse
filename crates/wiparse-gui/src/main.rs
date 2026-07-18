@@ -7,10 +7,10 @@ mod app;
 mod calculator;
 mod converter;
 mod fonts;
+mod instrument_control;
 mod log_tab;
 mod log_view;
 mod serial_tool;
-mod tektronix;
 mod theme;
 mod windows_icon;
 
@@ -20,7 +20,7 @@ use wiparse_core::config::load_config;
 use wiparse_core::paths::project_path;
 
 /// Embedded at compile time so window/taskbar icons work from dist without sidecar files.
-const EMBEDDED_ICO: &[u8] = include_bytes!("../../../packaging/WiParse.ico");
+const EMBEDDED_ICO: &[u8] = include_bytes!("../../../Icon/WiParse.ico");
 
 fn icon_from_bytes(bytes: &[u8]) -> Option<egui::IconData> {
     let img = image::load_from_memory(bytes).ok()?;

@@ -8,7 +8,7 @@ members = [
 default-members = ["crates/wiparse-cli", "crates/wiparse-gui"]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 license = "Proprietary"
 authors = ["WiParse"]
