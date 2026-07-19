@@ -6,6 +6,7 @@
 mod app;
 mod calculator;
 mod converter;
+mod error_log;
 mod fonts;
 mod instrument_control;
 mod log_tab;
@@ -82,7 +83,7 @@ fn load_window_icon() -> Option<egui::IconData> {
 }
 
 fn main() -> eframe::Result<()> {
-    tracing_subscriber::fmt().with_env_filter("info").init();
+    error_log::init();
     windows_icon::set_process_app_id();
 
     let cfg = load_config().unwrap_or_default();
@@ -99,7 +100,7 @@ fn main() -> eframe::Result<()> {
         viewport,
         ..Default::default()
     };
-    eframe::run_native(
+    match eframe::run_native(
         "WiParse",
         options,
         Box::new(move |cc| {
@@ -111,5 +112,13 @@ fn main() -> eframe::Result<()> {
             }
             Ok(Box::new(WiParseApp::new(cfg)))
         }),
-    )
+    ) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let msg = format!("eframe fatal error: {err:#}");
+            tracing::error!("{msg}");
+            error_log::append_crash(&msg);
+            Err(err)
+        }
+    }
 }

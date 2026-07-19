@@ -327,23 +327,48 @@ impl SerialToolPanel {
     }
 
     fn new_live_log(&mut self, lang: Lang) {
-        // Archive current live content as a named file tab if it has data
-        if let Some(live) = self.tabs.first() {
-            if !live.title.is_empty() {
-                // Keep existing live as archived file tab copy is expensive — just reset live
-                let _ = live;
-            }
+        // Flush current live to disk, then push it right as a file tab and
+        // insert a fresh live tab at index 0 (newest live stays leftmost).
+        if let Err(e) = self.ensure_live_file() {
+            self.status = format!("{}: {e}", tr(lang, "status.create_failed"));
+            return;
         }
+        let Some(archived_path) = self.live_file.take() else {
+            self.status = tr(lang, "status.create_failed").into();
+            return;
+        };
+
         let stamp = Local::now().format("%Y%m%d_%H%M%S");
         self.live_name = format!("{} {}", tr(lang, "log.default_filename"), stamp);
         self.committed_live_name = self.live_name.clone();
-        if let Some(live) = self.tabs.get_mut(0) {
-            live.clear_display();
-            live.title = self.live_name.clone();
+
+        let mut new_live = LogTabPage::live_tab(lang);
+        new_live.title = self.live_name.clone();
+        self.tabs.insert(0, new_live);
+        for load in &mut self.pending_loads {
+            load.tab_idx += 1;
         }
+
+        // Previous live is now at index 1 — reopen it as a closable file tab.
+        let path_s = normalize_path(&archived_path.to_string_lossy());
+        let archived_tab = LogTabPage::file_tab_empty(path_s);
+        if self.tabs.len() > 1 {
+            self.tabs[1] = archived_tab;
+        } else {
+            self.tabs.push(archived_tab);
+        }
+        let (tx, rx) = unbounded();
+        self.pending_loads.push(PendingFileLoad { tab_idx: 1, rx });
+        let path_for_worker = archived_path;
+        thread::spawn(move || build_file_store_worker(path_for_worker, tx));
+
         self.live_file = None;
-        let _ = self.ensure_live_file();
+        if let Err(e) = self.ensure_live_file() {
+            self.status = format!("{}: {e}", tr(lang, "status.create_failed"));
+            return;
+        }
         self.active_tab = 0;
+        self.persist_open_log_files();
         self.status = format!("new live log: {}", self.live_name);
     }
 

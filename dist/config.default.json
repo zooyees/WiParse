@@ -14,6 +14,7 @@
     "language": "en",
     "menu_bar_auto_hide": false,
     "theme": "dark",
+    "debug_mode": false,
     "panels": {
       "serial_tool": true,
       "calculator": true,

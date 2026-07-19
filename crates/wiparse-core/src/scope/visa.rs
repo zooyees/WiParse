@@ -426,13 +426,22 @@ impl Instrument {
         Ok(String::from_utf8_lossy(&raw).trim().to_string())
     }
 
+    /// Hard limit for HARDCopy / CURVe binary reads (prevents OOM on runaway instruments).
+    pub const MAX_RAW_READ_BYTES: usize = 32 * 1024 * 1024;
+
     pub fn read_raw(&self) -> Result<Vec<u8>, VisaError> {
-        // HARDCopy / CURVe can be large — read in chunks
+        // HARDCopy / CURVe can be large — read in chunks with a hard ceiling.
         let mut all = Vec::new();
         loop {
             match self.read_bytes(256 * 1024) {
                 Ok(chunk) if chunk.is_empty() => break,
                 Ok(chunk) => {
+                    if all.len().saturating_add(chunk.len()) > Self::MAX_RAW_READ_BYTES {
+                        return Err(VisaError::Io(format!(
+                            "binary read exceeded {} MiB limit",
+                            Self::MAX_RAW_READ_BYTES / (1024 * 1024)
+                        )));
+                    }
                     all.extend_from_slice(&chunk);
                     if chunk.len() < 256 * 1024 {
                         break;

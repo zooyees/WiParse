@@ -7,4 +7,5 @@ config.json
 *.db
 monitor.log
 log/
+logs/
 scope_captures/

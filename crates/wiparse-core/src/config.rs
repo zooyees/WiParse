@@ -55,6 +55,9 @@ pub struct UiConfig {
     pub panels: PanelFlags,
     #[serde(default = "default_chart_points")]
     pub chart_max_points: u32,
+    /// When true, the instrument workbench shows every instrument card (and demo sessions).
+    #[serde(default)]
+    pub debug_mode: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -237,6 +240,7 @@ impl Default for UiConfig {
             theme: default_theme(),
             panels: PanelFlags::default(),
             chart_max_points: default_chart_points(),
+            debug_mode: false,
         }
     }
 }

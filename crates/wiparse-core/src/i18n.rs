@@ -39,6 +39,8 @@ pub fn tr(lang: Lang, key: &str) -> String {
         (Lang::En, "menu.theme_dark") => "Dark",
         (Lang::Zh, "menu.theme_light") => "浅色",
         (Lang::En, "menu.theme_light") => "Light",
+        (Lang::Zh, "menu.debug_mode") => "调试模式",
+        (Lang::En, "menu.debug_mode") => "Debug Mode",
         (Lang::Zh, "menu.about") => "关于",
         (Lang::En, "menu.about") => "About",
         (Lang::Zh, "about.title") => "关于 WiParse",

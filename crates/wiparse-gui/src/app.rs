@@ -74,7 +74,13 @@ impl WiParseApp {
         let light = cfg.ui.theme == "light";
         Self {
             serial: SerialToolPanel::new(&cfg, lang),
-            instruments: InstrumentControlPanel::new(&cfg),
+            instruments: {
+                let mut panel = InstrumentControlPanel::new(&cfg);
+                if cfg.ui.debug_mode {
+                    panel.apply_debug_mode(true, lang);
+                }
+                panel
+            },
             cfg,
             lang,
             active,
@@ -127,6 +133,19 @@ impl WiParseApp {
         self.cfg.ui.panels.calculator = self.show_calculator;
         self.cfg.ui.panels.instrument_control = self.show_instruments;
         let _ = save_config(&self.cfg);
+    }
+
+    fn set_debug_mode(&mut self, enabled: bool) {
+        if self.cfg.ui.debug_mode == enabled {
+            return;
+        }
+        self.cfg.ui.debug_mode = enabled;
+        self.instruments.apply_debug_mode(enabled, self.lang);
+        if enabled {
+            self.show_instruments = true;
+            self.active = MainTab::Instruments;
+        }
+        self.persist_ui_prefs();
     }
 
     fn close_settings(&mut self) {
@@ -193,6 +212,15 @@ impl WiParseApp {
         if theme_row.hovered() || theme_row.clicked() {
             self.settings_sub = SettingsSub::Theme;
             self.settings_sub_anchor_y = theme_row.rect.top();
+        }
+
+        menu_separator(ui, t, ROOT_W);
+
+        let debug_l = tr(self.lang, "menu.debug_mode");
+        if menu_check_row(ui, t, &debug_l, self.cfg.ui.debug_mode, ROOT_W).clicked() {
+            let enabled = !self.cfg.ui.debug_mode;
+            self.set_debug_mode(enabled);
+            self.close_settings();
         }
 
         menu_separator(ui, t, ROOT_W);
