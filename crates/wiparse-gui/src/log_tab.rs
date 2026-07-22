@@ -12,8 +12,8 @@ use egui::text::{CCursor, CCursorRange};
 use egui::{Align2, Color32, CornerRadius, FontId, Frame, Margin, Pos2, RichText, Stroke, Vec2};
 use wiparse_core::i18n::{tr, tr_fmt, Lang};
 use wiparse_core::log::{
-    build_file_store_worker, collect_match_indices, parse_filter_patterns, prepared_needles,
-    FileBuildEvent, FileLogStore, LiveLogStore, LogStore,
+    build_file_store_worker, collect_match_indices, line_matches_prepared, parse_filter_patterns,
+    prepared_needles, FileBuildEvent, FileLogStore, LiveLogStore, LogStore,
 };
 use wiparse_core::protocol::{decode_qi_message, format_qi_tooltip, QiTipLine, QiTipRole};
 
@@ -42,19 +42,23 @@ pub(crate) struct SearchSelectionState {
     pub(crate) anchor: Option<TextCaret>,
     pub(crate) focus: Option<TextCaret>,
     pub(crate) selecting: bool,
+    pub(crate) select_origin: Option<Pos2>,
+    pub(crate) select_dragged: bool,
     pub(crate) last_selected_text: String,
 }
 
 impl SearchSelectionState {
-    fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.anchor = None;
         self.focus = None;
         self.selecting = false;
+        self.select_origin = None;
+        self.select_dragged = false;
         self.last_selected_text.clear();
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct PaneState {
     pub(crate) filter_draft: String,
     pub(crate) filter_applied: String,
@@ -66,6 +70,8 @@ pub(crate) struct PaneState {
     pub(crate) sel_focus: Option<TextCaret>,
     pub(crate) selecting: bool,
     pub(crate) select_origin: Option<Pos2>,
+    /// True once the pointer moved past the click threshold during this drag.
+    pub(crate) select_dragged: bool,
     pub(crate) search_selection: SearchSelectionState,
     pub(crate) parse_tip: Option<Rc<Vec<QiTipLine>>>,
     pub(crate) parse_hint: String,
@@ -82,6 +88,9 @@ pub(crate) struct PaneState {
     /// When false, live tail follow (`stick_to_bottom`) is paused until user scrolls to end.
     pub(crate) scroll_pinned: bool,
     pub(crate) reset_horizontal_scroll: bool,
+    pub(crate) cached_row_height: Option<(f32, f32)>, // font_size, height
+    /// Last first-visible master row — used to prefetch on tab activate.
+    pub(crate) last_view_row: Option<usize>,
     filter_rx: Option<Receiver<FilterScanResult>>,
     filter_busy: bool,
     filter_generation: u64,
@@ -100,6 +109,7 @@ impl Default for PaneState {
             sel_focus: None,
             selecting: false,
             select_origin: None,
+            select_dragged: false,
             search_selection: SearchSelectionState::default(),
             parse_tip: None,
             parse_hint: String::new(),
@@ -115,6 +125,8 @@ impl Default for PaneState {
             focus_filter_requested: false,
             scroll_pinned: true,
             reset_horizontal_scroll: true,
+            cached_row_height: None,
+            last_view_row: None,
             filter_rx: None,
             filter_busy: false,
             filter_generation: 0,
@@ -152,11 +164,12 @@ impl PaneState {
         )
     }
 
-    fn clear_sel(&mut self) {
+    pub(crate) fn clear_sel(&mut self) {
         self.sel_anchor = None;
         self.sel_focus = None;
         self.selecting = false;
         self.select_origin = None;
+        self.select_dragged = false;
     }
 
     fn clear_search_sel(&mut self) {
@@ -186,6 +199,14 @@ impl PaneState {
         self.highlight_master = self
             .highlight_master
             .and_then(|row| row.checked_sub(evicted));
+        self.last_view_row = self
+            .last_view_row
+            .and_then(|row| row.checked_sub(evicted));
+        self.search_map = self
+            .search_map
+            .iter()
+            .filter_map(|&i| i.checked_sub(evicted))
+            .collect();
     }
 }
 
@@ -232,6 +253,8 @@ pub struct LogTabPage {
     edit_cursor_status: String,
     edit_exit_confirm_open: bool,
     file_reload_rx: Option<Receiver<FileBuildEvent>>,
+    /// Live filter maps are stale (appended while serial tab was hidden).
+    filter_dirty: bool,
 }
 
 impl LogTabPage {
@@ -280,6 +303,7 @@ impl LogTabPage {
             edit_cursor_status: String::new(),
             edit_exit_confirm_open: false,
             file_reload_rx: None,
+            filter_dirty: false,
         }
     }
 
@@ -472,16 +496,109 @@ impl LogTabPage {
         if let TabBackend::Live(s) = &mut self.backend {
             s.clear();
         }
+        self.filter_dirty = false;
         self.refresh_all_views();
     }
 
-    pub fn append_lines(&mut self, lines: impl IntoIterator<Item = String>) {
+    pub fn append_lines(&mut self, lines: impl IntoIterator<Item = String>, update_filters: bool) {
         if let TabBackend::Live(s) = &mut self.backend {
+            let lines: Vec<String> = lines.into_iter().collect();
+            if lines.is_empty() {
+                return;
+            }
+            let added = lines.len();
             let evicted = s.append_lines(lines);
             for pane in &mut self.panes {
                 pane.shift_after_front_eviction(evicted);
             }
-            self.refresh_live_views_incremental();
+            if update_filters {
+                self.append_live_filter_matches(added);
+                self.filter_dirty = false;
+            } else {
+                self.filter_dirty = true;
+            }
+        }
+    }
+
+    pub fn on_activated(&mut self) {
+        if self.filter_dirty {
+            self.refresh_all_views();
+            self.filter_dirty = false;
+        }
+        // Drop stale layout metrics; never cache Galley across tabs — glyph UVs
+        // in the font atlas can change when another file introduces new CJK.
+        for pane in &mut self.panes {
+            pane.cached_row_height = None;
+        }
+        if let TabBackend::File(store) = &self.backend {
+            let anchor = self
+                .panes
+                .first()
+                .and_then(|p| {
+                    p.scroll_to_master
+                        .or(p.highlight_master)
+                        .or(p.last_view_row)
+                })
+                .unwrap_or(0);
+            let start = anchor.saturating_sub(256);
+            let end = anchor
+                .saturating_add(1024)
+                .min(store.line_count().saturating_sub(1).saturating_add(1));
+            store.prefetch_range(start, end.max(start.saturating_add(1)));
+        }
+    }
+
+    fn append_live_filter_matches(&mut self, added: usize) {
+        if added == 0 {
+            return;
+        }
+        let case_sensitive = self.case_sensitive;
+        let split = self.split_enabled;
+        let TabBackend::Live(live) = &self.backend else {
+            return;
+        };
+        let line_count = live.line_count();
+        let start = line_count.saturating_sub(added);
+
+        let pane_updates: Vec<Option<Vec<usize>>> = self
+            .panes
+            .iter()
+            .enumerate()
+            .map(|(i, pane)| {
+                let filter = if !split && i > 0 {
+                    ""
+                } else {
+                    pane.filter_applied.as_str()
+                };
+                if filter.is_empty() {
+                    return None; // clear/skip
+                }
+                let patterns = parse_filter_patterns(filter);
+                let needles = prepared_needles(patterns.as_deref(), case_sensitive);
+                if needles.is_empty() {
+                    return None;
+                }
+                let mut new_matches = Vec::new();
+                for idx in start..line_count {
+                    if let Some(line) = live.line_at(idx) {
+                        if line_matches_prepared(&line, &needles, case_sensitive) {
+                            new_matches.push(idx);
+                        }
+                    }
+                }
+                Some(new_matches)
+            })
+            .collect();
+
+        for (pane, update) in self.panes.iter_mut().zip(pane_updates) {
+            match update {
+                None => {
+                    pane.search_map.clear();
+                }
+                Some(new_matches) => {
+                    pane.search_map.extend(new_matches);
+                }
+            }
         }
     }
 
@@ -1909,13 +2026,13 @@ mod tests {
     #[test]
     fn live_append_does_not_reopen_closed_search_panel() {
         let mut page = LogTabPage::live_tab(Lang::En);
-        page.append_lines(vec!["ASK first".into()]);
+        page.append_lines(vec!["ASK first".into()], true);
         page.panes[0].filter_draft = "ASK".into();
         page.apply_filter(0);
         assert!(page.panes[0].show_search);
 
         page.panes[0].show_search = false;
-        page.append_lines(vec!["ASK second".into()]);
+        page.append_lines(vec!["ASK second".into()], true);
 
         assert_eq!(page.panes[0].search_map, vec![0, 1]);
         assert!(!page.panes[0].show_search);

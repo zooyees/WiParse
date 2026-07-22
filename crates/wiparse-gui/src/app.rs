@@ -453,7 +453,13 @@ impl eframe::App for WiParseApp {
                 ctx.request_repaint_after(std::time::Duration::from_millis(50));
             }
         }
-        self.serial.drain_events();
+        let serial_visible = self.active == MainTab::Serial && self.show_serial;
+        let live_filters = serial_visible && self.serial.active_live_visible();
+        if live_filters {
+            self.serial.sync_visible_live_filters();
+        }
+        // Live filters only need refresh when serial UI shows the live tab.
+        self.serial.drain_events(live_filters);
         // Instrument workers can deliver large waveform/image payloads. Do not
         // deserialize, rebuild plots, or schedule its live repaint loop while
         // the user is working in another tool.
@@ -466,10 +472,13 @@ impl eframe::App for WiParseApp {
             && self.show_instruments
             && self.instruments.live_active();
         if pump_serial || pump_instruments {
-            let ms = if self.active == MainTab::Serial && self.show_serial {
+            let ms = if serial_visible {
+                33
+            } else if self.active == MainTab::Instruments && self.show_instruments && pump_instruments
+            {
                 33
             } else {
-                80
+                500
             };
             ctx.request_repaint_after(std::time::Duration::from_millis(ms));
         }

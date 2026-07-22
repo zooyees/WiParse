@@ -2,8 +2,8 @@
 
 use super::defs::{
     ask_packet, bpp_grq_request, ept_reason, fod_type_label, fsk_bare_name, fsk_depth_label,
-    fsk_packet, get_payload_len, mpp_grq_request, msr_main_mode, msr_pref, prmc_vendor,
-    rp_mode_label, srq_type_name,
+    fsk_packet, get_payload_len, modecap_active_aux, modecap_active_main_mode, mpp_grq_request,
+    msr_main_mode, msr_pref, prmc_vendor, rp_mode_label, srq_type_name,
 };
 use serde::{Deserialize, Serialize};
 
@@ -1128,13 +1128,42 @@ fn decode_fsk_fields(header: u8, p: &[u8]) -> Vec<QiField> {
                 Some(format!("0x{:02X}{:02X}", p[3], p[4])),
             ),
         ],
-        0x5A if p.len() >= 2 => vec![
-            field("capabilities", p[1], "", Some(format!("0x{:02X}", p[1]))),
-            field("cpm", p[1] & 1 != 0, "", None),
-            field("npm", p[1] & 2 != 0, "", None),
-            field("lpm", p[1] & 4 != 0, "", None),
-            field("hpm", p[1] & 8 != 0, "", None),
-        ],
+        // MODECAP — Power Modes Capabilities (Figure 148 / Tables 91–92).
+        // Message size 5: B0..B4. Reserved bits shall be zero.
+        0x5A if p.len() >= 5 => {
+            let b0 = p[0];
+            let b1 = p[1];
+            let b2 = p[2];
+            let active_main = (b0 >> 3) & 0x03;
+            let active_aux = b0 & 0x01;
+            let support = |bit: bool| if bit { "Supported" } else { "Not supported" };
+            vec![
+                field("B0", b0, "", Some(format!("0x{b0:02X}"))),
+                field(
+                    "active_main_mode",
+                    modecap_active_main_mode(active_main),
+                    "",
+                    Some(format!("0x{active_main:X}")),
+                ),
+                field(
+                    "active_aux",
+                    modecap_active_aux(active_aux),
+                    "",
+                    Some(format!("0x{active_aux:X}")),
+                ),
+                field("B1", b1, "", Some(format!("0x{b1:02X}"))),
+                field("cpm", support(b1 & 0x01 != 0), "", None),
+                field("cpm_aux", support(b1 & 0x02 != 0), "", None),
+                field("npm", support(b1 & 0x10 != 0), "", None),
+                field("npm_aux", support(b1 & 0x20 != 0), "", None),
+                field("B2", b2, "", Some(format!("0x{b2:02X}"))),
+                field("lpm", support(b2 & 0x01 != 0), "", None),
+                field("hpm", support(b2 & 0x10 != 0), "", None),
+                field("hpm_aux", support(b2 & 0x20 != 0), "", None),
+                field("B3_reserved", p[3], "", Some(format!("0x{:02X}", p[3]))),
+                field("B4_reserved", p[4], "", Some(format!("0x{:02X}", p[4]))),
+            ]
+        }
         0x5F if p.len() >= 3 => vec![field(
             "g_coil_r",
             s16_be(p[1], p[2]),
@@ -1467,6 +1496,64 @@ mod tests {
         assert!(d.fields.iter().any(|field| {
             field.name == "g_coil_rx_pla2_valid" && field.value == serde_json::json!(true)
         }));
+    }
+
+    #[test]
+    fn decode_fsk_modecap_power_modes() {
+        // Header 0x5A, payload 5 bytes per GET_PAYLOAD_LEN.
+        // B0: active_main=NPM(1) at b4:b3, active_aux=1 at b0 → 0b0000_1001 = 0x09
+        // B1: npm_aux|npm|cpm_aux|cpm = b5|b4|b1|b0 → 0b0011_0011 = 0x33
+        // B2: hpm_aux|hpm|lpm = b5|b4|b0 → 0b0011_0001 = 0x31
+        // B3/B4 reserved 0, checksum = XOR of header+payload.
+        let payload = [0x09u8, 0x33, 0x31, 0x00, 0x00];
+        let mut x = 0x5Au8;
+        for b in payload {
+            x ^= b;
+        }
+        let line = format!(
+            "FSK 5A {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} F",
+            payload[0], payload[1], payload[2], payload[3], payload[4], x
+        );
+        let d = decode_qi_message(&line).unwrap();
+        assert_eq!(d.header, 0x5A);
+        assert_eq!(d.name, "MODECAP");
+        assert_eq!(d.payload, payload.to_vec());
+        assert_eq!(d.checksum_ok, Some(true));
+        assert!(d.fields.iter().any(|f| {
+            f.name == "active_main_mode"
+                && f.value == serde_json::json!("NPM (Nominal Power Mode)")
+        }));
+        assert!(d.fields.iter().any(|f| {
+            f.name == "active_aux" && f.value == serde_json::json!("Auxiliary Mode (1)")
+        }));
+        assert!(d
+            .fields
+            .iter()
+            .any(|f| f.name == "cpm" && f.value == serde_json::json!("Supported")));
+        assert!(d
+            .fields
+            .iter()
+            .any(|f| f.name == "cpm_aux" && f.value == serde_json::json!("Supported")));
+        assert!(d
+            .fields
+            .iter()
+            .any(|f| f.name == "npm" && f.value == serde_json::json!("Supported")));
+        assert!(d
+            .fields
+            .iter()
+            .any(|f| f.name == "npm_aux" && f.value == serde_json::json!("Supported")));
+        assert!(d
+            .fields
+            .iter()
+            .any(|f| f.name == "lpm" && f.value == serde_json::json!("Supported")));
+        assert!(d
+            .fields
+            .iter()
+            .any(|f| f.name == "hpm" && f.value == serde_json::json!("Supported")));
+        assert!(d
+            .fields
+            .iter()
+            .any(|f| f.name == "hpm_aux" && f.value == serde_json::json!("Supported")));
     }
 
     #[test]

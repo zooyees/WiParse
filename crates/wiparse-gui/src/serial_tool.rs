@@ -5,8 +5,9 @@ use crate::theme::{self as ui_theme, Tokens};
 use chrono::{Local, NaiveDateTime, Timelike};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use egui::{Color32, CornerRadius, Frame, Margin, Stroke};
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::collections::{HashMap, VecDeque};
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -52,12 +53,15 @@ pub struct SerialToolPanel {
     stop_flag: Option<Arc<AtomicBool>>,
     rx: Option<Receiver<SerialEvent>>,
     live_file: Option<PathBuf>,
+    live_writer: Option<BufWriter<File>>,
     last_lang: Lang,
     tab_scroll_x: f32,
     tab_wheel_last_switch_at: Option<f64>,
     pending_loads: Vec<PendingFileLoad>,
     /// Leftover RX lines when drain hits per-frame cap.
-    pending_lines: Vec<String>,
+    pending_lines: VecDeque<String>,
+    /// Cached elided tab titles: (source title, width_px) -> elided text.
+    tab_elide_cache: HashMap<(String, i32), String>,
 }
 
 impl SerialToolPanel {
@@ -98,11 +102,13 @@ impl SerialToolPanel {
             stop_flag: None,
             rx: None,
             live_file: None,
+            live_writer: None,
             last_lang: lang,
             tab_scroll_x: 0.0,
             tab_wheel_last_switch_at: None,
             pending_loads: Vec::new(),
-            pending_lines: Vec::new(),
+            pending_lines: VecDeque::new(),
+            tab_elide_cache: HashMap::new(),
         };
         panel.restore_open_log_files(&cfg.log_monitor.open_log_files);
         panel
@@ -227,9 +233,10 @@ impl SerialToolPanel {
         };
         self.live_name = name;
         let new_path = self.live_path();
-        if let Some(old_path) = self.live_file.as_ref() {
-            if old_path != &new_path && old_path.exists() {
-                if let Err(err) = rename_log_path(old_path, &new_path) {
+        if let Some(old_path) = self.live_file.clone() {
+            if old_path != new_path && old_path.exists() {
+                self.close_live_writer();
+                if let Err(err) = rename_log_path(&old_path, &new_path) {
                     self.live_name = self.committed_live_name.clone();
                     self.status = if err.kind() == std::io::ErrorKind::AlreadyExists {
                         tr(lang, "status.rename_exists")
@@ -240,6 +247,7 @@ impl SerialToolPanel {
                 }
             }
             self.live_file = Some(new_path);
+            self.live_writer = None;
         }
         self.committed_live_name = self.live_name.clone();
         if let Some(live) = self.tabs.get_mut(0) {
@@ -258,6 +266,18 @@ impl SerialToolPanel {
         self.persist_open_log_files();
     }
 
+    fn flush_live_writer(&mut self) {
+        if let Some(w) = &mut self.live_writer {
+            let _ = w.flush();
+        }
+    }
+
+    fn close_live_writer(&mut self) {
+        if let Some(mut w) = self.live_writer.take() {
+            let _ = w.flush();
+        }
+    }
+
     fn ensure_live_file(&mut self) -> std::io::Result<()> {
         let path = self.live_path();
         if let Some(parent) = path.parent() {
@@ -267,16 +287,28 @@ impl SerialToolPanel {
             // UTF-8 BOM for Notepad / Chinese-friendly parity with Python utf-8-sig
             fs::write(&path, b"\xEF\xBB\xBF")?;
         }
+        let need_reopen = match (&self.live_writer, &self.live_file) {
+            (None, _) => true,
+            (Some(_), Some(old)) if old != &path => true,
+            (Some(_), None) => true,
+            (Some(_), Some(_)) => false,
+        };
+        if need_reopen {
+            self.close_live_writer();
+            self.live_writer = Some(open_live_writer(&path)?);
+        }
         self.live_file = Some(path);
         Ok(())
     }
 
-    fn append_to_live_file(&self, line: &str) {
-        let Some(path) = &self.live_file else {
-            return;
-        };
-        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
-            let _ = writeln!(f, "{line}");
+    fn append_to_live_file(&mut self, line: &str) {
+        if self.live_writer.is_none() {
+            if self.ensure_live_file().is_err() {
+                return;
+            }
+        }
+        if let Some(w) = &mut self.live_writer {
+            let _ = writeln!(w, "{line}");
         }
     }
 
@@ -323,6 +355,7 @@ impl SerialToolPanel {
         }
         self.rx = None;
         self.monitoring = false;
+        self.close_live_writer();
         self.status = tr(lang, "status.stopped");
     }
 
@@ -333,10 +366,12 @@ impl SerialToolPanel {
             self.status = format!("{}: {e}", tr(lang, "status.create_failed"));
             return;
         }
+        self.close_live_writer();
         let Some(archived_path) = self.live_file.take() else {
             self.status = tr(lang, "status.create_failed").into();
             return;
         };
+        self.live_writer = None;
 
         let stamp = Local::now().format("%Y%m%d_%H%M%S");
         self.live_name = format!("{} {}", tr(lang, "log.default_filename"), stamp);
@@ -399,6 +434,34 @@ impl SerialToolPanel {
             }
         }
         self.persist_open_log_files();
+    }
+
+    /// Open dropped `.txt` / `.log` files (same filters as the Open Log dialog).
+    pub fn handle_dropped_files(&mut self, files: &[egui::DroppedFile]) {
+        let mut opened_any = false;
+        for file in files {
+            let Some(path) = file.path.as_ref() else {
+                continue;
+            };
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if ext != "txt" && ext != "log" {
+                continue;
+            }
+            if let Some(parent) = path.parent() {
+                self.open_dir = parent.to_string_lossy().into_owned();
+            }
+            if let Some(tab_idx) = self.open_path(path.clone()) {
+                self.activate_tab(tab_idx);
+                opened_any = true;
+            }
+        }
+        if opened_any {
+            self.persist_open_log_files();
+        }
     }
 
     fn browse_dir(&mut self) {
@@ -480,7 +543,7 @@ impl SerialToolPanel {
         }
     }
 
-    pub fn drain_events(&mut self) {
+    pub fn drain_events(&mut self, update_live_filters: bool) {
         for tab in &mut self.tabs {
             tab.poll_background_tasks();
         }
@@ -489,8 +552,11 @@ impl SerialToolPanel {
         let mut budget = DRAIN_LINES_PER_FRAME;
         let mut batch = Vec::new();
 
-        while budget > 0 && !self.pending_lines.is_empty() {
-            batch.push(self.pending_lines.remove(0));
+        while budget > 0 {
+            let Some(line) = self.pending_lines.pop_front() else {
+                break;
+            };
+            batch.push(line);
             budget -= 1;
         }
 
@@ -526,20 +592,24 @@ impl SerialToolPanel {
         }
         self.pending_lines.extend(extras);
         while self.pending_lines.len() > MAX_PENDING_LINES {
-            self.pending_lines.remove(0);
+            self.pending_lines.pop_front();
         }
 
         if stop_seen {
             self.monitoring = false;
             self.stop_flag = None;
             self.rx = None;
+            self.close_live_writer();
             self.status = tr(self.last_lang, "status.stopped");
         }
 
-        for line in batch {
-            self.append_to_live_file(&line);
+        if !batch.is_empty() {
+            for line in &batch {
+                self.append_to_live_file(line);
+            }
+            self.flush_live_writer();
             if let Some(live) = self.tabs.get_mut(0) {
-                live.append_lines([line]);
+                live.append_lines(batch, update_live_filters);
             }
         }
     }
@@ -562,9 +632,26 @@ impl SerialToolPanel {
         self.monitoring
     }
 
+    pub fn active_live_visible(&self) -> bool {
+        self.active_tab == 0
+    }
+
+    /// Call when the serial tool (and live tab) become visible again so deferred
+    /// filter updates from background RX are applied once.
+    pub fn sync_visible_live_filters(&mut self) {
+        if self.active_tab == 0 {
+            if let Some(live) = self.tabs.get_mut(0) {
+                live.on_activated();
+            }
+        }
+    }
+
     fn activate_tab(&mut self, idx: usize) {
         if idx < self.tabs.len() {
             self.active_tab = idx;
+            if let Some(tab) = self.tabs.get_mut(idx) {
+                tab.on_activated();
+            }
         }
     }
 
@@ -612,6 +699,10 @@ impl SerialToolPanel {
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
         self.last_lang = lang;
         // Events are drained from app::update so backlog clears even when this tab is hidden.
+        let dropped = ui.ctx().input(|i| i.raw.dropped_files.clone());
+        if !dropped.is_empty() {
+            self.handle_dropped_files(&dropped);
+        }
 
         // Python log_panel: fixed left sidebar + content (must force top-down
         // layouts — parent horizontal_top would otherwise stack every control in a row).
@@ -905,6 +996,8 @@ impl SerialToolPanel {
                                                 .show(ui, |ui| {
                                                     ui.horizontal(|ui| {
                                                         ui.spacing_mut().item_spacing.x = 0.0;
+                                                        let mut elide_cache =
+                                                            std::mem::take(&mut self.tab_elide_cache);
                                                         for (i, tab) in self.tabs.iter().enumerate() {
                                                             let selected = self.active_tab == i;
                                                             let (fill, fg) = if selected {
@@ -991,6 +1084,7 @@ impl SerialToolPanel {
                                                                     &tab.display_title(),
                                                                     title_rect.width() - 8.0,
                                                                     egui::FontId::proportional(TAB_FONT),
+                                                                    &mut elide_cache,
                                                                 ),
                                                                 egui::FontId::proportional(TAB_FONT),
                                                                 fg,
@@ -1112,6 +1206,7 @@ impl SerialToolPanel {
 
                                                             ui.add_space(4.0);
                                                         }
+                                                        self.tab_elide_cache = elide_cache;
                                                     });
                                                 })
                                         },
@@ -1192,6 +1287,11 @@ impl SerialToolPanel {
     }
 }
 
+fn open_live_writer(path: &Path) -> std::io::Result<BufWriter<File>> {
+    let f = OpenOptions::new().create(true).append(true).open(path)?;
+    Ok(BufWriter::with_capacity(64 * 1024, f))
+}
+
 fn elide_tab_title(title: &str, max_chars: usize) -> String {
     let count = title.chars().count();
     if count <= max_chars {
@@ -1206,29 +1306,40 @@ fn elide_tab_title_to_width(
     title: &str,
     max_width: f32,
     font: egui::FontId,
+    cache: &mut HashMap<(String, i32), String>,
 ) -> String {
-    if max_width <= 4.0 {
-        return "…".to_string();
+    let key = (title.to_string(), max_width.round() as i32);
+    if let Some(cached) = cache.get(&key) {
+        return cached.clone();
     }
-    let measure = |text: &str| -> f32 {
-        ui.fonts(|f| {
-            f.layout_no_wrap(text.to_string(), font.clone(), Color32::WHITE)
-                .size()
-                .x
-        })
-    };
-    if measure(title) <= max_width {
-        return title.to_string();
-    }
-    let mut chars: Vec<char> = title.chars().collect();
-    while !chars.is_empty() {
-        let trial: String = chars.iter().collect();
-        if measure(&format!("{trial}…")) <= max_width {
-            return format!("{trial}…");
+    let result = if max_width <= 4.0 {
+        "…".to_string()
+    } else {
+        let measure = |text: &str| -> f32 {
+            ui.fonts(|f| {
+                f.layout_no_wrap(text.to_string(), font.clone(), Color32::WHITE)
+                    .size()
+                    .x
+            })
+        };
+        if measure(title) <= max_width {
+            title.to_string()
+        } else {
+            let mut chars: Vec<char> = title.chars().collect();
+            let mut out = "…".to_string();
+            while !chars.is_empty() {
+                let trial: String = chars.iter().collect();
+                if measure(&format!("{trial}…")) <= max_width {
+                    out = format!("{trial}…");
+                    break;
+                }
+                chars.pop();
+            }
+            out
         }
-        chars.pop();
-    }
-    "…".to_string()
+    };
+    cache.insert(key, result.clone());
+    result
 }
 
 fn normalized_log_name(raw: &str) -> Result<String, ()> {

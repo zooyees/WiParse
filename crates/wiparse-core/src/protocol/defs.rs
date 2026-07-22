@@ -668,6 +668,20 @@ pub fn msr_main_mode(v: u8) -> &'static str {
     }
 }
 
+/// Table 91 — Active Main Mode (MODECAP B0[b4:b3]); same encoding as MSR main mode.
+pub fn modecap_active_main_mode(v: u8) -> &'static str {
+    msr_main_mode(v)
+}
+
+/// Table 92 — Active Auxiliary Mode (MODECAP B0[b0]).
+pub fn modecap_active_aux(v: u8) -> &'static str {
+    match v & 0x01 {
+        0 => "Default",
+        1 => "Auxiliary Mode (1)",
+        _ => "Unknown",
+    }
+}
+
 pub fn fod_type_label(v: u8) -> &'static str {
     match v {
         0 => "FOD/qf — Reference Q-Factor",

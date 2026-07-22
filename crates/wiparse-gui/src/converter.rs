@@ -285,25 +285,61 @@ impl<'a> ExprParser<'a> {
     fn number(&mut self) -> Result<f64, String> {
         self.skip_space();
         let start = self.position;
-        let bytes = self.input.as_bytes();
-        while self.position < bytes.len()
-            && (bytes[self.position].is_ascii_digit() || bytes[self.position] == b'.')
+        if self.input[self.position..].starts_with("0x")
+            || self.input[self.position..].starts_with("0X")
         {
-            self.position += 1;
+            self.position += 2;
+            let hex_start = self.position;
+            while self
+                .peek()
+                .is_some_and(|ch| ch.is_ascii_hexdigit())
+            {
+                self.position += self.peek().unwrap().len_utf8();
+            }
+            if hex_start == self.position {
+                return Err("十六进制数字无效 / Invalid hex number".into());
+            }
+            return parse_hex_digits(&self.input[hex_start..self.position]);
         }
-        if self.position < bytes.len() && matches!(bytes[self.position], b'e' | b'E') {
-            self.position += 1;
-            if self.position < bytes.len() && matches!(bytes[self.position], b'+' | b'-') {
-                self.position += 1;
-            }
-            let exponent_start = self.position;
-            while self.position < bytes.len() && bytes[self.position].is_ascii_digit() {
-                self.position += 1;
-            }
-            if exponent_start == self.position {
-                return Err("科学计数法指数无效 / Invalid exponent".into());
+
+        let mut has_hex_alpha = false;
+        while let Some(ch) = self.peek() {
+            if ch.is_ascii_digit() || ch == '.' {
+                self.position += ch.len_utf8();
+            } else if matches!(ch, 'a'..='d' | 'f' | 'A'..='D' | 'F') {
+                has_hex_alpha = true;
+                self.position += ch.len_utf8();
+            } else {
+                break;
             }
         }
+        if self.position == start {
+            return Err("数字无效 / Invalid number".into());
+        }
+
+        if matches!(self.peek(), Some('h') | Some('H')) {
+            let digits = &self.input[start..self.position];
+            self.position += 1;
+            return parse_hex_digits(digits);
+        }
+
+        if !has_hex_alpha {
+            let bytes = self.input.as_bytes();
+            if self.position < bytes.len() && matches!(bytes[self.position], b'e' | b'E') {
+                self.position += 1;
+                if self.position < bytes.len() && matches!(bytes[self.position], b'+' | b'-') {
+                    self.position += 1;
+                }
+                let exponent_start = self.position;
+                while self.position < bytes.len() && bytes[self.position].is_ascii_digit() {
+                    self.position += 1;
+                }
+                if exponent_start == self.position {
+                    return Err("科学计数法指数无效 / Invalid exponent".into());
+                }
+            }
+        }
+
         self.input[start..self.position]
             .parse::<f64>()
             .map_err(|_| "数字无效 / Invalid number".into())
@@ -391,6 +427,47 @@ fn finite(value: f64) -> Result<f64, String> {
     } else {
         Err("结果不是有限值 / Result is not finite".into())
     }
+}
+
+fn parse_hex_digits(digits: &str) -> Result<f64, String> {
+    let clean: String = digits.chars().filter(|c| *c != '_').collect();
+    if clean.is_empty() {
+        return Err("十六进制数字无效 / Invalid hex number".into());
+    }
+    if !clean.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("十六进制数字无效 / Invalid hex number".into());
+    }
+    u128::from_str_radix(&clean, 16)
+        .map(|value| value as f64)
+        .map_err(|_| "十六进制超出范围 / Hex value out of range".into())
+        .and_then(finite)
+}
+
+/// Parse a numeric literal: `0x`/`0X` prefix or `H`/`h` suffix => hex; otherwise decimal.
+pub(crate) fn parse_numeric_literal(text: &str) -> Result<f64, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("数字不能为空 / Number cannot be empty".into());
+    }
+    if let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        return parse_hex_digits(hex);
+    }
+    if trimmed.len() >= 2 {
+        let last = trimmed.as_bytes()[trimmed.len() - 1];
+        if last == b'H' || last == b'h' {
+            let body = &trimmed[..trimmed.len() - 1];
+            if !body.is_empty() {
+                return parse_hex_digits(body);
+            }
+        }
+    }
+    trimmed
+        .parse::<f64>()
+        .map_err(|_| "数字无效 / Invalid number".into())
+        .and_then(finite)
 }
 
 fn evaluate_expression(input: &str, angle_mode: AngleMode) -> Result<f64, String> {
@@ -583,6 +660,7 @@ impl ConverterPanel {
             [ui.available_width(), 54.0],
             egui::TextEdit::multiline(&mut self.expression),
         );
+        scientific_keypad(ui, &mut self.expression, lang, t);
         let enter = response.has_focus()
             && ui.input(|input| input.key_pressed(egui::Key::Enter) && !input.modifiers.shift);
         if ui_theme::accent_button(ui, t, text(lang, "计算", "Calculate")).clicked() || enter {
@@ -604,10 +682,73 @@ impl ConverterPanel {
             t,
             text(
                 lang,
-                "+ − * / % ^；pi/π, e；sqrt abs exp ln log/log10 log2；sin cos tan asin acos atan；floor ceil。^ 右结合，-2^2 = -(2^2)。",
-                "+ − * / % ^; pi/π, e; sqrt abs exp ln log/log10 log2; sin cos tan asin acos atan; floor ceil. ^ is right-associative; -2^2 = -(2^2).",
+                "+ − * / % ^；0x/0X 前缀或 H/h 后缀为十六进制，其余为十进制；pi/π, e；sqrt abs exp ln log/log10 log2；sin cos tan asin acos atan；floor ceil。^ 右结合，-2^2 = -(2^2)。",
+                "+ − * / % ^; 0x/0X prefix or H/h suffix => hex, otherwise decimal; pi/π, e; sqrt abs exp ln log/log10 log2; sin cos tan asin acos atan; floor ceil. ^ is right-associative; -2^2 = -(2^2).",
             ),
         );
+    }
+}
+
+fn scientific_keypad(ui: &mut egui::Ui, expression: &mut String, lang: Lang, t: &Tokens) {
+    ui.add_space(4.0);
+    let gap = 4.0;
+    let cols = 7_usize;
+    let btn_w = ((ui.available_width() - gap * (cols as f32 - 1.0)) / cols as f32).max(30.0);
+    let btn_h = 28.0;
+
+    let mut row = |ui: &mut egui::Ui, labels: &[&str]| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for label in labels {
+                if keypad_button(ui, t, label, btn_w, btn_h) {
+                    append_keypad_token(expression, label);
+                }
+            }
+        });
+    };
+
+    row(ui, &["7", "8", "9", "/", "*", "^", "⌫"]);
+    row(ui, &["4", "5", "6", "-", "+", "%", "C"]);
+    row(ui, &["1", "2", "3", "(", ")", ".", "H"]);
+    row(ui, &["0", "0x", "e", "pi", "sin(", "cos(", "tan("]);
+    row(
+        ui,
+        &["sqrt(", "ln(", "log(", "log2(", "asin(", "acos(", "atan("],
+    );
+    row(ui, &["abs(", "exp(", "floor(", "ceil("]);
+    ui.add_space(2.0);
+    ui.label(
+        egui::RichText::new(text(
+            lang,
+            "⌫ 退格 · C 清空 · H 追加后缀（如 10H）",
+            "⌫ backspace · C clear · H appends suffix (e.g. 10H)",
+        ))
+        .small()
+        .color(t.text_muted),
+    );
+}
+
+fn keypad_button(ui: &mut egui::Ui, t: &Tokens, label: &str, width: f32, height: f32) -> bool {
+    ui.add_sized(
+        [width, height],
+        egui::Button::new(egui::RichText::new(label).size(12.0).color(t.text_primary))
+            .fill(t.surface_bg)
+            .stroke(Stroke::new(1.0_f32, t.border.gamma_multiply(0.65))),
+    )
+    .clicked()
+}
+
+fn append_keypad_token(expression: &mut String, token: &str) {
+    match token {
+        "⌫" => {
+            expression.pop();
+        }
+        "C" => expression.clear(),
+        "0x" => expression.push_str("0x"),
+        "H" => expression.push('H'),
+        "pi" => expression.push_str("pi"),
+        "e" => expression.push('e'),
+        _ => expression.push_str(token),
     }
 }
 
@@ -710,6 +851,18 @@ mod tests {
             evaluate_expression("1.5e2 + 2.5E-1", AngleMode::Radians).unwrap(),
             150.25,
         );
+        close(
+            evaluate_expression("0xFF+1", AngleMode::Radians).unwrap(),
+            256.0,
+        );
+        close(
+            evaluate_expression("10H*2", AngleMode::Radians).unwrap(),
+            32.0,
+        );
+        close(parse_numeric_literal("0x10").unwrap(), 16.0);
+        close(parse_numeric_literal("FFH").unwrap(), 255.0);
+        close(parse_numeric_literal("10h").unwrap(), 16.0);
+        close(parse_numeric_literal("255").unwrap(), 255.0);
     }
 
     #[test]

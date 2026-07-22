@@ -17,6 +17,26 @@ use super::log_tab::{
 
 const TEXT_LEFT_PAD: f32 = 4.0;
 const SEARCH_PREFIX_CELLS: f32 = 27.0;
+/// Pointer movement below this (points) counts as a click, not a drag-select.
+const SELECT_DRAG_THRESHOLD: f32 = 4.0;
+
+/// Hit-test rect for text selection: visible content minus floating scrollbar overlay.
+fn text_select_interact_rect(ui: &Ui, body: Rect, clip: Rect) -> Rect {
+    let scroll = ui.spacing().scroll;
+    let gutter = scroll.bar_width
+        + scroll.bar_outer_margin
+        + scroll.bar_inner_margin
+        + scroll.floating_width
+        + 4.0;
+    let mut rect = body.intersect(clip);
+    if rect.width() > gutter + 16.0 {
+        rect.max.x -= gutter;
+    }
+    if rect.height() > gutter + 16.0 {
+        rect.max.y -= gutter;
+    }
+    rect
+}
 
 #[derive(Clone, Copy)]
 struct LineParts<'a> {
@@ -167,6 +187,42 @@ fn vertical_offset_for_row(row: usize, line_height: f32, viewport_height: f32) -
     (row as f32 * line_height - (viewport_height - line_height).max(0.0) * 0.5).max(0.0)
 }
 
+fn layout_log_line(ui: &Ui, line: &str, font_size: f32, color: Color32) -> Arc<egui::Galley> {
+    ui.fonts(|fonts| {
+        fonts.layout_no_wrap(line.to_owned(), FontId::monospace(font_size), color)
+    })
+}
+
+fn log_row_text_pos(row_rect: Rect, line_height: f32, galley: &egui::Galley) -> Pos2 {
+    Pos2::new(
+        row_rect.left() + TEXT_LEFT_PAD,
+        row_rect.top() + (line_height - galley.size().y).max(0.0) * 0.5,
+    )
+}
+
+/// Same coordinate transform as `TextEdit`: `galley.cursor_from_pos(pointer - galley_pos)`.
+fn caret_col_from_pointer(
+    galley: &egui::Galley,
+    line_char_len: usize,
+    text_pos: Pos2,
+    pointer: Pos2,
+) -> usize {
+    galley
+        .cursor_from_pos(pointer - text_pos)
+        .ccursor
+        .index
+        .min(line_char_len)
+}
+
+fn selection_x_range(galley: &egui::Galley, start_col: usize, end_col: usize) -> Option<(f32, f32)> {
+    if start_col >= end_col {
+        return None;
+    }
+    let start_x = galley.pos_from_ccursor(CCursor::new(start_col)).left();
+    let end_x = galley.pos_from_ccursor(CCursor::new(end_col)).left();
+    (end_x > start_x).then_some((start_x, end_x))
+}
+
 fn caret_at_pos<S: LogStore + ?Sized>(
     ui: &Ui,
     store: &S,
@@ -181,19 +237,15 @@ fn caret_at_pos<S: LogStore + ?Sized>(
     }
     let row = (((pos.y - body.top()) / line_height).floor().max(0.0) as usize)
         .min(total.saturating_sub(1));
+    let row_top = body.top() + row as f32 * line_height;
+    let row_rect = Rect::from_min_max(
+        Pos2::new(body.left(), row_top),
+        Pos2::new(body.right(), row_top + line_height),
+    );
     let line = store.line_at(row)?;
-    let galley = ui.fonts(|fonts| {
-        fonts.layout_no_wrap(
-            line.to_string(),
-            FontId::monospace(font_size),
-            Color32::WHITE,
-        )
-    });
-    let local_x = (pos.x - body.left() - TEXT_LEFT_PAD).max(0.0);
-    let col = galley
-        .cursor_from_pos(egui::vec2(local_x, galley.size().y * 0.5))
-        .ccursor
-        .index;
+    let galley = layout_log_line(ui, &line, font_size, Color32::WHITE);
+    let text_pos = log_row_text_pos(row_rect, line_height, &galley);
+    let col = caret_col_from_pointer(&galley, line.chars().count(), text_pos, pos);
     Some(super::log_tab::TextCaret { row, col })
 }
 
@@ -245,7 +297,19 @@ pub fn show_virtual_log_pane<S: LogStore + ?Sized>(
     let zoom_factor = ui.input(|i| i.zoom_delta());
 
     let total_lines = store.line_count();
-    let line_h = row_height(ui, pane.font_size);
+    let line_h = if let Some((fs, h)) = pane.cached_row_height {
+        if (fs - pane.font_size).abs() < f32::EPSILON {
+            h
+        } else {
+            let h = row_height(ui, pane.font_size);
+            pane.cached_row_height = Some((pane.font_size, h));
+            h
+        }
+    } else {
+        let h = row_height(ui, pane.font_size);
+        pane.cached_row_height = Some((pane.font_size, h));
+        h
+    };
     let glyph_w = ui
         .fonts(|f| f.glyph_width(&FontId::monospace(pane.font_size), '0'))
         .max(4.0);
@@ -301,52 +365,76 @@ pub fn show_virtual_log_pane<S: LogStore + ?Sized>(
             }
             scroll_area.show(ui, |ui| {
                 let total_h = (total_lines as f32 * line_h).max(line_h);
-                let (body, response) =
-                    ui.allocate_exact_size(Vec2::new(content_w, total_h), Sense::click_and_drag());
-
+                // Hover-only on the full body so the floating scrollbar can own
+                // clicks on the right/bottom edge; selection uses a shrunk rect.
+                let (body, _) =
+                    ui.allocate_exact_size(Vec2::new(content_w, total_h), Sense::hover());
                 let clip = ui.clip_rect();
+                let interact_rect = text_select_interact_rect(ui, body, clip);
+                let response = ui.interact(
+                    interact_rect,
+                    ui.id().with(("log_text_sel", salt)),
+                    Sense::click_and_drag(),
+                );
+
                 let visible_rows =
                     visible_row_range(body.top(), clip.top(), clip.height(), line_h, total_lines);
+                pane.last_view_row = Some(visible_rows.start);
 
                 if auto_scroll && body.bottom() - clip.bottom() < line_h * 1.5 {
                     pane.scroll_pinned = true;
                 }
 
-                let pointer = ui.input(|i| i.pointer.hover_pos());
+                let pointer = ui.ctx().pointer_interact_pos();
                 let primary_down = ui.input(|i| i.pointer.primary_down());
-                let primary_pressed = ui.input(|i| i.pointer.primary_pressed());
                 let primary_released = ui.input(|i| i.pointer.primary_released());
 
-                if primary_pressed {
-                    if let Some(pos) = pointer {
-                        if body.contains(pos) {
-                            response.request_focus();
-                            if let Some(caret) =
-                                caret_at_pos(ui, store, body, pos, line_h, pane.font_size)
-                            {
-                                pane.last_selected_text.clear();
-                                pane.sel_anchor = Some(caret);
-                                pane.sel_focus = Some(caret);
-                                pane.selecting = true;
-                                pane.select_origin = Some(pos);
-                            }
-                        }
-                    }
-                } else if primary_down && pane.selecting {
-                    if let Some(pos) = pointer {
+                // Match TextEdit: anchor at press, extend on drag; plain click clears.
+                if response.drag_started() {
+                    if let Some(pos) = response.interact_pointer_pos().or(pointer) {
+                        response.request_focus();
+                        pane.select_origin = Some(pos);
+                        pane.select_dragged = false;
+                        pane.selecting = true;
                         if let Some(caret) =
                             caret_at_pos(ui, store, body, pos, line_h, pane.font_size)
                         {
+                            pane.last_selected_text.clear();
+                            pane.sel_anchor = Some(caret);
                             pane.sel_focus = Some(caret);
                         }
                     }
-                } else if primary_released {
-                    pane.selecting = false;
-                    if let Some(text) = copy_selection(store, pane) {
-                        pane.last_selected_text = text;
+                } else if pane.selecting && primary_down {
+                    if let (Some(origin), Some(pos)) = (pane.select_origin, pointer) {
+                        if origin.distance(pos) >= SELECT_DRAG_THRESHOLD {
+                            pane.select_dragged = true;
+                        }
+                        if pane.select_dragged {
+                            if let Some(caret) =
+                                caret_at_pos(ui, store, body, pos, line_h, pane.font_size)
+                            {
+                                pane.sel_focus = Some(caret);
+                            }
+                        }
+                    }
+                } else if pane.selecting && primary_released {
+                    if pane.select_dragged {
+                        pane.selecting = false;
+                        pane.select_origin = None;
+                        pane.select_dragged = false;
+                        if let Some(text) = copy_selection(store, pane) {
+                            pane.last_selected_text = text;
+                        } else {
+                            pane.last_selected_text.clear();
+                        }
                     } else {
+                        pane.clear_sel();
                         pane.last_selected_text.clear();
                     }
+                } else if response.clicked() && !response.dragged() {
+                    pane.clear_sel();
+                    pane.last_selected_text.clear();
+                    pane.select_dragged = false;
                 }
 
                 if response.secondary_clicked() {
@@ -365,7 +453,7 @@ pub fn show_virtual_log_pane<S: LogStore + ?Sized>(
                 let copy_active = response.hovered() || response.has_focus() || pane.selecting;
                 handle_copy_shortcut(ui, store, pane, copy_active);
 
-                for row in visible_rows {
+                for row in visible_rows.start..visible_rows.end {
                     let row_top = body.top() + row as f32 * line_h;
                     let row_rect = Rect::from_min_max(
                         Pos2::new(body.left(), row_top),
@@ -390,31 +478,24 @@ pub fn show_virtual_log_pane<S: LogStore + ?Sized>(
                     }
 
                     let line = store.line_at(row).unwrap_or_else(|| Arc::from(""));
-                    let galley = ui.fonts(|fonts| {
-                        fonts.layout_no_wrap(
-                            line.to_string(),
-                            FontId::monospace(pane.font_size),
-                            t.text_primary,
-                        )
-                    });
-                    let text_pos = Pos2::new(
-                        row_rect.left() + TEXT_LEFT_PAD,
-                        row_rect.top() + (line_h - galley.size().y).max(0.0) * 0.5,
-                    );
+                    let galley = layout_log_line(ui, &line, pane.font_size, t.text_primary);
+                    let text_pos = log_row_text_pos(row_rect, line_h, &galley);
                     let row_clip = clip.intersect(row_rect);
                     if let Some((start_col, end_col)) =
                         selection_columns_for_row(pane, row, line.chars().count())
                     {
-                        let start_x = galley.pos_from_ccursor(CCursor::new(start_col)).center().x;
-                        let end_x = galley.pos_from_ccursor(CCursor::new(end_col)).center().x;
-                        ui.painter().with_clip_rect(row_clip).rect_filled(
-                            Rect::from_min_max(
-                                Pos2::new(text_pos.x + start_x, row_rect.top()),
-                                Pos2::new(text_pos.x + end_x, row_rect.bottom()),
-                            ),
-                            0.0,
-                            Color32::from_rgba_unmultiplied(59, 130, 246, 72),
-                        );
+                        if let Some((start_x, end_x)) =
+                            selection_x_range(&galley, start_col, end_col)
+                        {
+                            ui.painter().with_clip_rect(row_clip).rect_filled(
+                                Rect::from_min_max(
+                                    Pos2::new(text_pos.x + start_x, row_rect.top()),
+                                    Pos2::new(text_pos.x + end_x, row_rect.bottom()),
+                                ),
+                                0.0,
+                                Color32::from_rgba_unmultiplied(59, 130, 246, 72),
+                            );
+                        }
                     }
                     ui.painter()
                         .with_clip_rect(row_clip)
@@ -453,6 +534,7 @@ pub fn show_virtual_log_pane<S: LogStore + ?Sized>(
                         .clamp(LOG_FONT_MIN, LOG_FONT_MAX);
                     pane.font_size = (pane.font_size * 4.0).round() / 4.0;
                     if (pane.font_size - old).abs() > 0.01 {
+                        pane.cached_row_height = None;
                         ui.ctx().request_repaint();
                     }
                 }
@@ -611,34 +693,36 @@ fn search_caret_at_pos<S: LogStore + ?Sized>(
 ) -> Option<TextCaret> {
     let row = (((pos.y - body.top()) / line_height).floor().max(0.0) as usize)
         .min(search_map.len().saturating_sub(1));
+    let row_top = body.top() + row as f32 * line_height;
+    let row_rect = Rect::from_min_max(
+        Pos2::new(body.left(), row_top),
+        Pos2::new(body.right(), row_top + line_height),
+    );
     let master_idx = *search_map.get(row)?;
     let line = store.line_at(master_idx)?;
     let parts = split_timestamp_prefix(&line);
     let prefix_text = format!("{:>6} | {}", master_idx + 1, parts.prefix);
+    let prefix_galley = layout_log_line(ui, &prefix_text, font_size, Color32::WHITE);
+    let rest_galley = layout_log_line(ui, parts.rest, font_size, Color32::WHITE);
     let prefix_chars = prefix_text.chars().count();
-    let prefix_galley = ui.fonts(|fonts| {
-        fonts.layout_no_wrap(prefix_text, FontId::monospace(font_size), Color32::WHITE)
-    });
-    let rest_galley = ui.fonts(|fonts| {
-        fonts.layout_no_wrap(
-            parts.rest.to_owned(),
-            FontId::monospace(font_size),
-            Color32::WHITE,
-        )
-    });
+    let prefix_text_pos = Pos2::new(
+        viewport_left + TEXT_LEFT_PAD,
+        row_top + (line_height - prefix_galley.size().y).max(0.0) * 0.5,
+    );
+    let rest_text_pos = Pos2::new(
+        row_rect.left() + prefix_width,
+        row_top + (line_height - rest_galley.size().y).max(0.0) * 0.5,
+    );
     let col = if pos.x < viewport_left + prefix_width {
-        let local_x = (pos.x - viewport_left - TEXT_LEFT_PAD).max(0.0);
-        prefix_galley
-            .cursor_from_pos(egui::vec2(local_x, prefix_galley.size().y * 0.5))
-            .ccursor
-            .index
+        caret_col_from_pointer(&prefix_galley, prefix_chars, prefix_text_pos, pos)
     } else {
-        let local_x = (pos.x - body.left() - prefix_width).max(0.0);
         prefix_chars
-            + rest_galley
-                .cursor_from_pos(egui::vec2(local_x, rest_galley.size().y * 0.5))
-                .ccursor
-                .index
+            + caret_col_from_pointer(
+                &rest_galley,
+                parts.rest.chars().count(),
+                rest_text_pos,
+                pos,
+            )
     };
     Some(TextCaret { row, col })
 }
@@ -705,11 +789,17 @@ pub fn show_virtual_search_pane<S: LogStore + ?Sized>(
                 .animated(false)
                 .show(ui, |ui| {
                     let total_h = search_map.len() as f32 * line_h;
-                    let (body, response) = ui.allocate_exact_size(
+                    let (body, _) = ui.allocate_exact_size(
                         Vec2::new(content_w, total_h.max(line_h)),
-                        Sense::click_and_drag(),
+                        Sense::hover(),
                     );
                     let clip = ui.clip_rect();
+                    let interact_rect = text_select_interact_rect(ui, body, clip);
+                    let response = ui.interact(
+                        interact_rect,
+                        ui.id().with(("log_search_sel", salt)),
+                        Sense::click_and_drag(),
+                    );
                     let visible_rows = visible_row_range(
                         body.top(),
                         clip.top(),
@@ -717,14 +807,17 @@ pub fn show_virtual_search_pane<S: LogStore + ?Sized>(
                         line_h,
                         search_map.len(),
                     );
-                    let pointer = ui.input(|input| input.pointer.hover_pos());
-                    let primary_pressed = ui.input(|input| input.pointer.primary_pressed());
+                    let pointer = ui.ctx().pointer_interact_pos();
                     let primary_down = ui.input(|input| input.pointer.primary_down());
                     let primary_released = ui.input(|input| input.pointer.primary_released());
 
-                    if primary_pressed {
-                        if let Some(pos) = pointer.filter(|pos| body.contains(*pos)) {
+                    // Same as the main log pane: anchor at press, extend on drag.
+                    if response.drag_started() {
+                        if let Some(pos) = response.interact_pointer_pos().or(pointer) {
                             response.request_focus();
+                            selection.select_origin = Some(pos);
+                            selection.select_dragged = false;
+                            selection.selecting = true;
                             if let Some(caret) = search_caret_at_pos(
                                 ui,
                                 store,
@@ -739,29 +832,42 @@ pub fn show_virtual_search_pane<S: LogStore + ?Sized>(
                                 selection.last_selected_text.clear();
                                 selection.anchor = Some(caret);
                                 selection.focus = Some(caret);
-                                selection.selecting = true;
                             }
                         }
-                    } else if primary_down && selection.selecting {
-                        if let Some(pos) = pointer {
-                            if let Some(caret) = search_caret_at_pos(
-                                ui,
-                                store,
-                                search_map,
-                                body,
-                                pos,
-                                line_h,
-                                font_size,
-                                clip.left(),
-                                prefix_width,
-                            ) {
-                                selection.focus = Some(caret);
+                    } else if selection.selecting && primary_down {
+                        if let (Some(origin), Some(pos)) = (selection.select_origin, pointer) {
+                            if origin.distance(pos) >= SELECT_DRAG_THRESHOLD {
+                                selection.select_dragged = true;
+                            }
+                            if selection.select_dragged {
+                                if let Some(caret) = search_caret_at_pos(
+                                    ui,
+                                    store,
+                                    search_map,
+                                    body,
+                                    pos,
+                                    line_h,
+                                    font_size,
+                                    clip.left(),
+                                    prefix_width,
+                                ) {
+                                    selection.focus = Some(caret);
+                                }
                             }
                         }
-                    } else if primary_released {
-                        selection.selecting = false;
-                        selection.last_selected_text =
-                            copy_search_selection(store, search_map, selection).unwrap_or_default();
+                    } else if selection.selecting && primary_released {
+                        if selection.select_dragged {
+                            selection.selecting = false;
+                            selection.select_origin = None;
+                            selection.select_dragged = false;
+                            selection.last_selected_text =
+                                copy_search_selection(store, search_map, selection)
+                                    .unwrap_or_default();
+                        } else {
+                            selection.clear();
+                        }
+                    } else if response.clicked() && !response.dragged() {
+                        selection.clear();
                     }
 
                     let copy_requested = ui.input(|input| {
@@ -832,12 +938,10 @@ pub fn show_virtual_search_pane<S: LogStore + ?Sized>(
                                 let local_end = end_col.min(prefix_chars);
                                 let start_x = prefix_galley
                                     .pos_from_ccursor(CCursor::new(start_col))
-                                    .center()
-                                    .x;
+                                    .left();
                                 let end_x = prefix_galley
                                     .pos_from_ccursor(CCursor::new(local_end))
-                                    .center()
-                                    .x;
+                                    .left();
                                 prefix_selection_x = Some((start_x, end_x));
                             }
                             if end_col > prefix_chars {
@@ -845,12 +949,10 @@ pub fn show_virtual_search_pane<S: LogStore + ?Sized>(
                                 let local_end = end_col.saturating_sub(prefix_chars);
                                 let start_x = rest_galley
                                     .pos_from_ccursor(CCursor::new(local_start))
-                                    .center()
-                                    .x;
+                                    .left();
                                 let end_x = rest_galley
                                     .pos_from_ccursor(CCursor::new(local_end))
-                                    .center()
-                                    .x;
+                                    .left();
                                 ui.painter()
                                     .with_clip_rect(Rect::from_min_max(
                                         Pos2::new(clip.left() + prefix_width, row_rect.top()),

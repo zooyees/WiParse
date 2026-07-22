@@ -8,10 +8,10 @@ const CURVE_POINTS: usize = 801;
 const RESONANCE_SPAN_HZ: f64 = 200_000.0;
 const MIN_PLOT_FREQUENCY_HZ: f64 = 1.0;
 const MIN_IMPEDANCE_OHM: f64 = 1.0e-15;
-const Q_DECREMENT_FORMULA: &str = "δ = (1/N) · ln(V1/V2)";
+const Q_DECREMENT_FORMULA: &str = "δ = (1/N) · ln((V1−Bias)/(V2−Bias))";
 const Q_DAMPING_FORMULA: &str = "ζ = δ / sqrt(4π² + δ²)";
 const Q_EXACT_FORMULA: &str = "Q_exact = 1/(2ζ) = sqrt(4π² + δ²) / (2δ)";
-const Q_APPROX_FORMULA: &str = "Q_approx ≈ π/δ = πN / ln(V1/V2)  (pi)";
+const Q_APPROX_FORMULA: &str = "Q_approx ≈ π/δ = πN / ln((V1−Bias)/(V2−Bias))  (pi)";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InductanceUnit {
@@ -176,8 +176,10 @@ fn error_text(lang: Lang, error: CalcError) -> &'static str {
         (Lang::En, CalcError::NoPassband) => {
             "f_L ≥ f_H; these values do not form a valid passband."
         }
-        (Lang::Zh, CalcError::InvalidPeaks) => "峰值必须满足有限且 V1 > V2 > 0。",
-        (Lang::En, CalcError::InvalidPeaks) => "Peaks must be finite and satisfy V1 > V2 > 0.",
+        (Lang::Zh, CalcError::InvalidPeaks) => "峰值必须满足有限且 (V1−Bias) > (V2−Bias) > 0。",
+        (Lang::En, CalcError::InvalidPeaks) => {
+            "Peaks must be finite and satisfy (V1−Bias) > (V2−Bias) > 0."
+        },
         (Lang::Zh, CalcError::InvalidInterval) => "N 必须是正整数。",
         (Lang::En, CalcError::InvalidInterval) => "N must be a positive integer.",
     }
@@ -330,14 +332,19 @@ struct QResult {
     approx_q: f64,
 }
 
-fn logarithmic_decrement_q(v1: f64, v2: f64, intervals: f64) -> Result<QResult, CalcError> {
-    if !v1.is_finite() || !v2.is_finite() || v1 <= v2 || v2 <= 0.0 {
+fn logarithmic_decrement_q(v1: f64, v2: f64, bias: f64, intervals: f64) -> Result<QResult, CalcError> {
+    if !v1.is_finite() || !v2.is_finite() || !bias.is_finite() {
+        return Err(CalcError::InvalidPeaks);
+    }
+    let a = v1 - bias;
+    let b = v2 - bias;
+    if a <= b || b <= 0.0 {
         return Err(CalcError::InvalidPeaks);
     }
     if !intervals.is_finite() || intervals <= 0.0 || intervals.fract().abs() > f64::EPSILON {
         return Err(CalcError::InvalidInterval);
     }
-    let log_ratio = (v1 / v2).ln();
+    let log_ratio = (a / b).ln();
     let decrement = log_ratio / intervals;
     let root = (4.0 * PI * PI + decrement * decrement).sqrt();
     let damping_ratio = decrement / root;
@@ -672,11 +679,7 @@ fn parse_crc_hex(input: &str, width: u8, error: CrcError) -> Result<u32, CrcErro
 }
 
 fn parse_number(text: &str, error: CalcError) -> Result<f64, CalcError> {
-    text.trim()
-        .parse::<f64>()
-        .ok()
-        .filter(|value| value.is_finite())
-        .ok_or(error)
+    crate::converter::parse_numeric_literal(text).map_err(|_| error)
 }
 
 fn format_frequency(hz: f64) -> String {
@@ -835,6 +838,7 @@ impl BandpassState {
 struct QState {
     v1: String,
     v2: String,
+    bias: String,
     intervals: String,
     result: Option<QResult>,
     error: Option<CalcError>,
@@ -845,6 +849,7 @@ impl Default for QState {
         Self {
             v1: "10".into(),
             v2: "8".into(),
+            bias: "0".into(),
             intervals: "1".into(),
             result: None,
             error: None,
@@ -857,8 +862,9 @@ impl QState {
         let result = (|| {
             let v1 = parse_number(&self.v1, CalcError::InvalidPeaks)?;
             let v2 = parse_number(&self.v2, CalcError::InvalidPeaks)?;
+            let bias = parse_number(&self.bias, CalcError::InvalidPeaks)?;
             let intervals = parse_number(&self.intervals, CalcError::InvalidInterval)?;
-            logarithmic_decrement_q(v1, v2, intervals)
+            logarithmic_decrement_q(v1, v2, bias, intervals)
         })();
         match result {
             Ok(value) => {
@@ -907,35 +913,25 @@ impl RcState {
     fn calculate(&mut self) {
         let result = (|| {
             let resistance = positive_scaled(
-                self.resistance
-                    .trim()
-                    .parse::<f64>()
+                parse_number(&self.resistance, CalcError::InvalidResistance)
                     .map_err(|_| "resistance")?,
                 self.resistance_unit.scale(),
                 CalcError::InvalidResistance,
             )
             .map_err(|_| "resistance")?;
             let capacitance = positive_scaled(
-                self.capacitance
-                    .trim()
-                    .parse::<f64>()
+                parse_number(&self.capacitance, CalcError::InvalidCapacitance)
                     .map_err(|_| "capacitance")?,
                 self.capacitance_unit.scale(),
                 CalcError::InvalidCapacitance,
             )
             .map_err(|_| "capacitance")?;
-            let initial_voltage = self
-                .initial_voltage
-                .trim()
-                .parse::<f64>()
+            let initial_voltage = crate::converter::parse_numeric_literal(&self.initial_voltage)
                 .map_err(|_| "voltage")?;
-            let final_voltage = self
-                .final_voltage
-                .trim()
-                .parse::<f64>()
+            let final_voltage = crate::converter::parse_numeric_literal(&self.final_voltage)
                 .map_err(|_| "voltage")?;
             let time = time_seconds(
-                self.time.trim().parse::<f64>().map_err(|_| "time")?,
+                crate::converter::parse_numeric_literal(&self.time).map_err(|_| "time")?,
                 self.time_unit,
             )?;
             rc_time_response(
@@ -1378,6 +1374,13 @@ impl CalculatorPanel {
                         metrics,
                         "V2",
                         &mut self.q.v2,
+                        text(lang, "同单位", "same"),
+                    );
+                    compact_plain_grid_row(
+                        ui,
+                        metrics,
+                        text(lang, "偏置", "Bias"),
+                        &mut self.q.bias,
                         text(lang, "同单位", "same"),
                     );
                     compact_plain_grid_row(
@@ -2236,6 +2239,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parse_number_accepts_hex_literals() {
+        assert_eq!(parse_number("0x10", CalcError::InvalidInductance).unwrap(), 16.0);
+        assert_eq!(parse_number("FFH", CalcError::InvalidInductance).unwrap(), 255.0);
+        assert_eq!(parse_number("10", CalcError::InvalidInductance).unwrap(), 10.0);
+    }
+
+    #[test]
     fn converts_supported_units() {
         assert!(
             (inductance_h(10.0, InductanceUnit::Microhenry).unwrap() - 10.0e-6).abs() < 1.0e-18
@@ -2354,24 +2364,28 @@ mod tests {
 
     #[test]
     fn computes_logarithmic_decrement_q() {
-        let result = logarithmic_decrement_q(10.0, 8.0, 2.0).unwrap();
+        let result = logarithmic_decrement_q(10.0, 8.0, 0.0, 2.0).unwrap();
         assert!((result.decrement - (1.25_f64.ln() / 2.0)).abs() < 1.0e-12);
         let expected_exact =
             (4.0 * PI * PI + result.decrement * result.decrement).sqrt() / (2.0 * result.decrement);
         assert!((result.exact_q - expected_exact).abs() < 1.0e-12);
         assert!((result.approx_q - PI / result.decrement).abs() < 1.0e-12);
         assert!((result.damping_ratio - 1.0 / (2.0 * result.exact_q)).abs() < 1.0e-12);
+
+        let with_bias = logarithmic_decrement_q(12.0, 10.0, 2.0, 2.0).unwrap();
+        assert!((with_bias.decrement - result.decrement).abs() < 1.0e-12);
+        assert!((with_bias.exact_q - result.exact_q).abs() < 1.0e-12);
     }
 
     #[test]
     fn q_exact_and_approx_behave_across_damping_ranges() {
-        let high_q = logarithmic_decrement_q(0.01_f64.exp(), 1.0, 1.0).unwrap();
+        let high_q = logarithmic_decrement_q(0.01_f64.exp(), 1.0, 0.0, 1.0).unwrap();
         assert!((high_q.exact_q - high_q.approx_q) / high_q.exact_q < 1.0e-5);
 
-        let larger_delta = logarithmic_decrement_q(2.0_f64.exp(), 1.0, 1.0).unwrap();
+        let larger_delta = logarithmic_decrement_q(2.0_f64.exp(), 1.0, 0.0, 1.0).unwrap();
         assert!((larger_delta.exact_q - larger_delta.approx_q).abs() > 0.05);
 
-        let result = logarithmic_decrement_q(PI.exp(), 1.0, 1.0).unwrap();
+        let result = logarithmic_decrement_q(PI.exp(), 1.0, 0.0, 1.0).unwrap();
         assert!((result.decrement - PI).abs() < 1.0e-12);
         assert!((result.exact_q - 5.0_f64.sqrt() / 2.0).abs() < 1.0e-12);
         assert!((result.approx_q - 1.0).abs() < 1.0e-12);
@@ -2383,24 +2397,30 @@ mod tests {
         assert!(Q_EXACT_FORMULA.contains("4π²"));
         assert!(Q_EXACT_FORMULA.contains("2δ"));
         assert!(Q_APPROX_FORMULA.contains("πN"));
+        assert!(Q_DECREMENT_FORMULA.contains("(V1−Bias)/(V2−Bias)"));
+        assert!(Q_APPROX_FORMULA.contains("(V1−Bias)/(V2−Bias)"));
     }
 
     #[test]
     fn rejects_invalid_q_inputs() {
         assert_eq!(
-            logarithmic_decrement_q(8.0, 8.0, 1.0).unwrap_err(),
+            logarithmic_decrement_q(8.0, 8.0, 0.0, 1.0).unwrap_err(),
             CalcError::InvalidPeaks
         );
         assert_eq!(
-            logarithmic_decrement_q(1.0, 0.0, 1.0).unwrap_err(),
+            logarithmic_decrement_q(1.0, 0.0, 0.0, 1.0).unwrap_err(),
             CalcError::InvalidPeaks
         );
         assert_eq!(
-            logarithmic_decrement_q(10.0, 8.0, 0.0).unwrap_err(),
+            logarithmic_decrement_q(10.0, 8.0, 8.0, 1.0).unwrap_err(),
+            CalcError::InvalidPeaks
+        );
+        assert_eq!(
+            logarithmic_decrement_q(10.0, 8.0, 0.0, 0.0).unwrap_err(),
             CalcError::InvalidInterval
         );
         assert_eq!(
-            logarithmic_decrement_q(10.0, 8.0, 1.5).unwrap_err(),
+            logarithmic_decrement_q(10.0, 8.0, 0.0, 1.5).unwrap_err(),
             CalcError::InvalidInterval
         );
     }
