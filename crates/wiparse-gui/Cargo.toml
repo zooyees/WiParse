@@ -14,12 +14,15 @@ wiparse-core = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
 egui_plot = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 crossbeam-channel = { workspace = true }
 rfd = { workspace = true }
 chrono = { workspace = true }
+tiny_http = "0.12"
+rusqlite = { workspace = true }
 # The GUI only decodes its ICO application icon and PNG scope captures.
 # Keeping image's default formats pulls AVIF/EXR/GIF/JPEG/TIFF/WebP decoders
 # into the executable even though no code path can use them.

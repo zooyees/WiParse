@@ -69,6 +69,8 @@ pub struct PanelFlags {
     pub calculator: bool,
     #[serde(default = "default_true", alias = "tektronix_scope")]
     pub instrument_control: bool,
+    #[serde(default = "default_true")]
+    pub waveform_analysis: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +111,9 @@ pub struct LogMonitorConfig {
     /// Directory last used by the Open Log dialog.
     #[serde(default)]
     pub last_open_dir: String,
+    /// Root directory for the serial sidebar log-folder browser (subfolders with `.txt`).
+    #[serde(default)]
+    pub log_browser_dir: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +144,10 @@ pub struct InstrumentControlConfig {
     pub save_dir: String,
     #[serde(default)]
     pub known_tcpip_resources: Vec<String>,
+    /// Root directory for the waveform-analysis sidebar folder browser
+    /// (first-level subfolders containing CSV / ISF / TXT sources).
+    #[serde(default)]
+    pub waveform_browser_dir: String,
 }
 
 fn default_db_name() -> String {
@@ -229,6 +238,7 @@ impl Default for PanelFlags {
             serial_tool: true,
             calculator: true,
             instrument_control: true,
+            waveform_analysis: true,
         }
     }
 }
@@ -275,6 +285,7 @@ impl Default for LogMonitorConfig {
             file_extension: default_ext(),
             open_log_files: Vec::new(),
             last_open_dir: String::new(),
+            log_browser_dir: String::new(),
         }
     }
 }
@@ -296,6 +307,7 @@ impl Default for InstrumentControlConfig {
             max_points: default_instrument_points(),
             save_dir: default_instrument_dir(),
             known_tcpip_resources: Vec::new(),
+            waveform_browser_dir: String::new(),
         }
     }
 }

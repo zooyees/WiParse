@@ -41,6 +41,10 @@ Compatible with Python `WiParseCLI` shape:
 
 Full command reference: [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md).
 
+C+E API deploy (GUI embeds localhost API; CLI/MCP attach): [`docs/DEPLOY_API.md`](docs/DEPLOY_API.md).
+
+Packaged binaries: `dist/WiParse.exe`, `dist/WiParse-CLI.exe`.
+
 MCP server for agents: [`mcp/wiparse/README.md`](mcp/wiparse/README.md).
 
 ```powershell

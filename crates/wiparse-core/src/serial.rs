@@ -83,7 +83,11 @@ impl SerialSession {
             bytes.push(b);
             i += 2;
         }
-        self.port.write_all(&bytes)?;
+        self.write_bytes(&bytes)
+    }
+
+    pub fn write_bytes(&mut self, bytes: &[u8]) -> Result<usize, SerialError> {
+        self.port.write_all(bytes)?;
         Ok(bytes.len())
     }
 

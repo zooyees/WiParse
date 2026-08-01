@@ -475,7 +475,7 @@ fn trim_trailing_zeros(text: &str) -> String {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ControlCommand {
     Reset,
     Clear,
@@ -801,6 +801,259 @@ impl InstrumentDevice {
                 self.profile.name
             )))
         }
+    }
+
+    /// Read the current **on-screen** waveform source over VISA (full displayed record).
+    ///
+    /// Priority:
+    /// 1. Tektronix native `.isf` / `.wfm` / spreadsheet `.csv` via `SAVe:WAVEform` + `FILESystem:READFile`
+    /// 2. Tektronix `DATa:MODE SCREEN` + `WFMOutpre?` + `CURVe?` assembled ISF
+    /// 3. Rigol/Siglent `:WAV:MODE NORM` full screen CSV export
+    pub fn capture_scope_waveform_source(
+        &mut self,
+        channel: u8,
+    ) -> Result<(Vec<u8>, String), InstrumentError> {
+        self.require(InstrumentKind::Oscilloscope, "waveform source")?;
+        let channel = channel.clamp(1, 8);
+        if self.vendor_is("TEKTRONIX") {
+            if let Ok(bytes) = self.read_tek_waveform_via_filesystem(channel, "isf") {
+                return Ok((bytes, format!("waveform_CH{channel}.isf")));
+            }
+            if let Ok(bytes) = self.read_tek_waveform_via_filesystem(channel, "wfm") {
+                return Ok((bytes, format!("waveform_CH{channel}.wfm")));
+            }
+            if let Ok(bytes) = self.read_tek_waveform_via_filesystem(channel, "csv") {
+                return Ok((bytes, format!("waveform_CH{channel}.csv")));
+            }
+            let bytes = self.read_tek_isf_via_curve(channel)?;
+            Ok((bytes, format!("waveform_CH{channel}.isf")))
+        } else if self.vendor_is("RIGOL") || self.vendor_is("SIGLENT") {
+            if let Ok(bytes) = self.read_rigol_csv_via_filesystem(channel) {
+                return Ok((bytes, format!("waveform_CH{channel}.csv")));
+            }
+            let trace = self.read_scope_screen_waveform(channel)?;
+            let mut csv = String::new();
+            use std::fmt::Write as _;
+            let _ = writeln!(
+                csv,
+                "channel,index,x({}),y({})",
+                trace.x_unit, trace.y_unit
+            );
+            let n = trace.x.len().min(trace.y.len());
+            for i in 0..n {
+                let _ = writeln!(csv, "{},{},{},{}", trace.channel, i, trace.x[i], trace.y[i]);
+            }
+            Ok((csv.into_bytes(), format!("waveform_CH{channel}.csv")))
+        } else {
+            let trace = self.read_scope_screen_waveform(channel)?;
+            let mut csv = String::new();
+            use std::fmt::Write as _;
+            let _ = writeln!(
+                csv,
+                "channel,index,x({}),y({})",
+                trace.x_unit, trace.y_unit
+            );
+            let n = trace.x.len().min(trace.y.len());
+            for i in 0..n {
+                let _ = writeln!(csv, "{},{},{},{}", trace.channel, i, trace.x[i], trace.y[i]);
+            }
+            Ok((csv.into_bytes(), format!("waveform_CH{channel}.csv")))
+        }
+    }
+
+    /// Points in the current on-screen waveform for `channel`.
+    fn scope_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+        let channel = channel.clamp(1, 8);
+        let points = if self.vendor_is("RIGOL") || self.vendor_is("SIGLENT") {
+            self.session
+                .write(&format!(":WAV:SOUR CHAN{channel}"))?;
+            self.session.write(":WAV:MODE NORM")?;
+            self.session.write(":WAV:FORM BYTE")?;
+            let count = self
+                .session
+                .query_f64(":WAV:POIN?")
+                .unwrap_or(1000.0)
+                .round() as usize;
+            count.max(100).min(10_000_000)
+        } else {
+            self.session
+                .write(&format!("DATa:SOUrce CH{channel}"))?;
+            let _ = self.session.write("DATa:MODE SCREEN");
+            let nr = self
+                .session
+                .query_f64("WFMOutpre:NR_Pt?")
+                .unwrap_or(0.0)
+                .round() as usize;
+            if nr >= 100 {
+                nr.min(10_000_000)
+            } else {
+                let hor = self
+                    .session
+                    .query_f64("HORizontal:RECOrdlength?")
+                    .unwrap_or(1000.0)
+                    .round() as usize;
+                hor.max(100).min(10_000_000)
+            }
+        };
+        Ok(points)
+    }
+
+    /// Full on-screen waveform as [`WaveformTrace`] (no display downsampling).
+    pub fn read_scope_screen_waveform(
+        &mut self,
+        channel: u8,
+    ) -> Result<WaveformTrace, InstrumentError> {
+        self.require(InstrumentKind::Oscilloscope, "waveform")?;
+        let channel = channel.clamp(1, 8);
+        let points = self.scope_screen_point_count(channel)?;
+        let (xincr, xzero, ymult, yoff, yzero, pt_off, signed) = if self.vendor_is("RIGOL")
+            || self.vendor_is("SIGLENT")
+        {
+            self.session
+                .write(&format!(":WAV:SOUR CHAN{channel}"))?;
+            self.session.write(":WAV:MODE NORM")?;
+            self.session.write(":WAV:FORM BYTE")?;
+            let _ = self.session.write(":WAV:STAR 1");
+            let _ = self.session.write(&format!(":WAV:STOP {points}"));
+            let _ = self.session.write(&format!(":WAV:POIN {points}"));
+            (
+                self.session.query_f64(":WAV:XINC?")?,
+                self.session.query_f64(":WAV:XOR?").unwrap_or(0.0),
+                self.session.query_f64(":WAV:YINC?")?,
+                self.session.query_f64(":WAV:YOR?")?,
+                self.session.query_f64(":WAV:YREF?").unwrap_or(0.0),
+                0.0_f64,
+                false,
+            )
+        } else {
+            self.session
+                .write(&format!("DATa:SOUrce CH{channel}"))?;
+            self.session.write("DATa:ENCdg RIBINARY")?;
+            self.session.write("DATa:WIDth 1")?;
+            let _ = self.session.write("DATa:MODE SCREEN");
+            self.session.write("DATa:STARt 1")?;
+            self.session.write(&format!("DATa:STOP {points}"))?;
+            (
+                self.session.query_f64("WFMOutpre:XINcr?")?,
+                self.session.query_f64("WFMOutpre:XZEro?")?,
+                self.session.query_f64("WFMOutpre:YMUlt?")?,
+                self.session.query_f64("WFMOutpre:YOFf?")?,
+                self.session.query_f64("WFMOutpre:YZEro?")?,
+                self.session.query_f64("WFMOutpre:PT_Off?").unwrap_or(0.0),
+                true,
+            )
+        };
+        if self.vendor_is("RIGOL") || self.vendor_is("SIGLENT") {
+            self.session.write(":WAV:DATA?")?;
+        } else {
+            self.session.write("CURVe?")?;
+        }
+        let raw = self.session.read_raw()?;
+        let data = parse_ieee_block(&raw);
+        let mut x = Vec::with_capacity(data.len());
+        let mut y = Vec::with_capacity(data.len());
+        for (index, byte) in data.iter().copied().enumerate() {
+            let code = if signed {
+                (byte as i8) as f64
+            } else {
+                byte as f64
+            };
+            x.push(xzero + index as f64 * xincr - pt_off * xincr);
+            y.push((code - yoff) * ymult + yzero);
+        }
+        Ok(WaveformTrace {
+            channel: format!("CH{channel}"),
+            x,
+            y,
+            x_unit: "s".into(),
+            y_unit: "V".into(),
+        })
+    }
+
+    /// Tektronix: save waveform to scope disk, then `FILESystem:READFile`.
+    fn read_tek_waveform_via_filesystem(
+        &mut self,
+        channel: u8,
+        kind: &str,
+    ) -> Result<Vec<u8>, InstrumentError> {
+        self.prepare_tek_screen_waveform(channel)?;
+        let (file_format, ext) = match kind {
+            "wfm" => ("WINDows", "wfm"),
+            "csv" => ("SPREADSheet", "csv"),
+            _ => ("INTERNal", "isf"),
+        };
+        let path = format!("C:/WiParse_tmp.{ext}");
+        let _ = self.session.write("HEADer OFF");
+        self.session
+            .write(&format!("SAVe:WAVEform:FILEFormat {file_format}"))?;
+        self.session
+            .write(&format!("SAVe:WAVEform CH{channel},\"{path}\""))?;
+        self.session
+            .write(&format!("FILESystem:READFile \"{path}\""))?;
+        let raw = self.session.read_raw()?;
+        let _ = self.session.write(&format!("FILESystem:DELEte \"{path}\""));
+        let data = parse_ieee_block(&raw).to_vec();
+        if data.len() < 32 {
+            return Err(InstrumentError::Unsupported(format!(
+                "Tektronix FILESystem:READFile returned empty .{ext}"
+            )));
+        }
+        Ok(data)
+    }
+
+    /// Select channel and gate Tektronix save/transfer to the on-screen waveform record.
+    fn prepare_tek_screen_waveform(&mut self, channel: u8) -> Result<(), InstrumentError> {
+        let channel = channel.clamp(1, 8);
+        let _ = self.session.write("HEADer OFF");
+        self.session
+            .write(&format!("DATa:SOUrce CH{channel}"))?;
+        let _ = self.session.write("DATa:MODE SCREEN");
+        // MDO/MSO/DPO: limit SAVe:WAVEform to visible screen (not full memory).
+        let _ = self.session.write("SAVe:WAVEform:GATIng SCREEN");
+        Ok(())
+    }
+
+    /// Rigol/Siglent: CSV trace export via mass-storage when supported.
+    fn read_rigol_csv_via_filesystem(&mut self, channel: u8) -> Result<Vec<u8>, InstrumentError> {
+        let path = format!("/tmp/wiparse_ch{channel}.csv");
+        let cmds = [
+            format!(":WAV:SOUR CHAN{channel}"),
+            ":WAV:MODE NORM".into(),
+            format!(":SAVE:WAVeform \"{path}\""),
+            format!(":MMEM:LOAD:TRACe \"{path}\""),
+        ];
+        for cmd in &cmds {
+            let _ = self.session.write(cmd);
+        }
+        self.session.write(&format!(":MMEM:DATA? \"{path}\""))?;
+        let raw = self.session.read_raw()?;
+        let data = parse_ieee_block(&raw).to_vec();
+        if data.len() < 16 {
+            return Err(InstrumentError::Unsupported(
+                "Rigol MMEM waveform export returned empty CSV".into(),
+            ));
+        }
+        Ok(data)
+    }
+
+    /// Tektronix: `SAVe:WAVEform` INTERNAL to scope disk, then `FILESystem:READFile`.
+    fn read_tek_isf_via_filesystem(&mut self, channel: u8) -> Result<Vec<u8>, InstrumentError> {
+        self.read_tek_waveform_via_filesystem(channel, "isf")
+    }
+
+    /// Tektronix: assemble an ISF-compatible blob from on-screen `WFMOutpre?` + `CURVe?`.
+    fn read_tek_isf_via_curve(&mut self, channel: u8) -> Result<Vec<u8>, InstrumentError> {
+        self.prepare_tek_screen_waveform(channel)?;
+        let _ = self.session.write("HEADer ON");
+        self.session.write("DATa:ENCdg RIBINARY")?;
+        self.session.write("DATa:WIDth 1")?;
+        let points = self.scope_screen_point_count(channel)?;
+        self.session.write("DATa:STARt 1")?;
+        self.session.write(&format!("DATa:STOP {points}"))?;
+        let preamble = self.session.query("WFMOutpre?")?;
+        self.session.write("CURVe?")?;
+        let curve = self.session.read_raw()?;
+        Ok(assemble_tek_isf(&preamble, &curve))
     }
 
     pub fn read_scope_waveform(
@@ -1323,6 +1576,40 @@ impl InstrumentDevice {
     }
 }
 
+/// Build an ISF-compatible byte stream from Tektronix bus preamble + CURVe block.
+fn assemble_tek_isf(preamble: &str, curve_raw: &[u8]) -> Vec<u8> {
+    let mut pre = preamble.trim().replace("WFMOUTPRE:", "WFMPRE:");
+    pre = pre.replace("WFMOutpre:", "WFMPRE:");
+    pre = pre.replace("wfmoutpre:", "WFMPRE:");
+    if !pre.starts_with(':') && !pre.is_empty() {
+        pre.insert(0, ':');
+    }
+    let mut out = Vec::with_capacity(pre.len() + curve_raw.len() + 16);
+    out.extend_from_slice(pre.as_bytes());
+    if !pre.ends_with(';') && !pre.ends_with('\n') {
+        out.push(b';');
+    }
+    let curve = if curve_raw.windows(6).any(|w| w.eq_ignore_ascii_case(b":CURVE"))
+        || curve_raw.windows(6).any(|w| w.eq_ignore_ascii_case(b"CURVE "))
+    {
+        curve_raw.to_vec()
+    } else if curve_raw.first() == Some(&b'#') {
+        let mut v = b":CURVE ".to_vec();
+        v.extend_from_slice(curve_raw);
+        v
+    } else {
+        // Wrap bare payload as IEEE488.2 definite-length block: #<ndigits><digits><data>
+        let len = curve_raw.len().to_string();
+        let mut v = b":CURVE #".to_vec();
+        v.push(b'0' + len.len() as u8);
+        v.extend_from_slice(len.as_bytes());
+        v.extend_from_slice(curve_raw);
+        v
+    };
+    out.extend_from_slice(&curve);
+    out
+}
+
 fn normalize_load_mode<'a>(
     profile: &InstrumentProfile,
     mode: &'a str,
@@ -1442,8 +1729,14 @@ mod tests {
         assert!(scope.profile.capabilities.waveform);
         let png = scope.capture_scope_png().unwrap();
         assert!(png.starts_with(b"\x89PNG"));
-        let trace = scope.read_scope_waveform(1, 256).unwrap();
+        let trace = scope.read_scope_screen_waveform(1).unwrap();
         assert!(trace.y.len() >= 64);
+        let (src, name) = scope.capture_scope_waveform_source(1).unwrap();
+        assert!(!src.is_empty());
+        assert!(
+            name.ends_with(".csv") || name.ends_with(".isf") || name.ends_with(".wfm"),
+            "name={name}"
+        );
 
         let source = InstrumentDevice::connect_demo(InstrumentKind::DcSource).unwrap();
         assert_eq!(source.profile.capabilities.channels, 3);

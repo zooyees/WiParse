@@ -3,10 +3,12 @@
 //! Settings menu mirrors Python `QToolButton#settings_menu_btn` + cascading `QMenu`:
 //! root items with ▶ flyouts (Panels / Language / Theme), accent hover, checkmarks.
 
+use crate::backend::{self, ApiBridge};
 use crate::calculator::CalculatorPanel;
 use crate::instrument_control::InstrumentControlPanel;
 use crate::serial_tool::SerialToolPanel;
 use crate::theme::{self as ui_theme, Tokens};
+use crate::waveform_analysis::WaveformAnalysisPanel;
 use egui::{Color32, CornerRadius, FontId, Frame, Margin, Pos2, Rect, Sense, Stroke, Vec2};
 use wiparse_core::config::{save_config, AppConfig};
 use wiparse_core::i18n::{parse_lang, tr, Lang};
@@ -18,13 +20,20 @@ enum MainTab {
     Serial,
     Calculator,
     Instruments,
+    Waveform,
 }
 
-fn initial_tab(show_serial: bool, show_instruments: bool) -> MainTab {
+fn initial_tab(
+    show_serial: bool,
+    show_instruments: bool,
+    show_waveform: bool,
+) -> MainTab {
     if show_serial {
         MainTab::Serial
     } else if show_instruments {
         MainTab::Instruments
+    } else if show_waveform {
+        MainTab::Waveform
     } else {
         MainTab::Calculator
     }
@@ -46,9 +55,12 @@ pub struct WiParseApp {
     show_serial: bool,
     show_calculator: bool,
     show_instruments: bool,
+    show_waveform: bool,
     calculator: CalculatorPanel,
     serial: SerialToolPanel,
     instruments: InstrumentControlPanel,
+    waveform: WaveformAnalysisPanel,
+    api: ApiBridge,
     settings_open: bool,
     settings_sub: SettingsSub,
     /// Anchor Y for the open submenu (top of parent row).
@@ -70,8 +82,13 @@ impl WiParseApp {
         let show_serial = cfg.ui.panels.serial_tool;
         let show_calculator = cfg.ui.panels.calculator;
         let show_instruments = cfg.ui.panels.instrument_control;
-        let active = initial_tab(show_serial, show_instruments);
+        let show_waveform = cfg.ui.panels.waveform_analysis;
+        let active = initial_tab(show_serial, show_instruments, show_waveform);
         let light = cfg.ui.theme == "light";
+        let api = ApiBridge::new();
+        if let Err(e) = backend::start(api.clone()) {
+            tracing::error!("Failed to start WiParse API: {e}");
+        }
         Self {
             serial: SerialToolPanel::new(&cfg, lang),
             instruments: {
@@ -81,13 +98,16 @@ impl WiParseApp {
                 }
                 panel
             },
+            waveform: WaveformAnalysisPanel::new(&cfg),
             cfg,
             lang,
             active,
             show_serial,
             show_calculator,
             show_instruments,
+            show_waveform,
             calculator: CalculatorPanel::new(),
+            api,
             settings_open: false,
             settings_sub: SettingsSub::None,
             settings_sub_anchor_y: 0.0,
@@ -112,6 +132,7 @@ impl WiParseApp {
             MainTab::Serial => self.show_serial,
             MainTab::Calculator => self.show_calculator,
             MainTab::Instruments => self.show_instruments,
+            MainTab::Waveform => self.show_waveform,
         };
         if visible {
             return;
@@ -120,6 +141,8 @@ impl WiParseApp {
             self.active = MainTab::Serial;
         } else if self.show_instruments {
             self.active = MainTab::Instruments;
+        } else if self.show_waveform {
+            self.active = MainTab::Waveform;
         } else if self.show_calculator {
             self.active = MainTab::Calculator;
         } else {
@@ -132,6 +155,7 @@ impl WiParseApp {
         self.cfg.ui.panels.serial_tool = self.show_serial;
         self.cfg.ui.panels.calculator = self.show_calculator;
         self.cfg.ui.panels.instrument_control = self.show_instruments;
+        self.cfg.ui.panels.waveform_analysis = self.show_waveform;
         let _ = save_config(&self.cfg);
     }
 
@@ -233,8 +257,8 @@ impl WiParseApp {
     }
 
     fn settings_sub_ui(&mut self, ui: &mut egui::Ui, t: &Tokens) {
-        // Fit longest panel label ("Instrument Control" / "仪表控制") + checkbox.
-        const SUB_W: f32 = 174.0;
+        // Fit longest panel label ("Waveform Analysis" / "波形分析") + checkbox.
+        const SUB_W: f32 = 186.0;
         ui.set_width(SUB_W);
         ui.set_max_width(SUB_W);
         ui.set_min_width(SUB_W);
@@ -247,6 +271,7 @@ impl WiParseApp {
                 let serial_name = tr(self.lang, "tool.serial_tool.name");
                 let calculator_name = tr(self.lang, "tool.calculator.name");
                 let instrument_name = tr(self.lang, "tool.instrument_control.name");
+                let waveform_name = tr(self.lang, "tool.waveform_analysis.name");
 
                 if menu_check_row(ui, t, &serial_name, self.show_serial, SUB_W).clicked() {
                     self.show_serial = !self.show_serial;
@@ -269,7 +294,18 @@ impl WiParseApp {
                     }
                     dirty = true;
                 }
-                if !self.show_serial && !self.show_calculator && !self.show_instruments {
+                if menu_check_row(ui, t, &waveform_name, self.show_waveform, SUB_W).clicked() {
+                    self.show_waveform = !self.show_waveform;
+                    if self.show_waveform {
+                        self.active = MainTab::Waveform;
+                    }
+                    dirty = true;
+                }
+                if !self.show_serial
+                    && !self.show_calculator
+                    && !self.show_instruments
+                    && !self.show_waveform
+                {
                     self.show_serial = true;
                     self.active = MainTab::Serial;
                 }
@@ -458,14 +494,29 @@ impl eframe::App for WiParseApp {
         if live_filters {
             self.serial.sync_visible_live_filters();
         }
+        // Drain Agent/CLI API requests on the UI thread (shared serial/instrument state).
+        let active_name = match self.active {
+            MainTab::Serial => "serial",
+            MainTab::Calculator => "calculator",
+            MainTab::Instruments => "instruments",
+            MainTab::Waveform => "waveform",
+        };
+        backend::drain_api_requests(
+            &self.api,
+            &mut self.serial,
+            &mut self.instruments,
+            self.lang,
+            active_name,
+        );
         // Live filters only need refresh when serial UI shows the live tab.
-        self.serial.drain_events(live_filters);
+        self.serial.drain_events_with_bus(live_filters, Some(&self.api));
         // Instrument workers can deliver large waveform/image payloads. Do not
         // deserialize, rebuild plots, or schedule its live repaint loop while
         // the user is working in another tool.
-        if self.active == MainTab::Instruments && self.show_instruments {
-            self.instruments.pump(ctx);
-        }
+        // Always drain instrument worker so Agent API jobs complete; UI widgets
+        // for heavy scope views only render on the Instruments tab.
+        self.instruments
+            .pump_with_bus(ctx, Some(&self.api.events));
 
         let pump_serial = self.serial.is_monitoring() || self.serial.has_background_io();
         let pump_instruments = self.active == MainTab::Instruments
@@ -526,6 +577,14 @@ impl eframe::App for WiParseApp {
                         MainTab::Instruments,
                         self.show_instruments,
                         &tr(self.lang, "tool.instrument_control.name"),
+                    );
+                    main_tab(
+                        ui,
+                        &t,
+                        &mut self.active,
+                        MainTab::Waveform,
+                        self.show_waveform,
+                        &tr(self.lang, "tool.waveform_analysis.name"),
                     );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -612,6 +671,12 @@ impl eframe::App for WiParseApp {
                                 .size(12.0)
                                 .color(t.text_muted),
                         );
+                    } else if self.active == MainTab::Waveform {
+                        ui.label(
+                            egui::RichText::new(self.waveform.status_text())
+                                .size(12.0)
+                                .color(t.text_muted),
+                        );
                     } else {
                         ui.label(
                             egui::RichText::new(tr(self.lang, "status.ready"))
@@ -633,6 +698,9 @@ impl eframe::App for WiParseApp {
                 }
                 MainTab::Instruments if self.show_instruments => {
                     self.instruments.ui(ui, self.lang, &t);
+                }
+                MainTab::Waveform if self.show_waveform => {
+                    self.waveform.ui(ui, self.lang, &t);
                 }
                 _ => {
                     ui.centered_and_justified(|ui| {
@@ -853,8 +921,9 @@ mod tests {
 
     #[test]
     fn calculator_visibility_does_not_force_startup_tab() {
-        assert_eq!(initial_tab(true, true), MainTab::Serial);
-        assert_eq!(initial_tab(false, true), MainTab::Instruments);
-        assert_eq!(initial_tab(false, false), MainTab::Calculator);
+        assert_eq!(initial_tab(true, true, true), MainTab::Serial);
+        assert_eq!(initial_tab(false, true, true), MainTab::Instruments);
+        assert_eq!(initial_tab(false, false, true), MainTab::Waveform);
+        assert_eq!(initial_tab(false, false, false), MainTab::Calculator);
     }
 }

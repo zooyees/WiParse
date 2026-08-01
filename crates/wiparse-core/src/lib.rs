@@ -12,5 +12,6 @@ pub mod protocol;
 pub mod scope;
 pub mod serial;
 pub mod wave;
+pub mod waveform_file;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

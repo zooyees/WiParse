@@ -1,11 +1,14 @@
 # WiParse MCP Server
 
-通过 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 将 WiParse CLI 暴露给 Cursor / Claude 等 Agent。
+通过 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 将 WiParse 暴露给 Cursor / Claude 等 Agent。
+
+架构 **C+E**：优先连接运行中的 `WiParse.exe` 内嵌 API（`WIPARSE_URL`）；也可回退到 CLI。部署说明见 [`docs/DEPLOY_API.md`](../../docs/DEPLOY_API.md)。
 
 ## 前置条件
 
 - Node.js 18+
-- 已构建的 WiParse CLI（`dist/WiParse-CLI.exe` 或在 `PATH` 中的 `wiparse`）
+- 已启动的 `WiParse.exe`（Agent 控制设备时）
+- 已构建的 WiParse CLI（`dist/WiParse-CLI.exe`，用于兼容工具与本地模式）
 
 ## 安装与构建
 
@@ -19,8 +22,10 @@ npm run build
 
 | 变量 | 说明 |
 |------|------|
+| `WIPARSE_URL` | GUI API 根地址（推荐 `http://127.0.0.1:7878`） |
 | `WIPARSE_CLI_PATH` | CLI 可执行文件绝对路径（默认自动查找 `dist/WiParse-CLI.exe`） |
 | `WIPARSE_CWD` | 调用 CLI 时的工作目录（配置/数据库相对路径） |
+| `WIPARSE_LOCAL` | 设为任意值时强制 CLI 本地模式（不 attach） |
 
 ## Cursor 配置
 
@@ -33,6 +38,7 @@ npm run build
       "command": "node",
       "args": ["D:/windlink/windlink/WiParse-R/mcp/wiparse/dist/index.js"],
       "env": {
+        "WIPARSE_URL": "http://127.0.0.1:7878",
         "WIPARSE_CLI_PATH": "D:/windlink/windlink/WiParse-R/dist/WiParse-CLI.exe",
         "WIPARSE_CWD": "D:/windlink/windlink/WiParse-R"
       }
@@ -45,9 +51,12 @@ npm run build
 
 ## MCP 工具列表
 
-| 工具 | CLI 等价 |
-|------|----------|
-| `wiparse_cli_info` | 元信息 / CLI 路径 |
+| 工具 | 说明 |
+|------|------|
+| `wiparse_health` | GUI API 健康检查（HTTP） |
+| `wiparse_capabilities` | 方法目录（HTTP） |
+| `wiparse_invoke` | 任意 `method` + `params`（HTTP，推荐 Agent 入口） |
+| `wiparse_cli_info` | 元信息 / CLI 路径 / API URL |
 | `wiparse_version` | `wiparse version` |
 | `wiparse_ports` | `wiparse ports` |
 | `wiparse_serial_read` | `wiparse serial read ...` |

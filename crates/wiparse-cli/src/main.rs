@@ -1,9 +1,11 @@
 //! WiParse CLI — JSON envelope compatible with Python WiParseCLI.
 
+mod attach;
 mod output;
 
 use clap::{Parser, Subcommand};
 use output::{emit_error, emit_ndjson, emit_ok, OutputOptions};
+use serde_json::json;
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -34,6 +36,12 @@ struct Cli {
     quiet: bool,
     #[arg(long, global = true)]
     config: Option<PathBuf>,
+    /// Attach to running WiParse.exe API (default http://127.0.0.1:7878 via WIPARSE_URL).
+    #[arg(long, global = true)]
+    url: Option<String>,
+    /// Force local mode even if WIPARSE_URL is set.
+    #[arg(long, global = true)]
+    local: bool,
     #[command(subcommand)]
     command: Commands,
 }
@@ -42,6 +50,9 @@ struct Cli {
 enum Commands {
     Version,
     Ports,
+    /// GUI embedded API helpers (requires WiParse.exe running).
+    #[command(subcommand)]
+    Api(ApiCmd),
     #[command(subcommand)]
     Serial(SerialCmd),
     #[command(subcommand)]
@@ -52,6 +63,22 @@ enum Commands {
     Wave(WaveCmd),
     #[command(subcommand)]
     Scope(ScopeCmd),
+}
+
+#[derive(Subcommand, Debug)]
+enum ApiCmd {
+    Health,
+    Capabilities,
+    Invoke {
+        #[arg(long)]
+        method: String,
+        #[arg(long, default_value = "{}")]
+        params: String,
+    },
+    Events {
+        #[arg(long, default_value_t = 0)]
+        since_seq: u64,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -208,6 +235,15 @@ fn main() {
     apply_config(&cli);
     let o = opts(&cli);
 
+    if let Commands::Api(ApiCmd::Events { since_seq }) = &cli.command {
+        let url = cli.url.clone().unwrap_or_else(attach::default_url);
+        if let Err(e) = attach::stream_events(&url, *since_seq) {
+            let code = emit_error("api.events", &e, &o);
+            std::process::exit(code);
+        }
+        return;
+    }
+
     // NDJSON stream writes its own lines; skip envelope wrapper.
     if let Commands::Serial(SerialCmd::Stream { .. }) = &cli.command {
         let code = match run_stream(&cli, &o) {
@@ -222,6 +258,104 @@ fn main() {
         Err((cmd, err)) => emit_error(&cmd, &err, &o),
     };
     std::process::exit(code);
+}
+
+fn attach_url(cli: &Cli) -> Option<String> {
+    if cli.local {
+        return None;
+    }
+    if let Some(url) = &cli.url {
+        return Some(url.clone());
+    }
+    if let Ok(url) = std::env::var("WIPARSE_URL") {
+        return Some(url);
+    }
+    let url = attach::default_url();
+    attach::health(&url).ok().map(|_| url)
+}
+
+fn map_to_invoke(cli: &Cli) -> Option<(String, serde_json::Value)> {
+    match &cli.command {
+        Commands::Ports => Some(("serial.ports".into(), json!({}))),
+        Commands::Serial(SerialCmd::Send { hex_data, .. }) => {
+            Some(("serial.send".into(), json!({ "hex": hex_data })))
+        }
+        Commands::Serial(SerialCmd::Read {
+            port,
+            baud,
+            max_logs,
+            ..
+        }) => Some((
+            "serial.read".into(),
+            json!({
+                "port": port,
+                "baud": baud,
+                "max_logs": max_logs.unwrap_or(100),
+            }),
+        )),
+        Commands::Parse(ParseCmd::Line { text }) => {
+            Some(("parse.line".into(), json!({ "text": text })))
+        }
+        Commands::Parse(ParseCmd::Metrics { text }) => {
+            Some(("parse.metrics".into(), json!({ "text": text })))
+        }
+        Commands::Parse(ParseCmd::File { path, limit }) => Some((
+            "parse.file".into(),
+            json!({ "path": path, "limit": limit }),
+        )),
+        Commands::Session(SessionCmd::List { limit }) => {
+            Some(("session.list".into(), json!({ "limit": limit })))
+        }
+        Commands::Session(SessionCmd::Show { id }) => {
+            Some(("session.show".into(), json!({ "id": id })))
+        }
+        Commands::Scope(ScopeCmd::List) => Some(("scope.list".into(), json!({}))),
+        Commands::Scope(ScopeCmd::Shot { index, out }) => Some((
+            "scope.shot".into(),
+            json!({ "index": index, "out": out }),
+        )),
+        Commands::Scope(ScopeCmd::Wave {
+            index,
+            channel,
+            points,
+        }) => Some((
+            "scope.wave".into(),
+            json!({ "index": index, "channel": channel, "points": points }),
+        )),
+        Commands::Wave(WaveCmd::Session {
+            session_id,
+            rel_from,
+            rel_to,
+            channels,
+            format,
+        }) => Some((
+            "wave.session".into(),
+            json!({
+                "session_id": session_id,
+                "from": rel_from,
+                "to": rel_to,
+                "channels": channels,
+                "format": format,
+            }),
+        )),
+        Commands::Wave(WaveCmd::Export {
+            session_id,
+            rel_from,
+            rel_to,
+            format,
+            out,
+        }) => Some((
+            "wave.export".into(),
+            json!({
+                "session_id": session_id,
+                "from": rel_from,
+                "to": rel_to,
+                "format": format,
+                "out": out,
+            }),
+        )),
+        _ => None,
+    }
 }
 
 fn run_stream(cli: &Cli, o: &OutputOptions) -> Result<(), String> {
@@ -269,7 +403,69 @@ fn run_stream(cli: &Cli, o: &OutputOptions) -> Result<(), String> {
 }
 
 fn run(cli: &Cli, _o: &OutputOptions) -> Result<(String, serde_json::Value), (String, String)> {
+    if let Commands::Api(cmd) = &cli.command {
+        let url = cli.url.clone().unwrap_or_else(attach::default_url);
+        return match cmd {
+            ApiCmd::Health => attach::health(&url)
+                .map(|data| ("api.health".into(), data))
+                .map_err(|e| ("api.health".into(), e)),
+            ApiCmd::Capabilities => attach::capabilities(&url)
+                .map(|data| ("api.capabilities".into(), data))
+                .map_err(|e| ("api.capabilities".into(), e)),
+            ApiCmd::Invoke { method, params } => {
+                let params: serde_json::Value =
+                    serde_json::from_str(params).unwrap_or_else(|_| json!({}));
+                match attach::invoke(&url, method, params) {
+                    Ok(envelope) => {
+                        if envelope.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+                            Ok((
+                                method.clone(),
+                                envelope.get("data").cloned().unwrap_or(json!({})),
+                            ))
+                        } else {
+                            Err((
+                                method.clone(),
+                                envelope
+                                    .pointer("/error/message")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("invoke failed")
+                                    .to_string(),
+                            ))
+                        }
+                    }
+                    Err(e) => Err((method.clone(), e)),
+                }
+            }
+            ApiCmd::Events { .. } => unreachable!("handled in main"),
+        };
+    }
+
+    if let Some(url) = attach_url(cli) {
+        if let Some((method, params)) = map_to_invoke(cli) {
+            match attach::invoke(&url, &method, params) {
+                Ok(envelope) => {
+                    if envelope.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+                        return Ok((
+                            method,
+                            envelope.get("data").cloned().unwrap_or(json!({})),
+                        ));
+                    }
+                    return Err((
+                        method,
+                        envelope
+                            .pointer("/error/message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("invoke failed")
+                            .to_string(),
+                    ));
+                }
+                Err(e) => return Err((method, e)),
+            }
+        }
+    }
+
     match &cli.command {
+        Commands::Api(_) => unreachable!("handled above"),
         Commands::Version => Ok((
             "version".into(),
             serde_json::json!({

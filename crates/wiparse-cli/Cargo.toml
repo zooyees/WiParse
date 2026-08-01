@@ -17,3 +17,4 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 anyhow = { workspace = true }
 rusqlite = { workspace = true }
+ureq = { version = "2", default-features = false, features = ["json"] }

@@ -17,6 +17,7 @@ use wiparse_core::instrument::{
     Capabilities, ControlCommand, Identity, InstrumentDevice, InstrumentKind, MeasureFunction,
     Reading, ResourceInfo, Sample, ScopeMeasType, WaveformTrace,
 };
+use wiparse_core::waveform_file::{load_waveform_bytes, save_waveform_file};
 
 enum Job {
     Scan {
@@ -40,6 +41,8 @@ enum Job {
     Measure(u64),
     /// Capture scope screen for in-app preview + clipboard (no save dialog).
     Capture { id: u64 },
+    /// Read waveform source file over VISA (ISF/CSV), then UI prompts Save As.
+    WaveformSource { id: u64, channel: u8 },
     Waveform {
         id: u64,
         channel: u8,
@@ -78,6 +81,12 @@ enum Event {
     Waveform {
         id: u64,
         trace: WaveformTrace,
+    },
+    /// Raw waveform source file bytes from the instrument (ready for Save As).
+    WaveformSource {
+        id: u64,
+        bytes: Vec<u8>,
+        suggested_name: String,
     },
     Error {
         id: Option<u64>,
@@ -359,7 +368,14 @@ impl InstrumentControlPanel {
     }
 
     pub fn pump(&mut self, ctx: &egui::Context) {
+        self.pump_with_bus(ctx, None);
+    }
+
+    pub fn pump_with_bus(&mut self, ctx: &egui::Context, bus: Option<&crate::backend::EventBus>) {
         while let Ok(event) = self.rx.try_recv() {
+            if let Some(bus) = bus {
+                publish_instrument_event(bus, &event);
+            }
             self.handle_event(ctx, event);
         }
         if self.live_active()
@@ -376,10 +392,168 @@ impl InstrumentControlPanel {
                 }
             }
         }
-        // Live acquisition repaint is owned by the app loop; only keep a light
-        // poll while VISA scan is in flight.
         if self.scanning {
             ctx.request_repaint_after(Duration::from_millis(50));
+        }
+    }
+
+    pub fn device_count(&self) -> usize {
+        self.devices.len()
+    }
+
+    pub fn api_list(&self) -> serde_json::Value {
+        let devices: Vec<_> = self
+            .devices
+            .iter()
+            .map(|d| {
+                serde_json::json!({
+                    "device_id": d.id,
+                    "resource": d.resource,
+                    "kind": d.kind,
+                    "profile": d.profile,
+                    "identity": d.identity,
+                    "capabilities": d.capabilities,
+                    "acquiring": d.acquiring,
+                })
+            })
+            .collect();
+        serde_json::json!({ "devices": devices, "scanning": self.scanning })
+    }
+
+    pub fn api_scan(&mut self, _params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        self.scanning = true;
+        match self.tx.send(Job::Scan {
+            library: self.visa_library.clone(),
+            timeout_ms: self.timeout_ms,
+        }) {
+            Ok(()) => ok("instrument.scan", serde_json::json!({ "accepted": true })),
+            Err(e) => err("instrument.scan", &e.to_string()),
+        }
+    }
+
+    pub fn api_connect(
+        &mut self,
+        params: &serde_json::Value,
+        lang: Lang,
+    ) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let resource = match params.get("resource").and_then(|v| v.as_str()) {
+            Some(r) if !r.is_empty() => r.to_string(),
+            _ => return err("instrument.connect", "missing resource"),
+        };
+        let kind = params
+            .get("kind")
+            .and_then(|v| serde_json::from_value::<InstrumentKind>(v.clone()).ok());
+        let id = self.next_id;
+        self.next_id += 1;
+        match self.tx.send(Job::Connect {
+            id,
+            resource: resource.clone(),
+            kind,
+            timeout_ms: self.timeout_ms,
+            library: self.visa_library.clone(),
+        }) {
+            Ok(()) => {
+                self.status = text(lang, "正在连接…", "Connecting…").into();
+                ok(
+                    "instrument.connect",
+                    serde_json::json!({ "accepted": true, "device_id": id, "resource": resource }),
+                )
+            }
+            Err(e) => err("instrument.connect", &e.to_string()),
+        }
+    }
+
+    pub fn api_disconnect(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let id = match params.get("device_id").and_then(|v| v.as_u64()) {
+            Some(id) => id,
+            None => return err("instrument.disconnect", "missing device_id"),
+        };
+        match self.tx.send(Job::Disconnect(id)) {
+            Ok(()) => ok(
+                "instrument.disconnect",
+                serde_json::json!({ "accepted": true, "device_id": id }),
+            ),
+            Err(e) => err("instrument.disconnect", &e.to_string()),
+        }
+    }
+
+    pub fn api_command(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let id = match params.get("device_id").and_then(|v| v.as_u64()) {
+            Some(id) => id,
+            None => return err("instrument.command", "missing device_id"),
+        };
+        let command = match params.get("command") {
+            Some(c) => match serde_json::from_value::<ControlCommand>(c.clone()) {
+                Ok(cmd) => cmd,
+                Err(e) => return err("instrument.command", &format!("invalid command: {e}")),
+            },
+            None => return err("instrument.command", "missing command"),
+        };
+        match self.tx.send(Job::Command(id, command)) {
+            Ok(()) => ok(
+                "instrument.command",
+                serde_json::json!({ "accepted": true, "device_id": id }),
+            ),
+            Err(e) => err("instrument.command", &e.to_string()),
+        }
+    }
+
+    pub fn api_measure(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let id = match params.get("device_id").and_then(|v| v.as_u64()) {
+            Some(id) => id,
+            None => return err("instrument.measure", "missing device_id"),
+        };
+        self.measurement_pending.insert(id);
+        match self.tx.send(Job::Measure(id)) {
+            Ok(()) => ok(
+                "instrument.measure",
+                serde_json::json!({ "accepted": true, "device_id": id }),
+            ),
+            Err(e) => err("instrument.measure", &e.to_string()),
+        }
+    }
+
+    pub fn api_capture(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let id = match params.get("device_id").and_then(|v| v.as_u64()) {
+            Some(id) => id,
+            None => return err("instrument.capture", "missing device_id"),
+        };
+        match self.tx.send(Job::Capture { id }) {
+            Ok(()) => ok(
+                "instrument.capture",
+                serde_json::json!({ "accepted": true, "device_id": id }),
+            ),
+            Err(e) => err("instrument.capture", &e.to_string()),
+        }
+    }
+
+    pub fn api_waveform(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let id = match params.get("device_id").and_then(|v| v.as_u64()) {
+            Some(id) => id,
+            None => return err("instrument.waveform", "missing device_id"),
+        };
+        let channel = params.get("channel").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+        let points = params
+            .get("points")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1000) as usize;
+        match self.tx.send(Job::Waveform {
+            id,
+            channel,
+            points,
+        }) {
+            Ok(()) => ok(
+                "instrument.waveform",
+                serde_json::json!({ "accepted": true, "device_id": id, "channel": channel }),
+            ),
+            Err(e) => err("instrument.waveform", &e.to_string()),
         }
     }
 
@@ -486,6 +660,77 @@ impl InstrumentControlPanel {
                 self.wave_plots
                     .insert(id, build_cached_wave_plot(&trace, SCOPE_PLOT_DISPLAY_POINTS));
                 self.waveforms.insert(id, trace);
+            }
+            Event::WaveformSource {
+                id,
+                bytes,
+                suggested_name,
+            } => {
+                let stem = PathBuf::from(&suggested_name);
+                let ext = stem
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("isf")
+                    .to_ascii_lowercase();
+                let channel = stem
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .and_then(|s| s.strip_prefix("waveform_"))
+                    .unwrap_or("CH1");
+
+                // Parse in memory and show full screen record in ③ Waveform panel.
+                if let Ok(trace) = load_waveform_bytes(&bytes, &ext, channel) {
+                    self.status = format!(
+                        "屏幕波形 {} · N={} / Screen waveform {} · N={}",
+                        trace.channel,
+                        trace.x.len(),
+                        trace.channel,
+                        trace.x.len()
+                    );
+                    self.wave_plots.insert(
+                        id,
+                        build_cached_wave_plot(&trace, SCOPE_PLOT_DISPLAY_POINTS),
+                    );
+                    self.waveforms.insert(id, trace);
+                }
+
+                // Auto Save As as soon as VISA transfer completes.
+                let default = self.save_dir.join(format!(
+                    "{}_{}.{}",
+                    stem.file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("waveform"),
+                    Local::now().format("%Y%m%d_%H%M%S"),
+                    ext
+                ));
+                let mut dialog = rfd::FileDialog::new()
+                    .set_directory(&self.save_dir)
+                    .set_file_name(default.file_name().unwrap_or_default().to_string_lossy())
+                    .add_filter("Tektronix ISF", &["isf"])
+                    .add_filter("Tektronix WFM", &["wfm"])
+                    .add_filter("CSV", &["csv"])
+                    .add_filter("All", &["*"]);
+                if let Some(path) = dialog.save_file() {
+                    match save_waveform_file(&path, Some(&bytes), Some(&ext), None) {
+                        Ok(()) => {
+                            self.status = format!(
+                                "已保存波形源 / Waveform source saved: {}",
+                                path.display()
+                            );
+                            if let Some(parent) = path.parent() {
+                                self.save_dir = parent.to_path_buf();
+                            }
+                        }
+                        Err(error) => self.status = error.to_string(),
+                    }
+                } else if self.waveforms.contains_key(&id) {
+                    self.status =
+                        "已解析屏幕波形，保存已取消 / Screen waveform parsed, save cancelled"
+                            .into();
+                } else {
+                    self.status =
+                        "已取消保存波形源 / Waveform source save cancelled".into();
+                }
             }
             Event::Error { id, message } => {
                 if id.is_none() {
@@ -1090,11 +1335,39 @@ impl InstrumentControlPanel {
                 self.status = text(lang, "正在截取屏幕…", "Capturing screen…").into();
                 let _ = self.tx.send(Job::Capture { id });
             }
+            // Oscilloscope workbench always exposes VISA waveform-source read
+            // (capability flag can be false on generic/demo profiles).
+            let can_wave_src = self.devices[index].kind == InstrumentKind::Oscilloscope
+                || self.devices[index].capabilities.waveform;
+            if ui
+                .add_enabled(
+                    can_wave_src,
+                    egui::Button::new(text(lang, "读取波形源文件", "Read Wave Source"))
+                        .min_size(egui::vec2(128.0, 28.0)),
+                )
+                .on_hover_text(text(
+                    lang,
+                    "通过 VISA 读取屏幕完整波形（.isf/.wfm/.csv），完成后自动弹出另存为",
+                    "Read full on-screen waveform via VISA (.isf/.wfm/.csv), then auto Save As",
+                ))
+                .clicked()
+            {
+                let channel = self.devices[index].controls.scope_channel;
+                self.status =
+                    text(lang, "正在通过 VISA 读取波形源文件…", "Reading waveform source via VISA…")
+                        .into();
+                let _ = self.tx.send(Job::WaveformSource { id, channel });
+            }
             if ui
                 .add_enabled(
                     has_png,
                     egui::Button::new(text(lang, "另存为…", "Save As…")).min_size(SCOPE_BTN),
                 )
+                .on_hover_text(text(
+                    lang,
+                    "将截图预览另存为 PNG",
+                    "Save screenshot preview as PNG",
+                ))
                 .clicked()
             {
                 let default = self.save_dir.join(format!(
@@ -1125,8 +1398,8 @@ impl InstrumentControlPanel {
                 ui.label(
                     RichText::new(text(
                         lang,
-                        "预览 · 剪贴板",
-                        "Preview · clipboard",
+                        "预览 · 波形源",
+                        "Preview · wave src",
                     ))
                     .small()
                     .color(tokens.text_muted),
@@ -1182,38 +1455,46 @@ impl InstrumentControlPanel {
             if ui
                 .add_sized(
                     SCOPE_BTN,
-                    egui::Button::new(text(lang, "读取", "Read")).fill(tokens.accent),
+                    egui::Button::new(text(lang, "读取屏幕", "Read Screen")).fill(tokens.accent),
                 )
+                .on_hover_text(text(
+                    lang,
+                    "通过 VISA 读取屏幕完整波形（全部显示点，无抽样）",
+                    "Read full on-screen waveform via VISA (all displayed points)",
+                ))
                 .clicked()
             {
                 let channel = self.devices[index].controls.scope_channel;
+                self.status = text(lang, "正在读取屏幕波形…", "Reading on-screen waveform…").into();
                 let _ = self.tx.send(Job::Waveform {
                     id,
                     channel,
-                    points: self.max_points.min(20_000),
+                    points: 0,
                 });
             }
             let has_trace = self.waveforms.contains_key(&id);
             if ui
                 .add_enabled(
                     has_trace,
-                    egui::Button::new(text(lang, "导出 CSV", "Export CSV")).min_size(SCOPE_BTN_WIDE),
+                    egui::Button::new(text(lang, "导出…", "Export…")).min_size(SCOPE_BTN_WIDE),
                 )
                 .clicked()
             {
                 if let Some(trace) = self.waveforms.get(&id) {
                     let default = self.save_dir.join(format!(
-                        "waveform_{}_{}.csv",
+                        "waveform_{}_{}.isf",
                         trace.channel,
                         Local::now().format("%Y%m%d_%H%M%S")
                     ));
                     if let Some(path) = rfd::FileDialog::new()
                         .set_directory(&self.save_dir)
                         .set_file_name(default.file_name().unwrap_or_default().to_string_lossy())
+                        .add_filter("Tektronix ISF", &["isf"])
+                        .add_filter("Tektronix WFM", &["wfm"])
                         .add_filter("CSV", &["csv"])
                         .save_file()
                     {
-                        match export_waveform_csv(&path, trace) {
+                        match save_waveform_file(&path, None, None, Some(trace)) {
                             Ok(()) => {
                                 self.status = format!(
                                     "{} {}",
@@ -1292,12 +1573,17 @@ impl InstrumentControlPanel {
         id: u64,
         index: usize,
     ) {
+        let panel_w = ui.available_width().max(1.0);
+        ui.set_max_width(panel_w);
+
         let command = &mut self.devices[index].controls.console;
         let mut to_send = None;
         ui.horizontal(|ui| {
+            ui.set_max_width(panel_w);
             ui.spacing_mut().item_spacing.x = 8.0;
             let send_w = SCOPE_BTN.x;
-            let edit_w = (ui.available_width() - send_w - ui.spacing().item_spacing.x).max(80.0);
+            let gap = ui.spacing().item_spacing.x;
+            let edit_w = (ui.available_width() - send_w - gap).max(40.0);
             let response = ui.add(
                 egui::TextEdit::singleline(command)
                     .desired_width(edit_w)
@@ -1321,40 +1607,53 @@ impl InstrumentControlPanel {
             let _ = self.tx.send(Job::Command(id, scpi));
         }
         ui.add_space(6.0);
-        let log_h = ui.available_height().max(72.0);
-        let log_w = ui.available_width().max(1.0);
-        egui::ScrollArea::vertical()
-            .id_salt(("scope-scpi-log", id))
-            .max_height(log_h)
-            .auto_shrink([false, false])
-            .stick_to_bottom(true)
-            .show(ui, |ui| {
-                // Keep log lines clipped to the panel width so they cannot widen the grid cell.
-                ui.set_max_width(log_w);
-                if self.logs.is_empty() {
-                    ui.label(
-                        RichText::new(text(
-                            lang,
-                            "SCPI 收发日志显示在此",
-                            "SCPI traffic appears here",
-                        ))
-                        .small()
-                        .color(tokens.text_muted),
-                    );
-                } else {
-                    for line in self.logs.iter().rev().take(80).rev() {
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(line)
-                                    .monospace()
-                                    .small()
-                                    .color(tokens.text_muted),
-                            )
-                            .truncate(),
-                        );
-                    }
-                }
-            });
+
+        // Exact leftover viewport so ScrollArea cannot grow the card past its cell.
+        let log_h = ui.available_height().max(1.0);
+        let log_w = ui.available_width().min(panel_w).max(1.0);
+        let (log_rect, _) =
+            ui.allocate_exact_size(egui::vec2(log_w, log_h), egui::Sense::hover());
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(log_rect)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+            |ui| {
+                ui.set_clip_rect(log_rect.intersect(ui.clip_rect()));
+                ui.set_min_size(log_rect.size());
+                ui.set_max_size(log_rect.size());
+                egui::ScrollArea::vertical()
+                    .id_salt(("scope-scpi-log", id))
+                    .max_height(log_rect.height())
+                    .auto_shrink([false, false])
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        ui.set_max_width(log_rect.width());
+                        if self.logs.is_empty() {
+                            ui.label(
+                                RichText::new(text(
+                                    lang,
+                                    "SCPI 收发日志显示在此",
+                                    "SCPI traffic appears here",
+                                ))
+                                .small()
+                                .color(tokens.text_muted),
+                            );
+                        } else {
+                            for line in self.logs.iter().rev().take(80).rev() {
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(line)
+                                            .monospace()
+                                            .small()
+                                            .color(tokens.text_muted),
+                                    )
+                                    .truncate(),
+                                );
+                            }
+                        }
+                    });
+            },
+        );
     }
 
     fn source_workspace(
@@ -2451,13 +2750,27 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                     }
                 }
             }
+            Job::WaveformSource { id, channel } => {
+                if let Some(device) = devices.get_mut(&id) {
+                    match device.capture_scope_waveform_source(channel) {
+                        Ok((bytes, suggested_name)) => {
+                            let _ = events.send(Event::WaveformSource {
+                                id,
+                                bytes,
+                                suggested_name,
+                            });
+                        }
+                        Err(error) => send_error(&events, Some(id), error),
+                    }
+                }
+            }
             Job::Waveform {
                 id,
                 channel,
-                points,
+                points: _,
             } => {
                 if let Some(device) = devices.get_mut(&id) {
-                    match device.read_scope_waveform(channel, points) {
+                    match device.read_scope_screen_waveform(channel) {
                         Ok(trace) => {
                             let _ = events.send(Event::Waveform { id, trace });
                         }
@@ -2679,36 +2992,53 @@ fn scope_card_fill(
     title: &str,
     add: impl FnOnce(&mut egui::Ui),
 ) {
+    // Paint fill/stroke on the *allocated* cell rect. Do not use Frame::show here:
+    // Frame sizes its stroke from content min_rect; when SCPI/ScrollArea expands by
+    // even a few px, the right/bottom stroke lands outside the cell clip and vanishes.
     let outer = ui.available_size();
     let (rect, _) = ui.allocate_exact_size(outer, egui::Sense::hover());
+    if !rect.is_positive() {
+        return;
+    }
+
+    const STROKE_W: f32 = 1.0;
+    const PAD_X: f32 = 10.0;
+    const PAD_Y: f32 = 8.0;
+    let radius = CornerRadius::same(6);
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, radius, tokens.surface_bg);
+    painter.rect_stroke(
+        rect,
+        radius,
+        Stroke::new(STROKE_W, tokens.border),
+        egui::StrokeKind::Inside,
+    );
+
+    let content = rect.shrink2(egui::vec2(STROKE_W + PAD_X, STROKE_W + PAD_Y));
+    if !content.is_positive() {
+        return;
+    }
     ui.scope_builder(
         egui::UiBuilder::new()
-            .max_rect(rect)
+            .max_rect(content)
             .layout(egui::Layout::top_down(egui::Align::Min)),
         |ui| {
-            ui.set_clip_rect(rect.intersect(ui.clip_rect()));
-            Frame::NONE
-                .fill(tokens.surface_bg)
-                .stroke(Stroke::new(1.0_f32, tokens.border))
-                .corner_radius(CornerRadius::same(6))
-                .inner_margin(Margin::symmetric(10, 8))
-                .show(ui, |ui| {
-                    ui.set_min_width(ui.available_width());
-                    ui.set_max_width(ui.available_width());
-                    ui.label(RichText::new(title).strong().size(13.0));
-                    ui.add_space(4.0);
-                    let body = ui.available_size();
-                    ui.allocate_ui_with_layout(
-                        body,
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ui.set_min_size(body);
-                            ui.set_max_size(body);
-                            ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
-                            add(ui);
-                        },
-                    );
-                });
+            ui.set_clip_rect(content.intersect(ui.clip_rect()));
+            ui.set_min_size(content.size());
+            ui.set_max_size(content.size());
+            ui.label(RichText::new(title).strong().size(13.0));
+            ui.add_space(4.0);
+            let body = ui.available_size();
+            ui.allocate_ui_with_layout(
+                body,
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_min_size(body);
+                    ui.set_max_size(body);
+                    ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
+                    add(ui);
+                },
+            );
         },
     );
 }
@@ -4211,6 +4541,109 @@ fn short_resource(resource: &str) -> String {
         resource.to_owned()
     } else {
         format!("{}…", resource.chars().take(MAX - 1).collect::<String>())
+    }
+}
+
+fn publish_instrument_event(bus: &crate::backend::EventBus, event: &Event) {
+    match event {
+        Event::Resources(resources) => {
+            bus.publish(
+                "instrument.resources",
+                serde_json::json!({ "count": resources.len(), "resources": resources }),
+                None,
+            );
+        }
+        Event::Connected {
+            id,
+            resource,
+            identity,
+            kind,
+            profile,
+            ..
+        } => {
+            bus.publish(
+                "instrument.connected",
+                serde_json::json!({
+                    "device_id": id,
+                    "resource": resource,
+                    "identity": identity,
+                    "kind": kind,
+                    "profile": profile,
+                }),
+                None,
+            );
+        }
+        Event::Disconnected(id) => {
+            bus.publish(
+                "instrument.disconnected",
+                serde_json::json!({ "device_id": id }),
+                None,
+            );
+        }
+        Event::CommandDone { id, response } => {
+            bus.publish(
+                "instrument.command_done",
+                serde_json::json!({ "device_id": id, "response": response }),
+                None,
+            );
+        }
+        Event::Measurements {
+            id,
+            resource,
+            readings,
+        } => {
+            bus.publish(
+                "instrument.measurements",
+                serde_json::json!({
+                    "device_id": id,
+                    "resource": resource,
+                    "readings": readings,
+                }),
+                None,
+            );
+        }
+        Event::Screenshot {
+            id, width, height, ..
+        } => {
+            bus.publish(
+                "instrument.screenshot",
+                serde_json::json!({
+                    "device_id": id,
+                    "width": width,
+                    "height": height,
+                }),
+                None,
+            );
+        }
+        Event::Waveform { id, trace } => {
+            let mut data = serde_json::to_value(trace).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("device_id".into(), serde_json::json!(id));
+            }
+            bus.publish("instrument.waveform", data, None);
+        }
+        Event::WaveformSource {
+            id,
+            bytes,
+            suggested_name,
+        } => {
+            bus.publish(
+                "instrument.waveform_source",
+                serde_json::json!({
+                    "device_id": id,
+                    "bytes": bytes.len(),
+                    "suggested_name": suggested_name,
+                }),
+                None,
+            );
+        }
+        Event::Error { id, message } => {
+            bus.publish(
+                "instrument.error",
+                serde_json::json!({ "device_id": id, "message": message }),
+                None,
+            );
+        }
     }
 }
 

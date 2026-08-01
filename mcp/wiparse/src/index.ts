@@ -3,15 +3,27 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { formatEnvelope, resolveCliPath, runCli } from "./cli.js";
+import {
+  apiCapabilities,
+  apiHealth,
+  apiInvoke,
+  defaultApiUrl,
+} from "./http.js";
 
 const server = new McpServer({
   name: "wiparse",
-  version: "1.0.1",
+  version: "1.1.0",
 });
 
 function textResult(envelope: Awaited<ReturnType<typeof runCli>>) {
   return {
     content: [{ type: "text" as const, text: formatEnvelope(envelope) }],
+  };
+}
+
+function apiText(body: unknown) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(body, null, 2) }],
   };
 }
 
@@ -21,7 +33,7 @@ async function withCli(args: string[], options?: Parameters<typeof runCli>[1]) {
 
 server.tool(
   "wiparse_cli_info",
-  "Return resolved WiParse CLI path and supported command groups.",
+  "Return resolved WiParse CLI path, API URL, and supported command groups.",
   {},
   async () => ({
     content: [
@@ -30,16 +42,20 @@ server.tool(
         text: JSON.stringify(
           {
             cli_path: resolveCliPath(),
+            api_url: process.env.WIPARSE_URL ?? defaultApiUrl(),
+            architecture: "C+E (GUI embeds localhost API; CLI/MCP attach)",
             version_tool: "wiparse_version",
             groups: [
+              "api (health, capabilities, invoke) — preferred for Agent",
               "serial (read, send)",
               "parse (line, metrics, file)",
               "session (list, show)",
               "wave (live, session, export)",
               "scope (list, shot, wave)",
+              "instrument.* via wiparse_invoke (requires WiParse.exe)",
             ],
-            docs: "docs/CLI_REFERENCE.md",
-            note: "Instrument workbench (VISA multi-instrument) is GUI-only; CLI scope commands target Tektronix/VISA oscilloscopes.",
+            docs: "docs/DEPLOY_API.md",
+            note: "Start WiParse.exe first. Set WIPARSE_URL=http://127.0.0.1:7878 for attach.",
           },
           null,
           2,
@@ -47,6 +63,38 @@ server.tool(
       },
     ],
   }),
+);
+
+server.tool(
+  "wiparse_health",
+  "Check WiParse.exe embedded API health (requires GUI running).",
+  {},
+  async () => apiText(await apiHealth()),
+);
+
+server.tool(
+  "wiparse_capabilities",
+  "List all invoke methods and event types from the running GUI API.",
+  {},
+  async () => apiText(await apiCapabilities()),
+);
+
+server.tool(
+  "wiparse_invoke",
+  "Call any WiParse API method on the running GUI (full capability surface).",
+  {
+    method: z
+      .string()
+      .describe(
+        "e.g. serial.ports, serial.monitor.start, instrument.scan, parse.line",
+      ),
+    params: z
+      .record(z.unknown())
+      .optional()
+      .default({})
+      .describe("JSON params object for the method"),
+  },
+  async ({ method, params }) => apiText(await apiInvoke(method, params ?? {})),
 );
 
 server.tool("wiparse_version", "Get WiParse CLI version.", {}, async () =>

@@ -18,7 +18,8 @@
     "panels": {
       "serial_tool": true,
       "calculator": true,
-      "instrument_control": true
+      "instrument_control": true,
+      "waveform_analysis": true
     }
   },
   "alerts": {
@@ -41,7 +42,8 @@
     "save_dir": "log",
     "file_extension": "txt",
     "open_log_files": [],
-    "last_open_dir": ""
+    "last_open_dir": "",
+    "log_browser_dir": ""
   },
   "apps": {
     "tektronix_scope": {
@@ -53,7 +55,8 @@
       "sample_interval_ms": 1000,
       "max_points": 10000,
       "save_dir": "instrument_data",
-      "known_tcpip_resources": []
+      "known_tcpip_resources": [],
+      "waveform_browser_dir": ""
     }
   }
 }

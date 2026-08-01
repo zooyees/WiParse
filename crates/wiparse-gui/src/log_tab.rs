@@ -224,6 +224,14 @@ impl TabBackend {
             Self::Pending => 0,
         }
     }
+
+    fn line_at(&self, index: usize) -> Option<std::sync::Arc<str>> {
+        match self {
+            Self::Live(s) => s.line_at(index),
+            Self::File(s) => s.line_at(index),
+            Self::Pending => None,
+        }
+    }
 }
 
 pub struct LogTabPage {
@@ -621,6 +629,21 @@ impl LogTabPage {
 
     pub fn line_count(&self) -> usize {
         self.backend.line_count()
+    }
+
+    pub fn lines_slice(&self, from: usize, limit: usize) -> Vec<String> {
+        let total = self.line_count();
+        let start = from.min(total);
+        let end = (start + limit).min(total);
+        (start..end)
+            .filter_map(|i| self.backend.line_at(i).map(|s| s.to_string()))
+            .collect()
+    }
+
+    pub fn recent_lines(&self, limit: usize) -> Vec<String> {
+        let total = self.line_count();
+        let start = total.saturating_sub(limit);
+        self.lines_slice(start, limit)
     }
 
     pub fn release_display_buffers(&mut self) {

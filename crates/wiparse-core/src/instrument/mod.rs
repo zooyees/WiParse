@@ -425,6 +425,24 @@ impl DemoTransport {
             || cmd.contains("SAVE:IMAGE")
         {
             self.pending_raw = Some(Self::ieee_block(Self::demo_png()));
+        } else if cmd.contains("FILESYSTEM:READFILE") || cmd.contains("FILESYSTEM:READFILE ") {
+            // Minimal ISF-like blob for Tek filesystem waveform-source path.
+            let n = self.wave_points.clamp(64, 4096);
+            let mut samples = Vec::with_capacity(n);
+            for i in 0..n {
+                let phase = (i as f64 / n as f64) * std::f64::consts::TAU * 3.0;
+                samples.push((128.0 + 40.0 * phase.sin()).clamp(0.0, 255.0) as u8);
+            }
+            let mut isf = format!(
+                ":WFMPRE:BYT_NR 1;BIT_NR 8;ENCDG BIN;BN_FMT RI;BYT_OR MSB;NR_PT {n};XINCR 1.0E-6;XZERO 0;XUNIT \"s\";YMULT 0.01;YOFF 128;YZERO 0;YUNIT \"V\";WFID \"CH1\";:CURVE "
+            )
+            .into_bytes();
+            let len = samples.len().to_string();
+            isf.push(b'#');
+            isf.push(b'0' + len.len() as u8);
+            isf.extend_from_slice(len.as_bytes());
+            isf.extend_from_slice(&samples);
+            self.pending_raw = Some(Self::ieee_block(&isf));
         } else if cmd.contains("WAV:DATA") || cmd.contains("CURVE") {
             self.pending_raw = Some(self.demo_waveform_bytes());
         }
@@ -437,6 +455,18 @@ impl DemoTransport {
         }
         if cmd.starts_with("SYST:ERR") || cmd.starts_with("SYSTEM:ERROR") {
             return "0,\"No error\"".into();
+        }
+        if cmd == "WFMOUTPRE?" || cmd.ends_with("WFMOUTPRE?") {
+            let n = self.wave_points.clamp(64, 4096);
+            return format!(
+                ":WFMOUTPRE:BYT_NR 1;BIT_NR 8;ENCDG BIN;BN_FMT RI;BYT_OR MSB;NR_PT {n};XINCR 1.0E-6;XZERO 0;XUNIT \"s\";YMULT 0.01;YOFF 128;YZERO 0;YUNIT \"V\";WFID \"CH1\""
+            );
+        }
+        if cmd.contains("WFMOUTPRE:NR_PT") || cmd.contains("HORizontal:RECOrdlength") {
+            return self.wave_points.clamp(64, 4096).to_string();
+        }
+        if cmd.contains("WAV:POIN") {
+            return self.wave_points.clamp(64, 4096).to_string();
         }
         if cmd.contains("WAV:XINC") || cmd.contains("WFMOUTPRE:XINCR") {
             return "1.0E-6".into();

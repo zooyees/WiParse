@@ -4,6 +4,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod backend;
 mod calculator;
 mod converter;
 mod error_log;
@@ -13,6 +14,7 @@ mod log_tab;
 mod log_view;
 mod serial_tool;
 mod theme;
+mod waveform_analysis;
 mod windows_icon;
 
 use app::WiParseApp;

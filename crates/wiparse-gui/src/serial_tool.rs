@@ -16,7 +16,14 @@ use std::time::Duration;
 use wiparse_core::config::{load_config, save_config, AppConfig};
 use wiparse_core::i18n::{tr, tr_fmt, tr_monitoring, Lang};
 use wiparse_core::log::{build_file_store_worker, FileBuildEvent, LogStore};
+use wiparse_core::paths::project_path;
 use wiparse_core::serial::{list_ports, CapturedEvent, SerialSession};
+
+/// One subfolder under the log browser root that contains `.txt` files.
+struct LogBrowserFolder {
+    name: String,
+    files: Vec<(String, PathBuf)>,
+}
 
 /// Cap RX UI apply per frame so a post-dialog backlog cannot freeze the UI.
 const DRAIN_LINES_PER_FRAME: usize = 400;
@@ -52,6 +59,8 @@ pub struct SerialToolPanel {
     active_tab: usize,
     stop_flag: Option<Arc<AtomicBool>>,
     rx: Option<Receiver<SerialEvent>>,
+    /// Hex/bytes to write while monitoring (API / Agent).
+    write_tx: Option<Sender<Vec<u8>>>,
     live_file: Option<PathBuf>,
     live_writer: Option<BufWriter<File>>,
     last_lang: Lang,
@@ -62,6 +71,11 @@ pub struct SerialToolPanel {
     pending_lines: VecDeque<String>,
     /// Cached elided tab titles: (source title, width_px) -> elided text.
     tab_elide_cache: HashMap<(String, i32), String>,
+    /// Configurable root for the sidebar folder/txt browser.
+    browser_dir: String,
+    /// Last path that was scanned into `browser_folders`.
+    browser_scanned_dir: String,
+    browser_folders: Vec<LogBrowserFolder>,
 }
 
 impl SerialToolPanel {
@@ -83,6 +97,11 @@ impl SerialToolPanel {
         let baud_custom = !baud_options.iter().any(|b| b == &baud);
         let live_dir = cfg.log_monitor.save_dir.clone();
         let live_name = cfg.log_monitor.default_filename.clone();
+        let browser_dir = if cfg.log_monitor.log_browser_dir.trim().is_empty() {
+            String::new()
+        } else {
+            cfg.log_monitor.log_browser_dir.clone()
+        };
         let mut tabs = vec![LogTabPage::live_tab(lang)];
         tabs[0].title = live_name.clone();
         let mut panel = Self {
@@ -101,6 +120,7 @@ impl SerialToolPanel {
             active_tab: 0,
             stop_flag: None,
             rx: None,
+            write_tx: None,
             live_file: None,
             live_writer: None,
             last_lang: lang,
@@ -109,8 +129,12 @@ impl SerialToolPanel {
             pending_loads: Vec::new(),
             pending_lines: VecDeque::new(),
             tab_elide_cache: HashMap::new(),
+            browser_dir,
+            browser_scanned_dir: String::new(),
+            browser_folders: Vec::new(),
         };
         panel.restore_open_log_files(&cfg.log_monitor.open_log_files);
+        panel.refresh_log_browser();
         panel
     }
 
@@ -138,6 +162,7 @@ impl SerialToolPanel {
                 cfg.log_monitor.save_dir = self.live_dir.clone();
                 cfg.log_monitor.open_log_files = paths;
                 cfg.log_monitor.last_open_dir = self.open_dir.clone();
+                cfg.log_monitor.log_browser_dir = self.browser_dir.clone();
                 let _ = save_config(&cfg);
             }
             Err(_) => {
@@ -146,6 +171,7 @@ impl SerialToolPanel {
                 cfg.log_monitor.save_dir = self.live_dir.clone();
                 cfg.log_monitor.open_log_files = paths;
                 cfg.log_monitor.last_open_dir = self.open_dir.clone();
+                cfg.log_monitor.log_browser_dir = self.browser_dir.clone();
                 let _ = save_config(&cfg);
             }
         }
@@ -313,40 +339,127 @@ impl SerialToolPanel {
     }
 
     fn start_monitor(&mut self, lang: Lang) {
+        let _ = self.api_start_monitor(lang, None, None);
+    }
+
+    /// Start monitor; optional port/baud override for API.
+    pub fn api_start_monitor(
+        &mut self,
+        lang: Lang,
+        port_override: Option<String>,
+        baud_override: Option<u32>,
+    ) -> Result<(String, u32), String> {
         if self.monitoring {
-            return;
+            let port = self
+                .ports
+                .get(self.selected_port)
+                .cloned()
+                .unwrap_or_default();
+            let baud: u32 = self.baud.parse().unwrap_or(0);
+            return Ok((port, baud));
         }
         if self.live_name.trim() != self.committed_live_name && !self.commit_live_name(lang) {
-            return;
+            return Err(tr(lang, "status.create_failed").into());
+        }
+        if let Some(ref p) = port_override {
+            if let Some(idx) = self.ports.iter().position(|x| x == p) {
+                self.selected_port = idx;
+            } else {
+                self.ports.insert(0, p.clone());
+                self.selected_port = 0;
+            }
+        }
+        if let Some(b) = baud_override {
+            self.baud = b.to_string();
+            self.baud_custom = !self.baud_options.iter().any(|x| x == &self.baud);
         }
         let Some(port) = self.ports.get(self.selected_port).cloned() else {
             self.status = tr(lang, "status.port_none");
-            return;
+            return Err(self.status.clone());
         };
         let baud: u32 = match self.baud.parse() {
             Ok(v) if v > 0 => v,
             _ => {
                 self.status = tr(lang, "status.baud_invalid");
-                return;
+                return Err(self.status.clone());
             }
         };
         if let Err(e) = self.ensure_live_file() {
             self.status = format!("{}: {e}", tr(lang, "status.create_failed"));
-            return;
+            return Err(self.status.clone());
         }
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = unbounded();
+        let (write_tx, write_rx) = unbounded();
         let stop_c = Arc::clone(&stop);
         let port_for_thread = port.clone();
-        thread::spawn(move || serial_worker(port_for_thread, baud, stop_c, tx));
+        thread::spawn(move || serial_worker(port_for_thread, baud, stop_c, tx, write_rx));
         self.stop_flag = Some(stop);
         self.rx = Some(rx);
+        self.write_tx = Some(write_tx);
         self.monitoring = true;
         self.status = tr_monitoring(lang, &port, baud);
         if let Some(live) = self.tabs.get_mut(0) {
             live.title = self.live_name.clone();
         }
         self.active_tab = 0;
+        Ok((port, baud))
+    }
+
+    pub fn api_stop_monitor(&mut self, lang: Lang) {
+        self.stop_monitor(lang);
+    }
+
+    pub fn take_write_sender(&mut self) -> Option<Sender<Vec<u8>>> {
+        self.write_tx.clone()
+    }
+
+    pub fn api_tabs_list(&self) -> serde_json::Value {
+        let tabs: Vec<_> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(id, tab)| {
+                serde_json::json!({
+                    "tab_id": id,
+                    "title": tab.title,
+                    "live": tab.live,
+                    "path": tab.filepath.clone(),
+                    "lines": tab.line_count(),
+                })
+            })
+            .collect();
+        serde_json::json!({ "tabs": tabs, "active_tab": self.active_tab })
+    }
+
+    pub fn api_lines_get(&self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let tab_id = params.get("tab_id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let from = params.get("from_row").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let limit = params
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(100) as usize;
+        let Some(tab) = self.tabs.get(tab_id) else {
+            return err("log.lines.get", "tab not found");
+        };
+        let lines = tab.lines_slice(from, limit);
+        ok(
+            "log.lines.get",
+            serde_json::json!({
+                "tab_id": tab_id,
+                "from_row": from,
+                "lines": lines,
+                "count": lines.len(),
+            }),
+        )
+    }
+
+    pub fn api_recent_live_lines(&self, limit: usize) -> Vec<String> {
+        self.tabs
+            .first()
+            .map(|t| t.recent_lines(limit))
+            .unwrap_or_default()
     }
 
     fn stop_monitor(&mut self, lang: Lang) {
@@ -354,6 +467,7 @@ impl SerialToolPanel {
             flag.store(true, Ordering::SeqCst);
         }
         self.rx = None;
+        self.write_tx = None;
         self.monitoring = false;
         self.close_live_writer();
         self.status = tr(lang, "status.stopped");
@@ -478,6 +592,106 @@ impl SerialToolPanel {
         }
     }
 
+    fn browse_log_browser_dir(&mut self) {
+        let mut dialog = rfd::FileDialog::new();
+        let start = if !self.browser_dir.trim().is_empty() {
+            project_path(&self.browser_dir)
+        } else if !self.live_dir.trim().is_empty() {
+            project_path(&self.live_dir)
+        } else {
+            PathBuf::new()
+        };
+        if start.is_dir() {
+            dialog = dialog.set_directory(start);
+        }
+        if let Some(dir) = dialog.pick_folder() {
+            self.browser_dir = dir.to_string_lossy().into_owned();
+            self.refresh_log_browser();
+            self.persist_open_log_files();
+        }
+    }
+
+    fn resolve_browser_root(&self) -> Option<PathBuf> {
+        let raw = self.browser_dir.trim();
+        if raw.is_empty() {
+            return None;
+        }
+        let root = project_path(raw);
+        root.is_dir().then_some(root)
+    }
+
+    /// Scan `browser_dir` for *immediate* subfolders that contain `.txt` files.
+    /// Nested subfolders are ignored (first level only).
+    fn refresh_log_browser(&mut self) {
+        let scanned_key = self.browser_dir.trim().to_owned();
+        self.browser_scanned_dir = scanned_key;
+        self.browser_folders.clear();
+        let Some(root) = self.resolve_browser_root() else {
+            return;
+        };
+        let Ok(entries) = fs::read_dir(&root) else {
+            return;
+        };
+        let mut folders = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let Ok(files) = fs::read_dir(&path) else {
+                continue;
+            };
+            let mut txts = Vec::new();
+            for file in files.flatten() {
+                let file_path = file.path();
+                // First level only: skip nested directories entirely.
+                if !file_path.is_file() {
+                    continue;
+                }
+                let ext = file_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                if ext != "txt" {
+                    continue;
+                }
+                let name = file_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| file_path.display().to_string());
+                txts.push((name, file_path));
+            }
+            if txts.is_empty() {
+                continue;
+            }
+            txts.sort_by(|a, b| a.0.to_ascii_lowercase().cmp(&b.0.to_ascii_lowercase()));
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            folders.push(LogBrowserFolder { name, files: txts });
+        }
+        folders.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+        self.browser_folders = folders;
+    }
+
+    fn ensure_log_browser_fresh(&mut self) {
+        if self.browser_dir.trim() != self.browser_scanned_dir.trim() {
+            self.refresh_log_browser();
+        }
+    }
+
+    fn open_browser_file(&mut self, path: PathBuf) {
+        if let Some(parent) = path.parent() {
+            self.open_dir = parent.to_string_lossy().into_owned();
+        }
+        if let Some(tab_idx) = self.open_path(path) {
+            self.activate_tab(tab_idx);
+            self.persist_open_log_files();
+        }
+    }
+
     fn close_tab(&mut self, idx: usize) {
         if idx == 0 {
             return; // never close live
@@ -544,6 +758,14 @@ impl SerialToolPanel {
     }
 
     pub fn drain_events(&mut self, update_live_filters: bool) {
+        self.drain_events_with_bus(update_live_filters, None);
+    }
+
+    pub fn drain_events_with_bus(
+        &mut self,
+        update_live_filters: bool,
+        api: Option<&crate::backend::ApiBridge>,
+    ) {
         for tab in &mut self.tabs {
             tab.poll_background_tasks();
         }
@@ -573,8 +795,16 @@ impl SerialToolPanel {
                             extras.push(line);
                         }
                     }
-                    SerialEvent::Status(s) => self.status = s,
+                    SerialEvent::Status(s) => {
+                        if let Some(api) = api {
+                            api.publish_serial_status(&s);
+                        }
+                        self.status = s;
+                    }
                     SerialEvent::Error(e) => {
+                        if let Some(api) = api {
+                            api.publish_serial_status(&format!("error: {e}"));
+                        }
                         self.status = e.clone();
                         if budget > 0 {
                             batch.push(format!("[ERR] {e}"));
@@ -599,13 +829,22 @@ impl SerialToolPanel {
             self.monitoring = false;
             self.stop_flag = None;
             self.rx = None;
+            self.write_tx = None;
             self.close_live_writer();
             self.status = tr(self.last_lang, "status.stopped");
+            if let Some(api) = api {
+                api.set_monitoring(false, None, None);
+                *api.serial_write.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                api.publish_serial_status("stopped");
+            }
         }
 
         if !batch.is_empty() {
             for line in &batch {
                 self.append_to_live_file(line);
+                if let Some(api) = api {
+                    api.publish_serial_line(line);
+                }
             }
             self.flush_live_writer();
             if let Some(live) = self.tabs.get_mut(0) {
@@ -711,26 +950,29 @@ impl SerialToolPanel {
         let avail_w = ui.available_width();
 
         ui.horizontal_top(|ui| {
-            // ── Left connect sidebar ───────────────────────────────────
+            // ── Left sidebar: serial controls + log browser (two groups) ──
             ui.allocate_ui_with_layout(
                 egui::vec2(sidebar_w, avail_h),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
+                    // Shared outer / inner widths so both cards align exactly.
+                    let card_w = ui.available_width();
+                    const CARD_MARGIN_X: i8 = 8;
+                    let inner_w = (card_w - f32::from(CARD_MARGIN_X) * 2.0).max(1.0);
+
+                    // Group 1: serial port controls (width-fixed, height = content)
+                    ui.set_min_width(card_w);
+                    ui.set_max_width(card_w);
                     Frame::NONE
                         .fill(t.surface_bg)
-                        .inner_margin(Margin::symmetric(8, 6))
+                        .inner_margin(Margin::symmetric(CARD_MARGIN_X, 6))
                         .corner_radius(CornerRadius::same(6))
                         .stroke(Stroke::new(1.0_f32, t.border))
                         .show(ui, |ui| {
-                            ui.set_min_width(sidebar_w - 4.0);
-                            ui.set_max_width(sidebar_w - 4.0);
+                            ui.set_min_width(inner_w);
+                            ui.set_max_width(inner_w);
                             ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
-
-                            // All controls must use the same *actual* content
-                            // width. A width derived from `sidebar_w` diverges
-                            // from button width after Frame margins and DPI
-                            // scaling, making ComboBoxes visibly narrower.
-                            let ctrl_w = ui.available_width();
+                            let ctrl_w = inner_w;
 
                             let port_text = self
                                 .ports
@@ -758,7 +1000,7 @@ impl SerialToolPanel {
                                     "{} ({})",
                                     tr(lang, "serial.baud_custom"),
                                     if self.baud.is_empty() {
-                                        "—"
+                                        "-"
                                     } else {
                                         &self.baud
                                     }
@@ -772,7 +1014,10 @@ impl SerialToolPanel {
                                 .show_ui(ui, |ui| {
                                     for b in self.baud_options.clone() {
                                         if ui
-                                            .selectable_label(!self.baud_custom && self.baud == b, &b)
+                                            .selectable_label(
+                                                !self.baud_custom && self.baud == b,
+                                                &b,
+                                            )
                                             .clicked()
                                         {
                                             self.baud = b;
@@ -788,11 +1033,7 @@ impl SerialToolPanel {
                                         .clicked()
                                     {
                                         self.baud_custom = true;
-                                        if self
-                                            .baud_options
-                                            .iter()
-                                            .any(|b| b == &self.baud)
-                                        {
+                                        if self.baud_options.iter().any(|b| b == &self.baud) {
                                             self.baud.clear();
                                         }
                                     }
@@ -805,7 +1046,11 @@ impl SerialToolPanel {
                                         .margin(egui::vec2(6.0, 4.0)),
                                 );
                                 if baud_edit.changed() {
-                                    self.baud = self.baud.chars().filter(|c| c.is_ascii_digit()).collect();
+                                    self.baud = self
+                                        .baud
+                                        .chars()
+                                        .filter(|c| c.is_ascii_digit())
+                                        .collect();
                                 }
                             }
 
@@ -834,12 +1079,10 @@ impl SerialToolPanel {
                                 }
                             }
 
-                            if ui_theme::secondary_button(ui, t, tr(lang, "btn.new")).clicked()
-                            {
+                            if ui_theme::secondary_button(ui, t, tr(lang, "btn.new")).clicked() {
                                 self.new_live_log(lang);
                             }
-                            if ui_theme::secondary_button(ui, t, tr(lang, "btn.clear")).clicked()
-                            {
+                            if ui_theme::secondary_button(ui, t, tr(lang, "btn.clear")).clicked() {
                                 self.clear_live_display();
                             }
 
@@ -892,6 +1135,145 @@ impl SerialToolPanel {
                                 self.open_files();
                             }
                         });
+
+                    ui.add_space(8.0);
+
+                    // Group 2: log directory browser — same card/inner width &
+                    // full-width stacked controls as Group 1 (no side-by-side wrap).
+                    let browser_h = ui.available_height().max(120.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(card_w, browser_h),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_min_width(card_w);
+                            ui.set_max_width(card_w);
+                            ui.set_min_height(browser_h);
+                            ui.set_max_height(browser_h);
+                            Frame::NONE
+                                .fill(t.surface_bg)
+                                .inner_margin(Margin::symmetric(CARD_MARGIN_X, 6))
+                                .corner_radius(CornerRadius::same(6))
+                                .stroke(Stroke::new(1.0_f32, t.border))
+                                .show(ui, |ui| {
+                                    ui.set_min_width(inner_w);
+                                    ui.set_max_width(inner_w);
+                                    ui.set_min_height(ui.available_height());
+                                    ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
+                                    let ctrl_w = ui.available_width().min(inner_w).max(1.0);
+
+                                    ui.label(
+                                        egui::RichText::new(tr(lang, "log.browser_dir"))
+                                            .size(12.0)
+                                            .strong()
+                                            .color(t.text_primary),
+                                    );
+                                    let browser_edit = ui.add(
+                                        egui::TextEdit::singleline(&mut self.browser_dir)
+                                            .desired_width(ctrl_w)
+                                            .hint_text(tr(lang, "log.browser_hint"))
+                                            .margin(egui::vec2(6.0, 4.0)),
+                                    );
+                                    if browser_edit.lost_focus() {
+                                        self.refresh_log_browser();
+                                        self.persist_open_log_files();
+                                    }
+
+                                    // Full-width stacked buttons — same as 选择路径 / 打开文件 above.
+                                    if ui_theme::secondary_button(
+                                        ui,
+                                        t,
+                                        tr(lang, "btn.browse_dir"),
+                                    )
+                                    .clicked()
+                                    {
+                                        self.browse_log_browser_dir();
+                                    }
+                                    if ui_theme::secondary_button(
+                                        ui,
+                                        t,
+                                        tr(lang, "btn.refresh_browser"),
+                                    )
+                                    .clicked()
+                                    {
+                                        self.refresh_log_browser();
+                                    }
+
+                                    self.ensure_log_browser_fresh();
+
+                                    if self.browser_dir.trim().is_empty() {
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(tr(lang, "log.browser_hint"))
+                                                    .size(11.0)
+                                                    .color(t.text_muted),
+                                            )
+                                            .wrap(),
+                                        );
+                                    } else if self.browser_folders.is_empty() {
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(tr(lang, "log.browser_empty"))
+                                                    .size(11.0)
+                                                    .color(t.text_muted),
+                                            )
+                                            .wrap(),
+                                        );
+                                    } else {
+                                        let list_h = ui.available_height().max(72.0);
+                                        let list_w = ui.available_width().min(ctrl_w);
+                                        let mut open_path: Option<PathBuf> = None;
+                                        egui::ScrollArea::vertical()
+                                            .id_salt("log_browser_tree")
+                                            .max_height(list_h)
+                                            .auto_shrink([false, false])
+                                            .show(ui, |ui| {
+                                                ui.set_min_width(list_w);
+                                                ui.set_max_width(list_w);
+                                                ui.spacing_mut().item_spacing.y = 2.0;
+                                                for folder in &self.browser_folders {
+                                                    let header = format!(
+                                                        "{}  ({})",
+                                                        folder.name,
+                                                        folder.files.len()
+                                                    );
+                                                    egui::CollapsingHeader::new(
+                                                        egui::RichText::new(header)
+                                                            .size(12.0)
+                                                            .strong(),
+                                                    )
+                                                    .id_salt((
+                                                        "log-browser-folder",
+                                                        folder.name.as_str(),
+                                                    ))
+                                                    .default_open(false)
+                                                    .show(ui, |ui| {
+                                                        ui.set_min_width(list_w);
+                                                        ui.set_max_width(list_w);
+                                                        ui.spacing_mut().item_spacing.y = 1.0;
+                                                        for (name, path) in &folder.files {
+                                                            let resp = ui.add_sized(
+                                                                egui::vec2(list_w, 18.0),
+                                                                egui::SelectableLabel::new(
+                                                                    false,
+                                                                    egui::RichText::new(name)
+                                                                        .size(12.0)
+                                                                        .color(t.text_primary),
+                                                                ),
+                                                            );
+                                                            if resp.clicked() {
+                                                                open_path = Some(path.clone());
+                                                            }
+                                                        }
+                                                    });
+                                                }
+                                            });
+                                        if let Some(path) = open_path {
+                                            self.open_browser_file(path);
+                                        }
+                                    }
+                                });
+                        },
+                    );
                 },
             );
 
@@ -1419,7 +1801,13 @@ fn rename_log_path(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
     fs::rename(old_path, new_path)
 }
 
-fn serial_worker(port: String, baud: u32, stop: Arc<AtomicBool>, tx: Sender<SerialEvent>) {
+fn serial_worker(
+    port: String,
+    baud: u32,
+    stop: Arc<AtomicBool>,
+    tx: Sender<SerialEvent>,
+    write_rx: Receiver<Vec<u8>>,
+) {
     let mut session = match SerialSession::open(&port, baud) {
         Ok(s) => s,
         Err(e) => {
@@ -1431,6 +1819,11 @@ fn serial_worker(port: String, baud: u32, stop: Arc<AtomicBool>, tx: Sender<Seri
     let _ = tx.send(SerialEvent::Status(format!("open {port}")));
     let mut last_stamp = Local::now().naive_local() - chrono::Duration::milliseconds(1);
     while !stop.load(Ordering::SeqCst) {
+        while let Ok(bytes) = write_rx.try_recv() {
+            if let Err(e) = session.write_bytes(&bytes) {
+                let _ = tx.send(SerialEvent::Error(e.to_string()));
+            }
+        }
         match session.poll_events() {
             Ok(events) => {
                 for ev in events {
@@ -1460,8 +1853,6 @@ fn serial_worker(port: String, baud: u32, stop: Arc<AtomicBool>, tx: Sender<Seri
                             let payload = strip_tx_prefix(&line);
                             let stamped =
                                 format!("{} {}", next_strict_timestamp(&mut last_stamp), payload);
-                            // Python parity: live log shows raw timestamped ASK/FSK only;
-                            // full decode is hover tooltip (Auto Parse), not an inline "| …".
                             if tx.send(SerialEvent::Line(stamped)).is_err() {
                                 return;
                             }

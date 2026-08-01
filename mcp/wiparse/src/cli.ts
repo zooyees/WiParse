@@ -50,6 +50,11 @@ export async function runCli(
 ): Promise<CliEnvelope> {
   const cli = resolveCliPath();
   const fullArgs = ["--json"];
+  // Prefer attach to GUI API when WIPARSE_URL is set (C+E).
+  const apiUrl = process.env.WIPARSE_URL?.trim();
+  if (apiUrl && !process.env.WIPARSE_LOCAL) {
+    fullArgs.push("--url", apiUrl);
+  }
   if (options.config) {
     fullArgs.push("--config", options.config);
   }
