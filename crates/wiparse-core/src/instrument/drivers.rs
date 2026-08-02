@@ -1025,6 +1025,7 @@ impl InstrumentDevice {
         } else {
             YScaleKind::Rigol
         };
+        let y_unit = self.query_scope_y_unit(channel);
         self.session.write(":WAV:DATA?")?;
         let raw = self.session.read_raw()?;
         let data = parse_ieee_block(&raw);
@@ -1039,6 +1040,8 @@ impl InstrumentDevice {
             yzero,
             false,
             y_scale,
+            "s",
+            &y_unit,
         )
     }
 
@@ -1057,6 +1060,7 @@ impl InstrumentDevice {
             } else {
                 self.keysight_scale_queries()?
             };
+        let y_unit = self.query_scope_y_unit(channel);
         let _ = self.session.write(&format!(":WAVeform:POINts {points}"));
         self.session.write(":WAVeform:DATA?")?;
         let raw = self.session.read_raw()?;
@@ -1072,6 +1076,8 @@ impl InstrumentDevice {
             yzero,
             false,
             YScaleKind::Keysight,
+            "s",
+            &y_unit,
         )
     }
 
@@ -1118,12 +1124,68 @@ impl InstrumentDevice {
         let yoff = self.session.query_f64("WFMOutpre:YOFf?")?;
         let yzero = self.session.query_f64("WFMOutpre:YZEro?")?;
         let pt_off = self.session.query_f64("WFMOutpre:PT_Off?").unwrap_or(0.0);
+        let y_unit = self.query_scope_y_unit(channel);
         self.session.write("CURVe?")?;
         let raw = self.session.read_raw()?;
         let data = parse_ieee_block(&raw);
         decode_scope_bytes(
-            data, channel, xincr, xzero, pt_off, ymult, yoff, yzero, true, YScaleKind::Tek,
+            data,
+            channel,
+            xincr,
+            xzero,
+            pt_off,
+            ymult,
+            yoff,
+            yzero,
+            true,
+            YScaleKind::Tek,
+            "s",
+            &y_unit,
         )
+    }
+
+    /// Query vertical unit (supports voltage / current probes). Falls back to `"V"`.
+    fn query_scope_y_unit(&mut self, channel: u8) -> String {
+        let channel = channel.clamp(1, 8);
+        let candidates: &[&str] = if self.vendor_is("TEKTRONIX") {
+            &[
+                "WFMOutpre:YUNit?",
+                "WFMOutpre:YUNIT?",
+                "WFMOutpre:YUNits?",
+            ]
+        } else if self.is_keysight_family() {
+            &[
+                ":WAVeform:YUNits?",
+                ":WAVeform:YUNIT?",
+                ":WAVeform:YUNit?",
+            ]
+        } else {
+            // Rigol / Siglent channel units (current probe → A).
+            &[]
+        };
+        for cmd in candidates {
+            if let Ok(raw) = self.session.query(cmd) {
+                let u = normalize_wave_unit(&raw, "");
+                if !u.is_empty() {
+                    return u;
+                }
+            }
+        }
+        if self.is_rigol_siglent_family() {
+            for cmd in [
+                format!(":CHANnel{channel}:UNITs?"),
+                format!(":CHAN{channel}:UNIT?"),
+                format!(":CHANnel{channel}:UNIT?"),
+            ] {
+                if let Ok(raw) = self.session.query(&cmd) {
+                    let u = normalize_wave_unit(&raw, "");
+                    if !u.is_empty() {
+                        return u;
+                    }
+                }
+            }
+        }
+        "V".into()
     }
 
     /// Tektronix: save waveform to scope disk, then `FILESystem:READFile`.
@@ -1823,6 +1885,8 @@ fn decode_scope_bytes(
     yzero: f64,
     signed: bool,
     y_scale: YScaleKind,
+    x_unit: &str,
+    y_unit: &str,
 ) -> Result<WaveformTrace, InstrumentError> {
     if data.is_empty() {
         return Err(InstrumentError::Unsupported("empty waveform block".into()));
@@ -1842,9 +1906,42 @@ fn decode_scope_bytes(
         channel: format!("CH{channel}"),
         x,
         y,
-        x_unit: "s".into(),
-        y_unit: "V".into(),
+        x_unit: normalize_wave_unit(x_unit, "s"),
+        y_unit: normalize_wave_unit(y_unit, "V"),
     })
+}
+
+/// Strip quotes / NULs from instrument unit strings (`"A"`, `A\0…`, `Amps` → `A`).
+fn normalize_wave_unit(raw: &str, default: &str) -> String {
+    let s = raw
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim_end_matches('\0')
+        .trim();
+    if s.is_empty() {
+        return default.to_string();
+    }
+    // Reject numeric / status replies from unsupported unit queries (e.g. demo `"0"`).
+    if s.chars()
+        .all(|c| c.is_ascii_digit() || c == '.' || c == '+' || c == '-' || c == 'e' || c == 'E')
+    {
+        return default.to_string();
+    }
+    match s.to_ascii_lowercase().as_str() {
+        "a" | "aa" | "amp" | "amps" | "ampere" | "amperes" => "A".into(),
+        "v" | "volt" | "volts" => "V".into(),
+        "w" | "watt" | "watts" => "W".into(),
+        "s" | "sec" | "second" | "seconds" => "s".into(),
+        other => {
+            // Keep short unit tokens (A, V, mA, …); drop long descriptive strings.
+            if other.len() <= 8 && other.chars().any(|c| c.is_ascii_alphabetic()) {
+                s.to_string()
+            } else {
+                default.to_string()
+            }
+        }
+    }
 }
 
 /// Parse Keysight `:WAVeform:PREamble?` → (points, xinc, xorig, xref, yinc, yorig, yref).
@@ -2070,6 +2167,14 @@ mod tests {
             .read_measurements()
             .unwrap();
         assert!(readings.len() >= 3);
+    }
+
+    #[test]
+    fn normalize_wave_unit_maps_current_probe_tokens() {
+        assert_eq!(normalize_wave_unit("A", "V"), "A");
+        assert_eq!(normalize_wave_unit("\"Amps\"", "V"), "A");
+        assert_eq!(normalize_wave_unit("V", "A"), "V");
+        assert_eq!(normalize_wave_unit("", "V"), "V");
     }
 
     #[test]

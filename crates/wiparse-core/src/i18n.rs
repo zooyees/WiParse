@@ -115,6 +115,8 @@ pub fn tr(lang: Lang, key: &str) -> String {
         (Lang::En, "status.create_failed") => "Failed to create log file",
         (Lang::Zh, "status.rename_ok") => "日志文件已更名",
         (Lang::En, "status.rename_ok") => "Log file renamed",
+        (Lang::Zh, "status.rename_split_ok") => "原日志已保留，已切换到新文件",
+        (Lang::En, "status.rename_split_ok") => "Kept previous log; switched to new file",
         (Lang::Zh, "status.rename_invalid") => "文件名无效，不能包含 Windows 保留字符",
         (Lang::En, "status.rename_invalid") => "Invalid file name",
         (Lang::Zh, "status.rename_exists") => "目标文件已存在，未执行更名",

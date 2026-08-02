@@ -735,6 +735,26 @@ fn sanitize_channel_name(raw: &str) -> String {
     }
 }
 
+/// Normalize Tek/Rigol unit tokens so current-probe `"A"` / `Amps` map to `A`.
+fn normalize_isf_unit(raw: &str, default: &str) -> String {
+    let s = raw
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim_end_matches('\0')
+        .trim();
+    if s.is_empty() {
+        return default.to_string();
+    }
+    match s.to_ascii_lowercase().as_str() {
+        "a" | "aa" | "amp" | "amps" | "ampere" | "amperes" => "A".into(),
+        "v" | "volt" | "volts" => "V".into(),
+        "w" | "watt" | "watts" => "W".into(),
+        "s" | "sec" | "second" | "seconds" => "s".into(),
+        _ => s.to_string(),
+    }
+}
+
 fn split_csv(line: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
@@ -1028,16 +1048,8 @@ fn load_tek_wfm_structured_all(
 
     let sample_size = wfm_curve_sample_bytes(curve_fmt, bytes_per_pt)?;
     let channel_names = wfm_channel_names(&label, default_channel, curve_ranges.len());
-    let x_unit = if x_unit.is_empty() {
-        "s".into()
-    } else {
-        x_unit
-    };
-    let y_unit = if y_unit.is_empty() {
-        "V".into()
-    } else {
-        y_unit
-    };
+    let x_unit = normalize_isf_unit(&x_unit, "s");
+    let y_unit = normalize_isf_unit(&y_unit, "V");
 
     let mut traces = Vec::with_capacity(curve_ranges.len());
     for (idx, (data_start, postcharge_start)) in curve_ranges.into_iter().enumerate() {
@@ -1388,7 +1400,13 @@ fn load_tek_isf(bytes: &[u8], default_channel: &str) -> Result<WaveformTrace, Wa
     let yoff = kv_f64(&kv, "YOFF").unwrap_or(0.0);
     let yzero = kv_f64(&kv, "YZERO").unwrap_or(0.0);
     let x_unit = kv_str(&kv, "XUNIT").unwrap_or("s").replace('"', "");
-    let y_unit = kv_str(&kv, "YUNIT").unwrap_or("V").replace('"', "");
+    let y_unit = normalize_isf_unit(
+        &kv_str(&kv, "YUNIT")
+            .or_else(|| kv_str(&kv, "YUNit"))
+            .unwrap_or("V")
+            .replace('"', ""),
+        "V",
+    );
     let channel = kv_str(&kv, "WFID")
         .or_else(|| kv_str(&kv, "SOURCE"))
         .map(|s| sanitize_channel_name(&s.replace('"', "")))
@@ -1581,6 +1599,25 @@ mod tests {
         assert!((trace.y[1] - 10.0).abs() < 1e-9);
         assert!((trace.y[3] + 10.0).abs() < 1e-9);
         assert!((trace.x[1] - 1e-6).abs() < 1e-15);
+    }
+
+    #[test]
+    fn load_tek_isf_current_probe_yunit_a() {
+        // Current probe: YUNIT "A", YMULT in A/div-code (values are amperes).
+        let mut bytes = b":WFMPRE:BYT_NR 1;BN_FMT RI;BYT_OR MSB;NR_PT 4;XINCR 1.0E-6;XZERO 0;XUNIT \"s\";YMULT 0.01;YOFF 0;YZERO 0;YUNIT \"A\";WFID \"CH1\";:CURVE #14".to_vec();
+        bytes.extend_from_slice(&[0i8 as u8, 100i8 as u8, 0i8 as u8, (-50i8) as u8]);
+        let trace = load_tek_isf(&bytes, "CH1").unwrap();
+        assert_eq!(trace.y_unit, "A");
+        assert!((trace.y[1] - 1.0).abs() < 1e-9); // 100 * 0.01 A
+        assert!((trace.y[3] + 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn load_csv_current_channel_unit() {
+        let csv = "Time(s),CH1(A)\n0.0,0.1\n1e-6,0.2\n2e-6,-0.1\n";
+        let trace = load_waveform_csv_bytes(csv.as_bytes(), "CH1").unwrap();
+        assert_eq!(trace.y_unit, "A");
+        assert!((trace.y[1] - 0.2).abs() < 1e-12);
     }
 
     #[test]

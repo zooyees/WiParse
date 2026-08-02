@@ -483,6 +483,12 @@ impl DemoTransport {
         if cmd.contains("WAV:YREF") || cmd.contains("WFMOUTPRE:YZERO") {
             return "0".into();
         }
+        if cmd.contains("YUNIT") || cmd.contains("YUNITS") || cmd.contains("YUN") {
+            return "\"V\"".into();
+        }
+        if cmd.contains(":UNITS?") || cmd.contains(":UNIT?") {
+            return "VOLT".into();
+        }
         if cmd.contains("IMMED:UNIT") || cmd.contains("IMMED:UNITS") {
             return match self.kind {
                 InstrumentKind::Oscilloscope => "Hz".into(),

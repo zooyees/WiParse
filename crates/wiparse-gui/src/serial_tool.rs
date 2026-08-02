@@ -257,35 +257,101 @@ impl SerialToolPanel {
                 return false;
             }
         };
+        if name == self.committed_live_name {
+            self.live_name = name;
+            return true;
+        }
+
+        let old_name = self.committed_live_name.clone();
+        let old_path = self.live_file.clone().or_else(|| {
+            // Prefer the path that matches the committed name (before UI edit).
+            let dir = if self.live_dir.is_empty() {
+                PathBuf::from("log")
+            } else {
+                PathBuf::from(&self.live_dir)
+            };
+            let p = dir.join(format!("{old_name}.txt"));
+            p.exists().then_some(p)
+        });
         self.live_name = name;
         let new_path = self.live_path();
-        if let Some(old_path) = self.live_file.clone() {
-            if old_path != new_path && old_path.exists() {
-                self.close_live_writer();
-                if let Err(err) = rename_log_path(&old_path, &new_path) {
-                    self.live_name = self.committed_live_name.clone();
-                    self.status = if err.kind() == std::io::ErrorKind::AlreadyExists {
-                        tr(lang, "status.rename_exists")
-                    } else {
-                        format!("{}: {err}", tr(lang, "status.rename_failed"))
-                    };
-                    return false;
+
+        if new_path.exists() {
+            // Don't overwrite an existing log; revert name.
+            self.live_name = old_name;
+            self.status = tr(lang, "status.rename_exists");
+            return false;
+        }
+
+        let empty = live_capture_is_empty(
+            self.tabs.first().map(|t| t.line_count()).unwrap_or(0),
+            old_path.as_deref(),
+        );
+
+        if empty {
+            // No realtime content: rename the current (empty/BOM) file in place.
+            if let Some(old_path) = old_path {
+                if old_path != new_path && old_path.exists() {
+                    self.close_live_writer();
+                    if let Err(err) = rename_log_path(&old_path, &new_path) {
+                        self.live_name = old_name;
+                        self.status = if err.kind() == std::io::ErrorKind::AlreadyExists {
+                            tr(lang, "status.rename_exists")
+                        } else {
+                            format!("{}: {err}", tr(lang, "status.rename_failed"))
+                        };
+                        return false;
+                    }
                 }
             }
             self.live_file = Some(new_path);
             self.live_writer = None;
+            // Reopen writer if monitoring so subsequent lines keep flowing.
+            if self.monitoring {
+                if let Err(e) = self.ensure_live_file() {
+                    self.status = format!("{}: {e}", tr(lang, "status.create_failed"));
+                    return false;
+                }
+            }
+            self.committed_live_name = self.live_name.clone();
+            if let Some(live) = self.tabs.get_mut(0) {
+                live.title = self.committed_live_name.clone();
+            }
+            self.persist_live_log_name();
+            self.status = format!(
+                "{}: {}",
+                tr(lang, "status.rename_ok"),
+                self.committed_live_name
+            );
+            true
+        } else {
+            // Has data: keep the old file under the old name, start a fresh live file.
+            self.close_live_writer();
+            // old_path file is left as-is (already flushed).
+            self.live_file = None;
+            self.live_writer = None;
+            self.pending_lines.clear();
+            self.clear_live_display();
+            if let Err(e) = self.ensure_live_file() {
+                // Roll back name so UI matches the file that still holds data.
+                self.live_name = old_name.clone();
+                self.live_file = old_path;
+                self.status = format!("{}: {e}", tr(lang, "status.create_failed"));
+                return false;
+            }
+            self.committed_live_name = self.live_name.clone();
+            if let Some(live) = self.tabs.get_mut(0) {
+                live.title = self.committed_live_name.clone();
+            }
+            self.persist_live_log_name();
+            self.status = format!(
+                "{}: {} → {}",
+                tr(lang, "status.rename_split_ok"),
+                old_name,
+                self.committed_live_name
+            );
+            true
         }
-        self.committed_live_name = self.live_name.clone();
-        if let Some(live) = self.tabs.get_mut(0) {
-            live.title = self.committed_live_name.clone();
-        }
-        self.persist_live_log_name();
-        self.status = format!(
-            "{}: {}",
-            tr(lang, "status.rename_ok"),
-            self.committed_live_name
-        );
-        true
     }
 
     fn persist_live_log_name(&self) {
@@ -945,32 +1011,44 @@ impl SerialToolPanel {
 
         // Python log_panel: fixed left sidebar + content (must force top-down
         // layouts — parent horizontal_top would otherwise stack every control in a row).
-        let sidebar_w = 172.0;
+        // Fixed sidebar (+25% vs original 172). Cards leave 1px inset so Inside strokes show.
+        let sidebar_w = 172.0 * 1.25; // 215
         let avail_h = ui.available_height();
         let avail_w = ui.available_width();
+        const SIDE_MAIN_GAP: f32 = 4.0;
 
         ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = SIDE_MAIN_GAP;
             // ── Left sidebar: serial controls + log browser (two groups) ──
-            ui.allocate_ui_with_layout(
-                egui::vec2(sidebar_w, avail_h),
-                egui::Layout::top_down(egui::Align::Min),
+            // Exact allocation so expanding the tree cannot push the main pane right.
+            let (side_rect, _) =
+                ui.allocate_exact_size(egui::vec2(sidebar_w, avail_h), egui::Sense::hover());
+            // 1px left/right padding so card borders are never clipped by the allocate edge.
+            const SIDE_PAD: f32 = 1.0;
+            let side_inner = egui::Rect::from_min_max(
+                egui::pos2(side_rect.min.x + SIDE_PAD, side_rect.min.y),
+                egui::pos2(side_rect.max.x - SIDE_PAD, side_rect.max.y),
+            );
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(side_inner)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
                 |ui| {
-                    // Shared outer / inner widths so both cards align exactly.
-                    let card_w = ui.available_width();
+                    let card_w = side_inner.width();
+                    ui.set_min_size(side_inner.size());
+                    ui.set_max_size(side_inner.size());
+                    ui.set_clip_rect(side_rect.intersect(ui.clip_rect()));
                     const CARD_MARGIN_X: i8 = 8;
                     let inner_w = (card_w - f32::from(CARD_MARGIN_X) * 2.0).max(1.0);
 
-                    // Group 1: serial port controls (width-fixed, height = content)
-                    ui.set_min_width(card_w);
-                    ui.set_max_width(card_w);
-                    Frame::NONE
+                    // Group 1: serial port controls — fill + Inside stroke (no Frame stroke clip).
+                    ui.set_width(card_w);
+                    let g1 = Frame::NONE
                         .fill(t.surface_bg)
                         .inner_margin(Margin::symmetric(CARD_MARGIN_X, 6))
                         .corner_radius(CornerRadius::same(6))
-                        .stroke(Stroke::new(1.0_f32, t.border))
                         .show(ui, |ui| {
-                            ui.set_min_width(inner_w);
-                            ui.set_max_width(inner_w);
+                            ui.set_width(inner_w);
                             ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
                             let ctrl_w = inner_w;
 
@@ -1135,31 +1213,54 @@ impl SerialToolPanel {
                                 self.open_files();
                             }
                         });
+                    paint_sidebar_card_border(ui, g1.response.rect, card_w, t.border);
 
                     ui.add_space(8.0);
 
-                    // Group 2: log directory browser — same card/inner width &
-                    // full-width stacked controls as Group 1 (no side-by-side wrap).
+                    // Group 2: log directory browser — same fixed width as Group 1.
                     let browser_h = ui.available_height().max(120.0);
-                    ui.allocate_ui_with_layout(
+                    let browser_rect = egui::Rect::from_min_size(
+                        ui.cursor().min,
                         egui::vec2(card_w, browser_h),
-                        egui::Layout::top_down(egui::Align::Min),
+                    );
+                    ui.advance_cursor_after_rect(browser_rect);
+                    ui.scope_builder(
+                        egui::UiBuilder::new()
+                            .max_rect(browser_rect)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
                         |ui| {
-                            ui.set_min_width(card_w);
-                            ui.set_max_width(card_w);
-                            ui.set_min_height(browser_h);
-                            ui.set_max_height(browser_h);
-                            Frame::NONE
-                                .fill(t.surface_bg)
-                                .inner_margin(Margin::symmetric(CARD_MARGIN_X, 6))
-                                .corner_radius(CornerRadius::same(6))
-                                .stroke(Stroke::new(1.0_f32, t.border))
-                                .show(ui, |ui| {
-                                    ui.set_min_width(inner_w);
-                                    ui.set_max_width(inner_w);
-                                    ui.set_min_height(ui.available_height());
+                            ui.set_min_size(browser_rect.size());
+                            ui.set_max_size(browser_rect.size());
+                            ui.set_clip_rect(browser_rect.intersect(ui.clip_rect()));
+                            ui.set_width(card_w);
+                            // Fill first; border painted after so it sits above fill and isn't clipped.
+                            ui.painter().rect_filled(
+                                browser_rect,
+                                CornerRadius::same(6),
+                                t.surface_bg,
+                            );
+                            ui.painter().rect_stroke(
+                                browser_rect,
+                                CornerRadius::same(6),
+                                Stroke::new(1.0_f32, t.border),
+                                egui::StrokeKind::Inside,
+                            );
+                            let content = browser_rect.shrink2(egui::vec2(
+                                1.0 + f32::from(CARD_MARGIN_X),
+                                1.0 + 6.0,
+                            ));
+                            ui.scope_builder(
+                                egui::UiBuilder::new()
+                                    .max_rect(content)
+                                    .layout(egui::Layout::top_down(egui::Align::Min)),
+                                |ui| {
+                                    ui.set_width(content.width());
+                                    ui.set_max_width(content.width());
+                                    ui.set_min_height(content.height());
+                                    ui.set_clip_rect(content.intersect(ui.clip_rect()));
                                     ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
-                                    let ctrl_w = ui.available_width().min(inner_w).max(1.0);
+                                    let ctrl_w = content.width().max(1.0);
+                                    let inner_w = ctrl_w;
 
                                     ui.label(
                                         egui::RichText::new(tr(lang, "log.browser_dir"))
@@ -1178,7 +1279,6 @@ impl SerialToolPanel {
                                         self.persist_open_log_files();
                                     }
 
-                                    // Full-width stacked buttons — same as 选择路径 / 打开文件 above.
                                     if ui_theme::secondary_button(
                                         ui,
                                         t,
@@ -1220,14 +1320,15 @@ impl SerialToolPanel {
                                         );
                                     } else {
                                         let list_h = ui.available_height().max(72.0);
-                                        let list_w = ui.available_width().min(ctrl_w);
+                                        let list_w = ctrl_w;
                                         let mut open_path: Option<PathBuf> = None;
-                                        egui::ScrollArea::vertical()
+                                        egui::ScrollArea::new([false, true]) // vertical only
                                             .id_salt("log_browser_tree")
                                             .max_height(list_h)
+                                            .max_width(list_w)
                                             .auto_shrink([false, false])
                                             .show(ui, |ui| {
-                                                ui.set_min_width(list_w);
+                                                ui.set_width(list_w);
                                                 ui.set_max_width(list_w);
                                                 ui.spacing_mut().item_spacing.y = 2.0;
                                                 for folder in &self.browser_folders {
@@ -1247,18 +1348,21 @@ impl SerialToolPanel {
                                                     ))
                                                     .default_open(false)
                                                     .show(ui, |ui| {
-                                                        ui.set_min_width(list_w);
-                                                        ui.set_max_width(list_w);
+                                                        // Indent leaves less width — use available.
+                                                        let row_w =
+                                                            ui.available_width().min(list_w).max(1.0);
+                                                        ui.set_width(row_w);
+                                                        ui.set_max_width(row_w);
+                                                        ui.set_clip_rect(
+                                                            ui.max_rect().intersect(ui.clip_rect()),
+                                                        );
                                                         ui.spacing_mut().item_spacing.y = 1.0;
                                                         for (name, path) in &folder.files {
-                                                            let resp = ui.add_sized(
-                                                                egui::vec2(list_w, 18.0),
-                                                                egui::SelectableLabel::new(
-                                                                    false,
-                                                                    egui::RichText::new(name)
-                                                                        .size(12.0)
-                                                                        .color(t.text_primary),
-                                                                ),
+                                                            let resp = log_browser_file_row(
+                                                                ui,
+                                                                name,
+                                                                row_w,
+                                                                t.text_primary,
                                                             );
                                                             if resp.clicked() {
                                                                 open_path = Some(path.clone());
@@ -1271,16 +1375,16 @@ impl SerialToolPanel {
                                             self.open_browser_file(path);
                                         }
                                     }
-                                });
+                                },
+                            ); // end browser content
                         },
-                    );
+                    ); // end browser card scope
                 },
-            );
-
-            ui.add_space(8.0);
+            ); // end sidebar scope_builder
 
             // ── Right: file tabs + LogTabPage ─────────────────────────
-            let content_w = (avail_w - sidebar_w - 16.0).max(200.0);
+            // Gap already applied via item_spacing (SIDE_MAIN_GAP).
+            let content_w = (avail_w - sidebar_w - SIDE_MAIN_GAP).max(200.0);
             ui.allocate_ui_with_layout(
                 egui::vec2(content_w, avail_h),
                 egui::Layout::top_down(egui::Align::Min),
@@ -1674,6 +1778,59 @@ fn open_live_writer(path: &Path) -> std::io::Result<BufWriter<File>> {
     Ok(BufWriter::with_capacity(64 * 1024, f))
 }
 
+/// Draw sidebar card border with Inside stroke so the right edge stays visible.
+fn paint_sidebar_card_border(ui: &egui::Ui, rect: egui::Rect, card_w: f32, border: Color32) {
+    let mut r = rect;
+    r.set_width(card_w);
+    ui.painter().rect_stroke(
+        r,
+        CornerRadius::same(6),
+        Stroke::new(1.0_f32, border),
+        egui::StrokeKind::Inside,
+    );
+}
+
+/// One-line, left-aligned, truncated file row with full-name tooltip.
+fn log_browser_file_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    row_w: f32,
+    color: Color32,
+) -> egui::Response {
+    let row_h = 18.0_f32;
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(row_w.max(1.0), row_h), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        if resp.hovered() {
+            ui.painter().rect_filled(
+                rect,
+                CornerRadius::same(3),
+                Color32::from_rgba_unmultiplied(0x3B, 0x82, 0xF6, 40),
+            );
+        }
+        // Left-aligned single-line label; truncate overflow with ellipsis.
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            |ui| {
+                ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+                ui.set_min_width(rect.width());
+                ui.set_max_width(rect.width());
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(name).size(12.0).color(color),
+                    )
+                    .truncate()
+                    .selectable(false),
+                );
+            },
+        );
+    }
+    resp.on_hover_text(name)
+}
+
 fn elide_tab_title(title: &str, max_chars: usize) -> String {
     let count = title.chars().count();
     if count <= max_chars {
@@ -1799,6 +1956,22 @@ fn rename_log_path(old_path: &Path, new_path: &Path) -> std::io::Result<()> {
         fs::create_dir_all(parent)?;
     }
     fs::rename(old_path, new_path)
+}
+
+/// True when the live capture has no realtime lines and the on-disk file is
+/// missing or only contains a UTF-8 BOM (created by [`SerialToolPanel::ensure_live_file`]).
+fn live_capture_is_empty(live_line_count: usize, live_file: Option<&Path>) -> bool {
+    if live_line_count > 0 {
+        return false;
+    }
+    match live_file {
+        None => true,
+        Some(path) if !path.exists() => true,
+        Some(path) => match fs::metadata(path) {
+            Ok(meta) => meta.len() <= 3, // `\xEF\xBB\xBF` only
+            Err(_) => true,
+        },
+    }
 }
 
 fn serial_worker(
@@ -1937,6 +2110,53 @@ mod tests {
 
         assert!(!old_path.exists());
         assert_eq!(fs::read(&new_path).unwrap(), b"log");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn live_capture_empty_detects_bom_only_and_memory_lines() {
+        let dir = std::env::temp_dir().join(format!("wiparse_empty_test_{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let bom_only = dir.join("bom.txt");
+        let with_data = dir.join("data.txt");
+        fs::write(&bom_only, b"\xEF\xBB\xBF").unwrap();
+        fs::write(&with_data, b"\xEF\xBB\xBFline\n").unwrap();
+
+        assert!(live_capture_is_empty(0, None));
+        assert!(live_capture_is_empty(0, Some(&bom_only)));
+        assert!(!live_capture_is_empty(0, Some(&with_data)));
+        assert!(!live_capture_is_empty(3, Some(&bom_only)));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rename_when_empty_moves_file_when_nonempty_keeps_old() {
+        let dir = std::env::temp_dir().join(format!("wiparse_split_test_{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+
+        // Empty (BOM): rename in place.
+        let empty_old = dir.join("empty_old.txt");
+        let empty_new = dir.join("empty_new.txt");
+        fs::write(&empty_old, b"\xEF\xBB\xBF").unwrap();
+        assert!(live_capture_is_empty(0, Some(&empty_old)));
+        rename_log_path(&empty_old, &empty_new).unwrap();
+        assert!(!empty_old.exists());
+        assert!(empty_new.exists());
+
+        // Non-empty: keep old file; create a separate new file (split semantics).
+        let data_old = dir.join("data_old.txt");
+        let data_new = dir.join("data_new.txt");
+        fs::write(&data_old, b"\xEF\xBB\xBF[12:00:00.000] hello\n").unwrap();
+        assert!(!live_capture_is_empty(0, Some(&data_old)));
+        fs::write(&data_new, b"\xEF\xBB\xBF").unwrap();
+        assert!(data_old.exists());
+        assert!(data_new.exists());
+        assert_ne!(
+            fs::read(&data_old).unwrap(),
+            fs::read(&data_new).unwrap()
+        );
+
         let _ = fs::remove_dir_all(dir);
     }
 

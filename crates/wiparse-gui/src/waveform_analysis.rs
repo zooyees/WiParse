@@ -1162,15 +1162,23 @@ impl WaveformAnalysisPanel {
             .allow_scroll(!ctrl)
             .allow_boxed_zoom(mode == InteractMode::Pan)
             .legend(Legend::default())
-            .label_formatter(|name, value| {
-                if name.is_empty() {
-                    format!("t={}\nv={}", format_eng(value.x, "s"), format_eng(value.y, "V"))
-                } else {
-                    format!(
-                        "{name}\nt={}\nv={}",
-                        format_eng(value.x, "s"),
-                        format_eng(value.y, "V")
-                    )
+            .label_formatter({
+                let xu = xu.clone();
+                let yu = yu.clone();
+                move |name, value| {
+                    if name.is_empty() {
+                        format!(
+                            "t={}\ny={}",
+                            format_eng(value.x, &xu),
+                            format_eng(value.y, &yu)
+                        )
+                    } else {
+                        format!(
+                            "{name}\nt={}\ny={}",
+                            format_eng(value.x, &xu),
+                            format_eng(value.y, &yu)
+                        )
+                    }
                 }
             })
             .show(ui, |plot_ui| {
