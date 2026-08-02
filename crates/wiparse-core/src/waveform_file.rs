@@ -1693,6 +1693,25 @@ mod tests {
     }
 
     #[test]
+    fn save_converts_csv_trace_to_isf() {
+        let trace = WaveformTrace {
+            channel: "CH1".into(),
+            x: (0..64).map(|i| i as f64 * 1e-6).collect(),
+            y: (0..64).map(|i| (i as f64 * 0.1).sin()).collect(),
+            x_unit: "s".into(),
+            y_unit: "V".into(),
+        };
+        let csv = waveform_to_spreadsheet_csv(&trace);
+        let dir = std::env::temp_dir().join(format!("wiparse_conv_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("out.isf");
+        save_waveform_file(&path, Some(&csv), Some("csv"), Some(&trace)).unwrap();
+        let loaded = load_waveform_file(&path).unwrap();
+        assert_eq!(loaded.y.len(), 64);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn load_rigol_wfm_4ch_folder() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../sample_waveforms/Rigol_WFM_4ch");

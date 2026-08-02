@@ -686,7 +686,6 @@ impl InstrumentControlPanel {
 
                 // Parse in memory and show full screen record in ③ Waveform panel.
                 // Prefer suggested extension; fall back to content sniff (WFM#001/#003, ISF, CSV).
-                let mut parsed_ok = false;
                 let mut effective_ext = ext.clone();
                 let parse_result = load_waveform_bytes(&bytes, &ext, channel).or_else(|first| {
                     match sniff_waveform_ext(&bytes) {
@@ -697,9 +696,8 @@ impl InstrumentControlPanel {
                         _ => Err(first),
                     }
                 });
-                match parse_result {
+                let parsed_trace = match parse_result {
                     Ok(trace) => {
-                        parsed_ok = true;
                         self.status = format!(
                             "屏幕波形 {} · N={} / Screen waveform {} · N={}",
                             trace.channel,
@@ -711,16 +709,18 @@ impl InstrumentControlPanel {
                             id,
                             build_cached_wave_plot(&trace, SCOPE_PLOT_DISPLAY_POINTS),
                         );
-                        self.waveforms.insert(id, trace);
+                        self.waveforms.insert(id, trace.clone());
+                        Some(trace)
                     }
                     Err(err) => {
                         self.status = format!(
                             "波形已读取但解析失败 / Waveform read but parse failed: {err}"
                         );
+                        None
                     }
-                }
+                };
 
-                // Auto Save As — filters ordered by vendor native formats.
+                // Auto Save As — pass parsed trace so CSV↔ISF/WFM conversion works.
                 let default = self.save_dir.join(format!(
                     "{}_{}.{}",
                     stem.file_stem()
@@ -736,7 +736,12 @@ impl InstrumentControlPanel {
                     &effective_ext,
                 );
                 if let Some(path) = dialog.save_file() {
-                    match save_waveform_file(&path, Some(&bytes), Some(&effective_ext), None) {
+                    match save_waveform_file(
+                        &path,
+                        Some(&bytes),
+                        Some(&effective_ext),
+                        parsed_trace.as_ref(),
+                    ) {
                         Ok(()) => {
                             self.status = format!(
                                 "已保存波形源 / Waveform source saved: {}",
@@ -748,7 +753,7 @@ impl InstrumentControlPanel {
                         }
                         Err(error) => self.status = error.to_string(),
                     }
-                } else if parsed_ok {
+                } else if parsed_trace.is_some() {
                     self.status =
                         "已解析屏幕波形，保存已取消 / Screen waveform parsed, save cancelled"
                             .into();
@@ -4387,22 +4392,30 @@ fn scope_waveform_source_tip(lang: Lang, manufacturer: &str) -> String {
     if manufacturer_is(manufacturer, "TEKTRONIX") {
         text(
             lang,
-            "读取屏幕完整波形源：优先原生 .isf / WFM#001·#003 / .csv，失败则 CURVe 拼 ISF；完成后另存为",
-            "Read full on-screen source: native .isf / WFM#001·#003 / .csv, else CURVe→ISF; then Save As",
+            "读取屏幕完整波形源：优先原生 .isf / WFM#001·#003 / .csv，失败则 CURVe 拼 ISF；另存可转换格式",
+            "Read full on-screen source: native .isf / WFM#001·#003 / .csv, else CURVe→ISF; Save As converts",
         )
         .into()
     } else if manufacturer_is(manufacturer, "RIGOL") || manufacturer_is(manufacturer, "SIGLENT") {
         text(
             lang,
-            "读取屏幕完整波形并导出 CSV（:WAV:MODE NORM）；另存为可选转换为泰克 ISF/WFM",
-            "Read full on-screen wave as CSV (:WAV:MODE NORM); Save As can convert to Tek ISF/WFM",
+            "通过 :WAV NORM 读取屏幕波形→CSV（部分机型可再试原生 .wfm）；另存可转泰克 ISF/WFM",
+            "Read screen via :WAV NORM→CSV (native .wfm when available); Save As→Tek ISF/WFM",
+        )
+        .into()
+    } else if manufacturer_is(manufacturer, "KEYSIGHT") || manufacturer_is(manufacturer, "AGILENT")
+    {
+        text(
+            lang,
+            "Keysight :WAVeform BYTE 读取屏幕波形→CSV；另存可转换为泰克 ISF/WFM",
+            "Keysight :WAVeform BYTE screen→CSV; Save As can convert to Tek ISF/WFM",
         )
         .into()
     } else {
         text(
             lang,
-            "通过 VISA 读取屏幕波形并导出 CSV，完成后自动弹出另存为",
-            "Read on-screen waveform via VISA as CSV, then auto Save As",
+            "自动尝试 Keysight/Rigol/Tek 命令读取屏幕波形；另存可转换格式",
+            "Auto-try Keysight/Rigol/Tek screen waveform; Save As converts formats",
         )
         .into()
     }
@@ -4434,8 +4447,21 @@ fn scope_waveform_save_dialog(
                 .add_filter("CSV", &["csv"]),
         };
     } else if manufacturer_is(manufacturer, "RIGOL") || manufacturer_is(manufacturer, "SIGLENT") {
+        dialog = match preferred_ext {
+            "wfm" => dialog
+                .add_filter("Rigol WFM", &["wfm"])
+                .add_filter("CSV", &["csv"])
+                .add_filter("Tektronix ISF (converted)", &["isf"])
+                .add_filter("Tektronix WFM (converted)", &["wfm"]),
+            _ => dialog
+                .add_filter("CSV (native)", &["csv"])
+                .add_filter("Tektronix ISF (converted)", &["isf"])
+                .add_filter("Tektronix WFM (converted)", &["wfm"]),
+        };
+    } else if manufacturer_is(manufacturer, "KEYSIGHT") || manufacturer_is(manufacturer, "AGILENT")
+    {
         dialog = dialog
-            .add_filter("CSV (native)", &["csv"])
+            .add_filter("CSV", &["csv"])
             .add_filter("Tektronix ISF (converted)", &["isf"])
             .add_filter("Tektronix WFM (converted)", &["wfm"]);
     } else {

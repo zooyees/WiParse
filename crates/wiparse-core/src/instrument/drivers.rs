@@ -805,11 +805,11 @@ impl InstrumentDevice {
 
     /// Read the current **on-screen** waveform source over VISA (full displayed record).
     ///
-    /// Priority:
-    /// 1. Tektronix native `.isf` / `.wfm` / spreadsheet `.csv` via `SAVe:WAVEform` + `FILESystem:READFile`
-    /// 2. Tektronix `DATa:MODE SCREEN` + `WFMOutpre?` + `CURVe?` assembled ISF
-    /// 3. Rigol/Siglent: host-built spreadsheet CSV from `:WAV:MODE NORM` + `:WAV:DATA?`
-    ///    (optional `:SAVE:CSV` + `:MMEM:DATA?` when the scope supports mass-storage readback)
+    /// Priority by vendor:
+    /// - **Tektronix**: native `.isf` / `.wfm` / `.csv` via filesystem, else `CURVe`→ISF
+    /// - **Rigol/Siglent**: native `.wfm` via MMEM when available, else `:WAV NORM`→CSV
+    /// - **Keysight/Agilent**: `:WAVeform` BYTE screen → host CSV
+    /// - **Other**: try Keysight → Rigol/Siglent → Tek curve
     pub fn capture_scope_waveform_source(
         &mut self,
         channel: u8,
@@ -828,25 +828,40 @@ impl InstrumentDevice {
             }
             let bytes = self.read_tek_isf_via_curve(channel)?;
             Ok((bytes, format!("waveform_CH{channel}.isf")))
-        } else if self.vendor_is("RIGOL") || self.vendor_is("SIGLENT") {
-            // Prefer VISA CURVe/WAV:DATA → host CSV (reliable). Filesystem export is optional.
-            if let Ok(bytes) = self.export_rigol_screen_csv(channel) {
+        } else if self.is_rigol_siglent_family() {
+            // Prefer :WAV:DATA→CSV first (reliable). Native .wfm via MMEM is optional and
+            // can hang on models that ignore SAVE/*OPC — try it only after CSV fails.
+            if let Ok(bytes) = self.export_screen_csv(channel) {
                 return Ok((bytes, format!("waveform_CH{channel}.csv")));
             }
             if let Ok(bytes) = self.read_rigol_csv_via_filesystem(channel) {
                 return Ok((bytes, format!("waveform_CH{channel}.csv")));
             }
+            if let Ok(bytes) = self.read_rigol_wfm_via_filesystem(channel) {
+                return Ok((bytes, format!("waveform_CH{channel}.wfm")));
+            }
             Err(InstrumentError::Unsupported(
                 "Rigol/Siglent screen waveform export failed".into(),
             ))
-        } else {
-            let bytes = self.export_rigol_screen_csv(channel)?;
+        } else if self.is_keysight_family() {
+            let bytes = self.export_screen_csv(channel)?;
             Ok((bytes, format!("waveform_CH{channel}.csv")))
+        } else {
+            // Unknown brand: probe common SCPI families.
+            if let Ok(bytes) = self.export_screen_csv(channel) {
+                return Ok((bytes, format!("waveform_CH{channel}.csv")));
+            }
+            if let Ok(bytes) = self.read_tek_isf_via_curve(channel) {
+                return Ok((bytes, format!("waveform_CH{channel}.isf")));
+            }
+            Err(InstrumentError::Unsupported(
+                "unsupported oscilloscope waveform source protocol".into(),
+            ))
         }
     }
 
     /// Build a spreadsheet CSV (`TIME,CHx`) from the on-screen waveform record.
-    fn export_rigol_screen_csv(&mut self, channel: u8) -> Result<Vec<u8>, InstrumentError> {
+    fn export_screen_csv(&mut self, channel: u8) -> Result<Vec<u8>, InstrumentError> {
         let trace = self.read_scope_screen_waveform(channel)?;
         if trace.x.is_empty() {
             return Err(InstrumentError::Unsupported(
@@ -856,10 +871,18 @@ impl InstrumentDevice {
         Ok(crate::waveform_file::waveform_to_spreadsheet_csv(&trace))
     }
 
+    fn is_keysight_family(&self) -> bool {
+        self.vendor_is("KEYSIGHT") || self.vendor_is("AGILENT")
+    }
+
+    fn is_rigol_siglent_family(&self) -> bool {
+        self.vendor_is("RIGOL") || self.vendor_is("SIGLENT")
+    }
+
     /// Points in the current on-screen waveform for `channel`.
     fn scope_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
         let channel = channel.clamp(1, 8);
-        let points = if self.vendor_is("RIGOL") || self.vendor_is("SIGLENT") {
+        if self.is_rigol_siglent_family() {
             self.session
                 .write(&format!(":WAV:SOUR CHAN{channel}"))?;
             self.session.write(":WAV:MODE NORM")?;
@@ -869,28 +892,78 @@ impl InstrumentDevice {
                 .query_f64(":WAV:POIN?")
                 .unwrap_or(1000.0)
                 .round() as usize;
-            count.max(100).min(10_000_000)
-        } else {
-            self.session
-                .write(&format!("DATa:SOUrce CH{channel}"))?;
-            let _ = self.session.write("DATa:MODE SCREEN");
-            let nr = self
-                .session
-                .query_f64("WFMOutpre:NR_Pt?")
-                .unwrap_or(0.0)
-                .round() as usize;
-            if nr >= 100 {
-                nr.min(10_000_000)
-            } else {
-                let hor = self
-                    .session
-                    .query_f64("HORizontal:RECOrdlength?")
-                    .unwrap_or(1000.0)
-                    .round() as usize;
-                hor.max(100).min(10_000_000)
+            return Ok(count.max(100).min(10_000_000));
+        }
+        if self.is_keysight_family() {
+            return self.keysight_screen_point_count(channel);
+        }
+        if self.vendor_is("TEKTRONIX") {
+            return self.tek_screen_point_count(channel);
+        }
+        // Unknown: try Keysight then Rigol then Tek.
+        if let Ok(n) = self.keysight_screen_point_count(channel) {
+            return Ok(n);
+        }
+        self.session
+            .write(&format!(":WAV:SOUR CHAN{channel}"))
+            .ok();
+        let _ = self.session.write(":WAV:MODE NORM");
+        let _ = self.session.write(":WAV:FORM BYTE");
+        if let Ok(n) = self.session.query_f64(":WAV:POIN?") {
+            let n = n.round() as usize;
+            if n >= 100 {
+                return Ok(n.min(10_000_000));
             }
-        };
-        Ok(points)
+        }
+        self.tek_screen_point_count(channel)
+    }
+
+    fn tek_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+        self.session
+            .write(&format!("DATa:SOUrce CH{channel}"))?;
+        let _ = self.session.write("DATa:MODE SCREEN");
+        let nr = self
+            .session
+            .query_f64("WFMOutpre:NR_Pt?")
+            .unwrap_or(0.0)
+            .round() as usize;
+        if nr >= 100 {
+            Ok(nr.min(10_000_000))
+        } else {
+            let hor = self
+                .session
+                .query_f64("HORizontal:RECOrdlength?")
+                .unwrap_or(1000.0)
+                .round() as usize;
+            Ok(hor.max(100).min(10_000_000))
+        }
+    }
+
+    fn keysight_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+        self.prepare_keysight_screen_waveform(channel)?;
+        if let Ok(pre) = self.session.query(":WAVeform:PREamble?") {
+            if let Some(n) = parse_keysight_preamble_points(&pre) {
+                return Ok(n.max(100).min(10_000_000));
+            }
+        }
+        let n = self
+            .session
+            .query_f64(":WAVeform:POINts?")
+            .unwrap_or(1000.0)
+            .round() as usize;
+        Ok(n.max(100).min(10_000_000))
+    }
+
+    fn prepare_keysight_screen_waveform(&mut self, channel: u8) -> Result<(), InstrumentError> {
+        let channel = channel.clamp(1, 8);
+        self.session
+            .write(&format!(":WAVeform:SOURce CHANnel{channel}"))?;
+        // NORMal = displayed (screen) record on InfiniiVision.
+        let _ = self.session.write(":WAVeform:POINts:MODE NORMal");
+        self.session.write(":WAVeform:FORMat BYTE")?;
+        let _ = self.session.write(":WAVeform:UNSigned 1");
+        let _ = self.session.write(":WAVeform:BYTeorder MSBFirst");
+        Ok(())
     }
 
     /// Full on-screen waveform as [`WaveformTrace`] (no display downsampling).
@@ -900,76 +973,157 @@ impl InstrumentDevice {
     ) -> Result<WaveformTrace, InstrumentError> {
         self.require(InstrumentKind::Oscilloscope, "waveform")?;
         let channel = channel.clamp(1, 8);
-        let points = self.scope_screen_point_count(channel)?;
-        let rigol_family = self.vendor_is("RIGOL") || self.vendor_is("SIGLENT");
-        let (xincr, xzero, ymult, yoff, yzero, pt_off, signed, y_scale) =
-            if rigol_family {
-                self.session
-                    .write(&format!(":WAV:SOUR CHAN{channel}"))?;
-                self.session.write(":WAV:MODE NORM")?;
-                self.session.write(":WAV:FORM BYTE")?;
-                let _ = self.session.write(":WAV:STAR 1");
-                let _ = self.session.write(&format!(":WAV:STOP {points}"));
-                let _ = self.session.write(&format!(":WAV:POIN {points}"));
-                (
-                    self.session.query_f64(":WAV:XINC?")?,
-                    self.session.query_f64(":WAV:XOR?").unwrap_or(0.0),
-                    self.session.query_f64(":WAV:YINC?")?,
-                    self.session.query_f64(":WAV:YOR?").unwrap_or(0.0),
-                    self.session.query_f64(":WAV:YREF?").unwrap_or(0.0),
-                    0.0_f64,
-                    false,
-                    // Rigol: v=(data-YOR-YREF)*YINC ; Siglent often: (data-YREF)*YINC+YOR
-                    if self.vendor_is("RIGOL") {
-                        YScaleKind::Rigol
-                    } else {
-                        YScaleKind::Siglent
-                    },
-                )
-            } else {
-                self.session
-                    .write(&format!("DATa:SOUrce CH{channel}"))?;
-                self.session.write("DATa:ENCdg RIBINARY")?;
-                self.session.write("DATa:WIDth 1")?;
-                let _ = self.session.write("DATa:MODE SCREEN");
-                self.session.write("DATa:STARt 1")?;
-                self.session.write(&format!("DATa:STOP {points}"))?;
-                (
-                    self.session.query_f64("WFMOutpre:XINcr?")?,
-                    self.session.query_f64("WFMOutpre:XZEro?")?,
-                    self.session.query_f64("WFMOutpre:YMUlt?")?,
-                    self.session.query_f64("WFMOutpre:YOFf?")?,
-                    self.session.query_f64("WFMOutpre:YZEro?")?,
-                    self.session.query_f64("WFMOutpre:PT_Off?").unwrap_or(0.0),
-                    true,
-                    YScaleKind::Tek,
-                )
-            };
-        if rigol_family {
-            self.session.write(":WAV:DATA?")?;
-        } else {
-            self.session.write("CURVe?")?;
+        if self.vendor_is("TEKTRONIX") {
+            return self.read_tek_screen_waveform(channel);
         }
+        if self.is_keysight_family() {
+            return self.read_keysight_screen_waveform(channel);
+        }
+        if self.is_rigol_siglent_family() {
+            return self.read_rigol_screen_waveform(channel);
+        }
+        // Unknown brand: try Keysight → Rigol/Siglent → Tek.
+        if let Ok(t) = self.read_keysight_screen_waveform(channel) {
+            if !t.x.is_empty() {
+                return Ok(t);
+            }
+        }
+        if let Ok(t) = self.read_rigol_screen_waveform(channel) {
+            if !t.x.is_empty() {
+                return Ok(t);
+            }
+        }
+        self.read_tek_screen_waveform(channel)
+    }
+
+    fn read_rigol_screen_waveform(
+        &mut self,
+        channel: u8,
+    ) -> Result<WaveformTrace, InstrumentError> {
+        let points = {
+            self.session
+                .write(&format!(":WAV:SOUR CHAN{channel}"))?;
+            self.session.write(":WAV:MODE NORM")?;
+            self.session.write(":WAV:FORM BYTE")?;
+            self.session
+                .query_f64(":WAV:POIN?")
+                .unwrap_or(1000.0)
+                .round()
+                .max(100.0)
+                .min(10_000_000.0) as usize
+        };
+        let _ = self.session.write(":WAV:STAR 1");
+        let _ = self.session.write(&format!(":WAV:STOP {points}"));
+        let _ = self.session.write(&format!(":WAV:POIN {points}"));
+        let xincr = self.session.query_f64(":WAV:XINC?")?;
+        let xzero = self.session.query_f64(":WAV:XOR?").unwrap_or(0.0);
+        let ymult = self.session.query_f64(":WAV:YINC?")?;
+        let yoff = self.session.query_f64(":WAV:YOR?").unwrap_or(0.0);
+        let yzero = self.session.query_f64(":WAV:YREF?").unwrap_or(0.0);
+        let y_scale = if self.vendor_is("SIGLENT") {
+            YScaleKind::Siglent
+        } else {
+            YScaleKind::Rigol
+        };
+        self.session.write(":WAV:DATA?")?;
         let raw = self.session.read_raw()?;
         let data = parse_ieee_block(&raw);
-        let mut x = Vec::with_capacity(data.len());
-        let mut y = Vec::with_capacity(data.len());
-        for (index, byte) in data.iter().copied().enumerate() {
-            let code = if signed {
-                (byte as i8) as f64
+        decode_scope_bytes(
+            data,
+            channel,
+            xincr,
+            xzero,
+            0.0,
+            ymult,
+            yoff,
+            yzero,
+            false,
+            y_scale,
+        )
+    }
+
+    fn read_keysight_screen_waveform(
+        &mut self,
+        channel: u8,
+    ) -> Result<WaveformTrace, InstrumentError> {
+        self.prepare_keysight_screen_waveform(channel)?;
+        let (points, xincr, xzero, xref, ymult, yoff, yzero) =
+            if let Ok(pre) = self.session.query(":WAVeform:PREamble?") {
+                if let Some(p) = parse_keysight_preamble(&pre) {
+                    p
+                } else {
+                    self.keysight_scale_queries()?
+                }
             } else {
-                byte as f64
+                self.keysight_scale_queries()?
             };
-            x.push(xzero + (index as f64 - pt_off) * xincr);
-            y.push(scale_scope_y(y_scale, code, ymult, yoff, yzero));
-        }
-        Ok(WaveformTrace {
-            channel: format!("CH{channel}"),
-            x,
-            y,
-            x_unit: "s".into(),
-            y_unit: "V".into(),
-        })
+        let _ = self.session.write(&format!(":WAVeform:POINts {points}"));
+        self.session.write(":WAVeform:DATA?")?;
+        let raw = self.session.read_raw()?;
+        let data = parse_ieee_block(&raw);
+        decode_scope_bytes(
+            data,
+            channel,
+            xincr,
+            xzero,
+            xref,
+            ymult,
+            yoff,
+            yzero,
+            false,
+            YScaleKind::Keysight,
+        )
+    }
+
+    fn keysight_scale_queries(
+        &mut self,
+    ) -> Result<(usize, f64, f64, f64, f64, f64, f64), InstrumentError> {
+        let points = self
+            .session
+            .query_f64(":WAVeform:POINts?")
+            .unwrap_or(1000.0)
+            .round()
+            .max(100.0)
+            .min(10_000_000.0) as usize;
+        Ok((
+            points,
+            self.session.query_f64(":WAVeform:XINCrement?")?,
+            self.session.query_f64(":WAVeform:XORigin?").unwrap_or(0.0),
+            self.session
+                .query_f64(":WAVeform:XREFerence?")
+                .unwrap_or(0.0),
+            self.session.query_f64(":WAVeform:YINCrement?")?,
+            self.session.query_f64(":WAVeform:YORigin?").unwrap_or(0.0),
+            self.session
+                .query_f64(":WAVeform:YREFerence?")
+                .unwrap_or(0.0),
+        ))
+    }
+
+    fn read_tek_screen_waveform(
+        &mut self,
+        channel: u8,
+    ) -> Result<WaveformTrace, InstrumentError> {
+        let points = self.tek_screen_point_count(channel)?;
+        self.session
+            .write(&format!("DATa:SOUrce CH{channel}"))?;
+        self.session.write("DATa:ENCdg RIBINARY")?;
+        self.session.write("DATa:WIDth 1")?;
+        let _ = self.session.write("DATa:MODE SCREEN");
+        self.session.write("DATa:STARt 1")?;
+        self.session.write(&format!("DATa:STOP {points}"))?;
+        let xincr = self.session.query_f64("WFMOutpre:XINcr?")?;
+        let xzero = self.session.query_f64("WFMOutpre:XZEro?")?;
+        let ymult = self.session.query_f64("WFMOutpre:YMUlt?")?;
+        let yoff = self.session.query_f64("WFMOutpre:YOFf?")?;
+        let yzero = self.session.query_f64("WFMOutpre:YZEro?")?;
+        let pt_off = self.session.query_f64("WFMOutpre:PT_Off?").unwrap_or(0.0);
+        self.session.write("CURVe?")?;
+        let raw = self.session.read_raw()?;
+        let data = parse_ieee_block(&raw);
+        decode_scope_bytes(
+            data, channel, xincr, xzero, pt_off, ymult, yoff, yzero, true, YScaleKind::Tek,
+        )
     }
 
     /// Tektronix: save waveform to scope disk, then `FILESystem:READFile`.
@@ -1088,6 +1242,67 @@ impl InstrumentDevice {
         ))
     }
 
+    /// Rigol/Siglent: try saving a proprietary `.wfm` to scope storage and read it back.
+    ///
+    /// Not all models expose this over SCPI; callers should fall back to `:WAV:DATA` CSV.
+    fn read_rigol_wfm_via_filesystem(&mut self, channel: u8) -> Result<Vec<u8>, InstrumentError> {
+        let _ = self.session.write(&format!(":WAV:SOUR CHAN{channel}"));
+        let _ = self.session.write(":WAV:MODE NORM");
+        // Format hints used by various Rigol generations (ignored when unsupported).
+        for fmt in [
+            ":SAVE:WAVeform:TYPE WFM",
+            ":SAVE:WAVeform:FORMat WFM",
+            ":STORage:WAVeform:FORMat WFM",
+        ] {
+            let _ = self.session.write(fmt);
+        }
+        let attempts = [
+            format!(":SAVE:WAVeform \"/wiparse_ch{channel}.wfm\""),
+            format!(":SAVE:WAVeform \"C:/wiparse_ch{channel}.wfm\""),
+            format!(":SAVE:WAVeform CHAN{channel},\"/wiparse_ch{channel}.wfm\""),
+            format!(":MMEM:STOR:WAV \"/wiparse_ch{channel}.wfm\""),
+            format!(":STORage:WAVeform \"/wiparse_ch{channel}.wfm\""),
+        ];
+        let paths = [
+            format!("/wiparse_ch{channel}.wfm"),
+            format!("C:/wiparse_ch{channel}.wfm"),
+        ];
+        for save_cmd in attempts {
+            // Do not wait on *OPC? — unsupported SAVE formats can stall the bus.
+            if self.session.write(&save_cmd).is_err() {
+                continue;
+            }
+            for path in &paths {
+                if self
+                    .session
+                    .write(&format!(":MMEM:DATA? \"{path}\""))
+                    .is_err()
+                {
+                    continue;
+                }
+                let Ok(raw) = self.session.read_raw() else {
+                    continue;
+                };
+                let data = parse_ieee_block(&raw).to_vec();
+                if crate::rigol_wfm::looks_like_rigol_wfm(&data)
+                    && crate::waveform_file::load_waveform_bytes(
+                        &data,
+                        "wfm",
+                        &format!("CH{channel}"),
+                    )
+                    .is_ok()
+                {
+                    let _ = self.session.write(&format!(":MMEM:DELEte \"{path}\""));
+                    let _ = self.session.write(&format!(":MMEM:DEL \"{path}\""));
+                    return Ok(data);
+                }
+            }
+        }
+        Err(InstrumentError::Unsupported(
+            "Rigol/Siglent native WFM export unavailable".into(),
+        ))
+    }
+
     /// Tektronix: `SAVe:WAVEform` INTERNAL to scope disk, then `FILESystem:READFile`.
     fn read_tek_isf_via_filesystem(&mut self, channel: u8) -> Result<Vec<u8>, InstrumentError> {
         self.read_tek_waveform_via_filesystem(channel, "isf")
@@ -1115,74 +1330,15 @@ impl InstrumentDevice {
     ) -> Result<WaveformTrace, InstrumentError> {
         self.require(InstrumentKind::Oscilloscope, "waveform")?;
         let channel = channel.clamp(1, 8);
-        let points = max_points.clamp(100, 1_000_000);
-        let rigol_family = self.vendor_is("RIGOL") || self.vendor_is("SIGLENT");
-        let (xincr, xzero, ymult, yoff, yzero, signed, y_scale) = if rigol_family {
-            self.session
-                .write(&format!(":WAV:SOUR CHAN{channel}"))?;
-            self.session.write(":WAV:MODE NORM")?;
-            self.session.write(":WAV:FORM BYTE")?;
-            // Cap transfer size before :WAV:DATA? (full memory depth can be millions of points).
-            let _ = self.session.write(":WAV:STAR 1");
-            let _ = self.session.write(&format!(":WAV:STOP {points}"));
-            let _ = self.session.write(&format!(":WAV:POIN {points}"));
-            (
-                self.session.query_f64(":WAV:XINC?")?,
-                self.session.query_f64(":WAV:XOR?").unwrap_or(0.0),
-                self.session.query_f64(":WAV:YINC?")?,
-                self.session.query_f64(":WAV:YOR?").unwrap_or(0.0),
-                self.session.query_f64(":WAV:YREF?").unwrap_or(0.0),
-                false,
-                if self.vendor_is("RIGOL") {
-                    YScaleKind::Rigol
-                } else {
-                    YScaleKind::Siglent
-                },
-            )
-        } else {
-            // Tektronix / Keysight-style binary curve transfer.
-            self.session
-                .write(&format!("DATa:SOUrce CH{channel}"))?;
-            self.session.write("DATa:ENCdg RIBINARY")?;
-            self.session.write("DATa:WIDth 1")?;
-            self.session.write("DATa:STARt 1")?;
-            self.session.write(&format!("DATa:STOP {points}"))?;
-            (
-                self.session.query_f64("WFMOutpre:XINcr?")?,
-                self.session.query_f64("WFMOutpre:XZEro?")?,
-                self.session.query_f64("WFMOutpre:YMUlt?")?,
-                self.session.query_f64("WFMOutpre:YOFf?")?,
-                self.session.query_f64("WFMOutpre:YZEro?")?,
-                true,
-                YScaleKind::Tek,
-            )
-        };
-        if rigol_family {
-            self.session.write(":WAV:DATA?")?;
-        } else {
-            self.session.write("CURVe?")?;
+        let max_points = max_points.clamp(100, 1_000_000);
+        // Prefer the same vendor-aware screen path as “Read Wave Source”, then downsample.
+        let mut trace = self.read_scope_screen_waveform(channel)?;
+        if trace.x.len() > max_points {
+            let (x, y) = downsample_minmax(&trace.x, &trace.y, max_points);
+            trace.x = x;
+            trace.y = y;
         }
-        let raw = self.session.read_raw()?;
-        let data = parse_ieee_block(&raw);
-        let mut x = Vec::with_capacity(data.len());
-        let mut y = Vec::with_capacity(data.len());
-        for (index, byte) in data.iter().copied().enumerate() {
-            let code = if signed {
-                (byte as i8) as f64
-            } else {
-                byte as f64
-            };
-            x.push(xzero + index as f64 * xincr);
-            y.push(scale_scope_y(y_scale, code, ymult, yoff, yzero));
-        }
-        let (x, y) = downsample_minmax(&x, &y, points.max(2));
-        Ok(WaveformTrace {
-            channel: format!("CH{channel}"),
-            x,
-            y,
-            x_unit: "s".into(),
-            y_unit: "V".into(),
-        })
+        Ok(trace)
     }
 
     fn vendor_is(&self, needle: &str) -> bool {
@@ -1638,6 +1794,8 @@ enum YScaleKind {
     Tek,
     Rigol,
     Siglent,
+    /// Keysight/Agilent InfiniiVision: v = YORigin + (data - YREFerence) * YINCrement
+    Keysight,
 }
 
 fn scale_scope_y(kind: YScaleKind, code: f64, ymult: f64, yoff: f64, yzero: f64) -> f64 {
@@ -1648,7 +1806,68 @@ fn scale_scope_y(kind: YScaleKind, code: f64, ymult: f64, yoff: f64, yzero: f64)
         YScaleKind::Rigol => (code - yoff - yzero) * ymult,
         // Siglent SDS family commonly: v = (data - YREF) * YINC + YOR
         YScaleKind::Siglent => (code - yzero) * ymult + yoff,
+        // Keysight: v = YORigin + (data - YREFerence) * YINCrement
+        // (ymult=YINC, yoff=YOR, yzero=YREF)
+        YScaleKind::Keysight => yoff + (code - yzero) * ymult,
     }
+}
+
+fn decode_scope_bytes(
+    data: &[u8],
+    channel: u8,
+    xincr: f64,
+    xzero: f64,
+    pt_off: f64,
+    ymult: f64,
+    yoff: f64,
+    yzero: f64,
+    signed: bool,
+    y_scale: YScaleKind,
+) -> Result<WaveformTrace, InstrumentError> {
+    if data.is_empty() {
+        return Err(InstrumentError::Unsupported("empty waveform block".into()));
+    }
+    let mut x = Vec::with_capacity(data.len());
+    let mut y = Vec::with_capacity(data.len());
+    for (index, byte) in data.iter().copied().enumerate() {
+        let code = if signed {
+            (byte as i8) as f64
+        } else {
+            byte as f64
+        };
+        x.push(xzero + (index as f64 - pt_off) * xincr);
+        y.push(scale_scope_y(y_scale, code, ymult, yoff, yzero));
+    }
+    Ok(WaveformTrace {
+        channel: format!("CH{channel}"),
+        x,
+        y,
+        x_unit: "s".into(),
+        y_unit: "V".into(),
+    })
+}
+
+/// Parse Keysight `:WAVeform:PREamble?` → (points, xinc, xorig, xref, yinc, yorig, yref).
+fn parse_keysight_preamble(pre: &str) -> Option<(usize, f64, f64, f64, f64, f64, f64)> {
+    let parts: Vec<&str> = pre.trim().split(',').map(str::trim).collect();
+    if parts.len() < 10 {
+        return None;
+    }
+    let points = parts[2].parse::<f64>().ok()?.round() as usize;
+    let xinc: f64 = parts[4].parse().ok()?;
+    let xorig: f64 = parts[5].parse().ok()?;
+    let xref: f64 = parts[6].parse().ok()?;
+    let yinc: f64 = parts[7].parse().ok()?;
+    let yorig: f64 = parts[8].parse().ok()?;
+    let yref: f64 = parts[9].parse().ok()?;
+    if points < 2 || !xinc.is_finite() || !yinc.is_finite() {
+        return None;
+    }
+    Some((points, xinc, xorig, xref, yinc, yorig, yref))
+}
+
+fn parse_keysight_preamble_points(pre: &str) -> Option<usize> {
+    parse_keysight_preamble(pre).map(|(n, ..)| n)
 }
 
 fn looks_like_text_csv(bytes: &[u8]) -> bool {
@@ -1851,6 +2070,21 @@ mod tests {
             .read_measurements()
             .unwrap();
         assert!(readings.len() >= 3);
+    }
+
+    #[test]
+    fn keysight_preamble_parses_points_and_scale() {
+        let pre = "0,0,1000,1,1.000000E-08,-5.000000E-06,0,1.562500E-03,-4.000000E+00,128";
+        let (n, xinc, xorig, xref, yinc, yorig, yref) = parse_keysight_preamble(pre).unwrap();
+        assert_eq!(n, 1000);
+        assert!((xinc - 1e-8).abs() < 1e-20);
+        assert!((xorig + 5e-6).abs() < 1e-12);
+        assert_eq!(xref, 0.0);
+        assert!((yinc - 1.5625e-3).abs() < 1e-12);
+        assert!((yorig + 4.0).abs() < 1e-9);
+        assert_eq!(yref, 128.0);
+        let v = scale_scope_y(YScaleKind::Keysight, 128.0, yinc, yorig, yref);
+        assert!((v - yorig).abs() < 1e-12);
     }
 
     #[test]
