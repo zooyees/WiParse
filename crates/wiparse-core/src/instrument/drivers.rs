@@ -808,7 +808,8 @@ impl InstrumentDevice {
     /// Priority:
     /// 1. Tektronix native `.isf` / `.wfm` / spreadsheet `.csv` via `SAVe:WAVEform` + `FILESystem:READFile`
     /// 2. Tektronix `DATa:MODE SCREEN` + `WFMOutpre?` + `CURVe?` assembled ISF
-    /// 3. Rigol/Siglent `:WAV:MODE NORM` full screen CSV export
+    /// 3. Rigol/Siglent: host-built spreadsheet CSV from `:WAV:MODE NORM` + `:WAV:DATA?`
+    ///    (optional `:SAVE:CSV` + `:MMEM:DATA?` when the scope supports mass-storage readback)
     pub fn capture_scope_waveform_source(
         &mut self,
         channel: u8,
@@ -828,37 +829,31 @@ impl InstrumentDevice {
             let bytes = self.read_tek_isf_via_curve(channel)?;
             Ok((bytes, format!("waveform_CH{channel}.isf")))
         } else if self.vendor_is("RIGOL") || self.vendor_is("SIGLENT") {
+            // Prefer VISA CURVe/WAV:DATA → host CSV (reliable). Filesystem export is optional.
+            if let Ok(bytes) = self.export_rigol_screen_csv(channel) {
+                return Ok((bytes, format!("waveform_CH{channel}.csv")));
+            }
             if let Ok(bytes) = self.read_rigol_csv_via_filesystem(channel) {
                 return Ok((bytes, format!("waveform_CH{channel}.csv")));
             }
-            let trace = self.read_scope_screen_waveform(channel)?;
-            let mut csv = String::new();
-            use std::fmt::Write as _;
-            let _ = writeln!(
-                csv,
-                "channel,index,x({}),y({})",
-                trace.x_unit, trace.y_unit
-            );
-            let n = trace.x.len().min(trace.y.len());
-            for i in 0..n {
-                let _ = writeln!(csv, "{},{},{},{}", trace.channel, i, trace.x[i], trace.y[i]);
-            }
-            Ok((csv.into_bytes(), format!("waveform_CH{channel}.csv")))
+            Err(InstrumentError::Unsupported(
+                "Rigol/Siglent screen waveform export failed".into(),
+            ))
         } else {
-            let trace = self.read_scope_screen_waveform(channel)?;
-            let mut csv = String::new();
-            use std::fmt::Write as _;
-            let _ = writeln!(
-                csv,
-                "channel,index,x({}),y({})",
-                trace.x_unit, trace.y_unit
-            );
-            let n = trace.x.len().min(trace.y.len());
-            for i in 0..n {
-                let _ = writeln!(csv, "{},{},{},{}", trace.channel, i, trace.x[i], trace.y[i]);
-            }
-            Ok((csv.into_bytes(), format!("waveform_CH{channel}.csv")))
+            let bytes = self.export_rigol_screen_csv(channel)?;
+            Ok((bytes, format!("waveform_CH{channel}.csv")))
         }
+    }
+
+    /// Build a spreadsheet CSV (`TIME,CHx`) from the on-screen waveform record.
+    fn export_rigol_screen_csv(&mut self, channel: u8) -> Result<Vec<u8>, InstrumentError> {
+        let trace = self.read_scope_screen_waveform(channel)?;
+        if trace.x.is_empty() {
+            return Err(InstrumentError::Unsupported(
+                "empty on-screen waveform".into(),
+            ));
+        }
+        Ok(crate::waveform_file::waveform_to_spreadsheet_csv(&trace))
     }
 
     /// Points in the current on-screen waveform for `channel`.
@@ -906,44 +901,51 @@ impl InstrumentDevice {
         self.require(InstrumentKind::Oscilloscope, "waveform")?;
         let channel = channel.clamp(1, 8);
         let points = self.scope_screen_point_count(channel)?;
-        let (xincr, xzero, ymult, yoff, yzero, pt_off, signed) = if self.vendor_is("RIGOL")
-            || self.vendor_is("SIGLENT")
-        {
-            self.session
-                .write(&format!(":WAV:SOUR CHAN{channel}"))?;
-            self.session.write(":WAV:MODE NORM")?;
-            self.session.write(":WAV:FORM BYTE")?;
-            let _ = self.session.write(":WAV:STAR 1");
-            let _ = self.session.write(&format!(":WAV:STOP {points}"));
-            let _ = self.session.write(&format!(":WAV:POIN {points}"));
-            (
-                self.session.query_f64(":WAV:XINC?")?,
-                self.session.query_f64(":WAV:XOR?").unwrap_or(0.0),
-                self.session.query_f64(":WAV:YINC?")?,
-                self.session.query_f64(":WAV:YOR?")?,
-                self.session.query_f64(":WAV:YREF?").unwrap_or(0.0),
-                0.0_f64,
-                false,
-            )
-        } else {
-            self.session
-                .write(&format!("DATa:SOUrce CH{channel}"))?;
-            self.session.write("DATa:ENCdg RIBINARY")?;
-            self.session.write("DATa:WIDth 1")?;
-            let _ = self.session.write("DATa:MODE SCREEN");
-            self.session.write("DATa:STARt 1")?;
-            self.session.write(&format!("DATa:STOP {points}"))?;
-            (
-                self.session.query_f64("WFMOutpre:XINcr?")?,
-                self.session.query_f64("WFMOutpre:XZEro?")?,
-                self.session.query_f64("WFMOutpre:YMUlt?")?,
-                self.session.query_f64("WFMOutpre:YOFf?")?,
-                self.session.query_f64("WFMOutpre:YZEro?")?,
-                self.session.query_f64("WFMOutpre:PT_Off?").unwrap_or(0.0),
-                true,
-            )
-        };
-        if self.vendor_is("RIGOL") || self.vendor_is("SIGLENT") {
+        let rigol_family = self.vendor_is("RIGOL") || self.vendor_is("SIGLENT");
+        let (xincr, xzero, ymult, yoff, yzero, pt_off, signed, y_scale) =
+            if rigol_family {
+                self.session
+                    .write(&format!(":WAV:SOUR CHAN{channel}"))?;
+                self.session.write(":WAV:MODE NORM")?;
+                self.session.write(":WAV:FORM BYTE")?;
+                let _ = self.session.write(":WAV:STAR 1");
+                let _ = self.session.write(&format!(":WAV:STOP {points}"));
+                let _ = self.session.write(&format!(":WAV:POIN {points}"));
+                (
+                    self.session.query_f64(":WAV:XINC?")?,
+                    self.session.query_f64(":WAV:XOR?").unwrap_or(0.0),
+                    self.session.query_f64(":WAV:YINC?")?,
+                    self.session.query_f64(":WAV:YOR?").unwrap_or(0.0),
+                    self.session.query_f64(":WAV:YREF?").unwrap_or(0.0),
+                    0.0_f64,
+                    false,
+                    // Rigol: v=(data-YOR-YREF)*YINC ; Siglent often: (data-YREF)*YINC+YOR
+                    if self.vendor_is("RIGOL") {
+                        YScaleKind::Rigol
+                    } else {
+                        YScaleKind::Siglent
+                    },
+                )
+            } else {
+                self.session
+                    .write(&format!("DATa:SOUrce CH{channel}"))?;
+                self.session.write("DATa:ENCdg RIBINARY")?;
+                self.session.write("DATa:WIDth 1")?;
+                let _ = self.session.write("DATa:MODE SCREEN");
+                self.session.write("DATa:STARt 1")?;
+                self.session.write(&format!("DATa:STOP {points}"))?;
+                (
+                    self.session.query_f64("WFMOutpre:XINcr?")?,
+                    self.session.query_f64("WFMOutpre:XZEro?")?,
+                    self.session.query_f64("WFMOutpre:YMUlt?")?,
+                    self.session.query_f64("WFMOutpre:YOFf?")?,
+                    self.session.query_f64("WFMOutpre:YZEro?")?,
+                    self.session.query_f64("WFMOutpre:PT_Off?").unwrap_or(0.0),
+                    true,
+                    YScaleKind::Tek,
+                )
+            };
+        if rigol_family {
             self.session.write(":WAV:DATA?")?;
         } else {
             self.session.write("CURVe?")?;
@@ -958,8 +960,8 @@ impl InstrumentDevice {
             } else {
                 byte as f64
             };
-            x.push(xzero + index as f64 * xincr - pt_off * xincr);
-            y.push((code - yoff) * ymult + yzero);
+            x.push(xzero + (index as f64 - pt_off) * xincr);
+            y.push(scale_scope_y(y_scale, code, ymult, yoff, yzero));
         }
         Ok(WaveformTrace {
             channel: format!("CH{channel}"),
@@ -982,23 +984,46 @@ impl InstrumentDevice {
             "csv" => ("SPREADSheet", "csv"),
             _ => ("INTERNal", "isf"),
         };
-        let path = format!("C:/WiParse_tmp.{ext}");
-        let _ = self.session.write("HEADer OFF");
-        self.session
-            .write(&format!("SAVe:WAVEform:FILEFormat {file_format}"))?;
-        self.session
-            .write(&format!("SAVe:WAVEform CH{channel},\"{path}\""))?;
-        self.session
-            .write(&format!("FILESystem:READFile \"{path}\""))?;
-        let raw = self.session.read_raw()?;
-        let _ = self.session.write(&format!("FILESystem:DELEte \"{path}\""));
-        let data = parse_ieee_block(&raw).to_vec();
-        if data.len() < 32 {
-            return Err(InstrumentError::Unsupported(format!(
-                "Tektronix FILESystem:READFile returned empty .{ext}"
-            )));
+        // Prefer C: then E: (USB) — some benches only allow USB mass storage.
+        for path in [
+            format!("C:/WiParse_tmp.{ext}"),
+            format!("E:/WiParse_tmp.{ext}"),
+        ] {
+            let _ = self.session.write("HEADer OFF");
+            if self
+                .session
+                .write(&format!("SAVe:WAVEform:FILEFormat {file_format}"))
+                .is_err()
+            {
+                continue;
+            }
+            if self
+                .session
+                .write(&format!("SAVe:WAVEform CH{channel},\"{path}\""))
+                .is_err()
+            {
+                continue;
+            }
+            let _ = self.session.query("*OPC?");
+            if self
+                .session
+                .write(&format!("FILESystem:READFile \"{path}\""))
+                .is_err()
+            {
+                continue;
+            }
+            let Ok(raw) = self.session.read_raw() else {
+                continue;
+            };
+            let _ = self.session.write(&format!("FILESystem:DELEte \"{path}\""));
+            let data = parse_ieee_block(&raw).to_vec();
+            if tek_waveform_source_bytes_ok(&data, ext) {
+                return Ok(data);
+            }
         }
-        Ok(data)
+        Err(InstrumentError::Unsupported(format!(
+            "Tektronix FILESystem:READFile returned empty/invalid .{ext}"
+        )))
     }
 
     /// Select channel and gate Tektronix save/transfer to the on-screen waveform record.
@@ -1013,27 +1038,54 @@ impl InstrumentDevice {
         Ok(())
     }
 
-    /// Rigol/Siglent: CSV trace export via mass-storage when supported.
+    /// Rigol/Siglent: optional CSV via `:SAVE:CSV` / `:SAVE:WAVeform` then `:MMEM:DATA?`.
+    ///
+    /// Does **not** use `:MMEM:LOAD:TRACe` (that loads a file *into* the scope).
     fn read_rigol_csv_via_filesystem(&mut self, channel: u8) -> Result<Vec<u8>, InstrumentError> {
-        let path = format!("/tmp/wiparse_ch{channel}.csv");
-        let cmds = [
-            format!(":WAV:SOUR CHAN{channel}"),
-            ":WAV:MODE NORM".into(),
-            format!(":SAVE:WAVeform \"{path}\""),
-            format!(":MMEM:LOAD:TRACe \"{path}\""),
+        let _ = self.session.write(&format!(":WAV:SOUR CHAN{channel}"));
+        let _ = self.session.write(":WAV:MODE NORM");
+        let _ = self.session.write(":SAVE:CSV:LENGth DISPlay");
+        let _ = self
+            .session
+            .write(&format!(":SAVE:CSV:CHANnel CHAN{channel},ON"));
+
+        let attempts = [
+            (
+                format!(":SAVE:CSV \"/wiparse_ch{channel}.csv\""),
+                format!("/wiparse_ch{channel}.csv"),
+            ),
+            (
+                format!(":SAVE:CSV \"C:/wiparse_ch{channel}.csv\""),
+                format!("C:/wiparse_ch{channel}.csv"),
+            ),
+            (
+                format!(":SAVE:WAVeform \"/wiparse_ch{channel}.csv\""),
+                format!("/wiparse_ch{channel}.csv"),
+            ),
         ];
-        for cmd in &cmds {
-            let _ = self.session.write(cmd);
+        for (save_cmd, path) in attempts {
+            let _ = self.session.write(&save_cmd);
+            let _ = self.session.query("*OPC?");
+            if self
+                .session
+                .write(&format!(":MMEM:DATA? \"{path}\""))
+                .is_err()
+            {
+                continue;
+            }
+            let Ok(raw) = self.session.read_raw() else {
+                continue;
+            };
+            let data = parse_ieee_block(&raw).to_vec();
+            if data.len() >= 16 && looks_like_text_csv(&data) {
+                let _ = self.session.write(&format!(":MMEM:DELEte \"{path}\""));
+                let _ = self.session.write(&format!(":MMEM:DEL \"{path}\""));
+                return Ok(data);
+            }
         }
-        self.session.write(&format!(":MMEM:DATA? \"{path}\""))?;
-        let raw = self.session.read_raw()?;
-        let data = parse_ieee_block(&raw).to_vec();
-        if data.len() < 16 {
-            return Err(InstrumentError::Unsupported(
-                "Rigol MMEM waveform export returned empty CSV".into(),
-            ));
-        }
-        Ok(data)
+        Err(InstrumentError::Unsupported(
+            "Rigol/Siglent MMEM CSV export unavailable".into(),
+        ))
     }
 
     /// Tektronix: `SAVe:WAVEform` INTERNAL to scope disk, then `FILESystem:READFile`.
@@ -1064,9 +1116,8 @@ impl InstrumentDevice {
         self.require(InstrumentKind::Oscilloscope, "waveform")?;
         let channel = channel.clamp(1, 8);
         let points = max_points.clamp(100, 1_000_000);
-        let (xincr, xzero, ymult, yoff, yzero, signed) = if self.vendor_is("RIGOL")
-            || self.vendor_is("SIGLENT")
-        {
+        let rigol_family = self.vendor_is("RIGOL") || self.vendor_is("SIGLENT");
+        let (xincr, xzero, ymult, yoff, yzero, signed, y_scale) = if rigol_family {
             self.session
                 .write(&format!(":WAV:SOUR CHAN{channel}"))?;
             self.session.write(":WAV:MODE NORM")?;
@@ -1079,9 +1130,14 @@ impl InstrumentDevice {
                 self.session.query_f64(":WAV:XINC?")?,
                 self.session.query_f64(":WAV:XOR?").unwrap_or(0.0),
                 self.session.query_f64(":WAV:YINC?")?,
-                self.session.query_f64(":WAV:YOR?")?,
+                self.session.query_f64(":WAV:YOR?").unwrap_or(0.0),
                 self.session.query_f64(":WAV:YREF?").unwrap_or(0.0),
                 false,
+                if self.vendor_is("RIGOL") {
+                    YScaleKind::Rigol
+                } else {
+                    YScaleKind::Siglent
+                },
             )
         } else {
             // Tektronix / Keysight-style binary curve transfer.
@@ -1098,9 +1154,10 @@ impl InstrumentDevice {
                 self.session.query_f64("WFMOutpre:YOFf?")?,
                 self.session.query_f64("WFMOutpre:YZEro?")?,
                 true,
+                YScaleKind::Tek,
             )
         };
-        if self.vendor_is("RIGOL") || self.vendor_is("SIGLENT") {
+        if rigol_family {
             self.session.write(":WAV:DATA?")?;
         } else {
             self.session.write("CURVe?")?;
@@ -1116,7 +1173,7 @@ impl InstrumentDevice {
                 byte as f64
             };
             x.push(xzero + index as f64 * xincr);
-            y.push((code - yoff) * ymult + yzero);
+            y.push(scale_scope_y(y_scale, code, ymult, yoff, yzero));
         }
         let (x, y) = downsample_minmax(&x, &y, points.max(2));
         Ok(WaveformTrace {
@@ -1576,6 +1633,49 @@ impl InstrumentDevice {
     }
 }
 
+#[derive(Clone, Copy)]
+enum YScaleKind {
+    Tek,
+    Rigol,
+    Siglent,
+}
+
+fn scale_scope_y(kind: YScaleKind, code: f64, ymult: f64, yoff: f64, yzero: f64) -> f64 {
+    match kind {
+        // Tek: y = YZERO + YMULT * (code - YOFF)
+        YScaleKind::Tek => yzero + ymult * (code - yoff),
+        // Rigol DS/MSO: v = (data - YORigin - YREFerence) * YINCrement
+        YScaleKind::Rigol => (code - yoff - yzero) * ymult,
+        // Siglent SDS family commonly: v = (data - YREF) * YINC + YOR
+        YScaleKind::Siglent => (code - yzero) * ymult + yoff,
+    }
+}
+
+fn looks_like_text_csv(bytes: &[u8]) -> bool {
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(256)]);
+    let upper = head.to_ascii_uppercase();
+    head.contains(',')
+        && (upper.contains("TIME")
+            || upper.contains("CH")
+            || upper.contains("CHANNEL")
+            || upper.contains("SECOND")
+            || upper.contains("VOLT"))
+}
+
+/// Accept filesystem waveform only when content matches the requested format and parses.
+/// Ensures Tek `WINDows` `.wfm` (`WFM#001` / `#003`) is actually loadable before returning.
+fn tek_waveform_source_bytes_ok(bytes: &[u8], ext: &str) -> bool {
+    if bytes.len() < 32 {
+        return false;
+    }
+    match ext {
+        "wfm" => crate::waveform_file::load_waveform_bytes(bytes, "wfm", "CH1").is_ok(),
+        "isf" => crate::waveform_file::load_waveform_bytes(bytes, "isf", "CH1").is_ok(),
+        "csv" => looks_like_text_csv(bytes),
+        _ => !bytes.is_empty(),
+    }
+}
+
 /// Build an ISF-compatible byte stream from Tektronix bus preamble + CURVe block.
 fn assemble_tek_isf(preamble: &str, curve_raw: &[u8]) -> Vec<u8> {
     let mut pre = preamble.trim().replace("WFMOUTPRE:", "WFMPRE:");
@@ -1737,6 +1837,12 @@ mod tests {
             name.ends_with(".csv") || name.ends_with(".isf") || name.ends_with(".wfm"),
             "name={name}"
         );
+        // Captured source must be parseable by the same path the GUI uses.
+        let ext = name.rsplit('.').next().unwrap_or("csv");
+        assert!(
+            crate::waveform_file::load_waveform_bytes(&src, ext, "CH1").is_ok(),
+            "demo waveform source should parse ({name})"
+        );
 
         let source = InstrumentDevice::connect_demo(InstrumentKind::DcSource).unwrap();
         assert_eq!(source.profile.capabilities.channels, 3);
@@ -1745,6 +1851,25 @@ mod tests {
             .read_measurements()
             .unwrap();
         assert!(readings.len() >= 3);
+    }
+
+    #[test]
+    fn tek_wfm_source_validator_accepts_001_and_003() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../sample_waveforms/Tektronix_WFM");
+        let sample = root.join("analog_waveform.wfm");
+        if sample.is_file() {
+            let bytes = std::fs::read(&sample).unwrap();
+            assert!(tek_waveform_source_bytes_ok(&bytes, "wfm"));
+            assert!(!tek_waveform_source_bytes_ok(&bytes, "isf"));
+        }
+        // Legacy WiParse WFM#001 (no leading ':')
+        let mut legacy = vec![0u8; 900];
+        legacy[0] = 0x0f;
+        legacy[1] = 0x0f;
+        legacy[2..10].copy_from_slice(b"WFM#001\0");
+        // Not a full valid file — validator must require a successful parse.
+        assert!(!tek_waveform_source_bytes_ok(&legacy, "wfm"));
     }
 
     #[test]

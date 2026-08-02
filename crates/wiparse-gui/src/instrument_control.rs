@@ -17,7 +17,7 @@ use wiparse_core::instrument::{
     Capabilities, ControlCommand, Identity, InstrumentDevice, InstrumentKind, MeasureFunction,
     Reading, ResourceInfo, Sample, ScopeMeasType, WaveformTrace,
 };
-use wiparse_core::waveform_file::{load_waveform_bytes, save_waveform_file};
+use wiparse_core::waveform_file::{load_waveform_bytes, save_waveform_file, sniff_waveform_ext};
 
 enum Job {
     Scan {
@@ -670,48 +670,73 @@ impl InstrumentControlPanel {
                 let ext = stem
                     .extension()
                     .and_then(|e| e.to_str())
-                    .unwrap_or("isf")
+                    .unwrap_or("csv")
                     .to_ascii_lowercase();
                 let channel = stem
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .and_then(|s| s.strip_prefix("waveform_"))
                     .unwrap_or("CH1");
+                let vendor = self
+                    .devices
+                    .iter()
+                    .find(|d| d.id == id)
+                    .map(|d| d.identity.manufacturer.as_str())
+                    .unwrap_or("");
 
                 // Parse in memory and show full screen record in ③ Waveform panel.
-                if let Ok(trace) = load_waveform_bytes(&bytes, &ext, channel) {
-                    self.status = format!(
-                        "屏幕波形 {} · N={} / Screen waveform {} · N={}",
-                        trace.channel,
-                        trace.x.len(),
-                        trace.channel,
-                        trace.x.len()
-                    );
-                    self.wave_plots.insert(
-                        id,
-                        build_cached_wave_plot(&trace, SCOPE_PLOT_DISPLAY_POINTS),
-                    );
-                    self.waveforms.insert(id, trace);
+                // Prefer suggested extension; fall back to content sniff (WFM#001/#003, ISF, CSV).
+                let mut parsed_ok = false;
+                let mut effective_ext = ext.clone();
+                let parse_result = load_waveform_bytes(&bytes, &ext, channel).or_else(|first| {
+                    match sniff_waveform_ext(&bytes) {
+                        Some(sniffed) if sniffed != ext => {
+                            effective_ext = sniffed.to_string();
+                            load_waveform_bytes(&bytes, sniffed, channel)
+                        }
+                        _ => Err(first),
+                    }
+                });
+                match parse_result {
+                    Ok(trace) => {
+                        parsed_ok = true;
+                        self.status = format!(
+                            "屏幕波形 {} · N={} / Screen waveform {} · N={}",
+                            trace.channel,
+                            trace.x.len(),
+                            trace.channel,
+                            trace.x.len()
+                        );
+                        self.wave_plots.insert(
+                            id,
+                            build_cached_wave_plot(&trace, SCOPE_PLOT_DISPLAY_POINTS),
+                        );
+                        self.waveforms.insert(id, trace);
+                    }
+                    Err(err) => {
+                        self.status = format!(
+                            "波形已读取但解析失败 / Waveform read but parse failed: {err}"
+                        );
+                    }
                 }
 
-                // Auto Save As as soon as VISA transfer completes.
+                // Auto Save As — filters ordered by vendor native formats.
                 let default = self.save_dir.join(format!(
                     "{}_{}.{}",
                     stem.file_stem()
                         .and_then(|s| s.to_str())
                         .unwrap_or("waveform"),
                     Local::now().format("%Y%m%d_%H%M%S"),
-                    ext
+                    effective_ext
                 ));
-                let mut dialog = rfd::FileDialog::new()
-                    .set_directory(&self.save_dir)
-                    .set_file_name(default.file_name().unwrap_or_default().to_string_lossy())
-                    .add_filter("Tektronix ISF", &["isf"])
-                    .add_filter("Tektronix WFM", &["wfm"])
-                    .add_filter("CSV", &["csv"])
-                    .add_filter("All", &["*"]);
+                let dialog = scope_waveform_save_dialog(
+                    vendor,
+                    &self.save_dir,
+                    default.file_name().unwrap_or_default().to_string_lossy().as_ref(),
+                    &effective_ext,
+                );
                 if let Some(path) = dialog.save_file() {
-                    match save_waveform_file(&path, Some(&bytes), Some(&ext), None) {
+                    match save_waveform_file(&path, Some(&bytes), Some(&effective_ext), None) {
                         Ok(()) => {
                             self.status = format!(
                                 "已保存波形源 / Waveform source saved: {}",
@@ -723,7 +748,7 @@ impl InstrumentControlPanel {
                         }
                         Err(error) => self.status = error.to_string(),
                     }
-                } else if self.waveforms.contains_key(&id) {
+                } else if parsed_ok {
                     self.status =
                         "已解析屏幕波形，保存已取消 / Screen waveform parsed, save cancelled"
                             .into();
@@ -1339,17 +1364,15 @@ impl InstrumentControlPanel {
             // (capability flag can be false on generic/demo profiles).
             let can_wave_src = self.devices[index].kind == InstrumentKind::Oscilloscope
                 || self.devices[index].capabilities.waveform;
+            let vendor = self.devices[index].identity.manufacturer.as_str();
+            let wave_tip = scope_waveform_source_tip(lang, vendor);
             if ui
                 .add_enabled(
                     can_wave_src,
                     egui::Button::new(text(lang, "读取波形源文件", "Read Wave Source"))
                         .min_size(egui::vec2(128.0, 28.0)),
                 )
-                .on_hover_text(text(
-                    lang,
-                    "通过 VISA 读取屏幕完整波形（.isf/.wfm/.csv），完成后自动弹出另存为",
-                    "Read full on-screen waveform via VISA (.isf/.wfm/.csv), then auto Save As",
-                ))
+                .on_hover_text(wave_tip)
                 .clicked()
             {
                 let channel = self.devices[index].controls.scope_channel;
@@ -1481,19 +1504,24 @@ impl InstrumentControlPanel {
                 .clicked()
             {
                 if let Some(trace) = self.waveforms.get(&id) {
+                    let vendor = self.devices[index].identity.manufacturer.as_str();
+                    let default_ext = if manufacturer_is(vendor, "TEKTRONIX") {
+                        "isf"
+                    } else {
+                        "csv"
+                    };
                     let default = self.save_dir.join(format!(
-                        "waveform_{}_{}.isf",
-                        trace.channel,
-                        Local::now().format("%Y%m%d_%H%M%S")
+                        "waveform_{}_{}.{default_ext}",
+                        trace.channel.replace(['/', '\\', ':'], "_"),
+                        Local::now().format("%Y%m%d_%H%M%S"),
                     ));
-                    if let Some(path) = rfd::FileDialog::new()
-                        .set_directory(&self.save_dir)
-                        .set_file_name(default.file_name().unwrap_or_default().to_string_lossy())
-                        .add_filter("Tektronix ISF", &["isf"])
-                        .add_filter("Tektronix WFM", &["wfm"])
-                        .add_filter("CSV", &["csv"])
-                        .save_file()
-                    {
+                    let dialog = scope_waveform_save_dialog(
+                        vendor,
+                        &self.save_dir,
+                        default.file_name().unwrap_or_default().to_string_lossy().as_ref(),
+                        default_ext,
+                    );
+                    if let Some(path) = dialog.save_file() {
                         match save_waveform_file(&path, None, None, Some(trace)) {
                             Ok(()) => {
                                 self.status = format!(
@@ -2435,7 +2463,11 @@ impl InstrumentControlPanel {
             .legend(Legend::default())
             .show(ui, |plot_ui| {
                 for (name, points) in series {
-                    plot_ui.line(Line::new(PlotPoints::from(points)).name(name));
+                    let mut line = Line::new(PlotPoints::from(points)).name(name.clone());
+                    if let Some(color) = crate::waveform_analysis::tek_channel_color(&name) {
+                        line = line.color(color);
+                    }
+                    plot_ui.line(line);
                 }
             });
     }
@@ -4345,6 +4377,74 @@ fn instrument_type_card(
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     action
+}
+
+fn manufacturer_is(manufacturer: &str, needle: &str) -> bool {
+    manufacturer.to_uppercase().contains(needle)
+}
+
+fn scope_waveform_source_tip(lang: Lang, manufacturer: &str) -> String {
+    if manufacturer_is(manufacturer, "TEKTRONIX") {
+        text(
+            lang,
+            "读取屏幕完整波形源：优先原生 .isf / WFM#001·#003 / .csv，失败则 CURVe 拼 ISF；完成后另存为",
+            "Read full on-screen source: native .isf / WFM#001·#003 / .csv, else CURVe→ISF; then Save As",
+        )
+        .into()
+    } else if manufacturer_is(manufacturer, "RIGOL") || manufacturer_is(manufacturer, "SIGLENT") {
+        text(
+            lang,
+            "读取屏幕完整波形并导出 CSV（:WAV:MODE NORM）；另存为可选转换为泰克 ISF/WFM",
+            "Read full on-screen wave as CSV (:WAV:MODE NORM); Save As can convert to Tek ISF/WFM",
+        )
+        .into()
+    } else {
+        text(
+            lang,
+            "通过 VISA 读取屏幕波形并导出 CSV，完成后自动弹出另存为",
+            "Read on-screen waveform via VISA as CSV, then auto Save As",
+        )
+        .into()
+    }
+}
+
+/// Vendor-aware Save As filters. Native formats listed first.
+fn scope_waveform_save_dialog(
+    manufacturer: &str,
+    dir: &std::path::Path,
+    file_name: &str,
+    preferred_ext: &str,
+) -> rfd::FileDialog {
+    let mut dialog = rfd::FileDialog::new()
+        .set_directory(dir)
+        .set_file_name(file_name);
+    if manufacturer_is(manufacturer, "TEKTRONIX") {
+        dialog = match preferred_ext {
+            "wfm" => dialog
+                .add_filter("Tektronix WFM", &["wfm"])
+                .add_filter("Tektronix ISF", &["isf"])
+                .add_filter("CSV", &["csv"]),
+            "csv" => dialog
+                .add_filter("CSV", &["csv"])
+                .add_filter("Tektronix ISF", &["isf"])
+                .add_filter("Tektronix WFM", &["wfm"]),
+            _ => dialog
+                .add_filter("Tektronix ISF", &["isf"])
+                .add_filter("Tektronix WFM", &["wfm"])
+                .add_filter("CSV", &["csv"]),
+        };
+    } else if manufacturer_is(manufacturer, "RIGOL") || manufacturer_is(manufacturer, "SIGLENT") {
+        dialog = dialog
+            .add_filter("CSV (native)", &["csv"])
+            .add_filter("Tektronix ISF (converted)", &["isf"])
+            .add_filter("Tektronix WFM (converted)", &["wfm"]);
+    } else {
+        dialog = dialog
+            .add_filter("CSV", &["csv"])
+            .add_filter("Tektronix ISF (converted)", &["isf"])
+            .add_filter("Tektronix WFM (converted)", &["wfm"]);
+    }
+    dialog.add_filter("All", &["*"])
 }
 
 fn kind_sort_key(kind: Option<InstrumentKind>) -> u8 {

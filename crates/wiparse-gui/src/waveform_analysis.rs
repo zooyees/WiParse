@@ -11,7 +11,7 @@ use wiparse_core::i18n::{tr, Lang};
 use wiparse_core::instrument::WaveformTrace;
 use wiparse_core::paths::project_path;
 use wiparse_core::waveform_file::{
-    load_waveform_file, measure_waveform, measure_waveform_range, save_waveform_file,
+    load_waveform_file_all, measure_waveform, measure_waveform_range, save_waveform_file,
     WaveformMeasurements,
 };
 
@@ -220,12 +220,22 @@ impl WaveformAnalysisPanel {
                         .clicked()
                     {
                         if let Some(i) = self.selected {
-                            self.waves.remove(i);
-                            self.selected = if self.waves.is_empty() {
-                                None
+                            // Multi-channel WFM shares one path — close the whole document.
+                            let path = self.waves.get(i).map(|w| w.path.clone());
+                            if let Some(path) = path {
+                                self.waves.retain(|w| !same_wave_path(&w.path, &path));
                             } else {
-                                Some(i.min(self.waves.len() - 1))
-                            };
+                                self.waves.remove(i);
+                            }
+                            if self.waves.is_empty() {
+                                self.selected = None;
+                                self.last_x_range = None;
+                                self.last_y_range = None;
+                                self.pending_bounds = None;
+                                self.fit_request = false;
+                            } else {
+                                self.activate_wave(0);
+                            }
                             self.status = t(lang, "已关闭波形", "Waveform closed").into();
                         }
                     }
@@ -303,8 +313,14 @@ impl WaveformAnalysisPanel {
                         .on_hover_text(t(lang, "显示全部波形", "Show full waveform"))
                         .clicked()
                     {
+                        // Fit all channels in the current document (same source path).
                         self.fit_request = true;
-                        self.pending_bounds = None;
+                        self.pending_bounds =
+                            self.document_extent().or_else(|| self.selected_extent());
+                        if let Some(ext) = self.pending_bounds.as_ref() {
+                            self.last_x_range = Some((ext.min()[0], ext.max()[0]));
+                            self.last_y_range = Some((ext.min()[1], ext.max()[1]));
+                        }
                     }
                     let has_pair = match self.cursor_axis {
                         CursorAxis::X => self.x1.is_some() && self.x2.is_some(),
@@ -500,39 +516,24 @@ impl WaveformAnalysisPanel {
         Some(PlotBounds::from_min_max([xmin, ymin], [xmax, ymax]))
     }
 
-    /// Extent of the selected wave only — used when switching/fitting a file.
+    /// Extent of the selected wave only.
     fn selected_extent(&self) -> Option<PlotBounds> {
         let w = self.selected.and_then(|i| self.waves.get(i))?;
-        let n = w.trace.x.len().min(w.trace.y.len());
-        if n == 0 {
+        extent_of_traces(&[w])
+    }
+
+    /// Extent of every channel that belongs to the selected file (multi-channel WFM).
+    fn document_extent(&self) -> Option<PlotBounds> {
+        let path = self.selected.and_then(|i| self.waves.get(i)).map(|w| w.path.as_path())?;
+        let peers: Vec<&LoadedWave> = self
+            .waves
+            .iter()
+            .filter(|w| same_wave_path(&w.path, path))
+            .collect();
+        if peers.is_empty() {
             return None;
         }
-        let mut xmin = f64::INFINITY;
-        let mut xmax = f64::NEG_INFINITY;
-        let mut ymin = f64::INFINITY;
-        let mut ymax = f64::NEG_INFINITY;
-        for i in 0..n {
-            xmin = xmin.min(w.trace.x[i]);
-            xmax = xmax.max(w.trace.x[i]);
-            ymin = ymin.min(w.trace.y[i]);
-            ymax = ymax.max(w.trace.y[i]);
-        }
-        if !xmin.is_finite() {
-            return None;
-        }
-        if (xmax - xmin).abs() < VIEW_MIN_SPAN_ABS {
-            xmax = xmin + VIEW_MIN_SPAN_ABS;
-        }
-        if (ymax - ymin).abs() < VIEW_MIN_SPAN_ABS {
-            ymax = ymin + VIEW_MIN_SPAN_ABS;
-        }
-        // Small pad so the trace isn't flush against the frame.
-        let xpad = ((xmax - xmin).abs() * 0.02).max(VIEW_MIN_SPAN_ABS);
-        let ypad = ((ymax - ymin).abs() * 0.08).max(VIEW_MIN_SPAN_ABS);
-        Some(PlotBounds::from_min_max(
-            [xmin - xpad, ymin - ypad],
-            [xmax + xpad, ymax + ypad],
-        ))
+        extent_of_traces(&peers)
     }
 
     /// Clamp view so it cannot zoom/pan to infinity.
@@ -838,20 +839,35 @@ impl WaveformAnalysisPanel {
         if let Some(parent) = path.parent() {
             self.open_dir = parent.to_path_buf();
         }
-        if let Some(i) = self
-            .waves
-            .iter()
-            .position(|w| same_wave_path(&w.path, path))
-        {
-            // Re-activate + fit even when already selected, so the plot "page"
-            // always jumps to this file's extent (not the previous zoom window).
-            self.activate_wave(i);
-            self.status = format!("{} {}", t(lang, "已打开", "Opened"), path.display());
+        if self.waves.iter().any(|w| same_wave_path(&w.path, path)) {
+            // Browser = single-document switch: keep every channel from this file
+            // (multi-channel WFM expands to N LoadedWave entries sharing one path).
+            self.waves.retain(|w| same_wave_path(&w.path, path));
+            self.next_color = self.waves.len();
+            self.activate_wave(0);
+            self.status = format!(
+                "{} {} ({} ch)",
+                t(lang, "已打开", "Opened"),
+                path.display(),
+                self.waves.len()
+            );
             return;
         }
+        // Replace current document with the newly loaded file.
+        self.waves.clear();
+        self.selected = None;
+        self.next_color = 0;
+        self.last_x_range = None;
+        self.last_y_range = None;
+        self.pending_bounds = None;
         match self.load_path(path) {
             Ok(()) => {
-                self.status = format!("{} {}", t(lang, "已加载", "Loaded"), path.display());
+                self.status = format!(
+                    "{} {} ({} ch)",
+                    t(lang, "已加载", "Loaded"),
+                    path.display(),
+                    self.waves.len()
+                );
             }
             Err(err) => {
                 self.status = format!(
@@ -863,7 +879,7 @@ impl WaveformAnalysisPanel {
         }
     }
 
-    /// Select a loaded wave and reset the plot viewport to that wave.
+    /// Select a loaded wave and reset the plot viewport to the whole document.
     fn activate_wave(&mut self, index: usize) {
         if index >= self.waves.len() {
             return;
@@ -871,8 +887,16 @@ impl WaveformAnalysisPanel {
         self.selected = Some(index);
         self.fit_request = true;
         self.pending_bounds = None;
-        self.last_x_range = None;
-        self.last_y_range = None;
+        // Pre-seed viewport from all channels of this file. egui_plot's plot_bounds()
+        // returns *last frame* until draw finishes, so we must not read it for Fit.
+        if let Some(ext) = self.document_extent().or_else(|| self.selected_extent()) {
+            self.last_x_range = Some((ext.min()[0], ext.max()[0]));
+            self.last_y_range = Some((ext.min()[1], ext.max()[1]));
+            self.pending_bounds = Some(ext);
+        } else {
+            self.last_x_range = None;
+            self.last_y_range = None;
+        }
         self.x1 = None;
         self.x2 = None;
         self.y1 = None;
@@ -1150,20 +1174,31 @@ impl WaveformAnalysisPanel {
                 }
             })
             .show(ui, |plot_ui| {
+                // IMPORTANT: `plot_ui.plot_bounds()` returns *last frame* until the plot
+                // is drawn. `set_plot_bounds` only queues a modification. Never seed
+                // last_x_range from plot_bounds() on a Fit frame — that re-applies the
+                // previous file's window and makes the new waveform "disappear".
+                let mut applied: Option<PlotBounds> = None;
                 if fit {
-                    // Fit the *selected* file so switching browser entries changes the view.
-                    if let Some(ext) = self.selected_extent().or_else(|| self.data_extent()) {
+                    if let Some(ext) = self
+                        .document_extent()
+                        .or_else(|| self.selected_extent())
+                        .or_else(|| self.data_extent())
+                    {
                         let clamped = self.clamp_view_bounds(ext);
                         plot_ui.set_plot_bounds(clamped);
+                        applied = Some(clamped);
                     } else {
                         plot_ui.set_auto_bounds(Vec2b::new(true, true));
                     }
                 }
                 if let Some(b) = pending {
-                    plot_ui.set_plot_bounds(self.clamp_view_bounds(b));
+                    let clamped = self.clamp_view_bounds(b);
+                    plot_ui.set_plot_bounds(clamped);
+                    applied = Some(clamped);
                 }
 
-                let bounds = plot_ui.plot_bounds();
+                let bounds = applied.unwrap_or_else(|| plot_ui.plot_bounds());
                 next_x_range = Some((bounds.min()[0], bounds.max()[0]));
                 next_y_range = Some((bounds.min()[1], bounds.max()[1]));
                 let x_span = (bounds.max()[0] - bounds.min()[0]).abs().max(1e-30);
@@ -1287,12 +1322,15 @@ impl WaveformAnalysisPanel {
                     end_drag = true;
                 }
 
-                // Clamp after user zoom/pan this frame.
-                let after = plot_ui.plot_bounds();
-                let clamped = self.clamp_view_bounds(after);
-                if clamped.min() != after.min() || clamped.max() != after.max() {
-                    plot_ui.set_plot_bounds(clamped);
-                    needs_clamp = true;
+                // Clamp after user zoom/pan — skip on Fit frames so we don't overwrite
+                // the queued Set(bounds) with a clamp of the *previous* viewport.
+                if applied.is_none() {
+                    let after = plot_ui.plot_bounds();
+                    let clamped = self.clamp_view_bounds(after);
+                    if clamped.min() != after.min() || clamped.max() != after.max() {
+                        plot_ui.set_plot_bounds(clamped);
+                        needs_clamp = true;
+                    }
                 }
             });
 
@@ -1394,43 +1432,69 @@ impl WaveformAnalysisPanel {
                 t(lang, "波形源文件", "Waveform sources"),
                 &["csv", "isf", "wfm", "txt"],
             )
-            .add_filter("CSV", &["csv", "txt"])
+            .add_filter("CSV (Tek/Rigol/WiParse)", &["csv", "txt"])
             .add_filter("Tektronix ISF", &["isf"])
             .add_filter("Tektronix WFM", &["wfm"])
             .pick_files();
         let Some(paths) = paths else {
             return;
         };
+        // Multi-open from dialog may overlay; browser clicks use single-document switch.
         for path in paths {
             if let Some(parent) = path.parent() {
                 self.open_dir = parent.to_path_buf();
             }
-            self.open_browser_file(&path, lang);
+            if self
+                .waves
+                .iter()
+                .any(|w| same_wave_path(&w.path, &path))
+            {
+                continue;
+            }
+            match self.load_path(&path) {
+                Ok(()) => {
+                    self.status = format!("{} {}", t(lang, "已加载", "Loaded"), path.display());
+                }
+                Err(err) => {
+                    self.status = format!(
+                        "{} {}: {err}",
+                        t(lang, "加载失败", "Load failed"),
+                        path.display()
+                    );
+                }
+            }
         }
     }
 
     fn load_path(&mut self, path: &Path) -> Result<(), String> {
-        let trace = load_waveform_file(path).map_err(|e| e.to_string())?;
-        let measures = measure_waveform(&trace);
-        let plot_points = Arc::new(downsample_points(&trace, PLOT_DISPLAY_POINTS));
-        let label = format!(
-            "{} · {}",
-            path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("wave"),
-            trace.channel
-        );
-        let color = TRACE_COLORS[self.next_color % TRACE_COLORS.len()];
-        self.next_color += 1;
-        self.waves.push(LoadedWave {
-            path: path.to_path_buf(),
-            label,
-            trace,
-            plot_points,
-            measures,
-            color,
-        });
-        self.activate_wave(self.waves.len() - 1);
+        let traces = load_waveform_file_all(path).map_err(|e| e.to_string())?;
+        if traces.is_empty() {
+            return Err("empty waveform".into());
+        }
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("wave");
+        let first_idx = self.waves.len();
+        for trace in traces {
+            let measures = measure_waveform(&trace);
+            let plot_points = Arc::new(downsample_points(&trace, PLOT_DISPLAY_POINTS));
+            let label = format!("{file_name} · {}", trace.channel);
+            let color = color_for_channel(&trace.channel).unwrap_or_else(|| {
+                let c = TRACE_COLORS[self.next_color % TRACE_COLORS.len()];
+                self.next_color += 1;
+                c
+            });
+            self.waves.push(LoadedWave {
+                path: path.to_path_buf(),
+                label,
+                trace,
+                plot_points,
+                measures,
+                color,
+            });
+        }
+        self.activate_wave(first_idx);
         Ok(())
     }
 
@@ -1500,14 +1564,58 @@ impl WaveformAnalysisPanel {
     }
 }
 
-const TRACE_COLORS: [Color32; 6] = [
-    Color32::from_rgb(0x3B, 0xB2, 0xF0),
-    Color32::from_rgb(0xF5, 0xA6, 0x23),
-    Color32::from_rgb(0x2E, 0xC4, 0xB6),
-    Color32::from_rgb(0xE8, 0x5D, 0x75),
-    Color32::from_rgb(0xA7, 0x8B, 0xFA),
-    Color32::from_rgb(0x84, 0xCC, 0x16),
+/// Tektronix default channel colors (2/3/4/5/6 Series FAQ):
+/// CH1 Yellow, CH2 Cyan, CH3 Red, CH4 Green, CH5 Orange, CH6 Blue, CH7 Magenta, CH8 Mint.
+const TEK_CHANNEL_COLORS: [Color32; 8] = [
+    Color32::from_rgb(0xF7, 0xD6, 0x18), // CH1 Yellow
+    Color32::from_rgb(0x00, 0xD4, 0xFF), // CH2 Cyan
+    Color32::from_rgb(0xFF, 0x3B, 0x30), // CH3 Red
+    Color32::from_rgb(0x2E, 0xD1, 0x58), // CH4 Green
+    Color32::from_rgb(0xFF, 0x9F, 0x0A), // CH5 Orange
+    Color32::from_rgb(0x3B, 0x82, 0xF6), // CH6 Blue
+    Color32::from_rgb(0xE0, 0x40, 0xFB), // CH7 Magenta
+    Color32::from_rgb(0x6E, 0xF7, 0xC8), // CH8 Mint
 ];
+
+/// Fallback palette when the channel name is not CH1…CH8.
+const TRACE_COLORS: [Color32; 6] = [
+    TEK_CHANNEL_COLORS[0],
+    TEK_CHANNEL_COLORS[1],
+    TEK_CHANNEL_COLORS[2],
+    TEK_CHANNEL_COLORS[3],
+    TEK_CHANNEL_COLORS[4],
+    TEK_CHANNEL_COLORS[5],
+];
+
+/// Public helper for Tek-style CH1…CH8 colors (shared with instrument plots).
+pub fn tek_channel_color(channel: &str) -> Option<Color32> {
+    color_for_channel(channel)
+}
+
+/// Map `CH1`…`CH8` (also `C1`, `Channel 1`) to Tek default colors.
+fn color_for_channel(channel: &str) -> Option<Color32> {
+    let s = channel.trim();
+    let upper = s.to_ascii_uppercase();
+    let num = if let Some(rest) = upper.strip_prefix("CHANNEL") {
+        rest.trim().parse::<usize>().ok()
+    } else if let Some(rest) = upper.strip_prefix("CH") {
+        rest.trim().parse::<usize>().ok()
+    } else if let Some(rest) = upper.strip_prefix('C') {
+        // Avoid matching bare letters; require a digit start.
+        if rest.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            rest.parse::<usize>().ok()
+        } else {
+            None
+        }
+    } else {
+        upper.parse::<usize>().ok()
+    }?;
+    if (1..=TEK_CHANNEL_COLORS.len()).contains(&num) {
+        Some(TEK_CHANNEL_COLORS[num - 1])
+    } else {
+        None
+    }
+}
 
 fn is_waveform_source_ext(path: &Path) -> bool {
     matches!(
@@ -1773,6 +1881,42 @@ fn measure_row(ui: &mut egui::Ui, tokens: &Tokens, key: &str, value: &str) {
             ui.label(RichText::new(value).small().monospace());
         });
     });
+}
+
+fn extent_of_traces(waves: &[&LoadedWave]) -> Option<PlotBounds> {
+    let mut xmin = f64::INFINITY;
+    let mut xmax = f64::NEG_INFINITY;
+    let mut ymin = f64::INFINITY;
+    let mut ymax = f64::NEG_INFINITY;
+    let mut any = false;
+    for w in waves {
+        let n = w.trace.x.len().min(w.trace.y.len());
+        if n == 0 {
+            continue;
+        }
+        any = true;
+        for i in 0..n {
+            xmin = xmin.min(w.trace.x[i]);
+            xmax = xmax.max(w.trace.x[i]);
+            ymin = ymin.min(w.trace.y[i]);
+            ymax = ymax.max(w.trace.y[i]);
+        }
+    }
+    if !any || !xmin.is_finite() {
+        return None;
+    }
+    if (xmax - xmin).abs() < VIEW_MIN_SPAN_ABS {
+        xmax = xmin + VIEW_MIN_SPAN_ABS;
+    }
+    if (ymax - ymin).abs() < VIEW_MIN_SPAN_ABS {
+        ymax = ymin + VIEW_MIN_SPAN_ABS;
+    }
+    let xpad = ((xmax - xmin).abs() * 0.02).max(VIEW_MIN_SPAN_ABS);
+    let ypad = ((ymax - ymin).abs() * 0.08).max(VIEW_MIN_SPAN_ABS);
+    Some(PlotBounds::from_min_max(
+        [xmin - xpad, ymin - ypad],
+        [xmax + xpad, ymax + ypad],
+    ))
 }
 
 fn panel_in_rect(ui: &mut egui::Ui, rect: egui::Rect, add: impl FnOnce(&mut egui::Ui)) {

@@ -4550,6 +4550,7 @@ dependencies = [
  "chrono",
  "crossbeam-channel",
  "dirs",
+ "flate2",
  "libloading",
  "memmap2",
  "rusqlite",

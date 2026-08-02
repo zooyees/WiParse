@@ -18,6 +18,7 @@ uuid = { workspace = true }
 crossbeam-channel = { workspace = true }
 libloading = "0.8"
 memmap2 = "0.9"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
