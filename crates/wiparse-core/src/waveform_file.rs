@@ -71,18 +71,18 @@ pub fn load_waveform_bytes_all(
 ) -> Result<Vec<WaveformTrace>, WaveformFileError> {
     let ext = hint_ext.trim().trim_start_matches('.').to_ascii_lowercase();
     let traces = match ext.as_str() {
-        "isf" => vec![load_tek_isf(bytes, default_channel)?],
+        "isf" => load_tek_isf_all(bytes, default_channel)?,
         "wfm" => load_wfm_bytes_all(bytes, default_channel)?,
-        "csv" | "txt" => vec![load_waveform_csv_bytes(bytes, default_channel)?],
+        "csv" | "txt" => load_csv_bytes_all(bytes, default_channel)?,
         _ => {
             if looks_like_wfm(bytes) {
                 load_tek_wfm_all(bytes, default_channel)?
             } else if looks_like_rigol_wfm(bytes) {
                 load_rigol_wfm_all(bytes)?
             } else if looks_like_isf(bytes) {
-                vec![load_tek_isf(bytes, default_channel)?]
+                load_tek_isf_all(bytes, default_channel)?
             } else {
-                vec![load_waveform_csv_bytes(bytes, default_channel)?]
+                load_csv_bytes_all(bytes, default_channel)?
             }
         }
     };
@@ -175,19 +175,89 @@ pub fn waveform_to_wiparse_csv(trace: &WaveformTrace) -> Vec<u8> {
     csv.into_bytes()
 }
 
+/// Concatenate multiple single-channel Tek ISF blobs into one multi-curve file.
+///
+/// Each channel keeps its own `:WFMPRE … :CURVE #…` segment. WiParse (and many
+/// Tek tools that scan for successive CURVE blocks) can reload every channel.
+pub fn join_tek_isf_channels(channel_isfs: &[(u8, &[u8])]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for (i, (ch, bytes)) in channel_isfs.iter().enumerate() {
+        if i > 0 {
+            out.push(b'\n');
+        }
+        // Ensure a channel tag exists for reload labeling.
+        let tagged = ensure_isf_wfid(bytes, &format!("CH{ch}"));
+        out.extend_from_slice(&tagged);
+    }
+    out
+}
+
+fn ensure_isf_wfid(bytes: &[u8], channel: &str) -> Vec<u8> {
+    let upper = String::from_utf8_lossy(bytes).to_ascii_uppercase();
+    if upper.contains("WFID") || upper.contains("SOURCE") {
+        return bytes.to_vec();
+    }
+    // Insert WFID before :CURVE when missing.
+    if let Some(at) = find_bytes_ci(bytes, b":CURVE").or_else(|| find_bytes_ci(bytes, b"CURVE ")) {
+        let mut out = Vec::with_capacity(bytes.len() + 32);
+        out.extend_from_slice(&bytes[..at]);
+        if !out.last().is_some_and(|b| *b == b';' || *b == b'\n') {
+            out.push(b';');
+        }
+        out.extend_from_slice(format!("WFID \"{channel}\";").as_bytes());
+        out.extend_from_slice(&bytes[at..]);
+        out
+    } else {
+        bytes.to_vec()
+    }
+}
+
 /// Spreadsheet CSV (`TIME,CHx`) — Excel / Rigol / Tek friendly.
 pub fn waveform_to_spreadsheet_csv(trace: &WaveformTrace) -> Vec<u8> {
+    waveforms_to_spreadsheet_csv(std::slice::from_ref(trace))
+}
+
+/// Multi-channel spreadsheet CSV (`TIME,CH1,CH2,…`).
+///
+/// Rows are aligned by sample index using the first trace’s time axis. Channels
+/// with fewer points leave trailing cells empty.
+pub fn waveforms_to_spreadsheet_csv(traces: &[WaveformTrace]) -> Vec<u8> {
     use std::fmt::Write as _;
+    if traces.is_empty() {
+        return b"TIME\n".to_vec();
+    }
     let mut csv = String::new();
-    let ch = if trace.channel.trim().is_empty() {
-        "CH1".to_string()
-    } else {
-        sanitize_channel_name(&trace.channel)
-    };
-    let _ = writeln!(csv, "TIME,{}", csv_cell(&ch));
-    let n = trace.x.len().min(trace.y.len());
+    let names: Vec<String> = traces
+        .iter()
+        .map(|t| {
+            if t.channel.trim().is_empty() {
+                "CH?".into()
+            } else {
+                sanitize_channel_name(&t.channel)
+            }
+        })
+        .collect();
+    let _ = write!(csv, "TIME");
+    for name in &names {
+        let _ = write!(csv, ",{}", csv_cell(name));
+    }
+    let _ = writeln!(csv);
+    let n = traces
+        .iter()
+        .map(|t| t.x.len().min(t.y.len()))
+        .max()
+        .unwrap_or(0);
+    let time = &traces[0].x;
     for i in 0..n {
-        let _ = writeln!(csv, "{},{}", format_csv_f64(trace.x[i]), format_csv_f64(trace.y[i]));
+        let t = time.get(i).copied().unwrap_or(f64::NAN);
+        let _ = write!(csv, "{}", format_csv_f64(t));
+        for tr in traces {
+            let _ = write!(csv, ",");
+            if let Some(&y) = tr.y.get(i) {
+                let _ = write!(csv, "{}", format_csv_f64(y));
+            }
+        }
+        let _ = writeln!(csv);
     }
     csv.into_bytes()
 }
@@ -391,6 +461,9 @@ pub fn measure_waveform(trace: &WaveformTrace) -> WaveformMeasurements {
 }
 
 /// Measure samples whose X falls in `[x0, x1]` (order-independent).
+///
+/// Assumes a non-decreasing time axis (normal for scope captures) and measures
+/// via index slices — no temporary x/y copies.
 pub fn measure_waveform_range(
     trace: &WaveformTrace,
     x0: f64,
@@ -401,16 +474,14 @@ pub fn measure_waveform_range(
         return measure_samples(&[], &[]);
     }
     let (lo, hi) = if x0 <= x1 { (x0, x1) } else { (x1, x0) };
-    let mut xs = Vec::new();
-    let mut ys = Vec::new();
-    for i in 0..n {
-        let x = trace.x[i];
-        if x >= lo && x <= hi {
-            xs.push(x);
-            ys.push(trace.y[i]);
-        }
+    let xs = &trace.x[..n];
+    let ys = &trace.y[..n];
+    let start = xs.partition_point(|&x| x < lo);
+    let end = xs.partition_point(|&x| x <= hi);
+    if start >= end {
+        return measure_samples(&[], &[]);
     }
-    measure_samples(&xs, &ys)
+    measure_samples(&xs[start..end], &ys[start..end])
 }
 
 fn measure_samples(x: &[f64], y: &[f64]) -> WaveformMeasurements {
@@ -1344,6 +1415,164 @@ fn load_tek_wfm_legacy_fixed(
     })
 }
 
+/// Load every `:WFMPRE … :CURVE` segment from a (possibly multi-channel) ISF.
+fn load_tek_isf_all(
+    bytes: &[u8],
+    default_channel: &str,
+) -> Result<Vec<WaveformTrace>, WaveformFileError> {
+    let mut traces = Vec::new();
+    let mut offset = 0usize;
+    let mut idx = 0usize;
+    while offset < bytes.len() {
+        let slice = &bytes[offset..];
+        // Skip leading whitespace / NULs between segments.
+        let skip = slice
+            .iter()
+            .position(|&b| !b.is_ascii_whitespace() && b != 0)
+            .unwrap_or(slice.len());
+        offset += skip;
+        if offset >= bytes.len() {
+            break;
+        }
+        let slice = &bytes[offset..];
+        let Some((trace, consumed)) = try_load_tek_isf_segment(slice, default_channel, idx)?
+        else {
+            break;
+        };
+        traces.push(trace);
+        offset += consumed;
+        idx += 1;
+    }
+    if traces.is_empty() {
+        // Fall back to legacy single-curve parse for odd layouts.
+        traces.push(load_tek_isf(bytes, default_channel)?);
+    }
+    Ok(traces)
+}
+
+fn try_load_tek_isf_segment(
+    bytes: &[u8],
+    default_channel: &str,
+    index: usize,
+) -> Result<Option<(WaveformTrace, usize)>, WaveformFileError> {
+    let curve_pat = b":CURVE";
+    let curve_pat2 = b"CURVE ";
+    let Some(curve_at) = find_bytes_ci(bytes, curve_pat).or_else(|| find_bytes_ci(bytes, curve_pat2))
+    else {
+        return Ok(None);
+    };
+    let after = &bytes[curve_at..];
+    let Some(hash_at) = after.iter().position(|&b| b == b'#') else {
+        return Ok(None);
+    };
+    let rest = &after[hash_at + 1..];
+    if rest.is_empty() {
+        return Ok(None);
+    }
+    let Some(ndigits) = (rest[0] as char).to_digit(10).map(|d| d as usize) else {
+        return Ok(None);
+    };
+    if rest.len() < 1 + ndigits {
+        return Ok(None);
+    }
+    let Ok(len_str) = std::str::from_utf8(&rest[1..1 + ndigits]) else {
+        return Ok(None);
+    };
+    let Ok(data_len) = len_str.parse::<usize>() else {
+        return Ok(None);
+    };
+    let data_start = curve_at + hash_at + 1 + 1 + ndigits;
+    let data_end = data_start + data_len;
+    if data_end > bytes.len() {
+        return Err(WaveformFileError::Parse(format!(
+            "ISF data short: need {data_len}, got {}",
+            bytes.len().saturating_sub(data_start)
+        )));
+    }
+    let fallback = if index == 0 {
+        default_channel.to_string()
+    } else {
+        format!("CH{}", index + 1)
+    };
+    let trace = load_tek_isf(&bytes[..data_end], &fallback)?;
+    Ok(Some((trace, data_end)))
+}
+
+fn load_csv_bytes_all(
+    bytes: &[u8],
+    default_channel: &str,
+) -> Result<Vec<WaveformTrace>, WaveformFileError> {
+    let text = String::from_utf8_lossy(bytes);
+    let lines: Vec<&str> = text
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+    if let Some(traces) = try_parse_spreadsheet_csv_multi(&lines)? {
+        return Ok(traces);
+    }
+    Ok(vec![load_waveform_csv_bytes(bytes, default_channel)?])
+}
+
+/// `TIME,CH1,CH2,…` → one trace per Y column.
+fn try_parse_spreadsheet_csv_multi(
+    lines: &[&str],
+) -> Result<Option<Vec<WaveformTrace>>, WaveformFileError> {
+    if lines.is_empty() {
+        return Ok(None);
+    }
+    let header = split_csv(lines[0]);
+    if header.len() < 3 {
+        return Ok(None);
+    }
+    let h0 = header[0].to_ascii_uppercase();
+    if !(h0.contains("TIME") || h0 == "T" || h0 == "X" || h0.contains("SECOND")) {
+        return Ok(None);
+    }
+    let names: Vec<String> = header[1..]
+        .iter()
+        .map(|s| sanitize_channel_name(s))
+        .filter(|s| !s.is_empty())
+        .collect();
+    if names.len() < 2 {
+        return Ok(None);
+    }
+    let mut xs = Vec::new();
+    let mut ys: Vec<Vec<f64>> = names.iter().map(|_| Vec::new()).collect();
+    for line in &lines[1..] {
+        let cols = split_csv(line);
+        if cols.len() < 2 {
+            continue;
+        }
+        let Ok(t) = cols[0].parse::<f64>() else {
+            continue;
+        };
+        xs.push(t);
+        for (i, col) in ys.iter_mut().enumerate() {
+            let v = cols
+                .get(i + 1)
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(f64::NAN);
+            col.push(v);
+        }
+    }
+    if xs.len() < 2 {
+        return Ok(None);
+    }
+    let traces = names
+        .into_iter()
+        .zip(ys)
+        .map(|(channel, y)| WaveformTrace {
+            channel,
+            x: xs.clone(),
+            y,
+            x_unit: "s".into(),
+            y_unit: "V".into(),
+        })
+        .collect();
+    Ok(Some(traces))
+}
+
 /// Parse Tektronix ISF (internal waveform) files.
 fn load_tek_isf(bytes: &[u8], default_channel: &str) -> Result<WaveformTrace, WaveformFileError> {
     // Locate CURVE block. ISF is typically ASCII preamble + `:CURVE #N<data>`.
@@ -1399,6 +1628,7 @@ fn load_tek_isf(bytes: &[u8], default_channel: &str) -> Result<WaveformTrace, Wa
     let ymult = kv_f64(&kv, "YMULT").unwrap_or(1.0);
     let yoff = kv_f64(&kv, "YOFF").unwrap_or(0.0);
     let yzero = kv_f64(&kv, "YZERO").unwrap_or(0.0);
+    let pt_fmt = kv_str(&kv, "PT_FMT").unwrap_or("Y").to_ascii_uppercase();
     let x_unit = kv_str(&kv, "XUNIT").unwrap_or("s").replace('"', "");
     let y_unit = normalize_isf_unit(
         &kv_str(&kv, "YUNIT")
@@ -1413,7 +1643,17 @@ fn load_tek_isf(bytes: &[u8], default_channel: &str) -> Result<WaveformTrace, Wa
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| default_channel.to_string());
 
-    let samples = decode_curve_samples(data, byt_nr, &bn_fmt, &byt_or, nr_pt)?;
+    let mut samples = decode_curve_samples(data, byt_nr, &bn_fmt, &byt_or, nr_pt)?;
+    // ENV = min/max pairs; convert to midpoints so amplitude matches the screen.
+    if pt_fmt.contains("ENV") && samples.len() >= 2 {
+        let mut mid = Vec::with_capacity(samples.len() / 2);
+        for pair in samples.chunks_exact(2) {
+            mid.push(0.5 * (pair[0] + pair[1]));
+        }
+        if !mid.is_empty() {
+            samples = mid;
+        }
+    }
     let mut x = Vec::with_capacity(samples.len());
     let mut y = Vec::with_capacity(samples.len());
     for (i, raw) in samples.into_iter().enumerate() {
@@ -1504,13 +1744,27 @@ fn parse_wfmp_keys(preamble: &str) -> Vec<(String, String)> {
         }
         let chunk = chunk.trim_start_matches(':');
         // Forms: WFMPRE:XINCR 1e-9  OR  XINCR 1e-9  OR  XINCR:1e-9
-        let chunk = chunk
-            .strip_prefix("WFMPRE:")
-            .or_else(|| chunk.strip_prefix("WFMP:"))
-            .or_else(|| chunk.strip_prefix("WFMOutpre:"))
-            .unwrap_or(chunk);
+        // Prefix strip must be case-insensitive (Tek may return WFMOutpre / WFMOUTPRE).
+        let upper = chunk.to_ascii_uppercase();
+        let chunk = if let Some(rest) = upper.strip_prefix("WFMOUTPRE:") {
+            // Keep values from the original slice at the same offset.
+            &chunk[chunk.len() - rest.len()..]
+        } else if let Some(rest) = upper.strip_prefix("WFMPRE:") {
+            &chunk[chunk.len() - rest.len()..]
+        } else if let Some(rest) = upper.strip_prefix("WFMP:") {
+            &chunk[chunk.len() - rest.len()..]
+        } else {
+            chunk
+        };
         let (k, v) = if let Some((k, v)) = chunk.split_once(':') {
-            (k.trim(), v.trim())
+            // Avoid splitting scientific values; only treat KEY:VALUE when KEY is a token.
+            if k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                (k.trim(), v.trim())
+            } else if let Some((k2, v2)) = chunk.split_once(char::is_whitespace) {
+                (k2.trim(), v2.trim())
+            } else {
+                continue;
+            }
         } else if let Some((k, v)) = chunk.split_once(char::is_whitespace) {
             (k.trim(), v.trim())
         } else {
@@ -1519,7 +1773,6 @@ fn parse_wfmp_keys(preamble: &str) -> Vec<(String, String)> {
         if k.is_empty() || v.is_empty() {
             continue;
         }
-        // Nested "WFMPRE XINCR ..." already stripped; also handle "XINCR 1.0"
         let key = k
             .rsplit([':', ' '])
             .next()
@@ -1587,6 +1840,21 @@ mod tests {
         let trace = load_waveform_csv_bytes(csv.as_bytes(), "CH1").unwrap();
         assert_eq!(trace.x.len(), 5);
         assert!(trace.channel.to_ascii_uppercase().contains("CH"));
+    }
+
+    #[test]
+    fn join_and_load_multi_channel_isf() {
+        let mut ch1 = b":WFMPRE:BYT_NR 1;BN_FMT RI;BYT_OR MSB;NR_PT 2;XINCR 1e-6;XZERO 0;YMULT 1;YOFF 0;YZERO 0;WFID \"CH1\";:CURVE #12".to_vec();
+        ch1.extend_from_slice(&[0u8, 10u8]);
+        let mut ch2 = b":WFMPRE:BYT_NR 1;BN_FMT RI;BYT_OR MSB;NR_PT 2;XINCR 1e-6;XZERO 0;YMULT 1;YOFF 0;YZERO 0;WFID \"CH2\";:CURVE #12".to_vec();
+        ch2.extend_from_slice(&[5u8, 15u8]);
+        let joined = join_tek_isf_channels(&[(1, ch1.as_slice()), (2, ch2.as_slice())]);
+        let traces = load_tek_isf_all(&joined, "CH1").unwrap();
+        assert_eq!(traces.len(), 2);
+        assert!(traces[0].channel.to_ascii_uppercase().contains("CH1"));
+        assert!(traces[1].channel.to_ascii_uppercase().contains("CH2"));
+        assert_eq!(traces[0].y.len(), 2);
+        assert_eq!(traces[1].y.len(), 2);
     }
 
     #[test]

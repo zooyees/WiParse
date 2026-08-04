@@ -17,7 +17,12 @@ use wiparse_core::instrument::{
     Capabilities, ControlCommand, Identity, InstrumentDevice, InstrumentKind, MeasureFunction,
     Reading, ResourceInfo, Sample, ScopeMeasType, WaveformTrace,
 };
-use wiparse_core::waveform_file::{load_waveform_bytes, save_waveform_file, sniff_waveform_ext};
+use crate::plot::paint_envelope_columns;
+use wiparse_core::wave_display::{build_overview_envelope, envelope_bounds, ScopeEnvelopeColumn};
+use wiparse_core::waveform_file::{
+    join_tek_isf_channels, load_waveform_bytes, load_waveform_bytes_all, save_waveform_file,
+    sniff_waveform_ext, waveforms_to_spreadsheet_csv,
+};
 
 enum Job {
     Scan {
@@ -41,8 +46,8 @@ enum Job {
     Measure(u64),
     /// Capture scope screen for in-app preview + clipboard (no save dialog).
     Capture { id: u64 },
-    /// Read waveform source file over VISA (ISF/CSV), then UI prompts Save As.
-    WaveformSource { id: u64, channel: u8 },
+    /// Read waveform source for all displayed scope channels, then UI prompts Save As.
+    WaveformSource { id: u64 },
     Waveform {
         id: u64,
         channel: u8,
@@ -87,6 +92,18 @@ enum Event {
         id: u64,
         bytes: Vec<u8>,
         suggested_name: String,
+        /// Parsed on the worker thread so the UI does not freeze on multi‑Mpoint ISF.
+        trace: Option<WaveformTrace>,
+        /// All displayed channels (for multi-file / multi-column save).
+        traces: Vec<WaveformTrace>,
+        /// Per-channel native blobs `(CHx, bytes, ext)`.
+        channel_files: Vec<(u8, Vec<u8>, String)>,
+        parse_error: Option<String>,
+    },
+    /// Long-running job progress (screenshot / waveform source transfer).
+    Progress {
+        id: Option<u64>,
+        message: String,
     },
     Error {
         id: Option<u64>,
@@ -94,14 +111,29 @@ enum Event {
     },
 }
 
+/// Deferred Save As after waveform-source parse (open dialog next frame so the
+/// plot/status update is visible first; avoids rfd failing mid-event).
+struct PendingWaveformSave {
+    id: u64,
+    bytes: Vec<u8>,
+    effective_ext: String,
+    file_stem: String,
+    vendor: String,
+    parsed_trace: Option<WaveformTrace>,
+    traces: Vec<WaveformTrace>,
+    /// Per-channel native blobs `(channel, bytes, ext)`.
+    channel_files: Vec<(u8, Vec<u8>, String)>,
+}
+
 /// Prebuilt plot series — rebuilt only when a new waveform arrives.
 struct CachedWavePlot {
     channel: String,
-    points: Arc<Vec<[f64; 2]>>,
+    columns: Arc<Vec<ScopeEnvelopeColumn>>,
+    /// Precomputed plot bounds (display columns only).
+    bounds: (f64, f64, f64, f64),
+    stats: WaveformStats,
 }
 
-/// Max points drawn in the scope plot (full CURVe data stays in `waveforms`).
-const SCOPE_PLOT_DISPLAY_POINTS: usize = 1_024;
 /// Longest edge for on-screen screenshot preview (full PNG kept for Save As).
 const SCOPE_PREVIEW_MAX_EDGE: u32 = 1600;
 /// Gap between the two scope rows (keep small so cards fill the screen).
@@ -236,6 +268,13 @@ pub struct InstrumentControlPanel {
     scanning: bool,
     /// When set, every instrument card is shown and missing kinds use demo sessions.
     debug_mode: bool,
+    /// Device id currently running Capture / WaveformSource (for status + UI busy).
+    busy_device: Option<u64>,
+    busy_started: Option<Instant>,
+    busy_label: String,
+    /// Waveform source Save As, opened after a short UI settle delay.
+    pending_waveform_save: Option<PendingWaveformSave>,
+    pending_save_delay_frames: u8,
 }
 
 impl InstrumentControlPanel {
@@ -286,6 +325,11 @@ impl InstrumentControlPanel {
             logs: VecDeque::new(),
             scanning: false,
             debug_mode: false,
+            busy_device: None,
+            busy_started: None,
+            busy_label: String::new(),
+            pending_waveform_save: None,
+            pending_save_delay_frames: 0,
         };
         let _ = std::fs::create_dir_all(&panel.save_dir);
         panel
@@ -378,6 +422,20 @@ impl InstrumentControlPanel {
             }
             self.handle_event(ctx, event);
         }
+        // Open Save As one frame after parse so the waveform preview is already painted.
+        if self.pending_save_delay_frames > 0 {
+            self.pending_save_delay_frames -= 1;
+            ctx.request_repaint();
+        } else if self.pending_waveform_save.is_some() {
+            self.run_pending_waveform_save();
+        }
+        if let (Some(_), Some(started)) = (self.busy_device, self.busy_started) {
+            let secs = started.elapsed().as_secs();
+            if !self.busy_label.is_empty() {
+                self.status = format!("{}… {}s", self.busy_label, secs);
+            }
+            ctx.request_repaint_after(Duration::from_millis(200));
+        }
         if self.live_active()
             && self.last_sample.elapsed() >= Duration::from_millis(self.sample_interval_ms)
         {
@@ -395,6 +453,78 @@ impl InstrumentControlPanel {
         if self.scanning {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
+    }
+
+    fn clear_busy(&mut self) {
+        self.busy_device = None;
+        self.busy_started = None;
+        self.busy_label.clear();
+    }
+
+    fn begin_busy(&mut self, id: u64, label: impl Into<String>) {
+        self.busy_device = Some(id);
+        self.busy_started = Some(Instant::now());
+        self.busy_label = label.into();
+    }
+
+    fn run_pending_waveform_save(&mut self) {
+        let Some(pending) = self.pending_waveform_save.take() else {
+            return;
+        };
+        let default = self.save_dir.join(format!(
+            "{}_{}.{}",
+            pending.file_stem,
+            Local::now().format("%Y%m%d_%H%M%S"),
+            pending.effective_ext
+        ));
+        let dialog = scope_waveform_save_dialog(
+            &pending.vendor,
+            &self.save_dir,
+            default
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .as_ref(),
+            &pending.effective_ext,
+        );
+        if let Some(path) = dialog.save_file() {
+            match save_pending_waveform_source(&path, &pending) {
+                Ok(saved) => {
+                    self.status = if saved.len() == 1 {
+                        format!(
+                            "已保存波形源 / Waveform source saved: {}",
+                            saved[0].display()
+                        )
+                    } else {
+                        format!(
+                            "已保存 {} 个通道波形源 / Saved {} channel sources → {}",
+                            saved.len(),
+                            saved.len(),
+                            path.parent()
+                                .unwrap_or_else(|| std::path::Path::new("."))
+                                .display()
+                        )
+                    };
+                    if let Some(parent) = path.parent() {
+                        self.save_dir = parent.to_path_buf();
+                    }
+                }
+                Err(error) => self.status = error.to_string(),
+            }
+        } else if let Some(trace) = self.waveforms.get(&pending.id) {
+            self.status = format!(
+                "波形已显示（{} 点），另存为已取消 / Waveform shown ({} pts), Save As cancelled",
+                trace.x.len(),
+                trace.x.len()
+            );
+        } else if !pending.bytes.is_empty() {
+            self.status = format!(
+                "另存为已取消（已收到 {} KB 原始数据）/ Save As cancelled ({} KB raw kept)",
+                pending.bytes.len() / 1024,
+                pending.bytes.len() / 1024
+            );
+        }
+        let _ = pending.id;
     }
 
     pub fn device_count(&self) -> usize {
@@ -641,6 +771,7 @@ impl InstrumentControlPanel {
                 rgba,
                 png,
             } => {
+                self.clear_busy();
                 let color = egui::ColorImage::from_rgba_unmultiplied([width, height], &rgba);
                 ctx.copy_image(color.clone());
                 self.screenshots.insert(
@@ -656,113 +787,121 @@ impl InstrumentControlPanel {
                     "截图已显示并复制到剪贴板 / Screenshot copied to clipboard".into();
             }
             Event::Waveform { id, trace } => {
+                self.clear_busy();
                 self.status = format!("{}: {} points", trace.channel, trace.x.len());
                 self.wave_plots
-                    .insert(id, build_cached_wave_plot(&trace, SCOPE_PLOT_DISPLAY_POINTS));
+                    .insert(id, build_cached_wave_plot(&trace));
                 self.waveforms.insert(id, trace);
             }
             Event::WaveformSource {
                 id,
                 bytes,
                 suggested_name,
+                trace,
+                mut traces,
+                channel_files,
+                parse_error,
             } => {
+                self.clear_busy();
                 let stem = PathBuf::from(&suggested_name);
-                let ext = stem
+                let mut effective_ext = stem
                     .extension()
                     .and_then(|e| e.to_str())
-                    .unwrap_or("csv")
+                    .unwrap_or("isf")
                     .to_ascii_lowercase();
-                let channel = stem
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .and_then(|s| s.strip_prefix("waveform_"))
-                    .unwrap_or("CH1");
+                // Keep instrument-native format (Tek ISF / Rigol WFM). Multi-channel
+                // Save As writes sibling `stem_CHx.isf` files; CSV remains optional.
+                if let Some(sniffed) = sniff_waveform_ext(&bytes) {
+                    if sniffed != effective_ext {
+                        effective_ext = sniffed.to_string();
+                    }
+                } else if let Some((_, _, ext)) = channel_files.first() {
+                    effective_ext = ext.clone();
+                }
                 let vendor = self
                     .devices
                     .iter()
                     .find(|d| d.id == id)
-                    .map(|d| d.identity.manufacturer.as_str())
-                    .unwrap_or("");
+                    .map(|d| d.identity.manufacturer.clone())
+                    .unwrap_or_default();
 
-                // Parse in memory and show full screen record in ③ Waveform panel.
-                // Prefer suggested extension; fall back to content sniff (WFM#001/#003, ISF, CSV).
-                let mut effective_ext = ext.clone();
-                let parse_result = load_waveform_bytes(&bytes, &ext, channel).or_else(|first| {
-                    match sniff_waveform_ext(&bytes) {
-                        Some(sniffed) if sniffed != ext => {
-                            effective_ext = sniffed.to_string();
-                            load_waveform_bytes(&bytes, sniffed, channel)
-                        }
-                        _ => Err(first),
-                    }
-                });
-                let parsed_trace = match parse_result {
-                    Ok(trace) => {
-                        self.status = format!(
-                            "屏幕波形 {} · N={} / Screen waveform {} · N={}",
-                            trace.channel,
-                            trace.x.len(),
-                            trace.channel,
-                            trace.x.len()
-                        );
-                        self.wave_plots.insert(
-                            id,
-                            build_cached_wave_plot(&trace, SCOPE_PLOT_DISPLAY_POINTS),
-                        );
-                        self.waveforms.insert(id, trace.clone());
-                        Some(trace)
-                    }
-                    Err(err) => {
-                        self.status = format!(
-                            "波形已读取但解析失败 / Waveform read but parse failed: {err}"
-                        );
-                        None
-                    }
+                let ch_labels: Vec<String> = channel_files
+                    .iter()
+                    .map(|(ch, _, _)| format!("CH{ch}"))
+                    .collect();
+                let ch_summary = if ch_labels.is_empty() {
+                    "?".into()
+                } else {
+                    ch_labels.join("+")
                 };
 
-                // Auto Save As — pass parsed trace so CSV↔ISF/WFM conversion works.
-                let default = self.save_dir.join(format!(
-                    "{}_{}.{}",
-                    stem.file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("waveform"),
-                    Local::now().format("%Y%m%d_%H%M%S"),
-                    effective_ext
-                ));
-                let dialog = scope_waveform_save_dialog(
-                    vendor,
-                    &self.save_dir,
-                    default.file_name().unwrap_or_default().to_string_lossy().as_ref(),
-                    &effective_ext,
-                );
-                if let Some(path) = dialog.save_file() {
-                    match save_waveform_file(
-                        &path,
-                        Some(&bytes),
-                        Some(&effective_ext),
-                        parsed_trace.as_ref(),
-                    ) {
-                        Ok(()) => {
-                            self.status = format!(
-                                "已保存波形源 / Waveform source saved: {}",
-                                path.display()
-                            );
-                            if let Some(parent) = path.parent() {
-                                self.save_dir = parent.to_path_buf();
-                            }
-                        }
-                        Err(error) => self.status = error.to_string(),
-                    }
-                } else if parsed_trace.is_some() {
-                    self.status =
-                        "已解析屏幕波形，保存已取消 / Screen waveform parsed, save cancelled"
-                            .into();
+                let nch = traces.len();
+                let parse_ok = !traces.is_empty();
+                if parse_ok {
+                    let raw_n = traces[0].x.len();
+                    self.status = format!(
+                        "已读取 {ch_summary}（{nch} 通道, {raw_n} 点/通道, {} KB；预览仅作显示抽稀，测量/导出用全量数据）/ Read {ch_summary} ({nch} ch, {raw_n} pts/ch, {} KB; plot is display-only decimation, measure/export use full data)",
+                        bytes.len() / 1024,
+                        bytes.len() / 1024
+                    );
+                    // Preview trace moves into waveforms; pending keeps rest for multi-ch Save As.
+                    let preview = traces.remove(0);
+                    self.wave_plots.insert(
+                        id,
+                        build_cached_wave_plot(&preview),
+                    );
+                    self.waveforms.insert(id, preview);
+                    self.log(format!(
+                        "WaveformSource OK: {ch_summary}, {} points, {} bytes → {}",
+                        raw_n,
+                        bytes.len(),
+                        suggested_name
+                    ));
+                } else if let Some(err) = parse_error {
+                    self.status = format!(
+                        "已收到 {} KB 但解析失败: {err} / Got {} KB but parse failed: {err}",
+                        bytes.len() / 1024,
+                        bytes.len() / 1024
+                    );
+                    self.log(format!("WaveformSource parse error: {err}"));
                 } else {
-                    self.status =
-                        "已取消保存波形源 / Waveform source save cancelled".into();
+                    self.status = format!(
+                        "已收到 {} KB，无波形点 / Got {} KB, no trace",
+                        bytes.len() / 1024,
+                        bytes.len() / 1024
+                    );
+                }
+                let _ = trace; // worker no longer sends a duplicate CH1 copy
+
+                // Defer Save As so the plot/status paint first.
+                // `parsed_trace` omitted — use `traces.first()` to avoid a 3rd full copy.
+                self.pending_waveform_save = Some(PendingWaveformSave {
+                    id,
+                    bytes,
+                    effective_ext,
+                    file_stem: stem
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("waveform")
+                        .to_string(),
+                    vendor,
+                    parsed_trace: None,
+                    // Single-channel Save As uses `bytes` only — drop parsed copy to save RAM.
+                    traces: if nch > 1 { traces } else { Vec::new() },
+                    channel_files,
+                });
+                self.pending_save_delay_frames = 2;
+                ctx.request_repaint();
+            }
+            Event::Progress { id: _, message } => {
+                self.busy_label = message.clone();
+                self.status = message;
+                if self.busy_started.is_none() {
+                    self.busy_started = Some(Instant::now());
                 }
             }
             Event::Error { id, message } => {
+                self.clear_busy();
                 if id.is_none() {
                     self.scanning = false;
                 }
@@ -1353,15 +1492,20 @@ impl InstrumentControlPanel {
             ui.spacing_mut().item_spacing.x = 8.0;
             let can_shot = self.devices[index].capabilities.screenshot;
             let has_png = self.screenshot_png.contains_key(&id);
+            let busy = self.busy_device == Some(id);
             if ui
                 .add_enabled(
-                    can_shot,
+                    can_shot && !busy,
                     egui::Button::new(text(lang, "屏幕截图", "Screenshot"))
                         .fill(tokens.accent)
                         .min_size(SCOPE_BTN_WIDE),
                 )
                 .clicked()
             {
+                self.begin_busy(
+                    id,
+                    text(lang, "正在截取屏幕", "Capturing screen").to_string(),
+                );
                 self.status = text(lang, "正在截取屏幕…", "Capturing screen…").into();
                 let _ = self.tx.send(Job::Capture { id });
             }
@@ -1373,18 +1517,24 @@ impl InstrumentControlPanel {
             let wave_tip = scope_waveform_source_tip(lang, vendor);
             if ui
                 .add_enabled(
-                    can_wave_src,
+                    can_wave_src && !busy,
                     egui::Button::new(text(lang, "读取波形源文件", "Read Wave Source"))
                         .min_size(egui::vec2(128.0, 28.0)),
                 )
                 .on_hover_text(wave_tip)
                 .clicked()
             {
-                let channel = self.devices[index].controls.scope_channel;
-                self.status =
-                    text(lang, "正在通过 VISA 读取波形源文件…", "Reading waveform source via VISA…")
-                        .into();
-                let _ = self.tx.send(Job::WaveformSource { id, channel });
+                self.begin_busy(
+                    id,
+                    text(lang, "正在读取波形源文件", "Reading waveform source").to_string(),
+                );
+                self.status = text(
+                    lang,
+                    "正在读取示波器上已打开的全部通道（不受下方通道选择影响）…",
+                    "Reading all channels displayed on the scope (ignores the channel selector below)…",
+                )
+                .into();
+                let _ = self.tx.send(Job::WaveformSource { id });
             }
             if ui
                 .add_enabled(
@@ -1549,22 +1699,21 @@ impl InstrumentControlPanel {
             });
         });
 
-        if let Some(trace) = self.waveforms.get(&id) {
-            let stats = waveform_stats(trace);
+        if let (Some(plot), Some(trace)) = (self.wave_plots.get(&id), self.waveforms.get(&id)) {
+            let stats = plot.stats;
             ui.add_space(4.0);
+            // Prefer a short CHx label; Tek WFID strings are long ("Ch1, AC coupling…").
+            let label = short_wave_channel_label(&trace.channel);
             let stats_line = format!(
-                "{}  N={}  Δt={:.3}{}  min={:.4}{}  max={:.4}{}  pp={:.4}{}  mean={:.4}{}",
-                trace.channel,
+                "{label}  points={}  Δt={}{}  min={:.4}{}  max={:.4}{}  pp={:.4}{}",
                 stats.count,
-                stats.dt,
+                format_scope_dt(stats.dt),
                 trace.x_unit,
                 stats.min,
                 trace.y_unit,
                 stats.max,
                 trace.y_unit,
                 stats.pp,
-                trace.y_unit,
-                stats.mean,
                 trace.y_unit,
             );
             ui.add(
@@ -1576,6 +1725,16 @@ impl InstrumentControlPanel {
                 )
                 .truncate(),
             );
+            if trace.channel.len() > label.len() + 2 {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(&trace.channel)
+                            .small()
+                            .color(tokens.text_muted),
+                    )
+                    .truncate(),
+                );
+            }
         }
 
         ui.add_space(6.0);
@@ -1583,7 +1742,7 @@ impl InstrumentControlPanel {
         if defer_heavy {
             media_slot_empty(ui, preview_h);
         } else if let Some(cached) = self.wave_plots.get(&id) {
-            paint_waveform(ui, &cached.points, preview_h, tokens.accent);
+            paint_waveform(ui, &cached.columns, cached.bounds, preview_h, tokens.accent);
         } else {
             placeholder_panel(
                 ui,
@@ -2278,7 +2437,7 @@ impl InstrumentControlPanel {
                         egui::DragValue::new(&mut self.devices[index].controls.scope_channel)
                             .range(1..=capabilities.channels.max(1)),
                     );
-                    ui.label(text(lang, "波形点数上限", "Waveform point limit"));
+                    ui.label(text(lang, "测量历史点数", "Measurement history points"));
                     ui.label(format!("{}", self.max_points.min(20_000)));
                 });
             }
@@ -2765,37 +2924,184 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                 }
             }
             Job::Capture { id } => {
+                let _ = events.send(Event::Progress {
+                    id: Some(id),
+                    message: "正在截取屏幕… / Capturing screen…".into(),
+                });
                 if let Some(device) = devices.get_mut(&id) {
                     match device.capture_scope_png() {
-                        Ok(png) => match prepare_screenshot_preview(&png, SCOPE_PREVIEW_MAX_EDGE) {
-                            Ok((width, height, rgba)) => {
-                                let _ = events.send(Event::Screenshot {
-                                    id,
-                                    width,
-                                    height,
-                                    rgba,
-                                    png,
-                                });
+                        Ok(png) => {
+                            let _ = events.send(Event::Progress {
+                                id: Some(id),
+                                message: format!(
+                                    "截图已收到 {} KB，正在解码… / Screenshot {} KB, decoding…",
+                                    png.len() / 1024,
+                                    png.len() / 1024
+                                ),
+                            });
+                            match prepare_screenshot_preview(&png, SCOPE_PREVIEW_MAX_EDGE) {
+                                Ok((width, height, rgba)) => {
+                                    let _ = events.send(Event::Screenshot {
+                                        id,
+                                        width,
+                                        height,
+                                        rgba,
+                                        png,
+                                    });
+                                }
+                                Err(error) => send_error(
+                                    &events,
+                                    Some(id),
+                                    format!("Invalid screenshot: {error}"),
+                                ),
                             }
-                            Err(error) => send_error(
-                                &events,
-                                Some(id),
-                                format!("Invalid screenshot: {error}"),
-                            ),
-                        },
+                        }
                         Err(error) => send_error(&events, Some(id), error),
                     }
                 }
             }
-            Job::WaveformSource { id, channel } => {
+            Job::WaveformSource { id } => {
+                let _ = events.send(Event::Progress {
+                    id: Some(id),
+                    message: "正在查询已打开通道并读取波形（采样率×屏幕时宽）… / Querying displayed channels, reading acquisition-density screen window…"
+                        .into(),
+                });
                 if let Some(device) = devices.get_mut(&id) {
-                    match device.capture_scope_waveform_source(channel) {
-                        Ok((bytes, suggested_name)) => {
-                            let _ = events.send(Event::WaveformSource {
-                                id,
-                                bytes,
-                                suggested_name,
-                            });
+                    match device.capture_scope_waveform_sources_displayed() {
+                        Ok(parts) => {
+                            let mut channel_files = Vec::new();
+                            let mut errors = Vec::new();
+                            let mut total_bytes = 0usize;
+                            for (ch, bytes, suggested_name) in parts {
+                                total_bytes += bytes.len();
+                                let _ = events.send(Event::Progress {
+                                    id: Some(id),
+                                    message: format!(
+                                        "已读 CH{ch}（{} KB），继续… / Got CH{ch} ({} KB), continuing…",
+                                        bytes.len() / 1024,
+                                        bytes.len() / 1024
+                                    ),
+                                });
+                                let stem = std::path::PathBuf::from(&suggested_name);
+                                let ext = stem
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .unwrap_or("isf")
+                                    .to_ascii_lowercase();
+                                channel_files.push((ch, bytes, ext));
+                            }
+                            if channel_files.is_empty() {
+                                send_error(
+                                    &events,
+                                    Some(id),
+                                    "no displayed channel waveform data",
+                                );
+                            } else {
+                                let ch_tag = channel_files
+                                    .iter()
+                                    .map(|(ch, _, _)| format!("CH{ch}"))
+                                    .collect::<Vec<_>>()
+                                    .join("_");
+                                let all_isf = channel_files.len() > 1
+                                    && channel_files.iter().all(|(_, _, e)| e == "isf");
+                                let (ch0, raw0, ext0) = &channel_files[0];
+                                let (bytes, suggested_name) = if channel_files.len() == 1 {
+                                    (raw0.clone(), format!("waveform_CH{ch0}.{ext0}"))
+                                } else if all_isf {
+                                    let parts: Vec<(u8, &[u8])> = channel_files
+                                        .iter()
+                                        .map(|(ch, b, _)| (*ch, b.as_slice()))
+                                        .collect();
+                                    (
+                                        join_tek_isf_channels(&parts),
+                                        format!("waveform_{ch_tag}.isf"),
+                                    )
+                                } else {
+                                    (Vec::new(), format!("waveform_{ch_tag}.csv"))
+                                };
+
+                                let traces = if channel_files.len() == 1 {
+                                    match load_waveform_bytes_all(raw0, ext0, &format!("CH{ch0}"))
+                                        .or_else(|first| match sniff_waveform_ext(raw0) {
+                                            Some(sniffed) if sniffed != *ext0 => {
+                                                load_waveform_bytes_all(
+                                                    raw0,
+                                                    sniffed,
+                                                    &format!("CH{ch0}"),
+                                                )
+                                            }
+                                            _ => Err(first),
+                                        }) {
+                                        Ok(t) => t,
+                                        Err(e) => {
+                                            errors.push(format!("CH{ch0}: {e}"));
+                                            Vec::new()
+                                        }
+                                    }
+                                } else if all_isf {
+                                    match load_waveform_bytes_all(&bytes, "isf", "CH1") {
+                                        Ok(t) => t,
+                                        Err(e) => {
+                                            errors.push(e.to_string());
+                                            Vec::new()
+                                        }
+                                    }
+                                } else {
+                                    let mut t = Vec::new();
+                                    for (ch, b, e) in &channel_files {
+                                        match load_waveform_bytes(b, e, &format!("CH{ch}"))
+                                            .or_else(|first| match sniff_waveform_ext(b) {
+                                                Some(sniffed) if sniffed != *e => {
+                                                    load_waveform_bytes(
+                                                        b,
+                                                        sniffed,
+                                                        &format!("CH{ch}"),
+                                                    )
+                                                }
+                                                _ => Err(first),
+                                            }) {
+                                            Ok(tr) => t.push(tr),
+                                            Err(e) => errors.push(format!("CH{ch}: {e}")),
+                                        }
+                                    }
+                                    t
+                                };
+
+                                let (bytes, suggested_name) =
+                                    if channel_files.len() > 1 && !all_isf && !traces.is_empty() {
+                                        (
+                                            waveforms_to_spreadsheet_csv(&traces),
+                                            format!("waveform_{ch_tag}.csv"),
+                                        )
+                                    } else {
+                                        (bytes, suggested_name)
+                                    };
+                                let parse_error = if traces.is_empty() {
+                                    Some(errors.join("; "))
+                                } else if !errors.is_empty() {
+                                    Some(format!("partial: {}", errors.join("; ")))
+                                } else {
+                                    None
+                                };
+                                // Do not clone CH1 into `trace` — UI uses `traces[0]`.
+                                // Drop per-channel raw blobs when we already built a
+                                // single joined/CSV payload (keeps Save As working).
+                                let keep_parts = channel_files.len() <= 1;
+                                let _ = events.send(Event::WaveformSource {
+                                    id,
+                                    bytes,
+                                    suggested_name,
+                                    trace: None,
+                                    traces,
+                                    channel_files: if keep_parts {
+                                        channel_files
+                                    } else {
+                                        Vec::new()
+                                    },
+                                    parse_error,
+                                });
+                                let _ = total_bytes;
+                            }
                         }
                         Err(error) => send_error(&events, Some(id), error),
                     }
@@ -2807,7 +3113,7 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                 points: _,
             } => {
                 if let Some(device) = devices.get_mut(&id) {
-                    match device.read_scope_screen_waveform(channel) {
+                    match device.read_scope_source_waveform(channel) {
                         Ok(trace) => {
                             let _ = events.send(Event::Waveform { id, trace });
                         }
@@ -2827,6 +3133,83 @@ fn send_error(events: &Sender<Event>, id: Option<u64>, error: impl std::fmt::Dis
     });
 }
 
+/// Save multi-channel sources into **one** file when possible:
+/// - `.isf` → concatenated multi-curve Tek ISF
+/// - `.csv` / `.txt` → `TIME,CH1,CH2,…`
+/// - `.wfm` with Tek ISF natives → still one `.isf` (WFM has no simple multi join)
+fn save_pending_waveform_source(
+    path: &std::path::Path,
+    pending: &PendingWaveformSave,
+) -> Result<Vec<PathBuf>, String> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or(&pending.effective_ext)
+        .to_ascii_lowercase();
+
+    let first_trace = pending
+        .parsed_trace
+        .as_ref()
+        .or_else(|| pending.traces.first());
+
+    if pending.channel_files.len() <= 1 {
+        save_waveform_file(
+            path,
+            Some(&pending.bytes),
+            Some(&pending.effective_ext),
+            first_trace,
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok(vec![path.to_path_buf()]);
+    }
+
+    if ext == "csv" || ext == "txt" {
+        let csv = if pending.traces.len() > 1 {
+            waveforms_to_spreadsheet_csv(&pending.traces)
+        } else {
+            pending.bytes.clone()
+        };
+        std::fs::write(path, csv).map_err(|e| e.to_string())?;
+        return Ok(vec![path.to_path_buf()]);
+    }
+
+    // Multi-channel: prefer already-joined `bytes` (ISF/CSV built on the worker).
+    let all_isf = pending.effective_ext == "isf"
+        || pending
+            .channel_files
+            .iter()
+            .all(|(_, _, e)| e == "isf");
+    if all_isf && (ext == "isf" || ext == "wfm") {
+        let out = if ext == "isf" {
+            path.to_path_buf()
+        } else {
+            // Multi-curve WFM packaging is not supported — keep one ISF file.
+            path.with_extension("isf")
+        };
+        if !pending.bytes.is_empty() {
+            std::fs::write(&out, &pending.bytes).map_err(|e| e.to_string())?;
+        } else if !pending.channel_files.is_empty() {
+            let parts: Vec<(u8, &[u8])> = pending
+                .channel_files
+                .iter()
+                .map(|(ch, b, _)| (*ch, b.as_slice()))
+                .collect();
+            let joined = join_tek_isf_channels(&parts);
+            std::fs::write(&out, joined).map_err(|e| e.to_string())?;
+        } else {
+            return Err("no multi-channel ISF data to save".into());
+        }
+        return Ok(vec![out]);
+    }
+
+    // Other native formats: one multi-column CSV at the chosen stem.
+    let out = path.with_extension("csv");
+    let csv = waveforms_to_spreadsheet_csv(&pending.traces);
+    std::fs::write(&out, csv).map_err(|e| e.to_string())?;
+    Ok(vec![out])
+}
+
+#[derive(Clone, Copy)]
 struct WaveformStats {
     count: usize,
     dt: f64,
@@ -2904,49 +3287,49 @@ fn waveform_csv_cell(value: &str) -> String {
     }
 }
 
-fn build_cached_wave_plot(trace: &WaveformTrace, max_points: usize) -> CachedWavePlot {
-    let n = trace.x.len().min(trace.y.len());
-    let max_points = max_points.max(2);
-    let points = if n == 0 {
-        Vec::new()
-    } else if n <= max_points {
-        trace.x[..n]
-            .iter()
-            .zip(&trace.y[..n])
-            .map(|(&x, &y)| [x, y])
-            .collect()
-    } else {
-        // Min/max buckets preserve peaks without shipping 10k points to egui_plot each frame.
-        let buckets = max_points / 2;
-        let mut points = Vec::with_capacity(buckets * 2);
-        for b in 0..buckets {
-            let start = b * n / buckets;
-            let end = ((b + 1) * n / buckets).max(start + 1).min(n);
-            let mut min_i = start;
-            let mut max_i = start;
-            for i in start..end {
-                if trace.y[i] < trace.y[min_i] {
-                    min_i = i;
-                }
-                if trace.y[i] > trace.y[max_i] {
-                    max_i = i;
-                }
-            }
-            if min_i <= max_i {
-                points.push([trace.x[min_i], trace.y[min_i]]);
-                if max_i != min_i {
-                    points.push([trace.x[max_i], trace.y[max_i]]);
-                }
-            } else {
-                points.push([trace.x[max_i], trace.y[max_i]]);
-                points.push([trace.x[min_i], trace.y[min_i]]);
-            }
+fn short_wave_channel_label(channel: &str) -> String {
+    let head = channel.split(',').next().unwrap_or(channel).trim();
+    let upper = head.to_ascii_uppercase().replace(' ', "");
+    if upper.starts_with("CH") && upper.len() <= 6 {
+        upper
+    } else if let Some(rest) = channel.to_ascii_uppercase().split("CH").nth(1) {
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if !digits.is_empty() {
+            format!("CH{digits}")
+        } else {
+            head.chars().take(24).collect()
         }
-        points
-    };
+    } else {
+        head.chars().take(24).collect()
+    }
+}
+
+fn format_scope_dt(dt: f64) -> String {
+    if !dt.is_finite() || dt == 0.0 {
+        return "0".into();
+    }
+    let a = dt.abs();
+    if a >= 1.0 {
+        format!("{dt:.3}")
+    } else if a >= 1e-3 {
+        format!("{:.3}m", dt * 1e3)
+    } else if a >= 1e-6 {
+        format!("{:.3}µ", dt * 1e6)
+    } else if a >= 1e-9 {
+        format!("{:.3}n", dt * 1e9)
+    } else {
+        format!("{dt:.3e}")
+    }
+}
+
+fn build_cached_wave_plot(trace: &WaveformTrace) -> CachedWavePlot {
+    let columns = build_overview_envelope(&trace.x, &trace.y);
+    let bounds = envelope_bounds(columns.as_slice());
     CachedWavePlot {
         channel: trace.channel.clone(),
-        points: Arc::new(points),
+        columns,
+        bounds,
+        stats: waveform_stats(trace),
     }
 }
 
@@ -3093,7 +3476,14 @@ fn media_slot_empty(ui: &mut egui::Ui, height: f32) {
     );
 }
 
-fn paint_waveform(ui: &mut egui::Ui, points: &[[f64; 2]], height: f32, color: Color32) {
+
+fn paint_waveform(
+    ui: &mut egui::Ui,
+    columns: &[ScopeEnvelopeColumn],
+    bounds: (f64, f64, f64, f64),
+    height: f32,
+    color: Color32,
+) {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     let painter = ui.painter_at(rect);
@@ -3104,34 +3494,21 @@ fn paint_waveform(ui: &mut egui::Ui, points: &[[f64; 2]], height: f32, color: Co
         Stroke::new(1.0_f32, Color32::from_rgb(0x2A, 0x36, 0x4A)),
         egui::StrokeKind::Inside,
     );
-    if points.len() < 2 {
+    if columns.is_empty() {
         return;
     }
-    let mut min_x = points[0][0];
-    let mut max_x = points[0][0];
-    let mut min_y = points[0][1];
-    let mut max_y = points[0][1];
-    for p in points.iter().skip(1) {
-        min_x = min_x.min(p[0]);
-        max_x = max_x.max(p[0]);
-        min_y = min_y.min(p[1]);
-        max_y = max_y.max(p[1]);
-    }
+    let (min_x, max_x, min_y, max_y) = bounds;
     let dx = (max_x - min_x).max(1e-12);
     let dy = (max_y - min_y).max(1e-12);
     let pad = 6.0;
     let inner = rect.shrink(pad);
-    let stroke = Stroke::new(1.4_f32, color);
-    let mut prev = None;
-    for p in points {
+    let stroke = Stroke::new(1.2_f32, color);
+    let map = |p: [f64; 2]| {
         let x = inner.left() + ((p[0] - min_x) / dx) as f32 * inner.width();
         let y = inner.bottom() - ((p[1] - min_y) / dy) as f32 * inner.height();
-        let pt = egui::pos2(x, y);
-        if let Some(prev) = prev {
-            painter.line_segment([prev, pt], stroke);
-        }
-        prev = Some(pt);
-    }
+        egui::pos2(x, y)
+    };
+    paint_envelope_columns(&painter, columns, map, inner, stroke);
 }
 
 fn paint_screenshot(ui: &mut egui::Ui, texture: &egui::TextureHandle, height: f32) {
@@ -4392,23 +4769,23 @@ fn scope_waveform_source_tip(lang: Lang, manufacturer: &str) -> String {
     if manufacturer_is(manufacturer, "TEKTRONIX") {
         text(
             lang,
-            "读取屏幕完整波形源：优先原生 .isf / WFM#001·#003 / .csv，失败则 CURVe 拼 ISF；另存可转换格式",
-            "Read full on-screen source: native .isf / WFM#001·#003 / .csv, else CURVe→ISF; Save As converts",
+            "读取已打开通道的屏幕时间窗波形（采样全密度，软件不砍点数，上限=示波器 Record Length；多通道同一 ISF）",
+            "Read displayed channels over the screen time span (full sample density; no software point cap, limited by scope record length; multi-ch → one ISF)",
         )
         .into()
     } else if manufacturer_is(manufacturer, "RIGOL") || manufacturer_is(manufacturer, "SIGLENT") {
         text(
             lang,
-            "通过 :WAV NORM 读取屏幕波形→CSV（部分机型可再试原生 .wfm）；另存可转泰克 ISF/WFM",
-            "Read screen via :WAV NORM→CSV (native .wfm when available); Save As→Tek ISF/WFM",
+            "读取已打开的全部通道屏幕波形→CSV（不受下方通道选择影响）；另存可转泰克 ISF/WFM",
+            "Read all displayed channels via screen export→CSV (ignores selector); Save As→Tek ISF/WFM",
         )
         .into()
     } else if manufacturer_is(manufacturer, "KEYSIGHT") || manufacturer_is(manufacturer, "AGILENT")
     {
         text(
             lang,
-            "Keysight :WAVeform BYTE 读取屏幕波形→CSV；另存可转换为泰克 ISF/WFM",
-            "Keysight :WAVeform BYTE screen→CSV; Save As can convert to Tek ISF/WFM",
+            "读取已打开的全部通道屏幕波形→CSV（不受下方通道选择影响）；另存可转泰克 ISF/WFM",
+            "Read all displayed channels→CSV (ignores selector); Save As→Tek ISF/WFM",
         )
         .into()
     } else {
@@ -4752,6 +5129,10 @@ fn publish_instrument_event(bus: &crate::backend::EventBus, event: &Event) {
             id,
             bytes,
             suggested_name,
+            trace,
+            traces,
+            channel_files,
+            parse_error,
         } => {
             bus.publish(
                 "instrument.waveform_source",
@@ -4759,7 +5140,18 @@ fn publish_instrument_event(bus: &crate::backend::EventBus, event: &Event) {
                     "device_id": id,
                     "bytes": bytes.len(),
                     "suggested_name": suggested_name,
+                    "points": trace.as_ref().map(|t| t.x.len()),
+                    "channels": channel_files.iter().map(|(ch, _, _)| ch).collect::<Vec<_>>(),
+                    "trace_count": traces.len(),
+                    "parse_error": parse_error,
                 }),
+                None,
+            );
+        }
+        Event::Progress { id, message } => {
+            bus.publish(
+                "instrument.progress",
+                serde_json::json!({ "device_id": id, "message": message }),
                 None,
             );
         }

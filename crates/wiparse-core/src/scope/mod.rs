@@ -4,6 +4,14 @@ pub(crate) mod binary;
 mod client;
 pub(crate) mod visa;
 
+pub use binary::{decimate_scope_envelope, decimate_uniform_index};
+
+pub use crate::wave_display::{
+    build_overview_envelope, build_viewport_series, decimate_envelope_columns,
+    envelope_bounds, overview_column_count, quantize_view_cache_key, viewport_column_count,
+    ScopeEnvelopeColumn, WaveViewportSeries,
+};
+
 pub use client::{
     capture_shot, default_save_dir, list_scopes, read_waveform_json, scope_capabilities,
     ScopeError, ScopeInfo, TektronixScopeClient, Waveform, TEK_VID,

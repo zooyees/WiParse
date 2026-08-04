@@ -51,7 +51,7 @@
     },
     "instruments": {
       "visa_library": "",
-      "timeout_ms": 5000,
+      "timeout_ms": 30000,
       "sample_interval_ms": 1000,
       "max_points": 10000,
       "save_dir": "instrument_data",

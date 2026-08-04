@@ -1,21 +1,28 @@
 //! Offline waveform analysis — folder browser, open scope sources, zoom/pan, measure.
 
+use crate::plot::ScopeEnvelopePlotItem;
 use crate::theme::Tokens;
 use egui::{Color32, CornerRadius, Frame, Margin, RichText, Stroke, Vec2b};
 use egui_plot::{HLine, Legend, Line, Plot, PlotBounds, PlotPoints, Points, VLine};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::thread;
+use crossbeam_channel::{Receiver, unbounded};
 use wiparse_core::config::{load_config, save_config, AppConfig};
 use wiparse_core::i18n::{tr, Lang};
 use wiparse_core::instrument::WaveformTrace;
 use wiparse_core::paths::project_path;
+use wiparse_core::wave_display::{
+    build_overview_envelope, build_viewport_series, quantize_view_cache_key,
+    viewport_column_count, WaveViewportSeries,
+};
 use wiparse_core::waveform_file::{
     load_waveform_file_all, measure_waveform, measure_waveform_range, save_waveform_file,
     WaveformMeasurements,
 };
 
-const PLOT_DISPLAY_POINTS: usize = 8_192;
 const TOOLBAR_H: f32 = 44.0;
 const PANEL_GAP: f32 = 8.0;
 const SIDE_W: f32 = 280.0;
@@ -56,9 +63,38 @@ struct LoadedWave {
     path: PathBuf,
     label: String,
     trace: WaveformTrace,
-    plot_points: Arc<Vec<[f64; 2]>>,
+    /// Global overview envelope (display-only; measure uses `trace`).
+    overview: Arc<Vec<wiparse_core::wave_display::ScopeEnvelopeColumn>>,
+    /// Cached full-trace extents (avoids O(N) scans every frame).
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
     measures: WaveformMeasurements,
     color: Color32,
+}
+
+/// Viewport envelope cache: one entry per visible wave when zoomed.
+struct ViewLineCache {
+    view_key: u64,
+    per_wave: HashMap<usize, WaveViewportSeries>,
+}
+
+/// Parsed channel payload from a background file load (colors assigned on UI thread).
+struct LoadedChannelDraft {
+    trace: WaveformTrace,
+    measures: WaveformMeasurements,
+    overview: Arc<Vec<wiparse_core::wave_display::ScopeEnvelopeColumn>>,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+    label: String,
+}
+
+struct PendingWaveLoad {
+    path: PathBuf,
+    rx: Receiver<Result<(Vec<LoadedChannelDraft>, usize), String>>,
 }
 
 pub struct WaveformAnalysisPanel {
@@ -90,6 +126,14 @@ pub struct WaveformAnalysisPanel {
     last_x_range: Option<(f64, f64)>,
     /// Last frame plot Y range.
     last_y_range: Option<(f64, f64)>,
+    /// Cached selected-wave viewport polyline.
+    view_line_cache: Option<ViewLineCache>,
+    /// Cached X1–X2 gated measurements `(wave_idx, gate_key, measures)`.
+    gated_measure_cache: Option<(usize, u64, WaveformMeasurements)>,
+    /// Cached union extent of all loaded waves (avoids per-frame scans).
+    cached_extent: Option<(f64, f64, f64, f64)>,
+    /// Background file parse in progress.
+    pending_load: Option<PendingWaveLoad>,
 }
 
 impl WaveformAnalysisPanel {
@@ -118,6 +162,8 @@ impl WaveformAnalysisPanel {
             next_color: 0,
             browser_dir,
             browser_scanned_dir: String::new(),
+            view_line_cache: None,
+            gated_measure_cache: None,
             browser_folders: Vec::new(),
             mode: InteractMode::Pan,
             dragging_cursor: None,
@@ -125,6 +171,8 @@ impl WaveformAnalysisPanel {
             pending_bounds: None,
             last_x_range: None,
             last_y_range: None,
+            cached_extent: None,
+            pending_load: None,
         };
         panel.refresh_wave_browser();
         panel
@@ -135,6 +183,7 @@ impl WaveformAnalysisPanel {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        self.poll_pending_loads(lang);
         let avail = ui.available_size();
         let (full, _) = ui.allocate_exact_size(avail, egui::Sense::hover());
         if !full.is_positive() {
@@ -237,6 +286,7 @@ impl WaveformAnalysisPanel {
                                 self.activate_wave(0);
                             }
                             self.status = t(lang, "已关闭波形", "Waveform closed").into();
+                            self.refresh_cached_extent();
                         }
                     }
                     if ui
@@ -414,6 +464,7 @@ impl WaveformAnalysisPanel {
             }
         }
         self.dragging_cursor = None;
+        self.gated_measure_cache = None;
     }
 
     fn request_zoom_to_cursors(&mut self) {
@@ -486,26 +537,36 @@ impl WaveformAnalysisPanel {
     }
 
     fn data_extent(&self) -> Option<PlotBounds> {
+        let (xmin, xmax, ymin, ymax) = self.cached_extent?;
+        if (xmax - xmin).abs() < VIEW_MIN_SPAN_ABS {
+            return None;
+        }
+        let xpad = ((xmax - xmin).abs() * 0.02).max(VIEW_MIN_SPAN_ABS);
+        let ypad = ((ymax - ymin).abs() * 0.08).max(VIEW_MIN_SPAN_ABS);
+        Some(PlotBounds::from_min_max(
+            [xmin - xpad, ymin - ypad],
+            [xmax + xpad, ymax + ypad],
+        ))
+    }
+
+    fn refresh_cached_extent(&mut self) {
+        if self.waves.is_empty() {
+            self.cached_extent = None;
+            return;
+        }
         let mut xmin = f64::INFINITY;
         let mut xmax = f64::NEG_INFINITY;
         let mut ymin = f64::INFINITY;
         let mut ymax = f64::NEG_INFINITY;
-        let mut any = false;
         for w in &self.waves {
-            let n = w.trace.x.len().min(w.trace.y.len());
-            if n == 0 {
-                continue;
-            }
-            any = true;
-            for i in 0..n {
-                xmin = xmin.min(w.trace.x[i]);
-                xmax = xmax.max(w.trace.x[i]);
-                ymin = ymin.min(w.trace.y[i]);
-                ymax = ymax.max(w.trace.y[i]);
-            }
+            xmin = xmin.min(w.x_min);
+            xmax = xmax.max(w.x_max);
+            ymin = ymin.min(w.y_min);
+            ymax = ymax.max(w.y_max);
         }
-        if !any || !xmin.is_finite() {
-            return None;
+        if !xmin.is_finite() {
+            self.cached_extent = None;
+            return;
         }
         if (xmax - xmin).abs() < VIEW_MIN_SPAN_ABS {
             xmax = xmin + VIEW_MIN_SPAN_ABS;
@@ -513,7 +574,7 @@ impl WaveformAnalysisPanel {
         if (ymax - ymin).abs() < VIEW_MIN_SPAN_ABS {
             ymax = ymin + VIEW_MIN_SPAN_ABS;
         }
-        Some(PlotBounds::from_min_max([xmin, ymin], [xmax, ymax]))
+        self.cached_extent = Some((xmin, xmax, ymin, ymax));
     }
 
     /// Extent of the selected wave only.
@@ -602,14 +663,17 @@ impl WaveformAnalysisPanel {
             return None;
         }
         let (lo, hi) = if x0 <= x1 { (x0, x1) } else { (x1, x0) };
+        let xs = &w.trace.x[..n];
+        let start = xs.partition_point(|&x| x < lo);
+        let end = xs.partition_point(|&x| x <= hi);
+        if start >= end {
+            return None;
+        }
         let mut ymin = f64::INFINITY;
         let mut ymax = f64::NEG_INFINITY;
-        for i in 0..n {
-            let x = w.trace.x[i];
-            if x >= lo && x <= hi {
-                ymin = ymin.min(w.trace.y[i]);
-                ymax = ymax.max(w.trace.y[i]);
-            }
+        for &yv in &w.trace.y[start..end] {
+            ymin = ymin.min(yv);
+            ymax = ymax.max(yv);
         }
         if ymin.is_finite() && ymax.is_finite() {
             Some((ymin, ymax))
@@ -860,13 +924,72 @@ impl WaveformAnalysisPanel {
         self.last_x_range = None;
         self.last_y_range = None;
         self.pending_bounds = None;
-        match self.load_path(path) {
-            Ok(()) => {
+        self.view_line_cache = None;
+        self.gated_measure_cache = None;
+        self.start_load_path(path.to_path_buf(), lang);
+    }
+
+    fn start_load_path(&mut self, path: PathBuf, lang: Lang) {
+        if self.pending_load.is_some() {
+            self.status = t(lang, "正在加载上一文件…", "Previous file still loading…").into();
+            return;
+        }
+        let (tx, rx) = unbounded();
+        self.pending_load = Some(PendingWaveLoad { path: path.clone(), rx });
+        self.status = format!(
+            "{} {}…",
+            t(lang, "正在加载", "Loading"),
+            path.display()
+        );
+        thread::spawn(move || {
+            let result = load_waveform_file_worker(&path);
+            let _ = tx.send(result);
+        });
+    }
+
+    fn poll_pending_loads(&mut self, lang: Lang) {
+        let Some(load) = self.pending_load.as_ref() else {
+            return;
+        };
+        let Ok(result) = load.rx.try_recv() else {
+            return;
+        };
+        let path = load.path.clone();
+        self.pending_load = None;
+        match result {
+            Ok((channels, max_pts)) => {
+                let nch = channels.len();
+                let first_idx = self.waves.len();
+                for draft in channels {
+                    let color = color_for_channel(&draft.trace.channel).unwrap_or_else(|| {
+                        let c = TRACE_COLORS[self.next_color % TRACE_COLORS.len()];
+                        self.next_color += 1;
+                        c
+                    });
+                    self.waves.push(LoadedWave {
+                        path: path.clone(),
+                        label: draft.label,
+                        trace: draft.trace,
+                        overview: draft.overview,
+                        x_min: draft.x_min,
+                        x_max: draft.x_max,
+                        y_min: draft.y_min,
+                        y_max: draft.y_max,
+                        measures: draft.measures,
+                        color,
+                    });
+                }
+                self.view_line_cache = None;
+                self.gated_measure_cache = None;
+                self.refresh_cached_extent();
+                self.activate_wave(first_idx);
+                self.fit_request = true;
                 self.status = format!(
-                    "{} {} ({} ch)",
+                    "{} {} ({} ch, {} pts/ch)",
                     t(lang, "已加载", "Loaded"),
                     path.display(),
-                    self.waves.len()
+                    nch,
+                    max_pts
                 );
             }
             Err(err) => {
@@ -879,6 +1002,40 @@ impl WaveformAnalysisPanel {
         }
     }
 
+    fn load_path_sync(&mut self, path: &Path) -> Result<usize, String> {
+        let (channels, max_pts) = load_waveform_file_worker(path)?;
+        let first_idx = self.waves.len();
+        for draft in channels {
+            let color = color_for_channel(&draft.trace.channel).unwrap_or_else(|| {
+                let c = TRACE_COLORS[self.next_color % TRACE_COLORS.len()];
+                self.next_color += 1;
+                c
+            });
+            self.waves.push(LoadedWave {
+                path: path.to_path_buf(),
+                label: draft.label,
+                trace: draft.trace,
+                overview: draft.overview,
+                x_min: draft.x_min,
+                x_max: draft.x_max,
+                y_min: draft.y_min,
+                y_max: draft.y_max,
+                measures: draft.measures,
+                color,
+            });
+        }
+        self.view_line_cache = None;
+        self.gated_measure_cache = None;
+        self.refresh_cached_extent();
+        self.activate_wave(first_idx);
+        Ok(max_pts)
+    }
+
+    #[allow(dead_code)]
+    fn load_path(&mut self, path: &Path) -> Result<usize, String> {
+        self.load_path_sync(path)
+    }
+
     /// Select a loaded wave and reset the plot viewport to the whole document.
     fn activate_wave(&mut self, index: usize) {
         if index >= self.waves.len() {
@@ -887,6 +1044,8 @@ impl WaveformAnalysisPanel {
         self.selected = Some(index);
         self.fit_request = true;
         self.pending_bounds = None;
+        self.view_line_cache = None;
+        self.gated_measure_cache = None;
         // Pre-seed viewport from all channels of this file. egui_plot's plot_bounds()
         // returns *last frame* until draw finishes, so we must not read it for Fit.
         if let Some(ext) = self.document_extent().or_else(|| self.selected_extent()) {
@@ -917,6 +1076,7 @@ impl WaveformAnalysisPanel {
                     );
                     return;
                 };
+                let gated = self.cached_gated_measures(i);
                 let Some(w) = self.waves.get(i) else {
                     return;
                 };
@@ -927,14 +1087,8 @@ impl WaveformAnalysisPanel {
                         .color(tokens.text_primary),
                 );
                 ui.add_space(4.0);
-                let yu = &w.trace.y_unit;
-                let xu = &w.trace.x_unit;
-
-                // Prefer gated measurements when X1/X2 are both set.
-                let gated = match (self.x1, self.x2) {
-                    (Some(a), Some(b)) => Some(measure_waveform_range(&w.trace, a, b)),
-                    _ => None,
-                };
+                let yu = w.trace.y_unit.as_str();
+                let xu = w.trace.x_unit.as_str();
                 let m = gated.as_ref().unwrap_or(&w.measures);
                 let scope = if gated.is_some() {
                     t(lang, "X1–X2 区间", "X1–X2 gate")
@@ -976,6 +1130,21 @@ impl WaveformAnalysisPanel {
                     CursorAxis::Y => self.draw_y_cursor_measures(ui, tokens, lang, yu),
                 }
             });
+    }
+
+    /// X1–X2 gated measures, cached while cursors / selection are unchanged.
+    fn cached_gated_measures(&mut self, wave_index: usize) -> Option<WaveformMeasurements> {
+        let (a, b) = (self.x1?, self.x2?);
+        let key = f64_pair_key(a, b);
+        if let Some((wi, k, m)) = &self.gated_measure_cache {
+            if *wi == wave_index && *k == key {
+                return Some(m.clone());
+            }
+        }
+        let w = self.waves.get(wave_index)?;
+        let m = measure_waveform_range(&w.trace, a, b);
+        self.gated_measure_cache = Some((wave_index, key, m.clone()));
+        Some(m)
     }
 
     fn draw_x_cursor_measures(
@@ -1127,17 +1296,54 @@ impl WaveformAnalysisPanel {
         let mut end_drag = false;
         let mut needs_clamp = false;
 
-        let view_points: Option<(usize, Vec<[f64; 2]>)> =
-            if let (Some(i), Some((x0, x1))) = (self.selected, x_view) {
-                self.waves.get(i).map(|w| {
-                    (
+        let plot_width_px = ui.available_width().max(256.0);
+
+        // Rebuild viewport envelope cache when pan/zoom moves by ≥1 display column.
+        if let Some((x0, x1)) = x_view {
+            let zoom_cols = viewport_column_count(plot_width_px);
+            let (data_xmin, data_xmax) = self
+                .cached_extent
+                .map(|(a, b, _, _)| (a, b))
+                .unwrap_or((0.0, 1.0));
+            let key = quantize_view_cache_key(x0, x1, data_xmin, data_xmax, zoom_cols);
+            let need = self
+                .view_line_cache
+                .as_ref()
+                .map(|c| c.view_key != key)
+                .unwrap_or(true);
+            if need {
+                let mut per_wave = HashMap::new();
+                for (i, w) in self.waves.iter().enumerate() {
+                    if view_covers_overview(x0, x1, w.x_min, w.x_max) {
+                        continue;
+                    }
+                    let lo = x0.min(x1);
+                    let hi = x0.max(x1);
+                    let pad = (hi - lo).abs() * 0.02;
+                    if w.x_max < lo - pad || w.x_min > hi + pad {
+                        continue;
+                    }
+                    let n = w.trace.x.len().min(w.trace.y.len());
+                    per_wave.insert(
                         i,
-                        windowed_points(&w.trace, x0, x1, PLOT_DISPLAY_POINTS),
-                    )
-                })
-            } else {
-                None
-            };
+                        build_viewport_series(
+                            &w.trace.x[..n],
+                            &w.trace.y[..n],
+                            x0,
+                            x1,
+                            plot_width_px,
+                        ),
+                    );
+                }
+                self.view_line_cache = Some(ViewLineCache {
+                    view_key: key,
+                    per_wave,
+                });
+            }
+        } else {
+            self.view_line_cache = None;
+        }
+        let view_cache = self.view_line_cache.as_ref();
 
         let x1 = self.x1;
         let x2 = self.x2;
@@ -1214,23 +1420,70 @@ impl WaveformAnalysisPanel {
                 let grab_x = x_span * CURSOR_GRAB_FRAC;
                 let grab_y = y_span * CURSOR_GRAB_FRAC;
 
+                let x_view_lo = x_view.map(|(a, b)| a.min(b));
+                let x_view_hi = x_view.map(|(a, b)| a.max(b));
+
                 for (i, w) in self.waves.iter().enumerate() {
-                    let pts = if view_points.as_ref().is_some_and(|(si, _)| *si == i) {
-                        PlotPoints::from(view_points.as_ref().unwrap().1.clone())
-                    } else {
-                        PlotPoints::from(w.plot_points.as_slice().to_vec())
-                    };
                     let stroke = if self.selected == Some(i) {
                         2.0_f32
                     } else {
                         1.2_f32
                     };
-                    plot_ui.line(
-                        Line::new(pts)
-                            .name(&w.label)
-                            .color(w.color)
-                            .width(stroke),
-                    );
+                    let highlighted = self.selected == Some(i);
+                    let use_overview = match (x_view_lo, x_view_hi) {
+                        (Some(lo), Some(hi)) => view_covers_overview(lo, hi, w.x_min, w.x_max),
+                        _ => true,
+                    };
+                    if use_overview {
+                        if !w.overview.is_empty() {
+                            plot_ui.add(ScopeEnvelopePlotItem::new(
+                                Arc::clone(&w.overview),
+                                w.color,
+                                stroke,
+                                w.label.clone(),
+                                highlighted,
+                            ));
+                        }
+                    } else if let Some(series) = view_cache.and_then(|c| c.per_wave.get(&i)) {
+                        match series {
+                            WaveViewportSeries::Envelope(cols) if !cols.is_empty() => {
+                                plot_ui.add(ScopeEnvelopePlotItem::new(
+                                    Arc::clone(cols),
+                                    w.color,
+                                    stroke,
+                                    w.label.clone(),
+                                    highlighted,
+                                ));
+                            }
+                            WaveViewportSeries::Uniform(pts) if pts.len() >= 2 => {
+                                plot_ui.line(
+                                    Line::new(PlotPoints::from((**pts).clone()))
+                                        .name(&w.label)
+                                        .color(w.color)
+                                        .width(stroke),
+                                );
+                            }
+                            _ => {
+                                if !w.overview.is_empty() {
+                                    plot_ui.add(ScopeEnvelopePlotItem::new(
+                                        Arc::clone(&w.overview),
+                                        w.color,
+                                        stroke,
+                                        w.label.clone(),
+                                        highlighted,
+                                    ));
+                                }
+                            }
+                        }
+                    } else if !w.overview.is_empty() {
+                        plot_ui.add(ScopeEnvelopePlotItem::new(
+                            Arc::clone(&w.overview),
+                            w.color,
+                            stroke,
+                            w.label.clone(),
+                            highlighted,
+                        ));
+                    }
                 }
 
                 if let Some(v) = x1 {
@@ -1459,51 +1712,8 @@ impl WaveformAnalysisPanel {
             {
                 continue;
             }
-            match self.load_path(&path) {
-                Ok(()) => {
-                    self.status = format!("{} {}", t(lang, "已加载", "Loaded"), path.display());
-                }
-                Err(err) => {
-                    self.status = format!(
-                        "{} {}: {err}",
-                        t(lang, "加载失败", "Load failed"),
-                        path.display()
-                    );
-                }
-            }
+            self.start_load_path(path, lang);
         }
-    }
-
-    fn load_path(&mut self, path: &Path) -> Result<(), String> {
-        let traces = load_waveform_file_all(path).map_err(|e| e.to_string())?;
-        if traces.is_empty() {
-            return Err("empty waveform".into());
-        }
-        let file_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("wave");
-        let first_idx = self.waves.len();
-        for trace in traces {
-            let measures = measure_waveform(&trace);
-            let plot_points = Arc::new(downsample_points(&trace, PLOT_DISPLAY_POINTS));
-            let label = format!("{file_name} · {}", trace.channel);
-            let color = color_for_channel(&trace.channel).unwrap_or_else(|| {
-                let c = TRACE_COLORS[self.next_color % TRACE_COLORS.len()];
-                self.next_color += 1;
-                c
-            });
-            self.waves.push(LoadedWave {
-                path: path.to_path_buf(),
-                label,
-                trace,
-                plot_points,
-                measures,
-                color,
-            });
-        }
-        self.activate_wave(first_idx);
-        Ok(())
     }
 
     /// Load a path programmatically (e.g. deep-link / automation).
@@ -1521,9 +1731,14 @@ impl WaveformAnalysisPanel {
             self.status = format!("{} {}", t(lang, "已打开", "Opened"), path.display());
             return Ok(());
         }
-        match self.load_path(path) {
-            Ok(()) => {
-                self.status = format!("{} {}", t(lang, "已加载", "Loaded"), path.display());
+        match self.load_path_sync(path) {
+            Ok(n) => {
+                self.status = format!(
+                    "{} {} · {} pts/ch",
+                    t(lang, "已加载", "Loaded"),
+                    path.display(),
+                    n
+                );
                 Ok(())
             }
             Err(err) => {
@@ -1570,6 +1785,35 @@ impl WaveformAnalysisPanel {
             }
         }
     }
+}
+
+fn load_waveform_file_worker(path: &Path) -> Result<(Vec<LoadedChannelDraft>, usize), String> {
+    let traces = load_waveform_file_all(path).map_err(|e| e.to_string())?;
+    if traces.is_empty() {
+        return Err("empty waveform".into());
+    }
+    let max_pts = traces.iter().map(|t| t.x.len()).max().unwrap_or(0);
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("wave");
+    let mut channels = Vec::with_capacity(traces.len());
+    for trace in traces {
+        let measures = measure_waveform(&trace);
+        let overview = build_overview_envelope(&trace.x, &trace.y);
+        let (x_min, x_max, y_min, y_max) = trace_extent(&trace);
+        channels.push(LoadedChannelDraft {
+            label: format!("{file_name} · {}", trace.channel),
+            trace,
+            overview,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            measures,
+        });
+    }
+    Ok((channels, max_pts))
 }
 
 /// Tektronix default channel colors (2/3/4/5/6 Series FAQ):
@@ -1730,119 +1974,6 @@ fn format_eng(value: f64, unit: &str) -> String {
     }
 }
 
-/// Min/max downsample within an X window (full-resolution source).
-fn windowed_points(
-    trace: &WaveformTrace,
-    x_min: f64,
-    x_max: f64,
-    max_points: usize,
-) -> Vec<[f64; 2]> {
-    let n = trace.x.len().min(trace.y.len());
-    if n == 0 {
-        return Vec::new();
-    }
-    let (lo, hi) = if x_min <= x_max {
-        (x_min, x_max)
-    } else {
-        (x_max, x_min)
-    };
-    // Expand slightly so edges stay visible while panning.
-    let pad = (hi - lo).abs() * 0.02;
-    let lo = lo - pad;
-    let hi = hi + pad;
-
-    let mut start = 0usize;
-    while start < n && trace.x[start] < lo {
-        start += 1;
-    }
-    if start > 0 {
-        start -= 1;
-    }
-    let mut end = start;
-    while end < n && trace.x[end] <= hi {
-        end += 1;
-    }
-    end = end.min(n).max(start + 1);
-    let slice_n = end - start;
-    if slice_n <= max_points.max(2) {
-        return trace.x[start..end]
-            .iter()
-            .zip(&trace.y[start..end])
-            .map(|(&x, &y)| [x, y])
-            .collect();
-    }
-    // Local min/max bucket on the windowed slice.
-    let buckets = max_points.max(2) / 2;
-    let mut points = Vec::with_capacity(buckets * 2);
-    for b in 0..buckets {
-        let s = start + b * slice_n / buckets;
-        let e = (start + (b + 1) * slice_n / buckets)
-            .max(s + 1)
-            .min(end);
-        let mut min_i = s;
-        let mut max_i = s;
-        for i in s..e {
-            if trace.y[i] < trace.y[min_i] {
-                min_i = i;
-            }
-            if trace.y[i] > trace.y[max_i] {
-                max_i = i;
-            }
-        }
-        if min_i <= max_i {
-            points.push([trace.x[min_i], trace.y[min_i]]);
-            if max_i != min_i {
-                points.push([trace.x[max_i], trace.y[max_i]]);
-            }
-        } else {
-            points.push([trace.x[max_i], trace.y[max_i]]);
-            points.push([trace.x[min_i], trace.y[min_i]]);
-        }
-    }
-    points
-}
-
-fn downsample_points(trace: &WaveformTrace, max_points: usize) -> Vec<[f64; 2]> {
-    let n = trace.x.len().min(trace.y.len());
-    let max_points = max_points.max(2);
-    if n == 0 {
-        return Vec::new();
-    }
-    if n <= max_points {
-        return trace.x[..n]
-            .iter()
-            .zip(&trace.y[..n])
-            .map(|(&x, &y)| [x, y])
-            .collect();
-    }
-    let buckets = max_points / 2;
-    let mut points = Vec::with_capacity(buckets * 2);
-    for b in 0..buckets {
-        let start = b * n / buckets;
-        let end = ((b + 1) * n / buckets).max(start + 1).min(n);
-        let mut min_i = start;
-        let mut max_i = start;
-        for i in start..end {
-            if trace.y[i] < trace.y[min_i] {
-                min_i = i;
-            }
-            if trace.y[i] > trace.y[max_i] {
-                max_i = i;
-            }
-        }
-        if min_i <= max_i {
-            points.push([trace.x[min_i], trace.y[min_i]]);
-            if max_i != min_i {
-                points.push([trace.x[max_i], trace.y[max_i]]);
-            }
-        } else {
-            points.push([trace.x[max_i], trace.y[max_i]]);
-            points.push([trace.x[min_i], trace.y[min_i]]);
-        }
-    }
-    points
-}
-
 fn interpolate_y(trace: &WaveformTrace, x: f64) -> Option<f64> {
     let n = trace.x.len().min(trace.y.len());
     if n == 0 {
@@ -1851,18 +1982,16 @@ fn interpolate_y(trace: &WaveformTrace, x: f64) -> Option<f64> {
     if n == 1 {
         return Some(trace.y[0]);
     }
-    if x <= trace.x[0] {
+    let xs = &trace.x[..n];
+    if x <= xs[0] {
         return Some(trace.y[0]);
     }
-    if x >= trace.x[n - 1] {
+    if x >= xs[n - 1] {
         return Some(trace.y[n - 1]);
     }
-    let mut i = 1;
-    while i < n && trace.x[i] < x {
-        i += 1;
-    }
-    let x0 = trace.x[i - 1];
-    let x1 = trace.x[i];
+    let i = xs.partition_point(|&t| t < x).max(1).min(n - 1);
+    let x0 = xs[i - 1];
+    let x1 = xs[i];
     let y0 = trace.y[i - 1];
     let y1 = trace.y[i];
     let t = if (x1 - x0).abs() < f64::EPSILON {
@@ -1898,17 +2027,14 @@ fn extent_of_traces(waves: &[&LoadedWave]) -> Option<PlotBounds> {
     let mut ymax = f64::NEG_INFINITY;
     let mut any = false;
     for w in waves {
-        let n = w.trace.x.len().min(w.trace.y.len());
-        if n == 0 {
+        if w.trace.x.is_empty() || w.trace.y.is_empty() {
             continue;
         }
         any = true;
-        for i in 0..n {
-            xmin = xmin.min(w.trace.x[i]);
-            xmax = xmax.max(w.trace.x[i]);
-            ymin = ymin.min(w.trace.y[i]);
-            ymax = ymax.max(w.trace.y[i]);
-        }
+        xmin = xmin.min(w.x_min);
+        xmax = xmax.max(w.x_max);
+        ymin = ymin.min(w.y_min);
+        ymax = ymax.max(w.y_max);
     }
     if !any || !xmin.is_finite() {
         return None;
@@ -1926,6 +2052,94 @@ fn extent_of_traces(waves: &[&LoadedWave]) -> Option<PlotBounds> {
         [xmax + xpad, ymax + ypad],
     ))
 }
+
+fn trace_extent(trace: &WaveformTrace) -> (f64, f64, f64, f64) {
+    let n = trace.x.len().min(trace.y.len());
+    if n == 0 {
+        return (0.0, 1.0, 0.0, 1.0);
+    }
+    let mut xmin = f64::INFINITY;
+    let mut xmax = f64::NEG_INFINITY;
+    for i in 0..n {
+        let x = trace.x[i];
+        if x.is_finite() {
+            xmin = xmin.min(x);
+            xmax = xmax.max(x);
+        }
+    }
+    if !xmin.is_finite() {
+        xmin = 0.0;
+        xmax = 1.0;
+    }
+    let (mut ymin, mut ymax) = robust_y_range(&trace.y[..n]);
+    if (xmax - xmin).abs() < VIEW_MIN_SPAN_ABS {
+        xmax = xmin + VIEW_MIN_SPAN_ABS;
+    }
+    if (ymax - ymin).abs() < VIEW_MIN_SPAN_ABS {
+        ymax = ymin + VIEW_MIN_SPAN_ABS;
+    }
+    (xmin, xmax, ymin, ymax)
+}
+
+/// Robust Y extent for autoscale — ignores NaN/Inf and extreme outliers (0.1–99.9%).
+fn robust_y_range(y: &[f64]) -> (f64, f64) {
+    const SAMPLE: usize = 65_536;
+    let n = y.len();
+    if n == 0 {
+        return (0.0, 1.0);
+    }
+    let mut vals: Vec<f64> = if n <= SAMPLE {
+        y.iter().copied().filter(|v| v.is_finite()).collect()
+    } else {
+        let step = n as f64 / SAMPLE as f64;
+        let mut f = 0.0;
+        let mut out = Vec::with_capacity(SAMPLE);
+        while out.len() < SAMPLE {
+            let i = (f as usize).min(n - 1);
+            let v = y[i];
+            if v.is_finite() {
+                out.push(v);
+            }
+            f += step;
+        }
+        out
+    };
+    if vals.is_empty() {
+        return (0.0, 1.0);
+    }
+    vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let lo_i = ((vals.len() as f64) * 0.001).floor() as usize;
+    let hi_i = ((vals.len() as f64) * 0.999).ceil() as usize;
+    let lo_i = lo_i.min(vals.len() - 1);
+    let hi_i = hi_i.saturating_sub(1).max(lo_i);
+    let mut lo = vals[lo_i];
+    let mut hi = vals[hi_i];
+    if (hi - lo).abs() < VIEW_MIN_SPAN_ABS {
+        lo -= VIEW_MIN_SPAN_ABS * 0.5;
+        hi += VIEW_MIN_SPAN_ABS * 0.5;
+    } else {
+        let pad = (hi - lo).abs() * 0.04;
+        lo -= pad;
+        hi += pad;
+    }
+    (lo, hi)
+}
+
+#[inline]
+fn f64_pair_key(a: f64, b: f64) -> u64 {
+    a.to_bits().wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ b.to_bits()
+}
+
+/// True when the plot window spans (almost) the entire trace — use overview envelope.
+fn view_covers_overview(x0: f64, x1: f64, data_xmin: f64, data_xmax: f64) -> bool {
+    let (lo, hi) = if x0 <= x1 { (x0, x1) } else { (x1, x0) };
+    let data_span = (data_xmax - data_xmin).abs().max(VIEW_MIN_SPAN_ABS);
+    let view_span = (hi - lo).abs();
+    view_span >= data_span * 0.985
+        && lo <= data_xmin + data_span * 0.02
+        && hi >= data_xmax - data_span * 0.02
+}
+
 
 fn panel_in_rect(ui: &mut egui::Ui, rect: egui::Rect, add: impl FnOnce(&mut egui::Ui)) {
     if !rect.is_positive() {

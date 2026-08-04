@@ -762,7 +762,7 @@ impl TektronixScopeClient {
     ) -> Result<Waveform, ScopeError> {
         self.require(index)?;
         let ch = channel.to_uppercase();
-        let max_xfer = points.unwrap_or(10_000).clamp(100, 100_000);
+        let max_xfer = points.unwrap_or(1_000_000).clamp(100, 10_000_000);
 
         self.write(&format!("DATa:SOUrce {ch}"), index)?;
         self.write("DATa:ENCdg RIBINARY", index)?;
@@ -885,7 +885,7 @@ pub fn read_waveform_json(
 ) -> Result<Value, ScopeError> {
     let mut client = TektronixScopeClient::new();
     client.connect(None, index)?;
-    let w = client.read_waveform(channel, index, points, Some(2500), false)?;
+    let w = client.read_waveform(channel, index, points, None, false)?;
     Ok(json!({
         "channel": w.channel,
         "points": w.points,

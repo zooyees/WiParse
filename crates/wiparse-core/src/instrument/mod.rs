@@ -14,7 +14,8 @@ use thiserror::Error;
 pub use drivers::{
     classify_instrument_kind, detect_profile, estimate_dc_source_channels,
     format_human_scope_reading, humanize_scope_reading_text, ControlCommand, InstrumentDevice,
-    InstrumentProfile, MeasureFunction, Reading, ScopeMeasType, WaveformTrace,
+    InstrumentProfile, MeasureFunction, Reading, ScopeMeasType, ScopeWaveformDensity,
+    WaveformTrace,
 };
 pub use recording::{export_csv, AcquisitionBuffer, Sample};
 
@@ -114,6 +115,14 @@ pub trait Transport: Send {
     fn write(&mut self, command: &str) -> Result<(), InstrumentError>;
     fn query(&mut self, command: &str) -> Result<String, InstrumentError>;
     fn read_raw(&mut self) -> Result<Vec<u8>, InstrumentError>;
+    /// Update VISA I/O timeout (ms). Default: no-op for mock/demo transports.
+    fn set_timeout(&mut self, _timeout_ms: u32) -> Result<(), InstrumentError> {
+        Ok(())
+    }
+    /// VISA device-clear + drain unread bytes. Default: no-op.
+    fn clear_io(&mut self) -> Result<(), InstrumentError> {
+        Ok(())
+    }
 }
 
 pub struct VisaTransport {
@@ -155,6 +164,17 @@ impl Transport for VisaTransport {
 
     fn read_raw(&mut self) -> Result<Vec<u8>, InstrumentError> {
         Ok(self.instrument.read_raw()?)
+    }
+
+    fn set_timeout(&mut self, timeout_ms: u32) -> Result<(), InstrumentError> {
+        self.instrument.set_timeout(timeout_ms.max(100))?;
+        Ok(())
+    }
+
+    fn clear_io(&mut self) -> Result<(), InstrumentError> {
+        let _ = self.instrument.clear();
+        self.instrument.discard_input();
+        Ok(())
     }
 }
 
@@ -202,6 +222,42 @@ impl ScpiSession {
 
     pub fn read_raw(&mut self) -> Result<Vec<u8>, InstrumentError> {
         self.transport.read_raw()
+    }
+
+    pub fn set_timeout(&mut self, timeout_ms: u32) -> Result<(), InstrumentError> {
+        self.transport.set_timeout(timeout_ms)
+    }
+
+    pub fn clear_io(&mut self) -> Result<(), InstrumentError> {
+        self.transport.clear_io()
+    }
+
+    /// Soft query: temporarily use a short timeout so unsupported SCPI does not
+    /// burn the full I/O timeout (common cause of VI_ERROR_TMO on Tek).
+    pub fn query_soft(
+        &mut self,
+        command: &str,
+        probe_ms: u32,
+        restore_ms: u32,
+    ) -> Option<String> {
+        let _ = self.transport.set_timeout(probe_ms.max(50));
+        let out = self.query(command).ok();
+        let _ = self.transport.set_timeout(restore_ms.max(100));
+        // Note: do **not** clear_io() on every soft miss — discard loops add hundreds
+        // of ms per failed optional probe and dominated waveform-source latency.
+        out
+    }
+
+    pub fn query_f64_soft(
+        &mut self,
+        command: &str,
+        probe_ms: u32,
+        restore_ms: u32,
+    ) -> Option<f64> {
+        self.query_soft(command, probe_ms, restore_ms)?
+            .trim()
+            .parse()
+            .ok()
     }
 
     pub fn identify(&mut self) -> Result<Identity, InstrumentError> {
@@ -425,24 +481,29 @@ impl DemoTransport {
             || cmd.contains("SAVE:IMAGE")
         {
             self.pending_raw = Some(Self::ieee_block(Self::demo_png()));
-        } else if cmd.contains("FILESYSTEM:READFILE") || cmd.contains("FILESYSTEM:READFILE ") {
-            // Minimal ISF-like blob for Tek filesystem waveform-source path.
-            let n = self.wave_points.clamp(64, 4096);
-            let mut samples = Vec::with_capacity(n);
-            for i in 0..n {
-                let phase = (i as f64 / n as f64) * std::f64::consts::TAU * 3.0;
-                samples.push((128.0 + 40.0 * phase.sin()).clamp(0.0, 255.0) as u8);
+        } else if cmd.contains("FILESYSTEM:READFILE") {
+            // Screenshot path reads `.png`; waveform-source path reads `.isf`/`.csv`/`.wfm`.
+            if cmd.contains(".PNG") {
+                self.pending_raw = Some(Self::ieee_block(Self::demo_png()));
+            } else {
+                // Minimal ISF-like blob for Tek filesystem waveform-source path.
+                let n = self.wave_points.clamp(64, 4096);
+                let mut samples = Vec::with_capacity(n);
+                for i in 0..n {
+                    let phase = (i as f64 / n as f64) * std::f64::consts::TAU * 3.0;
+                    samples.push((128.0 + 40.0 * phase.sin()).clamp(0.0, 255.0) as u8);
+                }
+                let mut isf = format!(
+                    ":WFMPRE:BYT_NR 1;BIT_NR 8;ENCDG BIN;BN_FMT RI;BYT_OR MSB;NR_PT {n};XINCR 1.0E-6;XZERO 0;XUNIT \"s\";YMULT 0.01;YOFF 128;YZERO 0;YUNIT \"V\";WFID \"CH1\";:CURVE "
+                )
+                .into_bytes();
+                let len = samples.len().to_string();
+                isf.push(b'#');
+                isf.push(b'0' + len.len() as u8);
+                isf.extend_from_slice(len.as_bytes());
+                isf.extend_from_slice(&samples);
+                self.pending_raw = Some(Self::ieee_block(&isf));
             }
-            let mut isf = format!(
-                ":WFMPRE:BYT_NR 1;BIT_NR 8;ENCDG BIN;BN_FMT RI;BYT_OR MSB;NR_PT {n};XINCR 1.0E-6;XZERO 0;XUNIT \"s\";YMULT 0.01;YOFF 128;YZERO 0;YUNIT \"V\";WFID \"CH1\";:CURVE "
-            )
-            .into_bytes();
-            let len = samples.len().to_string();
-            isf.push(b'#');
-            isf.push(b'0' + len.len() as u8);
-            isf.extend_from_slice(len.as_bytes());
-            isf.extend_from_slice(&samples);
-            self.pending_raw = Some(Self::ieee_block(&isf));
         } else if cmd.contains("WAV:DATA") || cmd.contains("CURVE") {
             self.pending_raw = Some(self.demo_waveform_bytes());
         }
@@ -455,6 +516,28 @@ impl DemoTransport {
         }
         if cmd.starts_with("SYST:ERR") || cmd.starts_with("SYSTEM:ERROR") {
             return "0,\"No error\"".into();
+        }
+        if cmd.starts_with("SELECT:CH") && cmd.ends_with('?') {
+            // Demo scope: CH1 on, others off (matches a typical single-trace setup).
+            return if cmd.contains("CH1") {
+                "1".into()
+            } else {
+                "0".into()
+            };
+        }
+        if cmd.contains("CHANNEL") && cmd.contains("DISPLAY?") {
+            return if cmd.contains("CHANNEL1") {
+                "1".into()
+            } else {
+                "0".into()
+            };
+        }
+        if cmd.contains("CHAN") && cmd.contains("DISP?") && !cmd.contains("CHANNEL") {
+            return if cmd.contains("CHAN1") {
+                "1".into()
+            } else {
+                "0".into()
+            };
         }
         if cmd == "WFMOUTPRE?" || cmd.ends_with("WFMOUTPRE?") {
             let n = self.wave_points.clamp(64, 4096);

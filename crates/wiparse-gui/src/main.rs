@@ -13,6 +13,7 @@ mod instrument_control;
 mod log_tab;
 mod log_view;
 mod serial_tool;
+mod plot;
 mod theme;
 mod waveform_analysis;
 mod windows_icon;

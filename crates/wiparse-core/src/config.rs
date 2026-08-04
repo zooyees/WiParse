@@ -208,7 +208,7 @@ fn default_scope_dir() -> String {
     "scope_captures".into()
 }
 fn default_instrument_timeout() -> u32 {
-    5_000
+    30_000
 }
 fn default_sample_interval() -> u64 {
     1_000

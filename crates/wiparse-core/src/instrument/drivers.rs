@@ -1,7 +1,7 @@
 //! Capability-driven SCPI drivers for common bench instruments.
 
 use super::{Capabilities, Identity, InstrumentError, InstrumentKind, ScpiSession, Transport};
-use crate::scope::binary::{downsample_minmax, parse_ieee_block};
+use crate::scope::binary::parse_ieee_block;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
@@ -559,6 +559,14 @@ pub struct Reading {
     pub unit: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScopeWaveformDensity {
+    /// Display-decimated (fast live preview).
+    Screen,
+    /// Acquisition / memory density (waveform source, export).
+    Source,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WaveformTrace {
     pub channel: String,
@@ -574,6 +582,8 @@ pub struct InstrumentDevice {
     pub profile: InstrumentProfile,
     session: ScpiSession,
     dmm_function: MeasureFunction,
+    /// Last VISA I/O timeout applied to the session (ms).
+    io_timeout_ms: u32,
 }
 
 impl InstrumentDevice {
@@ -594,7 +604,13 @@ impl InstrumentDevice {
         let resource = resource.into();
         let mut session = ScpiSession::open_with_library(&resource, timeout_ms, library)?;
         let identity = session.identify()?;
-        Ok(Self::from_session(resource, session, identity, requested))
+        Ok(Self::from_session(
+            resource,
+            session,
+            identity,
+            requested,
+            timeout_ms,
+        ))
     }
 
     /// Open a soft demo session for UI debugging (no VISA / hardware required).
@@ -612,7 +628,13 @@ impl InstrumentDevice {
         let resource = resource.into();
         let mut session = ScpiSession::new(transport);
         let identity = session.identify()?;
-        Ok(Self::from_session(resource, session, identity, requested))
+        Ok(Self::from_session(
+            resource,
+            session,
+            identity,
+            requested,
+            5_000,
+        ))
     }
 
     fn from_session(
@@ -620,6 +642,7 @@ impl InstrumentDevice {
         session: ScpiSession,
         identity: Identity,
         requested: Option<InstrumentKind>,
+        timeout_ms: u32,
     ) -> Self {
         let profile = detect_profile(&identity, requested);
         Self {
@@ -627,6 +650,7 @@ impl InstrumentDevice {
             identity,
             profile,
             session,
+            io_timeout_ms: timeout_ms.max(1_000),
             dmm_function: MeasureFunction::DcVoltage,
         }
     }
@@ -786,12 +810,21 @@ impl InstrumentDevice {
         self.require(InstrumentKind::Oscilloscope, "screen capture")?;
         // Screen hardcopy (PNG pixels), not CURVe numerical samples.
         if self.vendor_is("TEKTRONIX") {
+            // Fast path: stream HARDCopy on the VISA session (USB-TMC / LAN).
+            // Do NOT try SAVe:IMAGe+*OPC? first — missing E:/C: waits a full VISA
+            // timeout per path and made screenshots feel several× slower.
             let _ = self.session.write("HEADer OFF");
             let _ = self.session.write("SAVe:IMAGe:FILEFormat PNG");
+            let _ = self.session.write("HARDCopy:INKSaver ON");
             let _ = self.session.write("SAVe:IMAGe:INKSaver ON");
             self.session.write("HARDCopy STARt")?;
-            // HARDCopy may return an IEEE488.2 definite-length block; strip header if present.
-            Ok(parse_ieee_block(&self.session.read_raw()?).to_vec())
+            let data = parse_ieee_block(&self.session.read_raw()?).to_vec();
+            if data.starts_with(b"\x89PNG") {
+                return Ok(data);
+            }
+            Err(InstrumentError::Unsupported(
+                "Tektronix HARDCopy did not return a PNG".into(),
+            ))
         } else if self.vendor_is("RIGOL") || self.vendor_is("SIGLENT") {
             self.session.write(":DISPLAY:DATA? ON,OFF,PNG")?;
             Ok(parse_ieee_block(&self.session.read_raw()?).to_vec())
@@ -803,10 +836,11 @@ impl InstrumentDevice {
         }
     }
 
-    /// Read the current **on-screen** waveform source over VISA (full displayed record).
+    /// Read the current waveform **source** over VISA.
     ///
     /// Priority by vendor:
-    /// - **Tektronix**: native `.isf` / `.wfm` / `.csv` via filesystem, else `CURVe`→ISF
+    /// - **Tektronix**: `CURVe`→ISF at acquisition sample density across the
+    ///   on-screen time span (no software point cap; instrument record length only)
     /// - **Rigol/Siglent**: native `.wfm` via MMEM when available, else `:WAV NORM`→CSV
     /// - **Keysight/Agilent**: `:WAVeform` BYTE screen → host CSV
     /// - **Other**: try Keysight → Rigol/Siglent → Tek curve
@@ -817,20 +851,116 @@ impl InstrumentDevice {
         self.require(InstrumentKind::Oscilloscope, "waveform source")?;
         let channel = channel.clamp(1, 8);
         if self.vendor_is("TEKTRONIX") {
-            if let Ok(bytes) = self.read_tek_waveform_via_filesystem(channel, "isf") {
-                return Ok((bytes, format!("waveform_CH{channel}.isf")));
+            self.with_tek_stable_capture(|dev| {
+                dev.capture_scope_waveform_source_unlocked(channel)
+            })
+        } else {
+            self.capture_scope_waveform_source_unlocked(channel)
+        }
+    }
+
+    /// Read waveform sources for every channel currently displayed on the instrument.
+    ///
+    /// Does **not** use the UI “waveform channel” selector — queries `SELect:CHx?` /
+    /// `:CHANnelx:DISPlay?` on the scope itself.
+    pub fn capture_scope_waveform_sources_displayed(
+        &mut self,
+    ) -> Result<Vec<(u8, Vec<u8>, String)>, InstrumentError> {
+        self.require(InstrumentKind::Oscilloscope, "waveform source")?;
+        let channels = self.query_displayed_scope_channels()?;
+        if channels.is_empty() {
+            return Err(InstrumentError::Unsupported(
+                "no displayed channels (turn on at least one CHx on the scope)".into(),
+            ));
+        }
+        if self.vendor_is("TEKTRONIX") {
+            self.with_tek_stable_capture(|dev| {
+                // Acquisition-density window around the graticule (not a sparse
+                // time-map clip, and not a multi‑minute full-record dump).
+                let first = channels[0];
+                let window = dev.apply_tek_source_data_window(first, None).map_err(|e| {
+                    InstrumentError::Unsupported(format!("source window: {e}"))
+                })?;
+                let mut out = Vec::with_capacity(channels.len());
+                for ch in channels {
+                    // Flush between channels — leftover CURVe bytes corrupt the next
+                    // channel's WFMOutpre/CURVe framing and look like "distortion".
+                    let _ = dev.session.clear_io();
+                    let _ = dev.session.write("*CLS");
+                    let bytes = dev.read_tek_isf_via_curve_range(ch, window).map_err(|e| {
+                        InstrumentError::Unsupported(format!(
+                            "Tektronix CURVe waveform source failed: {e}"
+                        ))
+                    })?;
+                    out.push((ch, bytes, format!("waveform_CH{ch}.isf")));
+                }
+                Ok(out)
+            })
+        } else {
+            let mut out = Vec::with_capacity(channels.len());
+            for ch in channels {
+                let (bytes, name) = self.capture_scope_waveform_source_unlocked(ch)?;
+                out.push((ch, bytes, name));
             }
-            if let Ok(bytes) = self.read_tek_waveform_via_filesystem(channel, "wfm") {
-                return Ok((bytes, format!("waveform_CH{channel}.wfm")));
+            Ok(out)
+        }
+    }
+
+    /// Channels currently turned on / displayed (instrument state, not UI).
+    pub fn query_displayed_scope_channels(&mut self) -> Result<Vec<u8>, InstrumentError> {
+        self.require(InstrumentKind::Oscilloscope, "channel display")?;
+        let max = self.profile.capabilities.channels.max(1).min(8);
+        let tmo = self.io_timeout_ms.max(1_000);
+        let tek = self.vendor_is("TEKTRONIX");
+        let asian = self.is_rigol_siglent_family();
+        let mut on = Vec::new();
+        for ch in 1..=max {
+            let displayed = if tek {
+                self.session
+                    .query_soft(&format!("SELect:CH{ch}?"), 800, tmo)
+                    .map(|s| scpi_on(&s))
+                    .unwrap_or(false)
+            } else if asian {
+                self.session
+                    .query_soft(&format!(":CHANnel{ch}:DISPlay?"), 800, tmo)
+                    .or_else(|| self.session.query_soft(&format!(":CHAN{ch}:DISP?"), 800, tmo))
+                    .map(|s| scpi_on(&s))
+                    .unwrap_or(false)
+            } else {
+                self.session
+                    .query_soft(&format!("SELect:CH{ch}?"), 800, tmo)
+                    .or_else(|| {
+                        self.session
+                            .query_soft(&format!(":CHANnel{ch}:DISPlay?"), 800, tmo)
+                    })
+                    .map(|s| scpi_on(&s))
+                    .unwrap_or(false)
+            };
+            if displayed {
+                on.push(ch);
             }
-            if let Ok(bytes) = self.read_tek_waveform_via_filesystem(channel, "csv") {
-                return Ok((bytes, format!("waveform_CH{channel}.csv")));
-            }
-            let bytes = self.read_tek_isf_via_curve(channel)?;
+        }
+        Ok(on)
+    }
+
+    fn capture_scope_waveform_source_unlocked(
+        &mut self,
+        channel: u8,
+    ) -> Result<(Vec<u8>, String), InstrumentError> {
+        let channel = channel.clamp(1, 8);
+        if self.vendor_is("TEKTRONIX") {
+            // Screen-aligned acquisition-density window. Filesystem+*OPC stalls
+            // on missing media.
+            let window = self.apply_tek_source_data_window(channel, None)?;
+            let bytes = self
+                .read_tek_isf_via_curve_range(channel, window)
+                .map_err(|e| {
+                    InstrumentError::Unsupported(format!(
+                        "Tektronix CURVe waveform source failed: {e}"
+                    ))
+                })?;
             Ok((bytes, format!("waveform_CH{channel}.isf")))
         } else if self.is_rigol_siglent_family() {
-            // Prefer :WAV:DATA→CSV first (reliable). Native .wfm via MMEM is optional and
-            // can hang on models that ignore SAVE/*OPC — try it only after CSV fails.
             if let Ok(bytes) = self.export_screen_csv(channel) {
                 return Ok((bytes, format!("waveform_CH{channel}.csv")));
             }
@@ -846,14 +976,11 @@ impl InstrumentDevice {
         } else if self.is_keysight_family() {
             let bytes = self.export_screen_csv(channel)?;
             Ok((bytes, format!("waveform_CH{channel}.csv")))
+        } else if let Ok(bytes) = self.export_screen_csv(channel) {
+            Ok((bytes, format!("waveform_CH{channel}.csv")))
+        } else if let Ok(bytes) = self.read_tek_isf_via_curve(channel) {
+            Ok((bytes, format!("waveform_CH{channel}.isf")))
         } else {
-            // Unknown brand: probe common SCPI families.
-            if let Ok(bytes) = self.export_screen_csv(channel) {
-                return Ok((bytes, format!("waveform_CH{channel}.csv")));
-            }
-            if let Ok(bytes) = self.read_tek_isf_via_curve(channel) {
-                return Ok((bytes, format!("waveform_CH{channel}.isf")));
-            }
             Err(InstrumentError::Unsupported(
                 "unsupported oscilloscope waveform source protocol".into(),
             ))
@@ -862,7 +989,7 @@ impl InstrumentDevice {
 
     /// Build a spreadsheet CSV (`TIME,CHx`) from the on-screen waveform record.
     fn export_screen_csv(&mut self, channel: u8) -> Result<Vec<u8>, InstrumentError> {
-        let trace = self.read_scope_screen_waveform(channel)?;
+        let trace = self.read_scope_waveform(channel, ScopeWaveformDensity::Source)?;
         if trace.x.is_empty() {
             return Err(InstrumentError::Unsupported(
                 "empty on-screen waveform".into(),
@@ -919,24 +1046,10 @@ impl InstrumentDevice {
     }
 
     fn tek_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
-        self.session
-            .write(&format!("DATa:SOUrce CH{channel}"))?;
-        let _ = self.session.write("DATa:MODE SCREEN");
-        let nr = self
-            .session
-            .query_f64("WFMOutpre:NR_Pt?")
-            .unwrap_or(0.0)
-            .round() as usize;
-        if nr >= 100 {
-            Ok(nr.min(10_000_000))
-        } else {
-            let hor = self
-                .session
-                .query_f64("HORizontal:RECOrdlength?")
-                .unwrap_or(1000.0)
-                .round() as usize;
-            Ok(hor.max(100).min(10_000_000))
-        }
+        let (start, stop) = self.apply_tek_source_data_window(channel, None)?;
+        Ok((stop.saturating_sub(start).saturating_add(1))
+            .max(2)
+            .min(10_000_000))
     }
 
     fn keysight_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
@@ -954,22 +1067,58 @@ impl InstrumentDevice {
         Ok(n.max(100).min(10_000_000))
     }
 
-    fn prepare_keysight_screen_waveform(&mut self, channel: u8) -> Result<(), InstrumentError> {
+    fn prepare_keysight_waveform(
+        &mut self,
+        channel: u8,
+        density: ScopeWaveformDensity,
+    ) -> Result<(), InstrumentError> {
         let channel = channel.clamp(1, 8);
         self.session
             .write(&format!(":WAVeform:SOURce CHANnel{channel}"))?;
-        // NORMal = displayed (screen) record on InfiniiVision.
-        let _ = self.session.write(":WAVeform:POINts:MODE NORMal");
+        match density {
+            ScopeWaveformDensity::Screen => {
+                let _ = self.session.write(":WAVeform:POINts:MODE NORMal");
+            }
+            ScopeWaveformDensity::Source => {
+                if self
+                    .session
+                    .write(":WAVeform:POINts:MODE MAXimum")
+                    .is_err()
+                {
+                    let _ = self.session.write(":WAVeform:POINts:MODE RAW");
+                }
+            }
+        }
         self.session.write(":WAVeform:FORMat BYTE")?;
         let _ = self.session.write(":WAVeform:UNSigned 1");
         let _ = self.session.write(":WAVeform:BYTeorder MSBFirst");
         Ok(())
     }
 
-    /// Full on-screen waveform as [`WaveformTrace`] (no display downsampling).
+    fn prepare_keysight_screen_waveform(&mut self, channel: u8) -> Result<(), InstrumentError> {
+        self.prepare_keysight_waveform(channel, ScopeWaveformDensity::Screen)
+    }
+
+    /// On-screen waveform (display density — fast preview).
     pub fn read_scope_screen_waveform(
         &mut self,
         channel: u8,
+    ) -> Result<WaveformTrace, InstrumentError> {
+        self.read_scope_waveform(channel, ScopeWaveformDensity::Screen)
+    }
+
+    /// Waveform at acquisition / record density (waveform source, export).
+    pub fn read_scope_source_waveform(
+        &mut self,
+        channel: u8,
+    ) -> Result<WaveformTrace, InstrumentError> {
+        self.read_scope_waveform(channel, ScopeWaveformDensity::Source)
+    }
+
+    fn read_scope_waveform(
+        &mut self,
+        channel: u8,
+        density: ScopeWaveformDensity,
     ) -> Result<WaveformTrace, InstrumentError> {
         self.require(InstrumentKind::Oscilloscope, "waveform")?;
         let channel = channel.clamp(1, 8);
@@ -977,18 +1126,17 @@ impl InstrumentDevice {
             return self.read_tek_screen_waveform(channel);
         }
         if self.is_keysight_family() {
-            return self.read_keysight_screen_waveform(channel);
+            return self.read_keysight_waveform(channel, density);
         }
         if self.is_rigol_siglent_family() {
-            return self.read_rigol_screen_waveform(channel);
+            return self.read_rigol_waveform(channel, density);
         }
-        // Unknown brand: try Keysight → Rigol/Siglent → Tek.
-        if let Ok(t) = self.read_keysight_screen_waveform(channel) {
+        if let Ok(t) = self.read_keysight_waveform(channel, density) {
             if !t.x.is_empty() {
                 return Ok(t);
             }
         }
-        if let Ok(t) = self.read_rigol_screen_waveform(channel) {
+        if let Ok(t) = self.read_rigol_waveform(channel, density) {
             if !t.x.is_empty() {
                 return Ok(t);
             }
@@ -996,22 +1144,12 @@ impl InstrumentDevice {
         self.read_tek_screen_waveform(channel)
     }
 
-    fn read_rigol_screen_waveform(
+    fn read_rigol_waveform(
         &mut self,
         channel: u8,
+        density: ScopeWaveformDensity,
     ) -> Result<WaveformTrace, InstrumentError> {
-        let points = {
-            self.session
-                .write(&format!(":WAV:SOUR CHAN{channel}"))?;
-            self.session.write(":WAV:MODE NORM")?;
-            self.session.write(":WAV:FORM BYTE")?;
-            self.session
-                .query_f64(":WAV:POIN?")
-                .unwrap_or(1000.0)
-                .round()
-                .max(100.0)
-                .min(10_000_000.0) as usize
-        };
+        let points = self.prepare_rigol_waveform(channel, density)?;
         let _ = self.session.write(":WAV:STAR 1");
         let _ = self.session.write(&format!(":WAV:STOP {points}"));
         let _ = self.session.write(&format!(":WAV:POIN {points}"));
@@ -1045,11 +1183,45 @@ impl InstrumentDevice {
         )
     }
 
-    fn read_keysight_screen_waveform(
+    fn prepare_rigol_waveform(
         &mut self,
         channel: u8,
+        density: ScopeWaveformDensity,
+    ) -> Result<usize, InstrumentError> {
+        let channel = channel.clamp(1, 8);
+        self.session
+            .write(&format!(":WAV:SOUR CHAN{channel}"))?;
+        self.session.write(":WAV:FORM BYTE")?;
+        match density {
+            ScopeWaveformDensity::Screen => {
+                self.session.write(":WAV:MODE NORM")?;
+            }
+            ScopeWaveformDensity::Source => {
+                if self.session.write(":WAV:MODE RAW").is_err() {
+                    let _ = self.session.write(":WAV:MODE MAX");
+                }
+                let _ = self.session.write(":WAV:POIN MAX");
+            }
+        }
+        let points = self
+            .session
+            .query_f64(":WAV:POIN?")
+            .unwrap_or(1000.0)
+            .round()
+            .max(100.0)
+            .min(10_000_000.0) as usize;
+        tracing::info!(
+            "Rigol/Siglent WAV CH{channel} density={density:?} points={points}"
+        );
+        Ok(points)
+    }
+
+    fn read_keysight_waveform(
+        &mut self,
+        channel: u8,
+        density: ScopeWaveformDensity,
     ) -> Result<WaveformTrace, InstrumentError> {
-        self.prepare_keysight_screen_waveform(channel)?;
+        self.prepare_keysight_waveform(channel, density)?;
         let (points, xincr, xzero, xref, ymult, yoff, yzero) =
             if let Ok(pre) = self.session.query(":WAVeform:PREamble?") {
                 if let Some(p) = parse_keysight_preamble(&pre) {
@@ -1110,38 +1282,41 @@ impl InstrumentDevice {
         &mut self,
         channel: u8,
     ) -> Result<WaveformTrace, InstrumentError> {
-        let points = self.tek_screen_point_count(channel)?;
-        self.session
-            .write(&format!("DATa:SOUrce CH{channel}"))?;
-        self.session.write("DATa:ENCdg RIBINARY")?;
-        self.session.write("DATa:WIDth 1")?;
-        let _ = self.session.write("DATa:MODE SCREEN");
-        self.session.write("DATa:STARt 1")?;
-        self.session.write(&format!("DATa:STOP {points}"))?;
-        let xincr = self.session.query_f64("WFMOutpre:XINcr?")?;
-        let xzero = self.session.query_f64("WFMOutpre:XZEro?")?;
-        let ymult = self.session.query_f64("WFMOutpre:YMUlt?")?;
-        let yoff = self.session.query_f64("WFMOutpre:YOFf?")?;
-        let yzero = self.session.query_f64("WFMOutpre:YZEro?")?;
-        let pt_off = self.session.query_f64("WFMOutpre:PT_Off?").unwrap_or(0.0);
-        let y_unit = self.query_scope_y_unit(channel);
-        self.session.write("CURVe?")?;
-        let raw = self.session.read_raw()?;
-        let data = parse_ieee_block(&raw);
-        decode_scope_bytes(
-            data,
-            channel,
-            xincr,
-            xzero,
-            pt_off,
-            ymult,
-            yoff,
-            yzero,
-            true,
-            YScaleKind::Tek,
-            "s",
-            &y_unit,
-        )
+        self.with_tek_stable_capture(|dev| {
+            dev.session.write("DATa:ENCdg RIBINARY")?;
+            dev.session.write("DATa:WIDth 1")?;
+            // Full acquisition density — same window as waveform source (no point cap).
+            let _ = dev.apply_tek_source_data_window(channel, None)?;
+            let xincr = dev.tek_curve_xincr()?;
+            let xzero = dev.session.query_f64("WFMOutpre:XZEro?")?;
+            let ymult = dev.session.query_f64("WFMOutpre:YMUlt?")?;
+            let yoff = dev.session.query_f64("WFMOutpre:YOFf?")?;
+            let yzero = dev.session.query_f64("WFMOutpre:YZEro?")?;
+            let pt_off = dev.session.query_f64("WFMOutpre:PT_Off?").unwrap_or(0.0);
+            let y_unit = dev.query_scope_y_unit(channel);
+            dev.session.write("CURVe?")?;
+            let raw = dev.session.read_raw()?;
+            let data = parse_ieee_block(&raw);
+            if data.is_empty() {
+                return Err(InstrumentError::Unsupported(
+                    "Tektronix CURVe returned empty/incomplete block".into(),
+                ));
+            }
+            decode_scope_bytes(
+                data,
+                channel,
+                xincr,
+                xzero,
+                pt_off,
+                ymult,
+                yoff,
+                yzero,
+                true,
+                YScaleKind::Tek,
+                "s",
+                &y_unit,
+            )
+        })
     }
 
     /// Query vertical unit (supports voltage / current probes). Falls back to `"V"`.
@@ -1195,15 +1370,17 @@ impl InstrumentDevice {
         kind: &str,
     ) -> Result<Vec<u8>, InstrumentError> {
         self.prepare_tek_screen_waveform(channel)?;
+        // Refuse to return a full-memory dump disguised as a screen capture.
+        self.ensure_tek_save_gating_screen()?;
         let (file_format, ext) = match kind {
             "wfm" => ("WINDows", "wfm"),
             "csv" => ("SPREADSheet", "csv"),
             _ => ("INTERNal", "isf"),
         };
-        // Prefer C: then E: (USB) — some benches only allow USB mass storage.
+        // MDO3000: E: = front USB; C: may be internal. G:/H: are not available on MDO3000.
         for path in [
-            format!("C:/WiParse_tmp.{ext}"),
             format!("E:/WiParse_tmp.{ext}"),
+            format!("C:/WiParse_tmp.{ext}"),
         ] {
             let _ = self.session.write("HEADer OFF");
             if self
@@ -1220,7 +1397,8 @@ impl InstrumentDevice {
             {
                 continue;
             }
-            let _ = self.session.query("*OPC?");
+            // Do not use *OPC? here — missing media blocks for the full VISA timeout.
+            std::thread::sleep(std::time::Duration::from_millis(400));
             if self
                 .session
                 .write(&format!("FILESystem:READFile \"{path}\""))
@@ -1242,16 +1420,419 @@ impl InstrumentDevice {
         )))
     }
 
-    /// Select channel and gate Tektronix save/transfer to the on-screen waveform record.
+    /// Filesystem export without gating query / *OPC? (fast fail on missing media).
+    fn read_tek_waveform_via_filesystem_fast(
+        &mut self,
+        channel: u8,
+        kind: &str,
+    ) -> Result<Vec<u8>, InstrumentError> {
+        let _ = self.session.write("HEADer OFF");
+        let _ = self.session.write(&format!("DATa:SOUrce CH{channel}"));
+        let _ = self.session.write("SAVe:WAVEform:GATIng SCREEN");
+        let (file_format, ext) = match kind {
+            "csv" => ("SPREADSheet", "csv"),
+            _ => ("INTERNal", "isf"),
+        };
+        for path in [
+            format!("E:/WiParse_tmp.{ext}"),
+            format!("C:/WiParse_tmp.{ext}"),
+        ] {
+            if self
+                .session
+                .write(&format!("SAVe:WAVEform:FILEFormat {file_format}"))
+                .is_err()
+            {
+                continue;
+            }
+            if self
+                .session
+                .write(&format!("SAVe:WAVEform CH{channel},\"{path}\""))
+                .is_err()
+            {
+                continue;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            if self
+                .session
+                .write(&format!("FILESystem:READFile \"{path}\""))
+                .is_err()
+            {
+                continue;
+            }
+            let Ok(raw) = self.session.read_raw() else {
+                continue;
+            };
+            let _ = self.session.write(&format!("FILESystem:DELEte \"{path}\""));
+            let data = parse_ieee_block(&raw).to_vec();
+            if tek_waveform_source_bytes_ok(&data, ext) {
+                return Ok(data);
+            }
+        }
+        Err(InstrumentError::Unsupported(format!(
+            "Tektronix fast FILESystem .{ext} unavailable"
+        )))
+    }
+
+    /// Select channel and request Tektronix screen-gated save/transfer.
     fn prepare_tek_screen_waveform(&mut self, channel: u8) -> Result<(), InstrumentError> {
         let channel = channel.clamp(1, 8);
         let _ = self.session.write("HEADer OFF");
         self.session
             .write(&format!("DATa:SOUrce CH{channel}"))?;
+        // Present on some Tek families (e.g. MSO2000); ignored on MDO3000/MDO3014.
         let _ = self.session.write("DATa:MODE SCREEN");
-        // MDO/MSO/DPO: limit SAVe:WAVEform to visible screen (not full memory).
         let _ = self.session.write("SAVe:WAVEform:GATIng SCREEN");
         Ok(())
+    }
+
+    /// Confirm `SAVe:WAVEform:GATIng SCREEN` took effect (MDO3000 supported path).
+    fn ensure_tek_save_gating_screen(&mut self) -> Result<(), InstrumentError> {
+        self.session.write("SAVe:WAVEform:GATIng SCREEN")?;
+        let gating = self.session.query("SAVe:WAVEform:GATIng?")?;
+        if gating.to_ascii_uppercase().contains("SCREEN") {
+            Ok(())
+        } else {
+            Err(InstrumentError::Unsupported(format!(
+                "SAVe:WAVEform:GATIng not SCREEN (got {})",
+                gating.trim()
+            )))
+        }
+    }
+
+    /// Stop acquisition (and FastAcq) so CURVe matches the frozen graticule, then restore.
+    ///
+    /// Does **not** change `ACQuire:MODe` or wait for a new trigger — those paths
+    /// cleared memory / stalled up to 20s and produced long, low-density transfers.
+    fn with_tek_stable_capture<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> Result<T, InstrumentError>,
+    ) -> Result<T, InstrumentError> {
+        // Flush any aborted HARDCopy/CURVe before STOP — leftover input causes
+        // the next query to sit until VI_ERROR_TMO.
+        let _ = self.session.clear_io();
+        let tmo = self.io_timeout_ms.max(1_000);
+
+        let running = self
+            .session
+            .query_soft("ACQuire:STATE?", 800, tmo)
+            .map(|s| {
+                let u = s.to_ascii_uppercase();
+                scpi_on(&s) || u.contains("RUN")
+            })
+            .unwrap_or(false);
+        let fastacq_was_on = self
+            .session
+            .query_soft("ACQuire:FASTAcq:STATE?", 400, tmo)
+            .map(|s| scpi_on(&s))
+            .unwrap_or(false);
+
+        // Writes of unsupported cmds only set the SCPI error queue; queries of
+        // unsupported cmds burn a full VISA timeout. Prefer write-only here.
+        let _ = self.session.write("ACQuire:STATE STOP");
+        let _ = self.session.write("ACQuire:FASTAcq:STATE OFF");
+        let _ = self.session.write("*CLS");
+        std::thread::sleep(std::time::Duration::from_millis(80));
+
+        let result = f(self);
+
+        if fastacq_was_on {
+            let _ = self.session.write("ACQuire:FASTAcq:STATE ON");
+        }
+        if running {
+            let _ = self.session.write("ACQuire:STATE RUN");
+        }
+        result
+    }
+
+    /// Waveform-source window: acquisition sample density across the **on-screen**
+    /// time span (delay / zoom aware).
+    ///
+    /// Important: do **not** center on `PT_Off` (trigger). With horizontal delay the
+    /// graticule is far from the trigger; trigger-centering reads the wrong slice
+    /// and looks like “distortion” vs the scope screen.
+    ///
+    /// No artificial per-channel point cap — limited only by `HORizontal:RECOrdlength`
+    /// (MDO3014 up to 10M). Multi-channel reads repeat that window once per CHx.
+    fn apply_tek_source_data_window(
+        &mut self,
+        channel: u8,
+        max_points: Option<usize>,
+    ) -> Result<(usize, usize), InstrumentError> {
+        let channel = channel.clamp(1, 8);
+        let tmo = self.io_timeout_ms.max(1_000);
+        let _ = self.session.write("HEADer OFF");
+        let _ = self.session.write("*CLS");
+        let _ = self.session.write(&format!("DATa:SOUrce CH{channel}"));
+
+        let record = self
+            .session
+            .query_f64_soft("HORizontal:RECOrdlength?", 2_000, tmo)
+            .unwrap_or(10_000_000.0)
+            .round()
+            .clamp(2.0, 20_000_000.0) as usize;
+
+        // Expand DATa so WFMOutpre XZERO/PT_Off describe the full acquisition.
+        let _ = self.session.write("DATa:STARt 1");
+        let _ = self.session.write(&format!("DATa:STOP {record}"));
+        let _ = self.session.write("*CLS");
+
+        let main_scale = self
+            .session
+            .query_f64_soft("HORizontal:SCAle?", 1_200, tmo)
+            .unwrap_or(1e-6);
+        let zoom_on = self
+            .session
+            .query_soft("ZOOm:STATE?", 300, tmo)
+            .or_else(|| self.session.query_soft("ZOOm:ZOOM1:STATE?", 300, tmo))
+            .map(|s| scpi_on(&s))
+            .unwrap_or(false);
+        let scale = if zoom_on {
+            self.session
+                .query_f64_soft("ZOOm:ZOOM1:SCAle?", 400, tmo)
+                .filter(|v| v.is_finite() && *v > 0.0)
+                .unwrap_or(main_scale)
+        } else {
+            main_scale
+        };
+
+        let srate = self
+            .session
+            .query_f64_soft("HORizontal:SAMPLERate?", 1_200, tmo)
+            .filter(|v| v.is_finite() && *v > 0.0);
+        let xzero = self
+            .session
+            .query_f64_soft("WFMOutpre:XZEro?", 800, tmo)
+            .unwrap_or(0.0);
+        let pt_off = self
+            .session
+            .query_f64_soft("WFMOutpre:PT_Off?", 600, tmo)
+            .unwrap_or(0.0);
+
+        // Acquisition sample period — never use decimated WFMOutpre:XINcr alone for density.
+        let acq_xincr = srate
+            .map(|sr| 1.0 / sr)
+            .or_else(|| {
+                self.session
+                    .query_f64_soft("WFMOutpre:XINcr?", 1_000, tmo)
+                    .filter(|v| v.is_finite() && *v > 0.0)
+            });
+
+        let density_target = srate.map(|sr| {
+            (10.0 * scale * sr)
+                .round()
+                .clamp(2.0, record as f64) as usize
+        });
+
+        let screen_idx = acq_xincr.and_then(|dx| {
+            let (t_left, t_right) = self
+                .tek_query_screen_time_window_soft()
+                .or_else(|| self.tek_estimate_screen_time_window(dx))?;
+            Some(tek_time_window_to_data_range(
+                record, dx, xzero, pt_off, t_left, t_right,
+            ))
+        });
+
+        let screen = screen_idx.or_else(|| self.tek_try_screen_data_range(record, acq_xincr));
+        let (start, stop) = tek_refine_source_index_window(
+            record,
+            screen.unwrap_or((1, record)),
+            density_target,
+            max_points,
+        );
+
+        self.session
+            .write(&format!("DATa:STARt {start}"))
+            .map_err(|e| InstrumentError::Unsupported(format!("DATa:STARt: {e}")))?;
+        self.session
+            .write(&format!("DATa:STOP {stop}"))
+            .map_err(|e| InstrumentError::Unsupported(format!("DATa:STOP: {e}")))?;
+
+        let mut start = start;
+        let mut stop = stop;
+        if let (Some(a), Some(b)) = (
+            self.session.query_f64_soft("DATa:STARt?", 600, tmo),
+            self.session.query_f64_soft("DATa:STOP?", 600, tmo),
+        ) {
+            let a = a.round().clamp(1.0, record as f64) as usize;
+            let b = b.round().clamp(1.0, record as f64) as usize;
+            if b >= a {
+                start = a;
+                stop = b;
+            }
+        }
+
+        let got = stop.saturating_sub(start).saturating_add(1);
+        if let Some(nr_pt) = self
+            .session
+            .query_f64_soft("WFMOutpre:NR_Pt?", 600, tmo)
+            .map(|v| v.round() as usize)
+        {
+            if nr_pt >= 2 && nr_pt + nr_pt / 10 < got {
+                tracing::warn!(
+                    "Tek CH{channel}: requested {got} pts but WFMOutpre:NR_Pt={nr_pt} — scope may decimate"
+                );
+            }
+        }
+        tracing::info!(
+            "Tek source window CH{channel}: {start}..{stop} ({got} pts, record={record}, scale={scale:e}, srate={srate:?}, acq_xincr={acq_xincr:?})"
+        );
+        Ok((start, stop))
+    }
+
+    /// Restrict `DATa:STARt`/`STOP` to the on-screen graticule (live plot / screen CSV).
+    ///
+    /// MDO3014 / MDO3000 do **not** support `DATa:MODE SCREEN`. Delegates to
+    /// [`Self::apply_tek_source_data_window`] (sample-rate × screen span).
+    fn apply_tek_visible_data_window(
+        &mut self,
+        channel: u8,
+        max_points: Option<usize>,
+    ) -> Result<(usize, usize), InstrumentError> {
+        self.apply_tek_source_data_window(channel, max_points)
+    }
+
+    /// Best X increment for CURVe decode — prefer acquisition rate when WFMOutpre is decimated.
+    fn tek_curve_xincr(&mut self) -> Result<f64, InstrumentError> {
+        let tmo = self.io_timeout_ms.max(1_000);
+        let wfm_x = self.session.query_f64("WFMOutpre:XINcr?")?;
+        if let Some(sr) = self
+            .session
+            .query_f64_soft("HORizontal:SAMPLERate?", 1_200, tmo)
+            .filter(|v| v.is_finite() && *v > 0.0)
+        {
+            let acq = 1.0 / sr;
+            if acq.is_finite() && acq > 0.0 && wfm_x > acq * 1.001 {
+                tracing::debug!(
+                    "Tek CURVe XINcr: WFMOutpre={wfm_x:e} → acquisition {acq:e} (SAMPLERate={sr:e})"
+                );
+                return Ok(acq);
+            }
+        }
+        Ok(wfm_x)
+    }
+
+    /// Soft-probe screen time → sample indices on the full record.
+    ///
+    /// Falls back to a scale/xincr estimate when zoom/delay probes are incomplete,
+    /// so we still cover ~10 horizontal divisions instead of a tiny center clip.
+    fn tek_try_screen_data_range(
+        &mut self,
+        record: usize,
+        acq_xincr: Option<f64>,
+    ) -> Option<(usize, usize)> {
+        let tmo = self.io_timeout_ms.max(1_000);
+        let xincr = acq_xincr.or_else(|| {
+            self.session
+                .query_f64_soft("WFMOutpre:XINcr?", 1_500, tmo)
+                .filter(|v| v.is_finite() && *v > 0.0)
+        })?;
+        let xzero = self
+            .session
+            .query_f64_soft("WFMOutpre:XZEro?", 800, tmo)
+            .unwrap_or(0.0);
+        let pt_off = self
+            .session
+            .query_f64_soft("WFMOutpre:PT_Off?", 600, tmo)
+            .unwrap_or(0.0);
+
+        let (t_left, t_right) = self
+            .tek_query_screen_time_window_soft()
+            .or_else(|| self.tek_estimate_screen_time_window(xincr))?;
+        Some(tek_time_window_to_data_range(
+            record, xincr, xzero, pt_off, t_left, t_right,
+        ))
+    }
+
+    /// Minimal screen span from main time/div only (10 divisions).
+    fn tek_estimate_screen_time_window(&mut self, xincr: f64) -> Option<(f64, f64)> {
+        let tmo = self.io_timeout_ms.max(1_000);
+        let scale = self
+            .session
+            .query_f64_soft("HORizontal:SCAle?", 2_000, tmo)?;
+        if !scale.is_finite() || scale <= 0.0 || !xincr.is_finite() || xincr == 0.0 {
+            return None;
+        }
+        let delay_on = self
+            .session
+            .query_soft("HORizontal:DELay:MODe?", 500, tmo)
+            .map(|s| scpi_on(&s))
+            .unwrap_or(true);
+        let delay_time = self
+            .session
+            .query_f64_soft("HORizontal:DELay:TIMe?", 500, tmo)
+            .unwrap_or(0.0);
+        let position_pct = self
+            .session
+            .query_f64_soft("HORizontal:POSition?", 500, tmo)
+            .unwrap_or(50.0);
+        Some(tek_graticule_time_window(
+            scale,
+            delay_on,
+            delay_time,
+            position_pct,
+            false,
+            0.0,
+            0.0,
+        ))
+    }
+
+    /// Visible graticule time span relative to the trigger (seconds). Soft only.
+    fn tek_query_screen_time_window_soft(&mut self) -> Option<(f64, f64)> {
+        let tmo = self.io_timeout_ms.max(1_000);
+        // One zoom probe only — cascading ZOOm:* misses used to burn ~1.5s each.
+        let zoom_on = self
+            .session
+            .query_soft("ZOOm:STATE?", 400, tmo)
+            .or_else(|| self.session.query_soft("ZOOm:ZOOM1:STATE?", 400, tmo))
+            .map(|s| scpi_on(&s))
+            .unwrap_or(false);
+        let scale = self
+            .session
+            .query_f64_soft("HORizontal:SCAle?", 1_200, tmo)?;
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+        let delay_on = self
+            .session
+            .query_soft("HORizontal:DELay:MODe?", 400, tmo)
+            .map(|s| scpi_on(&s))
+            .unwrap_or(true);
+        let delay_time = if delay_on {
+            self.session
+                .query_f64_soft("HORizontal:DELay:TIMe?", 400, tmo)
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        let position_pct = if delay_on {
+            50.0
+        } else {
+            self.session
+                .query_f64_soft("HORizontal:POSition?", 400, tmo)
+                .unwrap_or(50.0)
+        };
+        // Skip ZOOM1 scale/trigpos probes when zoom is off (each miss ≈ probe timeout).
+        let (zoom_scale, zoom_trigpos) = if zoom_on {
+            (
+                self.session
+                    .query_f64_soft("ZOOm:ZOOM1:SCAle?", 400, tmo)
+                    .unwrap_or(scale),
+                self.session
+                    .query_f64_soft("ZOOm:ZOOM1:TRIGPOS?", 400, tmo)
+                    .unwrap_or(0.0),
+            )
+        } else {
+            (scale, 0.0)
+        };
+        Some(tek_graticule_time_window(
+            scale,
+            delay_on,
+            delay_time,
+            position_pct,
+            zoom_on,
+            zoom_scale,
+            zoom_trigpos,
+        ))
     }
 
     /// Rigol/Siglent: optional CSV via `:SAVE:CSV` / `:SAVE:WAVeform` then `:MMEM:DATA?`.
@@ -1370,37 +1951,261 @@ impl InstrumentDevice {
         self.read_tek_waveform_via_filesystem(channel, "isf")
     }
 
-    /// Tektronix: assemble an ISF-compatible blob from on-screen `WFMOutpre?` + `CURVe?`.
-    fn read_tek_isf_via_curve(&mut self, channel: u8) -> Result<Vec<u8>, InstrumentError> {
-        self.prepare_tek_screen_waveform(channel)?;
-        let _ = self.session.write("HEADer ON");
-        self.session.write("DATa:ENCdg RIBINARY")?;
-        self.session.write("DATa:WIDth 1")?;
-        let points = self.scope_screen_point_count(channel)?;
-        self.session.write("DATa:STARt 1")?;
-        self.session.write(&format!("DATa:STOP {points}"))?;
-        let preamble = self.session.query("WFMOutpre?")?;
-        self.session.write("CURVe?")?;
-        let curve = self.session.read_raw()?;
-        Ok(assemble_tek_isf(&preamble, &curve))
-    }
-
-    pub fn read_scope_waveform(
+    /// Tektronix: assemble ISF from `WFMOutpre?` + `CURVe?` over a precomputed window.
+    ///
+    /// Prefers a single `CURVe?` for the whole screen window; falls back to large
+    /// chunks only when the one-shot transfer times out.
+    fn read_tek_isf_via_curve_range(
         &mut self,
         channel: u8,
-        max_points: usize,
-    ) -> Result<WaveformTrace, InstrumentError> {
-        self.require(InstrumentKind::Oscilloscope, "waveform")?;
-        let channel = channel.clamp(1, 8);
-        let max_points = max_points.clamp(100, 1_000_000);
-        // Prefer the same vendor-aware screen path as “Read Wave Source”, then downsample.
-        let mut trace = self.read_scope_screen_waveform(channel)?;
-        if trace.x.len() > max_points {
-            let (x, y) = downsample_minmax(&trace.x, &trace.y, max_points);
-            trace.x = x;
-            trace.y = y;
+        window: (usize, usize),
+    ) -> Result<Vec<u8>, InstrumentError> {
+        const CURVE_TIMEOUT_MS: u32 = 90_000;
+        // Prefer one-shot up to this many points; above that, chunk.
+        const ONESHOT_MAX: usize = 2_000_000;
+        const CHUNK_POINTS: usize = 500_000;
+
+        let (start, stop) = window;
+        if stop < start {
+            return Err(InstrumentError::Unsupported(
+                "invalid CURVe window".into(),
+            ));
         }
-        Ok(trace)
+        let total = stop.saturating_sub(start).saturating_add(1);
+        tracing::info!("Tek CURVe CH{channel}: {start}..{stop} ({total} pts)");
+
+        let prev_tmo = self.io_timeout_ms;
+        let boost = CURVE_TIMEOUT_MS.max(prev_tmo);
+        if let Err(e) = self.session.set_timeout(boost) {
+            tracing::warn!("CURVe set_timeout({boost}) ignored: {e}");
+        }
+        self.io_timeout_ms = boost;
+
+        let result = (|| {
+            let step = |ctx: &str, err: InstrumentError| {
+                InstrumentError::Unsupported(format!("{ctx}: {err}"))
+            };
+
+            self.session
+                .write(&format!("DATa:SOUrce CH{channel}"))
+                .map_err(|e| step("DATa:SOUrce", e))?;
+            // Explicit binary framing — do not rely on leftover ENCdg from prior CH.
+            self.session
+                .write("DATa:ENCdg RIBINARY")
+                .map_err(|e| step("DATa:ENCdg", e))?;
+            self.session
+                .write("DATa:WIDth 1")
+                .map_err(|e| step("DATa:WIDth", e))?;
+            self.session
+                .write(&format!("DATa:STARt {start}"))
+                .map_err(|e| step("DATa:STARt", e))?;
+            self.session
+                .write(&format!("DATa:STOP {stop}"))
+                .map_err(|e| step("DATa:STOP", e))?;
+            let _ = self.session.write("HEADer OFF");
+            let _ = self.session.write("*CLS");
+
+            // Discrete scaling queries (HEADER OFF) — full WFMOutpre? with HEADER ON
+            // has been a source of mis-parsed YMULT/YOFF on multi-channel runs.
+            let (preamble, pt_fmt) = self
+                .tek_query_curve_preamble(channel)
+                .map_err(|e| step("WFMOutpre scale", e))?;
+
+            let read_chunk = |dev: &mut Self,
+                              s: usize,
+                              e: usize|
+             -> Result<Vec<u8>, InstrumentError> {
+                dev.session
+                    .write(&format!("DATa:STARt {s}"))
+                    .map_err(|err| step(&format!("DATa:STARt {s}"), err))?;
+                dev.session
+                    .write(&format!("DATa:STOP {e}"))
+                    .map_err(|err| step(&format!("DATa:STOP {e}"), err))?;
+                dev.session
+                    .write("CURVe?")
+                    .map_err(|err| step("CURVe?", err))?;
+                let curve = dev.session.read_raw().map_err(|err| {
+                    InstrumentError::Unsupported(format!("CURVe {s}..{e} failed ({err})"))
+                })?;
+                let payload = parse_ieee_block(&curve);
+                if payload.is_empty() {
+                    return Err(InstrumentError::Unsupported(format!(
+                        "CURVe {s}..{e} returned empty data"
+                    )));
+                }
+                if crate::scope::binary::ieee_block_header_offset(&curve).is_some()
+                    && !crate::scope::binary::ieee_block_complete(&curve)
+                {
+                    return Err(InstrumentError::Unsupported(format!(
+                        "CURVe {s}..{e} incomplete (got {} bytes)",
+                        curve.len()
+                    )));
+                }
+                Ok(payload.to_vec())
+            };
+
+            let samples = if total <= ONESHOT_MAX {
+                match read_chunk(self, start, stop) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        // One-shot timed out — fall back to large chunks.
+                        tracing::warn!("CURVe one-shot failed ({err}); chunking");
+                        let _ = self.session.clear_io();
+                        let _ = self.session.set_timeout(self.io_timeout_ms);
+                        let mut all = Vec::with_capacity(total.min(16 * 1024 * 1024));
+                        let mut s = start;
+                        let mut chunk = CHUNK_POINTS;
+                        while s <= stop {
+                            let e = (s + chunk - 1).min(stop);
+                            match read_chunk(self, s, e) {
+                                Ok(payload) => {
+                                    all.extend_from_slice(&payload);
+                                    s = e.saturating_add(1);
+                                }
+                                Err(e2) => {
+                                    let smaller = (chunk / 2).max(25_000);
+                                    if smaller >= chunk {
+                                        return Err(e2);
+                                    }
+                                    chunk = smaller;
+                                    let _ = self.session.clear_io();
+                                    let _ = self.session.set_timeout(self.io_timeout_ms);
+                                }
+                            }
+                        }
+                        all
+                    }
+                }
+            } else {
+                let mut all = Vec::with_capacity(total.min(16 * 1024 * 1024));
+                let mut s = start;
+                let mut chunk = CHUNK_POINTS;
+                while s <= stop {
+                    let mut e = (s + chunk - 1).min(stop);
+                    match read_chunk(self, s, e) {
+                        Ok(payload) => {
+                            all.extend_from_slice(&payload);
+                            s = e.saturating_add(1);
+                        }
+                        Err(err) => {
+                            let _ = self.session.clear_io();
+                            let _ = self.session.set_timeout(self.io_timeout_ms);
+                            let smaller = (chunk / 2).max(25_000);
+                            if smaller >= chunk {
+                                return Err(err);
+                            }
+                            chunk = smaller;
+                            e = (s + chunk - 1).min(stop);
+                            let payload = read_chunk(self, s, e)?;
+                            all.extend_from_slice(&payload);
+                            s = e.saturating_add(1);
+                        }
+                    }
+                }
+                all
+            };
+
+            if samples.is_empty() {
+                return Err(InstrumentError::Unsupported(
+                    "Tektronix CURVe returned empty data".into(),
+                ));
+            }
+
+            // If scope still reports ENV (mode change ignored), collapse min/max pairs.
+            let samples = collapse_tek_env_curve_bytes(&samples, &pt_fmt);
+            let n = samples.len();
+            let preamble = patch_wfmp_nr_pt(&preamble, n);
+            let preamble = patch_wfmp_pt_fmt_y(&preamble);
+            Ok(assemble_tek_isf(&preamble, &samples))
+        })();
+
+        let _ = self.session.set_timeout(prev_tmo);
+        self.io_timeout_ms = prev_tmo;
+        result
+    }
+
+    /// Build a clean ISF preamble from discrete WFMOutpre queries (HEADER OFF).
+    fn tek_query_curve_preamble(
+        &mut self,
+        channel: u8,
+    ) -> Result<(String, String), InstrumentError> {
+        let _ = self.session.write("HEADer OFF");
+        let byt_nr = self
+            .session
+            .query_f64("WFMOutpre:BYT_Nr?")
+            .unwrap_or(1.0)
+            .round()
+            .clamp(1.0, 2.0) as i32;
+        let bn_fmt = self
+            .session
+            .query("WFMOutpre:BN_Fmt?")
+            .unwrap_or_else(|_| "RI".into());
+        let bn_fmt = bn_fmt
+            .rsplit(|c: char| c == ':' || c == ' ')
+            .next()
+            .unwrap_or("RI")
+            .trim()
+            .to_ascii_uppercase();
+        let byt_or = self
+            .session
+            .query("WFMOutpre:BYT_Or?")
+            .unwrap_or_else(|_| "MSB".into());
+        let byt_or = byt_or
+            .rsplit(|c: char| c == ':' || c == ' ')
+            .next()
+            .unwrap_or("MSB")
+            .trim()
+            .to_ascii_uppercase();
+        let nr_pt = self
+            .session
+            .query_f64("WFMOutpre:NR_Pt?")
+            .unwrap_or(0.0)
+            .round()
+            .max(0.0) as i64;
+        let xincr = self.session.query_f64("WFMOutpre:XINcr?")?;
+        let xzero = self.session.query_f64("WFMOutpre:XZEro?").unwrap_or(0.0);
+        let pt_off = self.session.query_f64("WFMOutpre:PT_Off?").unwrap_or(0.0);
+        let ymult = self.session.query_f64("WFMOutpre:YMUlt?")?;
+        let yoff = self.session.query_f64("WFMOutpre:YOFf?").unwrap_or(0.0);
+        let yzero = self.session.query_f64("WFMOutpre:YZEro?").unwrap_or(0.0);
+        let xunit = self
+            .session
+            .query("WFMOutpre:XUNit?")
+            .unwrap_or_else(|_| "\"s\"".into());
+        let yunit = self
+            .session
+            .query("WFMOutpre:YUNit?")
+            .unwrap_or_else(|_| "\"V\"".into());
+        let pt_fmt = self
+            .session
+            .query("WFMOutpre:PT_Fmt?")
+            .unwrap_or_else(|_| "Y".into());
+        let pt_fmt_token = pt_fmt
+            .rsplit(|c: char| c == ':' || c == ' ' || c == ';')
+            .next()
+            .unwrap_or("Y")
+            .trim()
+            .to_ascii_uppercase();
+        let xunit = xunit.trim().trim_matches('"');
+        let yunit = yunit.trim().trim_matches('"');
+        let preamble = format!(
+            ":WFMPRE:BYT_NR {byt_nr};BIT_NR {};ENCDG BIN;BN_FMT {bn_fmt};BYT_OR {byt_or};\
+             NR_PT {nr_pt};PT_FMT Y;PT_OFF {pt_off};XINCR {:.12E};XZERO {:.12E};XUNIT \"{xunit}\";\
+             YMULT {:.12E};YOFF {:.12E};YZERO {:.12E};YUNIT \"{yunit}\";WFID \"CH{channel}\";",
+            byt_nr * 8,
+            xincr,
+            xzero,
+            ymult,
+            yoff,
+            yzero
+        );
+        Ok((preamble, pt_fmt_token))
+    }
+
+    /// Legacy entry: compute screen window then CURVe.
+    fn read_tek_isf_via_curve(&mut self, channel: u8) -> Result<Vec<u8>, InstrumentError> {
+        let window = self.apply_tek_source_data_window(channel, None)?;
+        self.read_tek_isf_via_curve_range(channel, window)
     }
 
     fn vendor_is(&self, needle: &str) -> bool {
@@ -1978,6 +2783,128 @@ fn looks_like_text_csv(bytes: &[u8]) -> bool {
             || upper.contains("VOLT"))
 }
 
+fn scpi_on(raw: &str) -> bool {
+    let u = raw.to_ascii_uppercase();
+    let token = u
+        .rsplit(|c: char| c == ':' || c == ' ' || c == ';')
+        .next()
+        .unwrap_or(&u)
+        .trim();
+    matches!(token, "1" | "ON" | "TRUE" | "YES")
+}
+
+/// Expand a screen-aligned index window to acquisition sample density; optional cap.
+fn tek_refine_source_index_window(
+    record: usize,
+    screen: (usize, usize),
+    density_target: Option<usize>,
+    max_points: Option<usize>,
+) -> (usize, usize) {
+    let record = record.max(2);
+    let (mut start, mut stop) = screen;
+    if stop < start {
+        std::mem::swap(&mut start, &mut stop);
+    }
+    let mut span = stop.saturating_sub(start).saturating_add(1).max(2);
+
+    if let Some(target) = density_target {
+        if span < target {
+            let mid = start + span / 2;
+            let half = target / 2;
+            start = mid.saturating_sub(half).max(1);
+            stop = (start + target - 1).min(record);
+            span = stop.saturating_sub(start).saturating_add(1);
+            if span < target {
+                start = record.saturating_sub(target - 1).max(1);
+                stop = record;
+            }
+        }
+    }
+
+    if let Some(cap) = max_points {
+        let span = stop.saturating_sub(start).saturating_add(1);
+        if span > cap {
+            let mid = start + span / 2;
+            let half = cap / 2;
+            start = mid.saturating_sub(half).max(1);
+            stop = (start + cap - 1).min(record);
+        }
+    }
+
+    if stop < start {
+        start = 1;
+        stop = record;
+    }
+    (start, stop)
+}
+
+/// Visible graticule `[t_left, t_right]` relative to trigger (seconds).
+fn tek_graticule_time_window(
+    main_scale: f64,
+    delay_mode_on: bool,
+    delay_time: f64,
+    position_pct: f64,
+    zoom_on: bool,
+    zoom_scale: f64,
+    zoom_trigpos: f64,
+) -> (f64, f64) {
+    let (center, scale) = if zoom_on && zoom_scale.is_finite() && zoom_scale > 0.0 {
+        (zoom_trigpos, zoom_scale)
+    } else if delay_mode_on {
+        (delay_time, main_scale)
+    } else {
+        // Delay off: HORizontal:POSition is % of record before trigger and places
+        // the trigger on the graticule (50% → center).
+        let pos = position_pct.clamp(0.0, 100.0);
+        let center = (0.5 - pos / 100.0) * 10.0 * main_scale;
+        (center, main_scale)
+    };
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1e-6
+    };
+    let half = 5.0 * scale;
+    (center - half, center + half)
+}
+
+/// Map a trigger-relative time window to 1-based `DATa:STARt`/`STOP` indices.
+///
+/// Tek time of sample `i` (1-based): `xzero + (i - 1 - pt_off) * xincr`.
+fn tek_time_window_to_data_range(
+    record: usize,
+    xincr: f64,
+    xzero: f64,
+    pt_off: f64,
+    t_left: f64,
+    t_right: f64,
+) -> (usize, usize) {
+    let record = record.max(2);
+    if !xincr.is_finite() || xincr == 0.0 {
+        return (1, record);
+    }
+    let to_index = |t: f64| -> isize {
+        let i = 1.0 + pt_off + (t - xzero) / xincr;
+        if i.is_finite() {
+            i.round() as isize
+        } else {
+            1
+        }
+    };
+    let mut start = to_index(t_left.min(t_right)).clamp(1, record as isize) as usize;
+    let mut stop = to_index(t_left.max(t_right)).clamp(1, record as isize) as usize;
+    if stop < start {
+        std::mem::swap(&mut start, &mut stop);
+    }
+    if stop == start {
+        stop = (start + 1).min(record);
+        if stop == start {
+            start = start.saturating_sub(1).max(1);
+        }
+    }
+    (start, stop)
+}
+
 /// Accept filesystem waveform only when content matches the requested format and parses.
 /// Ensures Tek `WINDows` `.wfm` (`WFM#001` / `#003`) is actually loadable before returning.
 fn tek_waveform_source_bytes_ok(bytes: &[u8], ext: &str) -> bool {
@@ -1990,6 +2917,75 @@ fn tek_waveform_source_bytes_ok(bytes: &[u8], ext: &str) -> bool {
         "csv" => looks_like_text_csv(bytes),
         _ => !bytes.is_empty(),
     }
+}
+
+/// Collapse Tek ENV (min/max pair) CURVe bytes into midpoints for Y-format ISF.
+fn collapse_tek_env_curve_bytes(samples: &[u8], pt_fmt: &str) -> Vec<u8> {
+    // Only true Envelope point format (min/max pairs). Do not treat "PEAK" or
+    // substring false-positives as ENV — that zig-zag halves points and looks distorted.
+    let fmt = pt_fmt.to_ascii_uppercase();
+    let is_env = fmt == "ENV" || fmt.ends_with(" ENV") || fmt.contains("PT_FMT ENV");
+    if !is_env || samples.len() < 2 {
+        return samples.to_vec();
+    }
+    let mut out = Vec::with_capacity(samples.len() / 2);
+    for pair in samples.chunks_exact(2) {
+        let a = pair[0] as i8 as i16;
+        let b = pair[1] as i8 as i16;
+        out.push(((a + b) / 2) as i8 as u8);
+    }
+    if out.is_empty() {
+        samples.to_vec()
+    } else {
+        out
+    }
+}
+
+fn patch_wfmp_pt_fmt_y(preamble: &str) -> String {
+    let upper = preamble.to_ascii_uppercase();
+    if let Some(idx) = upper.find("PT_FMT") {
+        let mut out = String::with_capacity(preamble.len() + 8);
+        out.push_str(&preamble[..idx]);
+        out.push_str("PT_FMT Y");
+        let after = &preamble[idx + 6..];
+        let rest = after.trim_start();
+        let skipped = rest
+            .find(|c: char| c == ';' || c == ',' || c == '\n' || c == '\r')
+            .map(|i| &rest[i..])
+            .unwrap_or("");
+        out.push_str(skipped);
+        out
+    } else {
+        preamble.to_string()
+    }
+}
+
+/// Replace `NR_PT <n>` (any casing) in a Tek preamble with the concatenated point count.
+fn patch_wfmp_nr_pt(preamble: &str, n: usize) -> String {
+    let mut out = String::with_capacity(preamble.len() + 16);
+    let upper = preamble.to_ascii_uppercase();
+    if let Some(idx) = upper.find("NR_PT") {
+        out.push_str(&preamble[..idx]);
+        out.push_str("NR_PT ");
+        out.push_str(&n.to_string());
+        let after = &preamble[idx + 5..];
+        let rest = after.trim_start();
+        // Skip the old numeric token.
+        let skipped = rest
+            .find(|c: char| c == ';' || c == ',' || c == '\n' || c == '\r')
+            .map(|i| &rest[i..])
+            .unwrap_or("");
+        out.push_str(skipped);
+    } else if preamble.is_empty() {
+        out = format!(":WFMPRE:NR_PT {n};");
+    } else {
+        out = preamble.to_string();
+        if !out.ends_with(';') {
+            out.push(';');
+        }
+        out.push_str(&format!("NR_PT {n};"));
+    }
+    out
 }
 
 /// Build an ISF-compatible byte stream from Tektronix bus preamble + CURVe block.
@@ -2175,6 +3171,50 @@ mod tests {
         assert_eq!(normalize_wave_unit("\"Amps\"", "V"), "A");
         assert_eq!(normalize_wave_unit("V", "A"), "V");
         assert_eq!(normalize_wave_unit("", "V"), "V");
+    }
+
+    #[test]
+    fn tek_screen_window_maps_delay_and_position() {
+        // Delay on, 1 ms/div, delay 0 → ±10 ms around trigger.
+        let (l, r) = tek_graticule_time_window(1e-3, true, 0.0, 50.0, false, 0.0, 0.0);
+        assert!((l + 5e-3).abs() < 1e-12);
+        assert!((r - 5e-3).abs() < 1e-12);
+
+        // Delay off, position 10% → trigger near left of graticule.
+        let (l, r) = tek_graticule_time_window(1e-3, false, 0.0, 10.0, false, 0.0, 0.0);
+        assert!((l + 1e-3).abs() < 1e-12);
+        assert!((r - 9e-3).abs() < 1e-12);
+
+        // Zoom uses zoom scale + TRIGPOS center.
+        let (l, r) = tek_graticule_time_window(1e-3, true, 0.0, 50.0, true, 1e-6, 2e-6);
+        assert!((l - 2e-6 + 5e-6).abs() < 1e-15);
+        assert!((r - 2e-6 - 5e-6).abs() < 1e-15);
+    }
+
+    #[test]
+    fn tek_time_window_to_indices_uses_xzero_pt_off() {
+        // 10_000 pts, 1 µs/pt, xzero=-5 ms, pt_off=0 → t=0 at sample 5001.
+        let (start, stop) =
+            tek_time_window_to_data_range(10_000, 1e-6, -5e-3, 0.0, -1e-3, 1e-3);
+        assert_eq!(start, 4001);
+        assert_eq!(stop, 6001);
+        assert!(scpi_on("ON"));
+        assert!(scpi_on(":HORIZONTAL:DELAY:MODE 1"));
+        assert!(!scpi_on("OFF"));
+        assert!(!scpi_on("SCREEN"));
+    }
+
+    #[test]
+    fn tek_refine_source_window_expands_coarse_screen_span() {
+        // Coarse time-map span (500 idx) must expand to acquisition density (10k).
+        let (s, e) = tek_refine_source_index_window(1_000_000, (5000, 5499), Some(10_000), None);
+        assert_eq!(e.saturating_sub(s).saturating_add(1), 10_000);
+        // Wide screen span is kept — never shrink below graticule mapping.
+        let (s2, e2) = tek_refine_source_index_window(1_000_000, (1000, 50_000), Some(10_000), None);
+        assert_eq!(e2 - s2 + 1, 50_000 - 1000 + 1);
+        // Optional cap for preview paths only.
+        let (s3, e3) = tek_refine_source_index_window(1_000_000, (1, 100_000), None, Some(5000));
+        assert_eq!(e3.saturating_sub(s3).saturating_add(1), 5000);
     }
 
     #[test]

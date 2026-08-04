@@ -12,6 +12,7 @@ pub mod protocol;
 pub mod scope;
 pub mod serial;
 pub mod wave;
+pub mod wave_display;
 pub mod waveform_file;
 pub mod rigol_wfm;
 

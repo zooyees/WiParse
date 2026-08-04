@@ -127,6 +127,8 @@ type FnClose = unsafe extern "system" fn(ViObject) -> ViStatus;
 type FnWrite = unsafe extern "system" fn(ViSession, *const u8, ViUInt32, *mut ViUInt32) -> ViStatus;
 type FnRead = unsafe extern "system" fn(ViSession, *mut u8, ViUInt32, *mut ViUInt32) -> ViStatus;
 type FnSetAttribute = unsafe extern "system" fn(ViObject, ViAttr, ViAttrState) -> ViStatus;
+type FnGetAttribute = unsafe extern "system" fn(ViObject, ViAttr, *mut ViAttrState) -> ViStatus;
+type FnClear = unsafe extern "system" fn(ViSession) -> ViStatus;
 type FnStatusDesc = unsafe extern "system" fn(ViObject, ViStatus, *mut c_char) -> ViStatus;
 
 struct VisaApi {
@@ -140,6 +142,8 @@ struct VisaApi {
     write: FnWrite,
     read: FnRead,
     set_attribute: FnSetAttribute,
+    get_attribute: Option<FnGetAttribute>,
+    clear: Option<FnClear>,
     status_desc: Option<FnStatusDesc>,
 }
 
@@ -217,6 +221,11 @@ impl VisaApi {
             let set_attribute = *lib
                 .get::<FnSetAttribute>(b"viSetAttribute\0")
                 .map_err(|e| VisaError::Load(e.to_string()))?;
+            let get_attribute = lib
+                .get::<FnGetAttribute>(b"viGetAttribute\0")
+                .ok()
+                .map(|s| *s);
+            let clear = lib.get::<FnClear>(b"viClear\0").ok().map(|s| *s);
             let status_desc = lib.get::<FnStatusDesc>(b"viStatusDesc\0").ok().map(|s| *s);
             let _ = ptr::null::<c_void>();
             Ok(Self {
@@ -230,6 +239,8 @@ impl VisaApi {
                 write,
                 read,
                 set_attribute,
+                get_attribute,
+                clear,
                 status_desc,
             })
         }
@@ -383,6 +394,39 @@ impl Instrument {
         self.api.check(self.session, st)
     }
 
+    pub fn timeout_ms(&self) -> Option<u32> {
+        let get = self.api.get_attribute?;
+        let mut state: ViAttrState = 0;
+        let st = unsafe { get(self.session, VI_ATTR_TMO_VALUE, &mut state) };
+        if st < 0 {
+            return None;
+        }
+        Some(state as u32)
+    }
+
+    /// Device clear — flushes I/O buffers after aborted CURVe/HARDCopy transfers.
+    pub fn clear(&self) -> Result<(), VisaError> {
+        let Some(clear) = self.api.clear else {
+            return Ok(());
+        };
+        let st = unsafe { clear(self.session) };
+        self.api.check(self.session, st)
+    }
+
+    /// Drain leftover input with a short timeout (best-effort).
+    pub fn discard_input(&self) {
+        let prev = self.timeout_ms().unwrap_or(5_000);
+        let _ = self.set_timeout(20);
+        // Keep this tight — clear_io is used on the hot path before CURVe.
+        for _ in 0..3 {
+            match self.read_bytes(64 * 1024) {
+                Ok(buf) if !buf.is_empty() => continue,
+                _ => break,
+            }
+        }
+        let _ = self.set_timeout(prev.max(100));
+    }
+
     pub fn write_bytes(&self, data: &[u8]) -> Result<(), VisaError> {
         let mut written = 0;
         let st = unsafe {
@@ -427,15 +471,47 @@ impl Instrument {
     }
 
     /// Hard limit for HARDCopy / CURVe binary reads (prevents OOM on runaway instruments).
-    pub const MAX_RAW_READ_BYTES: usize = 32 * 1024 * 1024;
+    /// 64 MiB ≈ 60M i8 samples — enough for 10M pt Tek CURVe with IEEE header.
+    pub const MAX_RAW_READ_BYTES: usize = 64 * 1024 * 1024;
 
     pub fn read_raw(&self) -> Result<Vec<u8>, VisaError> {
         // HARDCopy / CURVe can be large — read in chunks with a hard ceiling.
+        // Critical: a short/timeout chunk must NOT end the read while an IEEE
+        // `#N…` block header says more payload bytes are still outstanding
+        // (MDO3014 CURVe is multi‑MiB). But each empty/timeout retry costs a full
+        // VISA timeout — keep the idle budget small for HARDCopy/PNG, larger for CURVe.
+        use crate::scope::binary::{
+            ieee_block_complete, ieee_block_header_offset, parse_ieee_block, png_complete,
+        };
+
+        const CHUNK: usize = 1024 * 1024;
         let mut all = Vec::new();
+        let mut idle_errors = 0u32;
         loop {
-            match self.read_bytes(256 * 1024) {
-                Ok(chunk) if chunk.is_empty() => break,
+            let done = |buf: &[u8]| -> bool {
+                if ieee_block_complete(buf) || png_complete(buf) {
+                    return true;
+                }
+                // HARDCopy: payload may be a finished PNG even if the outer length
+                // prefix was truncated / slightly wrong — stop without more timeouts.
+                let payload = parse_ieee_block(buf);
+                png_complete(payload)
+            };
+
+            match self.read_bytes(CHUNK) {
+                Ok(chunk) if chunk.is_empty() => {
+                    if done(&all) || ieee_block_header_offset(&all).is_none() {
+                        break;
+                    }
+                    idle_errors += 1;
+                    // CURVe mid-transfer: allow more retries; HARDCopy should finish sooner.
+                    let max_idle = if all.len() > 512 * 1024 { 48 } else { 6 };
+                    if idle_errors >= max_idle {
+                        break;
+                    }
+                }
                 Ok(chunk) => {
+                    idle_errors = 0;
                     if all.len().saturating_add(chunk.len()) > Self::MAX_RAW_READ_BYTES {
                         return Err(VisaError::Io(format!(
                             "binary read exceeded {} MiB limit",
@@ -443,16 +519,37 @@ impl Instrument {
                         )));
                     }
                     all.extend_from_slice(&chunk);
-                    if chunk.len() < 256 * 1024 {
+                    if done(&all) {
                         break;
                     }
+                    let framed = ieee_block_header_offset(&all).is_some();
+                    // Short chunk = END for unframed / finished PNG; keep going only
+                    // when a definite-length IEEE header still promises more bytes.
+                    if chunk.len() < CHUNK && (!framed || done(&all)) {
+                        break;
+                    }
+                    if chunk.len() < CHUNK && framed && !ieee_block_complete(&all) {
+                        // Instrument paused mid-block — one more read cycle, but do not
+                        // spin on timeouts forever (screenshot regression).
+                        idle_errors += 1;
+                        let max_idle = if all.len() > 512 * 1024 { 48 } else { 6 };
+                        if idle_errors >= max_idle {
+                            break;
+                        }
+                    }
                 }
-                Err(VisaError::Status(code, _)) if !all.is_empty() && (code as i32) < 0 => break,
                 Err(e) => {
+                    if done(&all) {
+                        break;
+                    }
                     if all.is_empty() {
                         return Err(e);
                     }
-                    break;
+                    idle_errors += 1;
+                    let max_idle = if all.len() > 512 * 1024 { 48 } else { 6 };
+                    if idle_errors >= max_idle {
+                        break;
+                    }
                 }
             }
         }
