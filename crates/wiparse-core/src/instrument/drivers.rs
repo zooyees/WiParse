@@ -1285,7 +1285,6 @@ impl InstrumentDevice {
         self.with_tek_stable_capture(|dev| {
             dev.session.write("DATa:ENCdg RIBINARY")?;
             dev.session.write("DATa:WIDth 1")?;
-            // Full acquisition density — same window as waveform source (no point cap).
             let _ = dev.apply_tek_source_data_window(channel, None)?;
             let xincr = dev.tek_curve_xincr()?;
             let xzero = dev.session.query_f64("WFMOutpre:XZEro?")?;
@@ -1531,7 +1530,7 @@ impl InstrumentDevice {
         let _ = self.session.write("ACQuire:STATE STOP");
         let _ = self.session.write("ACQuire:FASTAcq:STATE OFF");
         let _ = self.session.write("*CLS");
-        std::thread::sleep(std::time::Duration::from_millis(80));
+        std::thread::sleep(std::time::Duration::from_millis(25));
 
         let result = f(self);
 
@@ -1646,20 +1645,6 @@ impl InstrumentDevice {
         self.session
             .write(&format!("DATa:STOP {stop}"))
             .map_err(|e| InstrumentError::Unsupported(format!("DATa:STOP: {e}")))?;
-
-        let mut start = start;
-        let mut stop = stop;
-        if let (Some(a), Some(b)) = (
-            self.session.query_f64_soft("DATa:STARt?", 600, tmo),
-            self.session.query_f64_soft("DATa:STOP?", 600, tmo),
-        ) {
-            let a = a.round().clamp(1.0, record as f64) as usize;
-            let b = b.round().clamp(1.0, record as f64) as usize;
-            if b >= a {
-                start = a;
-                stop = b;
-            }
-        }
 
         let got = stop.saturating_sub(start).saturating_add(1);
         if let Some(nr_pt) = self

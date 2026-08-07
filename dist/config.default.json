@@ -51,12 +51,19 @@
     },
     "instruments": {
       "visa_library": "",
-      "timeout_ms": 5000,
+      "timeout_ms": 30000,
       "sample_interval_ms": 1000,
       "max_points": 10000,
       "save_dir": "instrument_data",
       "known_tcpip_resources": [],
       "waveform_browser_dir": ""
     }
+  },
+  "update": {
+    "enabled": true,
+    "manifest_url": "",
+    "channel": "stable",
+    "check_interval_hours": 24,
+    "auto_download": false
   }
 }

@@ -29,6 +29,8 @@ pub struct AppConfig {
     pub log_monitor: LogMonitorConfig,
     #[serde(default)]
     pub apps: AppsConfig,
+    #[serde(default)]
+    pub update: UpdateConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +150,46 @@ pub struct InstrumentControlConfig {
     /// (first-level subfolders containing CSV / ISF / TXT sources).
     #[serde(default)]
     pub waveform_browser_dir: String,
+}
+
+/// Online update settings (HTTPS manifest + optional auto-check).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// HTTPS URL to `latest.json` (channel manifest).
+    #[serde(default = "default_update_manifest_url")]
+    pub manifest_url: String,
+    #[serde(default = "default_update_channel")]
+    pub channel: String,
+    /// Background check interval; `0` = startup only.
+    #[serde(default = "default_update_check_hours")]
+    pub check_interval_hours: u32,
+    /// Download in background when an update is found (user still confirms install).
+    #[serde(default)]
+    pub auto_download: bool,
+}
+
+fn default_update_manifest_url() -> String {
+    String::new()
+}
+fn default_update_channel() -> String {
+    "stable".into()
+}
+fn default_update_check_hours() -> u32 {
+    24
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            manifest_url: default_update_manifest_url(),
+            channel: default_update_channel(),
+            check_interval_hours: default_update_check_hours(),
+            auto_download: false,
+        }
+    }
 }
 
 fn default_db_name() -> String {
@@ -330,6 +372,7 @@ impl Default for AppConfig {
             serial: SerialConfig::default(),
             log_monitor: LogMonitorConfig::default(),
             apps: AppsConfig::default(),
+            update: UpdateConfig::default(),
         }
     }
 }

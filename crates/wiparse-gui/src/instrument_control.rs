@@ -718,6 +718,9 @@ impl InstrumentControlPanel {
                 self.selected_id = Some(id);
             }
             Event::Disconnected(id) => {
+                if self.busy_device == Some(id) {
+                    self.clear_busy();
+                }
                 self.devices.retain(|device| device.id != id);
                 self.measurement_pending.remove(&id);
                 self.waveforms.remove(&id);
@@ -2907,6 +2910,8 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                         }
                         Err(error) => send_error(&events, Some(id), error),
                     }
+                } else {
+                    send_error(&events, Some(id), "device not connected");
                 }
             }
             Job::Measure(id) => {
@@ -2921,6 +2926,8 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                         }
                         Err(error) => send_error(&events, Some(id), error),
                     }
+                } else {
+                    send_error(&events, Some(id), "device not connected");
                 }
             }
             Job::Capture { id } => {
@@ -2958,6 +2965,8 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                         }
                         Err(error) => send_error(&events, Some(id), error),
                     }
+                } else {
+                    send_error(&events, Some(id), "device not connected");
                 }
             }
             Job::WaveformSource { id } => {
@@ -3105,6 +3114,8 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                         }
                         Err(error) => send_error(&events, Some(id), error),
                     }
+                } else {
+                    send_error(&events, Some(id), "device not connected");
                 }
             }
             Job::Waveform {
@@ -3119,6 +3130,8 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                         }
                         Err(error) => send_error(&events, Some(id), error),
                     }
+                } else {
+                    send_error(&events, Some(id), "device not connected");
                 }
             }
             Job::Shutdown => break,

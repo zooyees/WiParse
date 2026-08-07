@@ -15,6 +15,7 @@ mod log_view;
 mod serial_tool;
 mod plot;
 mod theme;
+mod update;
 mod waveform_analysis;
 mod windows_icon;
 

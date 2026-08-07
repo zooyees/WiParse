@@ -21,6 +21,11 @@ fn clip_segment(a: Pos2, b: Pos2, rect: Rect) -> Option<(Pos2, Pos2)> {
     }
 }
 
+#[inline]
+fn display_y(y_raw: f64, y_scale: f64, y_offset: f64) -> f64 {
+    y_raw * y_scale + y_offset
+}
+
 /// Push scope-style column shapes into `out` using the plot's current transform.
 pub fn push_envelope_column_shapes(
     transform: &PlotTransform,
@@ -28,19 +33,23 @@ pub fn push_envelope_column_shapes(
     stroke: Stroke,
     frame: Rect,
     out: &mut Vec<Shape>,
+    y_scale: f64,
+    y_offset: f64,
 ) {
     out.reserve(columns.len());
     for col in columns {
+        let y_min = display_y(col.y_min, y_scale, y_offset);
+        let y_max = display_y(col.y_max, y_scale, y_offset);
         if col.is_flat() {
-            let a = transform.position_from_point(&PlotPoint::new(col.x0, col.y_min));
-            let b = transform.position_from_point(&PlotPoint::new(col.x1, col.y_min));
+            let a = transform.position_from_point(&PlotPoint::new(col.x0, y_min));
+            let b = transform.position_from_point(&PlotPoint::new(col.x1, y_min));
             if let Some((a, b)) = clip_segment(a, b, frame) {
                 out.push(Shape::line_segment([a, b], stroke));
             }
         } else {
             let xc = 0.5 * (col.x0 + col.x1);
-            let a = transform.position_from_point(&PlotPoint::new(xc, col.y_min));
-            let b = transform.position_from_point(&PlotPoint::new(xc, col.y_max));
+            let a = transform.position_from_point(&PlotPoint::new(xc, y_min));
+            let b = transform.position_from_point(&PlotPoint::new(xc, y_max));
             if let Some((a, b)) = clip_segment(a, b, frame) {
                 out.push(Shape::line_segment([a, b], stroke));
             }
@@ -97,6 +106,10 @@ pub struct ScopeEnvelopePlotItem {
     pub width: f32,
     pub name: String,
     pub highlighted: bool,
+    /// Display-only vertical scale (1.0 = native).
+    pub y_scale: f64,
+    /// Display-only vertical shift (plot Y units).
+    pub y_offset: f64,
     cached_bounds: PlotBounds,
 }
 
@@ -107,15 +120,22 @@ impl ScopeEnvelopePlotItem {
         width: f32,
         name: impl Into<String>,
         highlighted: bool,
+        y_scale: f64,
+        y_offset: f64,
     ) -> Self {
         let (xmin, xmax, ymin, ymax) = envelope_bounds(columns.as_slice());
-        let cached_bounds = PlotBounds::from_min_max([xmin, ymin], [xmax, ymax]);
+        let cached_bounds = PlotBounds::from_min_max(
+            [xmin, display_y(ymin, y_scale, y_offset)],
+            [xmax, display_y(ymax, y_scale, y_offset)],
+        );
         Self {
             columns,
             color,
             width,
             name: name.into(),
             highlighted,
+            y_scale,
+            y_offset,
             cached_bounds,
         }
     }
@@ -137,6 +157,8 @@ impl PlotItem for ScopeEnvelopePlotItem {
             stroke,
             *transform.frame(),
             shapes,
+            self.y_scale,
+            self.y_offset,
         );
     }
 

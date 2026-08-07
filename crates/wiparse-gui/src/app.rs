@@ -8,6 +8,7 @@ use crate::calculator::CalculatorPanel;
 use crate::instrument_control::InstrumentControlPanel;
 use crate::serial_tool::SerialToolPanel;
 use crate::theme::{self as ui_theme, Tokens};
+use crate::update::UpdateController;
 use crate::waveform_analysis::WaveformAnalysisPanel;
 use egui::{Color32, CornerRadius, FontId, Frame, Margin, Pos2, Rect, Sense, Stroke, Vec2};
 use wiparse_core::config::{save_config, AppConfig};
@@ -70,6 +71,8 @@ pub struct WiParseApp {
     settings_sub_rect: Option<Rect>,
     settings_leave_since: Option<f64>,
     about_open: bool,
+    updater: UpdateController,
+    update_startup_checked: bool,
     tokens: Tokens,
     theme_applied_light: Option<bool>,
     taskbar_icon_applied: bool,
@@ -89,6 +92,7 @@ impl WiParseApp {
         if let Err(e) = backend::start(api.clone()) {
             tracing::error!("Failed to start WiParse API: {e}");
         }
+        let updater = UpdateController::new(cfg.update.clone());
         Self {
             serial: SerialToolPanel::new(&cfg, lang),
             instruments: {
@@ -116,6 +120,8 @@ impl WiParseApp {
             settings_sub_rect: None,
             settings_leave_since: None,
             about_open: false,
+            updater,
+            update_startup_checked: false,
             tokens: if light {
                 Tokens::light()
             } else {
@@ -436,6 +442,7 @@ impl WiParseApp {
     }
 
     fn paint_about_dialog(&mut self, ctx: &egui::Context, t: &Tokens) {
+        self.updater.poll();
         let mut open = self.about_open;
         let mut close_requested = false;
         egui::Window::new(tr(self.lang, "about.title"))
@@ -452,7 +459,7 @@ impl WiParseApp {
                     .inner_margin(Margin::same(16)),
             )
             .show(ctx, |ui| {
-                ui.set_min_width(280.0);
+                ui.set_min_width(320.0);
                 ui.vertical_centered(|ui| {
                     ui.label(
                         egui::RichText::new("WiParse")
@@ -470,7 +477,63 @@ impl WiParseApp {
                         .size(13.0)
                         .color(t.text_muted),
                     );
-                    ui.add_space(14.0);
+                    ui.add_space(10.0);
+                    use crate::update::UpdatePhase;
+                    match self.updater.phase() {
+                        UpdatePhase::Idle => {}
+                        UpdatePhase::Checking => {
+                            ui.label(tr(self.lang, "update.checking"));
+                        }
+                        UpdatePhase::UpToDate => {
+                            ui.label(tr(self.lang, "update.up_to_date"));
+                        }
+                        UpdatePhase::Available { manifest, .. } => {
+                            ui.label(format!(
+                                "{}: {}",
+                                tr(self.lang, "update.available"),
+                                manifest.version
+                            ));
+                            if let Some(notes) = manifest.notes.as_deref() {
+                                ui.label(
+                                    egui::RichText::new(notes)
+                                        .small()
+                                        .color(t.text_muted),
+                                );
+                            }
+                        }
+                        UpdatePhase::Downloading { received, total } => {
+                            let frac = if *total > 0 {
+                                *received as f32 / *total as f32
+                            } else {
+                                0.0
+                            };
+                            ui.label(tr(self.lang, "update.downloading"));
+                            ui.add(egui::ProgressBar::new(frac));
+                        }
+                        UpdatePhase::Ready(_) => {
+                            ui.label(tr(self.lang, "update.ready"));
+                        }
+                        UpdatePhase::Error(msg) => {
+                            ui.colored_label(Color32::from_rgb(0xFF, 0x6B, 0x6B), msg);
+                        }
+                    }
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(tr(self.lang, "update.check")).clicked() {
+                            self.updater.check_now();
+                        }
+                        if matches!(self.updater.phase(), UpdatePhase::Available { .. })
+                            && ui.button(tr(self.lang, "update.download")).clicked()
+                        {
+                            self.updater.download_available();
+                        }
+                        if matches!(self.updater.phase(), UpdatePhase::Ready(_))
+                            && ui.button(tr(self.lang, "update.install")).clicked()
+                        {
+                            let _ = self.updater.apply_ready_and_exit();
+                        }
+                    });
+                    ui.add_space(10.0);
                     if ui.button(tr(self.lang, "about.close")).clicked() {
                         close_requested = true;
                     }
@@ -482,6 +545,11 @@ impl WiParseApp {
 
 impl eframe::App for WiParseApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.update_startup_checked {
+            self.update_startup_checked = true;
+            self.updater.maybe_check_on_startup();
+        }
+        self.updater.poll();
         if !self.taskbar_icon_applied && self.taskbar_icon_attempts < 10 {
             self.taskbar_icon_attempts += 1;
             self.taskbar_icon_applied = crate::windows_icon::apply_embedded_icon();

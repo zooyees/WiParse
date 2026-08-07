@@ -1,0 +1,18 @@
+{
+  "product": "wiparse",
+  "channel": "stable",
+  "version": "1.0.2",
+  "min_version": "1.0.0",
+  "published_at": "2026-08-04T00:00:00Z",
+  "notes": "Example release notes — replace when publishing.",
+  "notes_url": "https://example.com/wiparse/releases/1.0.2",
+  "packages": [
+    {
+      "target": "windows-x64",
+      "url": "https://update.example.com/wiparse/releases/1.0.2/WiParse-1.0.2-win64.zip",
+      "size": 0,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "filename": "WiParse-1.0.2-win64.zip"
+    }
+  ]
+}

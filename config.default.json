@@ -58,5 +58,12 @@
       "known_tcpip_resources": [],
       "waveform_browser_dir": ""
     }
+  },
+  "update": {
+    "enabled": true,
+    "manifest_url": "",
+    "channel": "stable",
+    "check_interval_hours": 24,
+    "auto_download": false
   }
 }

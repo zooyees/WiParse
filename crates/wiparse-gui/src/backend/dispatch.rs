@@ -37,12 +37,18 @@ pub fn invoke(bridge: &ApiBridge, method: &str, params: Value) -> InvokeReply {
         },
         "parse.line" => {
             let text = params_str(&params, "text").unwrap_or("");
-            ok(method, serde_json::to_value(parse_qi_line(text)).unwrap())
+            ok(
+                method,
+                serde_json::to_value(parse_qi_line(text)).unwrap_or(json!(null)),
+            )
         }
         "parse.metrics" => {
             let text = params_str(&params, "text").unwrap_or("");
             match parse_metric_frame(text) {
-                Some(m) => ok(method, serde_json::to_value(m).unwrap()),
+                Some(m) => ok(
+                    method,
+                    serde_json::to_value(m).unwrap_or(json!(null)),
+                ),
                 None => err(method, "invalid AA55 frame"),
             }
         }
@@ -126,7 +132,7 @@ fn session_list(method: &str, params: &Value) -> InvokeReply {
         .and_then(|v| v.as_u64())
         .unwrap_or(20) as usize;
     match db_conn().and_then(|c| list_sessions(&c, limit).map_err(|e| e.to_string())) {
-        Ok(rows) => ok(method, serde_json::to_value(rows).unwrap()),
+        Ok(rows) => ok(method, serde_json::to_value(rows).unwrap_or(json!([]))),
         Err(e) => err(method, &e),
     }
 }

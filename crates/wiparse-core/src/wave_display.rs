@@ -5,8 +5,6 @@
 
 use std::sync::Arc;
 
-use crate::scope::decimate_uniform_index;
-
 /// One screen column: time span `[x0, x1]` with min/max amplitude in that bucket.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScopeEnvelopeColumn {
@@ -81,39 +79,109 @@ pub fn decimate_envelope_columns(
         return Vec::new();
     }
     let max_columns = max_columns.max(1);
+    if n >= 2 && x_is_monotonic(x, n) {
+        return decimate_envelope_time_buckets(x, y, n, max_columns);
+    }
+    decimate_envelope_index_buckets(x, y, n, max_columns)
+}
+
+#[inline]
+fn x_is_monotonic(x: &[f64], n: usize) -> bool {
+    x[..n].windows(2).all(|w| w[1] >= w[0] || (w[1] - w[0]).abs() < 1e-18)
+}
+
+fn decimate_envelope_index_buckets(
+    x: &[f64],
+    y: &[f64],
+    n: usize,
+    max_columns: usize,
+) -> Vec<ScopeEnvelopeColumn> {
     let mut out = Vec::with_capacity(max_columns);
     for b in 0..max_columns {
         let start = b * n / max_columns;
         let end = ((b + 1) * n / max_columns).max(start + 1).min(n);
-        let (mut ymin, mut ymax) = (f64::INFINITY, f64::NEG_INFINITY);
-        let mut any = false;
-        for i in start..end {
-            let v = y[i];
-            if v.is_finite() {
-                any = true;
-                ymin = ymin.min(v);
-                ymax = ymax.max(v);
-            }
+        if let Some(col) = envelope_column_range(x, y, start, end) {
+            out.push(col);
         }
-        if !any {
-            continue;
-        }
-        let mut x0 = x[start];
-        let mut x1 = x[end - 1];
-        if x1 < x0 {
-            std::mem::swap(&mut x0, &mut x1);
-        }
-        if (x1 - x0).abs() < f64::EPSILON {
-            x1 = x0;
-        }
-        out.push(ScopeEnvelopeColumn {
-            x0,
-            x1,
-            y_min: ymin,
-            y_max: ymax,
-        });
     }
     out
+}
+
+fn decimate_envelope_time_buckets(
+    x: &[f64],
+    y: &[f64],
+    n: usize,
+    max_columns: usize,
+) -> Vec<ScopeEnvelopeColumn> {
+    let mut x0 = x[0];
+    let mut x1 = x[n - 1];
+    if !x0.is_finite() || !x1.is_finite() {
+        return decimate_envelope_index_buckets(x, y, n, max_columns);
+    }
+    if x1 < x0 {
+        std::mem::swap(&mut x0, &mut x1);
+    }
+    let span = (x1 - x0).abs().max(f64::EPSILON);
+    let mut out = Vec::with_capacity(max_columns);
+    let mut idx = 0usize;
+    for b in 0..max_columns {
+        let t0 = x0 + span * (b as f64) / max_columns as f64;
+        let t1 = if b + 1 == max_columns {
+            x1 + f64::EPSILON
+        } else {
+            x0 + span * ((b + 1) as f64) / max_columns as f64
+        };
+        while idx < n && x[idx] < t0 {
+            idx += 1;
+        }
+        let start = idx;
+        while idx < n && x[idx] <= t1 {
+            idx += 1;
+        }
+        let end = idx.max(start + 1).min(n);
+        if let Some(col) = envelope_column_range(x, y, start, end) {
+            out.push(col);
+        }
+    }
+    out
+}
+
+fn envelope_column_range(
+    x: &[f64],
+    y: &[f64],
+    start: usize,
+    end: usize,
+) -> Option<ScopeEnvelopeColumn> {
+    if start >= end {
+        return None;
+    }
+    let (mut ymin, mut ymax) = (f64::INFINITY, f64::NEG_INFINITY);
+    let mut any = false;
+    for i in start..end {
+        let v = y[i];
+        if v.is_finite() {
+            any = true;
+            ymin = ymin.min(v);
+            ymax = ymax.max(v);
+        }
+    }
+    if !any {
+        return None;
+    }
+    let mut x0 = x[start];
+    let mut x1 = x[end - 1];
+    if x1 < x0 {
+        std::mem::swap(&mut x0, &mut x1);
+    }
+    if (x1 - x0).abs() < f64::EPSILON {
+        x1 = x0;
+    }
+    Some(ScopeEnvelopeColumn {
+        x0,
+        x1,
+        y_min: ymin,
+        y_max: ymax,
+    })
 }
 
 /// Union bounds of envelope columns `(xmin, xmax, ymin, ymax)`.
@@ -179,12 +247,6 @@ pub fn build_viewport_series(
 
     let xs = &x[start..end];
     let ys = &y[start..end];
-    if xs.len() <= cols.saturating_mul(2) {
-        let uniform = decimate_uniform_index(xs, ys, cols.saturating_mul(2).max(2));
-        if uniform.len() >= 2 {
-            return WaveViewportSeries::Uniform(Arc::new(uniform));
-        }
-    }
     WaveViewportSeries::Envelope(Arc::new(decimate_envelope_columns(xs, ys, cols)))
 }
 

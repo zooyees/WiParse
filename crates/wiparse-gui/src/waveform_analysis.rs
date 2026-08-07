@@ -26,15 +26,21 @@ use wiparse_core::waveform_file::{
 const TOOLBAR_H: f32 = 44.0;
 const PANEL_GAP: f32 = 8.0;
 const SIDE_W: f32 = 280.0;
+/// Compact Y-axis strip width (scope-style, right of plot).
+const CHANNEL_AXIS_COL_W: f32 = 28.0;
+const AXIS_HANDLE_RADIUS: f32 = 5.5;
+const AXIS_TICK_LEN: f32 = 4.0;
 const BTN: egui::Vec2 = egui::vec2(108.0, 28.0);
 const BTN_SM: egui::Vec2 = egui::vec2(72.0, 28.0);
 const CARD_MARGIN_X: i8 = 8;
 /// Cursor grab distance as a fraction of visible axis span.
 const CURSOR_GRAB_FRAC: f64 = 0.012;
-/// Max zoom-out: view may extend this factor beyond full data extent.
+/// Max zoom-out: view may extend this factor beyond full data extent (X axis).
 const VIEW_MAX_PAD: f64 = 1.25;
-/// Min zoom-in: visible span ≥ full data span / this factor (and ≥ absolute floor).
-const VIEW_MAX_ZOOM: f64 = 50_000.0;
+/// Min zoom-in on X: visible span ≥ full data span / this factor.
+const VIEW_MAX_ZOOM_X: f64 = 50_000.0;
+/// Max zoom-out padding for global Y viewport (per-channel scale handles trace sizing).
+const VIEW_MAX_PAD_Y: f64 = 50.0;
 const VIEW_MIN_SPAN_ABS: f64 = 1e-15;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -72,6 +78,10 @@ struct LoadedWave {
     y_max: f64,
     measures: WaveformMeasurements,
     color: Color32,
+    /// Display-only vertical shift (plot Y units); measurements use raw trace.
+    y_offset: f64,
+    /// Per-channel vertical scale (1.0 = native); display y = raw × scale + offset.
+    y_scale: f64,
 }
 
 /// Viewport envelope cache: one entry per visible wave when zoomed.
@@ -132,8 +142,13 @@ pub struct WaveformAnalysisPanel {
     gated_measure_cache: Option<(usize, u64, WaveformMeasurements)>,
     /// Cached union extent of all loaded waves (avoids per-frame scans).
     cached_extent: Option<(f64, f64, f64, f64)>,
+    extent_dirty: bool,
     /// Background file parse in progress.
     pending_load: Option<PendingWaveLoad>,
+    /// Dragging a channel position handle on the right axis strip.
+    dragging_channel_offset: Option<usize>,
+    /// Ctrl+drag on channel strip adjusts vertical scale.
+    dragging_channel_scale: Option<usize>,
 }
 
 impl WaveformAnalysisPanel {
@@ -172,7 +187,10 @@ impl WaveformAnalysisPanel {
             last_x_range: None,
             last_y_range: None,
             cached_extent: None,
+            extent_dirty: true,
             pending_load: None,
+            dragging_channel_offset: None,
+            dragging_channel_scale: None,
         };
         panel.refresh_wave_browser();
         panel
@@ -184,6 +202,10 @@ impl WaveformAnalysisPanel {
 
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
         self.poll_pending_loads(lang);
+        let typing = ui.ctx().wants_keyboard_input();
+        if !typing && ui.input(|i| i.key_pressed(egui::Key::Escape)) && self.selected.is_some() {
+            self.selected = None;
+        }
         let avail = ui.available_size();
         let (full, _) = ui.allocate_exact_size(avail, egui::Sense::hover());
         if !full.is_positive() {
@@ -286,7 +308,7 @@ impl WaveformAnalysisPanel {
                                 self.activate_wave(0);
                             }
                             self.status = t(lang, "已关闭波形", "Waveform closed").into();
-                            self.refresh_cached_extent();
+                            self.mark_extent_dirty();
                         }
                     }
                     if ui
@@ -402,17 +424,71 @@ impl WaveformAnalysisPanel {
                     }
                     if ui
                         .add(egui::Button::new("Y+").min_size(egui::vec2(36.0, 28.0)))
-                        .on_hover_text(t(lang, "纵向放大", "Zoom in Y"))
+                        .on_hover_text(t(
+                            lang,
+                            if self.selected.is_some() {
+                                "纵向放大选中通道"
+                            } else {
+                                "纵向放大"
+                            },
+                            if self.selected.is_some() {
+                                "Zoom in Y (selected channel scale)"
+                            } else {
+                                "Zoom in Y"
+                            },
+                        ))
                         .clicked()
                     {
-                        self.request_zoom_axis(false, 0.5);
+                        self.apply_y_zoom_factor(0.5);
                     }
                     if ui
                         .add(egui::Button::new("Y−").min_size(egui::vec2(36.0, 28.0)))
-                        .on_hover_text(t(lang, "纵向缩小", "Zoom out Y"))
+                        .on_hover_text(t(
+                            lang,
+                            if self.selected.is_some() {
+                                "纵向缩小选中通道"
+                            } else {
+                                "纵向缩小"
+                            },
+                            if self.selected.is_some() {
+                                "Zoom out Y (selected channel scale)"
+                            } else {
+                                "Zoom out Y"
+                            },
+                        ))
                         .clicked()
                     {
-                        self.request_zoom_axis(false, 2.0);
+                        self.apply_y_zoom_factor(2.0);
+                    }
+                    if ui
+                        .add_enabled(self.selected.is_some(), {
+                            egui::Button::new(t(lang, "复位通道", "Reset CH"))
+                                .min_size(egui::vec2(72.0, 28.0))
+                        })
+                        .on_hover_text(t(
+                            lang,
+                            "复位选中通道的位移与比例",
+                            "Reset offset & scale for selected channel",
+                        ))
+                        .clicked()
+                    {
+                        if let Some(i) = self.selected {
+                            self.reset_channel_display(i);
+                        }
+                    }
+                    if ui
+                        .add_enabled(!self.waves.is_empty(), {
+                            egui::Button::new(t(lang, "复位全部", "Reset All"))
+                                .min_size(egui::vec2(72.0, 28.0))
+                        })
+                        .on_hover_text(t(
+                            lang,
+                            "复位所有通道的位移与比例",
+                            "Reset offset & scale for all channels",
+                        ))
+                        .clicked()
+                    {
+                        self.reset_all_channel_display();
                     }
                     if ui
                         .add(
@@ -428,8 +504,8 @@ impl WaveformAnalysisPanel {
                         ui.label(
                             RichText::new(t(
                                 lang,
-                                "Ctrl+滚轮=X · Ctrl+Shift+滚轮=Y · 空格=X/Y光标",
-                                "Ctrl+wheel=X · Ctrl+Shift+wheel=Y · Space=X/Y cursors",
+                                "Ctrl+滚轮=X · Ctrl+Shift+滚轮=Y · 轴滚轮=比例 · Shift+滚轮=位移",
+                                "Ctrl+wheel=X · Ctrl+Shift+wheel=Y · strip wheel=scale · Shift+wheel=offset",
                             ))
                             .small()
                             .color(tokens.text_muted),
@@ -437,6 +513,22 @@ impl WaveformAnalysisPanel {
                     });
                 });
             });
+    }
+
+    fn reset_channel_display(&mut self, index: usize) {
+        if let Some(w) = self.waves.get_mut(index) {
+            w.y_offset = 0.0;
+            w.y_scale = 1.0;
+            self.mark_extent_dirty();
+        }
+    }
+
+    fn reset_all_channel_display(&mut self) {
+        for w in &mut self.waves {
+            w.y_offset = 0.0;
+            w.y_scale = 1.0;
+        }
+        self.mark_extent_dirty();
     }
 
     fn toggle_cursor_axis(&mut self) {
@@ -536,6 +628,21 @@ impl WaveformAnalysisPanel {
         self.fit_request = false;
     }
 
+    /// Y zoom: per-channel scale when a channel is selected, else global plot Y range.
+    fn apply_y_zoom_factor(&mut self, factor: f64) {
+        if !factor.is_finite() || (factor - 1.0).abs() <= 1e-6 {
+            return;
+        }
+        if let Some(i) = self.selected {
+            if let Some(w) = self.waves.get_mut(i) {
+                w.y_scale = (w.y_scale * factor).clamp(1e-12, 1e12);
+                self.mark_extent_dirty();
+                return;
+            }
+        }
+        self.request_zoom_axis(false, factor);
+    }
+
     fn data_extent(&self) -> Option<PlotBounds> {
         let (xmin, xmax, ymin, ymax) = self.cached_extent?;
         if (xmax - xmin).abs() < VIEW_MIN_SPAN_ABS {
@@ -547,6 +654,10 @@ impl WaveformAnalysisPanel {
             [xmin - xpad, ymin - ypad],
             [xmax + xpad, ymax + ypad],
         ))
+    }
+
+    fn mark_extent_dirty(&mut self) {
+        self.extent_dirty = true;
     }
 
     fn refresh_cached_extent(&mut self) {
@@ -561,8 +672,9 @@ impl WaveformAnalysisPanel {
         for w in &self.waves {
             xmin = xmin.min(w.x_min);
             xmax = xmax.max(w.x_max);
-            ymin = ymin.min(w.y_min);
-            ymax = ymax.max(w.y_max);
+            let (dy0, dy1) = wave_display_y_bounds(w);
+            ymin = ymin.min(dy0);
+            ymax = ymax.max(dy1);
         }
         if !xmin.is_finite() {
             self.cached_extent = None;
@@ -611,13 +723,12 @@ impl WaveformAnalysisPanel {
 
         let outer_x0 = ex0 - x_span_data * (VIEW_MAX_PAD - 1.0);
         let outer_x1 = ex1 + x_span_data * (VIEW_MAX_PAD - 1.0);
-        let outer_y0 = ey0 - y_span_data * (VIEW_MAX_PAD - 1.0);
-        let outer_y1 = ey1 + y_span_data * (VIEW_MAX_PAD - 1.0);
+        let outer_y0 = ey0 - y_span_data * (VIEW_MAX_PAD_Y - 1.0);
+        let outer_y1 = ey1 + y_span_data * (VIEW_MAX_PAD_Y - 1.0);
 
-        let min_x_span = (x_span_data / VIEW_MAX_ZOOM).max(VIEW_MIN_SPAN_ABS);
-        let min_y_span = (y_span_data / VIEW_MAX_ZOOM).max(VIEW_MIN_SPAN_ABS);
+        let min_x_span = (x_span_data / VIEW_MAX_ZOOM_X).max(VIEW_MIN_SPAN_ABS);
+        let min_y_span = VIEW_MIN_SPAN_ABS;
         let max_x_span = (outer_x1 - outer_x0).abs();
-        let max_y_span = (outer_y1 - outer_y0).abs();
 
         let mut x0 = bounds.min()[0];
         let mut x1 = bounds.max()[0];
@@ -631,7 +742,7 @@ impl WaveformAnalysisPanel {
         }
 
         let mut x_span = (x1 - x0).max(min_x_span).min(max_x_span);
-        let mut y_span = (y1 - y0).max(min_y_span).min(max_y_span);
+        let mut y_span = (y1 - y0).max(min_y_span);
         let mut cx = 0.5 * (x0 + x1);
         let mut cy = 0.5 * (y0 + y1);
 
@@ -977,11 +1088,17 @@ impl WaveformAnalysisPanel {
                         y_max: draft.y_max,
                         measures: draft.measures,
                         color,
+                        y_offset: 0.0,
+                        y_scale: 1.0,
                     });
+                }
+                if nch > 1 {
+                    let end = self.waves.len();
+                    auto_stagger_channel_offsets(&mut self.waves, first_idx..end);
                 }
                 self.view_line_cache = None;
                 self.gated_measure_cache = None;
-                self.refresh_cached_extent();
+                self.mark_extent_dirty();
                 self.activate_wave(first_idx);
                 self.fit_request = true;
                 self.status = format!(
@@ -1022,11 +1139,17 @@ impl WaveformAnalysisPanel {
                 y_max: draft.y_max,
                 measures: draft.measures,
                 color,
+                y_offset: 0.0,
+                y_scale: 1.0,
             });
+        }
+        let end = self.waves.len();
+        if end - first_idx > 1 {
+            auto_stagger_channel_offsets(&mut self.waves, first_idx..end);
         }
         self.view_line_cache = None;
         self.gated_measure_cache = None;
-        self.refresh_cached_extent();
+        self.mark_extent_dirty();
         self.activate_wave(first_idx);
         Ok(max_pts)
     }
@@ -1127,7 +1250,7 @@ impl WaveformAnalysisPanel {
                 ui.add_space(4.0);
                 match self.cursor_axis {
                     CursorAxis::X => self.draw_x_cursor_measures(ui, tokens, lang, &w.trace, xu, yu),
-                    CursorAxis::Y => self.draw_y_cursor_measures(ui, tokens, lang, yu),
+                    CursorAxis::Y => self.draw_y_cursor_measures(ui, tokens, lang),
                 }
             });
     }
@@ -1173,7 +1296,8 @@ impl WaveformAnalysisPanel {
                     measure_row(ui, tokens, "ΔY", &format_eng(yb - ya, yu));
                 }
                 if dx.abs() > f64::EPSILON {
-                    measure_row(ui, tokens, "1/|ΔX|", &format_eng(1.0 / dx.abs(), "Hz"));
+                    measure_row(ui, tokens, "freq", &format_freq(1.0 / dx.abs()));
+                    measure_row(ui, tokens, "period", &format_eng(dx.abs(), xu));
                 }
             }
             (Some(a), None) => {
@@ -1206,18 +1330,40 @@ impl WaveformAnalysisPanel {
         ui: &mut egui::Ui,
         tokens: &Tokens,
         lang: Lang,
-        yu: &str,
     ) {
         match (self.y1, self.y2) {
-            (Some(a), Some(b)) => {
-                let dy = b - a;
-                measure_row(ui, tokens, "Y1", &format_eng(a, yu));
-                measure_row(ui, tokens, "Y2", &format_eng(b, yu));
-                measure_row(ui, tokens, "ΔY", &format_eng(dy, yu));
-                measure_row(ui, tokens, "|ΔY|", &format_eng(dy.abs(), yu));
+            (Some(y1_plot), Some(y2_plot)) => {
+                for (idx, w) in self.waves.iter().enumerate() {
+                    let ch = short_channel_label(&w.trace.channel);
+                    let yu = w.trace.y_unit.as_str();
+                    let y1 = plot_y_to_native(y1_plot, w.y_scale, w.y_offset);
+                    let y2 = plot_y_to_native(y2_plot, w.y_scale, w.y_offset);
+                    let dy = y2 - y1;
+                    ui.label(
+                        RichText::new(&ch)
+                            .small()
+                            .strong()
+                            .color(w.color),
+                    );
+                    measure_row(ui, tokens, "Y1", &format_eng(y1, yu));
+                    measure_row(ui, tokens, "Y2", &format_eng(y2, yu));
+                    measure_row(ui, tokens, "ΔY", &format_eng(dy, yu));
+                    measure_row(ui, tokens, "|ΔY|", &format_eng(dy.abs(), yu));
+                    if self.waves.len() > 1 && idx + 1 < self.waves.len() {
+                        ui.add_space(6.0);
+                    }
+                }
             }
-            (Some(a), None) => {
-                measure_row(ui, tokens, "Y1", &format_eng(a, yu));
+            (Some(y1_plot), None) => {
+                if let Some(w) = self.selected.and_then(|i| self.waves.get(i)) {
+                    let yu = w.trace.y_unit.as_str();
+                    let y1 = plot_y_to_native(y1_plot, w.y_scale, w.y_offset);
+                    measure_row(ui, tokens, "Y1", &format_eng(y1, yu));
+                } else if let Some(w) = self.waves.first() {
+                    let yu = w.trace.y_unit.as_str();
+                    let y1 = plot_y_to_native(y1_plot, w.y_scale, w.y_offset);
+                    measure_row(ui, tokens, "Y1", &format_eng(y1, yu));
+                }
                 ui.label(
                     RichText::new(t(lang, "再点击设置 Y2", "Click again to set Y2"))
                         .small()
@@ -1235,6 +1381,240 @@ impl WaveformAnalysisPanel {
                     .color(tokens.text_muted),
                 );
             }
+        }
+    }
+
+    /// Shared Y axis strip: all channel handles on one axis (select nearest to interact).
+    fn channel_offset_axes(
+        &mut self,
+        ui: &mut egui::Ui,
+        tokens: &Tokens,
+        lang: Lang,
+        y0: f64,
+        y1: f64,
+    ) {
+        let n = self.waves.len();
+        if n == 0 {
+            return;
+        }
+        let (y_lo, y_hi) = if y0 <= y1 { (y0, y1) } else { (y1, y0) };
+        let y_span = (y_hi - y_lo).max(1e-30);
+        let strip_h = ui.available_height();
+        let strip_w = ui.available_width();
+        let ctrl = ui.input(|i| i.modifiers.ctrl);
+        let shift = ui.input(|i| i.modifiers.shift);
+        let y_unit = self
+            .selected
+            .and_then(|i| self.waves.get(i))
+            .map(|w| w.trace.y_unit.as_str())
+            .or_else(|| self.waves.first().map(|w| w.trace.y_unit.as_str()))
+            .unwrap_or("V");
+
+        let (rect, resp) = ui.allocate_exact_size(
+            egui::vec2(strip_w, strip_h),
+            egui::Sense::click_and_drag(),
+        );
+        let painter = ui.painter_at(rect);
+        // Scope-style axis rail: subtle fill + left edge line.
+        painter.rect_filled(rect, CornerRadius::same(2), tokens.surface_bg);
+        painter.line_segment(
+            [rect.left_top(), rect.left_bottom()],
+            Stroke::new(1.0_f32, tokens.border),
+        );
+        let tick_x0 = rect.left() + 1.0;
+        let tick_x1 = tick_x0 + AXIS_TICK_LEN;
+        let show_tick_labels = resp.hovered() || self.selected.is_some();
+        for (frac, with_unit) in [(0.0_f32, true), (0.5, false), (1.0, false)] {
+            let y = egui::lerp(rect.top()..=rect.bottom(), frac);
+            painter.line_segment(
+                [egui::pos2(tick_x0, y), egui::pos2(tick_x1, y)],
+                Stroke::new(0.5_f32, tokens.border.gamma_multiply(0.65)),
+            );
+            if show_tick_labels {
+                let y_val = y_lo + (1.0 - f64::from(frac)) * (y_hi - y_lo);
+                painter.text(
+                    egui::pos2(rect.right() - 1.0, y),
+                    egui::Align2::RIGHT_CENTER,
+                    format_axis_tick(y_val, y_unit, with_unit),
+                    egui::FontId::monospace(7.0),
+                    tokens.text_muted,
+                );
+            }
+        }
+
+        let plot_y_to_screen = |y_plot: f64| -> f32 {
+            let t = ((y_plot - y_lo) / y_span).clamp(0.0, 1.0) as f32;
+            egui::lerp(rect.bottom()..=rect.top(), t)
+        };
+
+        let axis_cx = rect.center().x;
+        let centers: Vec<f64> = self.waves.iter().map(wave_display_y_center).collect();
+        let pick_at = |pos: egui::Pos2| -> Option<usize> {
+            let mut best = None;
+            let mut best_d2 = 14.0_f32 * 14.0_f32;
+            for i in 0..n {
+                let hy = plot_y_to_screen(centers[i]);
+                let d2 = pos.distance_sq(egui::pos2(axis_cx, hy));
+                if d2 < best_d2 {
+                    best_d2 = d2;
+                    best = Some(i);
+                }
+            }
+            best
+        };
+        let hover_ch = resp.interact_pointer_pos().and_then(pick_at);
+
+        for i in 0..n {
+            let w = &self.waves[i];
+            let color = w.color;
+            let hy = plot_y_to_screen(centers[i])
+                .clamp(rect.top() + 10.0, rect.bottom() - 16.0);
+            let selected = self.selected == Some(i);
+            let active = self.dragging_channel_offset == Some(i)
+                || self.dragging_channel_scale == Some(i);
+            let highlighted = selected || active || hover_ch == Some(i);
+            let radius = if highlighted {
+                AXIS_HANDLE_RADIUS + 1.0
+            } else {
+                AXIS_HANDLE_RADIUS
+            };
+            painter.circle_stroke(
+                egui::pos2(axis_cx, hy),
+                radius,
+                Stroke::new(if highlighted { 2.0_f32 } else { 1.2_f32 }, color),
+            );
+            painter.circle_filled(egui::pos2(axis_cx, hy), (radius - 1.2).max(2.0), color);
+            if highlighted {
+                let channel = short_channel_label(&w.trace.channel);
+                painter.text(
+                    egui::pos2(axis_cx, hy - radius - 1.0),
+                    egui::Align2::CENTER_BOTTOM,
+                    channel,
+                    egui::FontId::proportional(9.0),
+                    color,
+                );
+                let scale = w.y_scale;
+                if (scale - 1.0).abs() > 1e-6 {
+                    painter.text(
+                        egui::pos2(axis_cx, hy + radius + 1.0),
+                        egui::Align2::CENTER_TOP,
+                        format_scale(scale),
+                        egui::FontId::monospace(8.0),
+                        color.gamma_multiply(0.85),
+                    );
+                }
+            }
+        }
+
+        if let Some(i) = self.selected {
+            if let Some(w) = self.waves.get(i) {
+                let div = format_channel_div(w, y_span);
+                painter.text(
+                    egui::pos2(rect.right() - 2.0, rect.bottom() - 2.0),
+                    egui::Align2::RIGHT_BOTTOM,
+                    div,
+                    egui::FontId::monospace(8.0),
+                    tokens.text_muted,
+                );
+            }
+        }
+
+        let active_ch = self
+            .dragging_channel_offset
+            .or(self.dragging_channel_scale)
+            .or(hover_ch)
+            .or(self.selected.filter(|&i| i < n));
+
+        if resp.hovered() {
+            if let Some(scroll) = {
+                let s = ui.input(|inp| {
+                    inp.smooth_scroll_delta.y as f64 + inp.raw_scroll_delta.y as f64
+                });
+                if s.abs() > 0.0 { Some(s) } else { None }
+            } {
+                let Some(i) = active_ch else {
+                    return;
+                };
+                if shift {
+                    self.waves[i].y_offset += -(scroll / 120.0) * y_span * 0.08;
+                } else {
+                    let factor = (scroll * 0.002).exp();
+                    self.waves[i].y_scale =
+                        (self.waves[i].y_scale * factor).clamp(1e-12, 1e12);
+                }
+                self.mark_extent_dirty();
+                self.selected = Some(i);
+            }
+        }
+
+        if resp.drag_started() {
+            if let Some(i) = hover_ch {
+                self.selected = Some(i);
+                if ctrl {
+                    self.dragging_channel_scale = Some(i);
+                } else {
+                    self.dragging_channel_offset = Some(i);
+                }
+            }
+        }
+        if let Some(i) = self.dragging_channel_scale {
+            if resp.dragged() {
+                let dy = resp.drag_delta().y as f64;
+                let factor = (-dy * 0.008).exp();
+                self.waves[i].y_scale =
+                    (self.waves[i].y_scale * factor).clamp(1e-12, 1e12);
+                self.mark_extent_dirty();
+            }
+        } else if let Some(i) = self.dragging_channel_offset {
+            if resp.dragged() {
+                let dy = resp.drag_delta().y;
+                self.waves[i].y_offset += -(dy as f64 / rect.height() as f64) * y_span;
+                self.mark_extent_dirty();
+            }
+        }
+        if resp.double_clicked() {
+            if let Some(i) = hover_ch.or(self.selected) {
+                if ctrl {
+                    self.waves[i].y_scale = 1.0;
+                } else {
+                    self.waves[i].y_offset = 0.0;
+                }
+                self.mark_extent_dirty();
+                self.selected = Some(i);
+            }
+        }
+        if resp.clicked() && !resp.dragged() {
+            if let Some(i) = hover_ch {
+                self.selected = Some(i);
+            }
+        }
+        if resp.hovered() {
+            if let Some(i) = active_ch {
+                let y_unit = self.waves[i].trace.y_unit.clone();
+                let off = self.waves[i].y_offset;
+                let sc = self.waves[i].y_scale;
+                let ch = short_channel_label(&self.waves[i].trace.channel);
+                let div = format_channel_div(&self.waves[i], y_span);
+                let tip = format!(
+                    "{}\n{}\n{}\n{}\n{}: {}\n{}: {}\n{}: {}",
+                    ch,
+                    t(lang, "拖动：垂直位移", "Drag: vertical offset"),
+                    t(lang, "滚轮：比例 · Shift+滚轮：位移", "Wheel: scale · Shift+wheel: offset"),
+                    t(lang, "Ctrl+拖动：比例缩放", "Ctrl+drag: scale"),
+                    t(lang, "偏移", "Offset"),
+                    format_eng(off, &y_unit),
+                    t(lang, "比例", "Scale"),
+                    format_scale(sc),
+                    t(lang, "量程", "Range"),
+                    div,
+                );
+                resp.on_hover_text(tip);
+            }
+        }
+
+        if !ui.input(|i| i.pointer.primary_down()) {
+            self.dragging_channel_offset = None;
+            self.dragging_channel_scale = None;
         }
     }
 
@@ -1256,6 +1636,11 @@ impl WaveformAnalysisPanel {
                 },
             );
             return;
+        }
+
+        if self.extent_dirty {
+            self.refresh_cached_extent();
+            self.extent_dirty = false;
         }
 
         // Space toggles X/Y cursor measure (when not typing in a text field).
@@ -1296,7 +1681,33 @@ impl WaveformAnalysisPanel {
         let mut end_drag = false;
         let mut needs_clamp = false;
 
-        let plot_width_px = ui.available_width().max(256.0);
+        let total_w = ui.available_width();
+        let nch = self.waves.len();
+        let strip_w = if nch > 0 { CHANNEL_AXIS_COL_W } else { 0.0 };
+        let plot_w = (total_w - strip_w - 3.0).max(80.0);
+        let plot_width_px = plot_w.max(256.0);
+        let mut y_for_axes = self.last_y_range;
+        let mut plot_response = None;
+        let xu = self
+            .selected
+            .and_then(|i| self.waves.get(i))
+            .map(|w| w.trace.x_unit.clone())
+            .unwrap_or_else(|| "s".into());
+        let yu = self
+            .selected
+            .and_then(|i| self.waves.get(i))
+            .map(|w| w.trace.y_unit.clone())
+            .unwrap_or_else(|| "V".into());
+
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            plot_response = Some(
+                ui.allocate_ui_with_layout(
+                    egui::vec2(plot_w, height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_min_width(plot_w);
+                        ui.set_max_width(plot_w);
 
         // Rebuild viewport envelope cache when pan/zoom moves by ≥1 display column.
         if let Some((x0, x1)) = x_view {
@@ -1350,18 +1761,8 @@ impl WaveformAnalysisPanel {
         let y1 = self.y1;
         let y2 = self.y2;
         let dragging = self.dragging_cursor;
-        let xu = self
-            .selected
-            .and_then(|i| self.waves.get(i))
-            .map(|w| w.trace.x_unit.clone())
-            .unwrap_or_else(|| "s".into());
-        let yu = self
-            .selected
-            .and_then(|i| self.waves.get(i))
-            .map(|w| w.trace.y_unit.clone())
-            .unwrap_or_else(|| "V".into());
 
-        let response = Plot::new("waveform-analysis-plot")
+        Plot::new("waveform-analysis-plot")
             .height(height)
             .allow_zoom(allow_zoom)
             .allow_drag(mode == InteractMode::Pan)
@@ -1442,6 +1843,8 @@ impl WaveformAnalysisPanel {
                                 stroke,
                                 w.label.clone(),
                                 highlighted,
+                                w.y_scale,
+                                w.y_offset,
                             ));
                         }
                     } else if let Some(series) = view_cache.and_then(|c| c.per_wave.get(&i)) {
@@ -1453,11 +1856,26 @@ impl WaveformAnalysisPanel {
                                     stroke,
                                     w.label.clone(),
                                     highlighted,
+                                    w.y_scale,
+                                    w.y_offset,
                                 ));
                             }
                             WaveViewportSeries::Uniform(pts) if pts.len() >= 2 => {
+                                let scale = w.y_scale;
+                                let y_off = w.y_offset;
+                                let line_pts = if (scale - 1.0).abs() > f64::EPSILON
+                                    || y_off.abs() > f64::EPSILON
+                                {
+                                    PlotPoints::from(
+                                        pts.iter()
+                                            .map(|p| [p[0], p[1] * scale + y_off])
+                                            .collect::<Vec<[f64; 2]>>(),
+                                    )
+                                } else {
+                                    PlotPoints::from((**pts).clone())
+                                };
                                 plot_ui.line(
-                                    Line::new(PlotPoints::from((**pts).clone()))
+                                    Line::new(line_pts)
                                         .name(&w.label)
                                         .color(w.color)
                                         .width(stroke),
@@ -1471,6 +1889,8 @@ impl WaveformAnalysisPanel {
                                         stroke,
                                         w.label.clone(),
                                         highlighted,
+                                        w.y_scale,
+                                        w.y_offset,
                                     ));
                                 }
                             }
@@ -1482,6 +1902,8 @@ impl WaveformAnalysisPanel {
                             stroke,
                             w.label.clone(),
                             highlighted,
+                            w.y_scale,
+                            w.y_offset,
                         ));
                     }
                 }
@@ -1593,7 +2015,24 @@ impl WaveformAnalysisPanel {
                         needs_clamp = true;
                     }
                 }
-            });
+            })
+                    })
+                .inner,
+            );
+
+            if nch > 0 {
+                if let Some((y0, y1)) = next_y_range.or(y_for_axes) {
+                    y_for_axes = Some((y0, y1));
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(strip_w, height),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| self.channel_offset_axes(ui, tokens, lang, y0, y1),
+                    );
+                }
+            }
+        });
+
+        let response = plot_response.expect("waveform plot");
 
         if fit {
             self.fit_request = false;
@@ -1609,10 +2048,9 @@ impl WaveformAnalysisPanel {
         // Apply Ctrl+Shift+wheel Y zoom after ranges are captured for this frame.
         if y_wheel != 0.0 && response.response.hovered() {
             let zoom_speed = ui.ctx().options(|o| o.scroll_zoom_speed);
-            let factor = (zoom_speed * y_wheel).exp() as f64;
-            if factor.is_finite() && (factor - 1.0).abs() > 1e-6 {
-                self.request_zoom_axis(false, factor);
-            }
+            // Inverted: scroll up zooms in (matches scope-style Y+ expectation).
+            let factor = (zoom_speed * -y_wheel).exp() as f64;
+            self.apply_y_zoom_factor(factor);
         }
 
         if let Some((which, v)) = drag_cursor {
@@ -1652,25 +2090,57 @@ impl WaveformAnalysisPanel {
         // On-plot measurement overlay (X1/X2 or Y1/Y2 + delta).
         let overlay = match self.cursor_axis {
             CursorAxis::X => match (self.x1, self.x2) {
-                (Some(a), Some(b)) => Some(format!(
-                    "X1={}   X2={}   ΔX={}",
-                    format_eng(a, &xu),
-                    format_eng(b, &xu),
-                    format_eng(b - a, &xu)
-                )),
+                (Some(a), Some(b)) => {
+                    let dx = b - a;
+                    let freq = if dx.abs() > f64::EPSILON {
+                        format!("   f={}", format_freq(1.0 / dx.abs()))
+                    } else {
+                        String::new()
+                    };
+                    Some(format!(
+                        "X1={}   X2={}   ΔX={}{freq}",
+                        format_eng(a, &xu),
+                        format_eng(b, &xu),
+                        format_eng(dx, &xu),
+                    ))
+                }
                 (Some(a), None) => Some(format!("X1={}   X2=—", format_eng(a, &xu))),
                 _ => None,
             },
-            CursorAxis::Y => match (self.y1, self.y2) {
-                (Some(a), Some(b)) => Some(format!(
-                    "Y1={}   Y2={}   ΔY={}",
-                    format_eng(a, &yu),
-                    format_eng(b, &yu),
-                    format_eng(b - a, &yu)
-                )),
-                (Some(a), None) => Some(format!("Y1={}   Y2=—", format_eng(a, &yu))),
-                _ => None,
-            },
+            CursorAxis::Y => {
+                let sel = self.selected.or(if self.waves.len() == 1 { Some(0) } else { None });
+                match (sel, self.y1, self.y2) {
+                    (Some(i), Some(y1p), Some(y2p)) if self.waves.get(i).is_some() => {
+                        let w = &self.waves[i];
+                        let yu = w.trace.y_unit.as_str();
+                        let y1 = plot_y_to_native(y1p, w.y_scale, w.y_offset);
+                        let y2 = plot_y_to_native(y2p, w.y_scale, w.y_offset);
+                        Some(format!(
+                            "Y1={}   Y2={}   ΔY={} ({})",
+                            format_eng(y1, yu),
+                            format_eng(y2, yu),
+                            format_eng(y2 - y1, yu),
+                            short_channel_label(&w.trace.channel),
+                        ))
+                    }
+                    (_, Some(y1p), None) => {
+                        if let Some(i) = sel {
+                            if let Some(w) = self.waves.get(i) {
+                                let y1 = plot_y_to_native(y1p, w.y_scale, w.y_offset);
+                                Some(format!(
+                                    "Y1={}   Y2=—",
+                                    format_eng(y1, w.trace.y_unit.as_str())
+                                ))
+                            } else {
+                                Some(format!("Y1={}   Y2=—", format_eng(y1p, &yu)))
+                            }
+                        } else {
+                            Some(format!("Y1={}   Y2=—", format_eng(y1p, &yu)))
+                        }
+                    }
+                    _ => None,
+                }
+            }
         };
         if let Some(text) = overlay {
             let rect = response.response.rect;
@@ -1844,6 +2314,26 @@ pub fn tek_channel_color(channel: &str) -> Option<Color32> {
     color_for_channel(channel)
 }
 
+/// Short label for per-channel offset axis (e.g. CH1).
+fn short_channel_label(channel: &str) -> String {
+    let s = channel.trim();
+    if s.len() <= 4 {
+        return s.to_ascii_uppercase();
+    }
+    let upper = s.to_ascii_uppercase();
+    if let Some(rest) = upper.strip_prefix("CHANNEL") {
+        return format!("CH{}", rest.trim());
+    }
+    if upper.starts_with("CH") && upper.len() <= 4 {
+        return upper;
+    }
+    if s.len() > 6 {
+        format!("{}…", &s[..5])
+    } else {
+        s.to_string()
+    }
+}
+
 /// Map `CH1`…`CH8` (also `C1`, `Channel 1`) to Tek default colors.
 fn color_for_channel(channel: &str) -> Option<Color32> {
     let s = channel.trim();
@@ -1935,6 +2425,91 @@ fn ordered(a: f64, b: f64) -> (f64, f64) {
         (a, b)
     } else {
         (b, a)
+    }
+}
+
+/// Display-space Y center of a loaded wave (scale + offset applied).
+fn wave_display_y_center(w: &LoadedWave) -> f64 {
+    0.5 * (w.y_min + w.y_max) * w.y_scale + w.y_offset
+}
+
+/// Display-space Y bounds for a loaded wave (scale + offset applied).
+fn wave_display_y_bounds(w: &LoadedWave) -> (f64, f64) {
+    let y0 = w.y_min * w.y_scale + w.y_offset;
+    let y1 = w.y_max * w.y_scale + w.y_offset;
+    (y0.min(y1), y0.max(y1))
+}
+
+/// Stack multi-channel traces vertically on first load (avoids overlap).
+fn auto_stagger_channel_offsets(waves: &mut [LoadedWave], range: std::ops::Range<usize>) {
+    if range.end <= range.start + 1 {
+        return;
+    }
+    let avg_pp: f64 = waves[range.clone()]
+        .iter()
+        .map(|w| (w.y_max - w.y_min).abs())
+        .sum::<f64>()
+        / (range.end - range.start) as f64;
+    let gap = (avg_pp * 0.12).max(1e-12);
+    let start = range.start;
+    let mut top =
+        waves[start].y_max * waves[start].y_scale + waves[start].y_offset;
+    for i in range.start + 1..range.end {
+        let y_min = waves[i].y_min;
+        let scale = waves[i].y_scale;
+        waves[i].y_offset = top + gap - y_min * scale;
+        top = waves[i].y_max * scale + waves[i].y_offset;
+    }
+}
+
+/// Effective native units per vertical division for the selected channel.
+fn format_channel_div(w: &LoadedWave, plot_y_span: f64) -> String {
+    let native_span = plot_y_span / w.y_scale.abs().max(1e-30);
+    let per_div = native_span / 10.0;
+    format!("{}/div", format_eng(per_div, w.trace.y_unit.as_str()))
+}
+
+/// Convert plot Y coordinate to native channel value.
+fn plot_y_to_native(y_plot: f64, y_scale: f64, y_offset: f64) -> f64 {
+    if y_scale.abs() < f64::EPSILON {
+        y_plot
+    } else {
+        (y_plot - y_offset) / y_scale
+    }
+}
+
+/// Compact Y-axis tick label for the narrow strip (unit on top tick only).
+fn format_axis_tick(value: f64, unit: &str, with_unit: bool) -> String {
+    if !value.is_finite() {
+        return "—".into();
+    }
+    if with_unit {
+        return format_eng(value, unit);
+    }
+    let full = format_eng(value, unit);
+    full.split_whitespace().next().unwrap_or("—").to_string()
+}
+
+/// Adaptive frequency label (Hz / kHz / MHz / GHz via engineering prefix).
+fn format_freq(hz: f64) -> String {
+    if !hz.is_finite() || hz <= 0.0 {
+        return "—".into();
+    }
+    format_eng(hz, "Hz")
+}
+
+fn format_scale(scale: f64) -> String {
+    if !scale.is_finite() {
+        return "×—".into();
+    }
+    if (scale - 1.0).abs() < 1e-6 {
+        "×1".into()
+    } else if scale >= 10.0 {
+        format!("×{scale:.1}")
+    } else if scale >= 1.0 {
+        format!("×{scale:.2}")
+    } else {
+        format!("×{scale:.3}")
     }
 }
 
@@ -2033,8 +2608,9 @@ fn extent_of_traces(waves: &[&LoadedWave]) -> Option<PlotBounds> {
         any = true;
         xmin = xmin.min(w.x_min);
         xmax = xmax.max(w.x_max);
-        ymin = ymin.min(w.y_min);
-        ymax = ymax.max(w.y_max);
+        let (dy0, dy1) = wave_display_y_bounds(w);
+        ymin = ymin.min(dy0);
+        ymax = ymax.max(dy1);
     }
     if !any || !xmin.is_finite() {
         return None;
