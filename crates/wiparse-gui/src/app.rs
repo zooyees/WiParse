@@ -442,99 +442,207 @@ impl WiParseApp {
     }
 
     fn paint_about_dialog(&mut self, ctx: &egui::Context, t: &Tokens) {
+        use crate::update::UpdatePhase;
+
         self.updater.poll();
         let mut open = self.about_open;
         let mut close_requested = false;
+        const DIALOG_W: f32 = 400.0;
+        const BTN: Vec2 = Vec2::new(88.0, 28.0);
+
         egui::Window::new(tr(self.lang, "about.title"))
             .id(egui::Id::new("about_dialog"))
             .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
             .collapsible(false)
             .resizable(false)
+            .default_width(DIALOG_W)
             .open(&mut open)
             .frame(
                 Frame::window(&ctx.style())
                     .fill(t.panel_bg)
                     .stroke(Stroke::new(1.0_f32, t.border))
-                    .corner_radius(CornerRadius::same(6))
-                    .inner_margin(Margin::same(16)),
+                    .corner_radius(CornerRadius::same(8))
+                    .inner_margin(Margin::symmetric(18, 16)),
             )
             .show(ctx, |ui| {
-                ui.set_min_width(320.0);
-                ui.vertical_centered(|ui| {
-                    ui.label(
-                        egui::RichText::new("WiParse")
-                            .size(22.0)
-                            .strong()
-                            .color(t.text_primary),
-                    );
-                    ui.add_space(8.0);
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{} {}",
-                            tr(self.lang, "about.version"),
-                            APP_VERSION
-                        ))
-                        .size(13.0)
-                        .color(t.text_muted),
-                    );
-                    ui.add_space(10.0);
-                    use crate::update::UpdatePhase;
-                    match self.updater.phase() {
-                        UpdatePhase::Idle => {}
-                        UpdatePhase::Checking => {
-                            ui.label(tr(self.lang, "update.checking"));
-                        }
-                        UpdatePhase::UpToDate => {
-                            ui.label(tr(self.lang, "update.up_to_date"));
-                        }
-                        UpdatePhase::Available { manifest, .. } => {
-                            ui.label(format!(
-                                "{}: {}",
-                                tr(self.lang, "update.available"),
-                                manifest.version
-                            ));
-                            if let Some(notes) = manifest.notes.as_deref() {
-                                ui.label(
-                                    egui::RichText::new(notes)
-                                        .small()
-                                        .color(t.text_muted),
-                                );
-                            }
-                        }
-                        UpdatePhase::Downloading { received, total } => {
-                            let frac = if *total > 0 {
-                                *received as f32 / *total as f32
-                            } else {
-                                0.0
-                            };
-                            ui.label(tr(self.lang, "update.downloading"));
-                            ui.add(egui::ProgressBar::new(frac));
-                        }
-                        UpdatePhase::Ready(_) => {
-                            ui.label(tr(self.lang, "update.ready"));
-                        }
-                        UpdatePhase::Error(msg) => {
-                            ui.colored_label(Color32::from_rgb(0xFF, 0x6B, 0x6B), msg);
-                        }
-                    }
-                    ui.add_space(10.0);
-                    ui.horizontal(|ui| {
-                        if ui.button(tr(self.lang, "update.check")).clicked() {
-                            self.updater.check_now();
-                        }
-                        if matches!(self.updater.phase(), UpdatePhase::Available { .. })
-                            && ui.button(tr(self.lang, "update.download")).clicked()
-                        {
-                            self.updater.download_available();
-                        }
-                        if matches!(self.updater.phase(), UpdatePhase::Ready(_))
-                            && ui.button(tr(self.lang, "update.install")).clicked()
-                        {
-                            let _ = self.updater.apply_ready_and_exit();
-                        }
+                ui.set_min_width(DIALOG_W);
+                ui.set_max_width(DIALOG_W);
+
+                // Header: product identity + version badge
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new("WiParse")
+                                .size(24.0)
+                                .strong()
+                                .color(t.text_primary),
+                        );
+                        ui.label(
+                            egui::RichText::new(tr(self.lang, "about.subtitle"))
+                                .size(12.0)
+                                .color(t.text_muted),
+                        );
                     });
-                    ui.add_space(10.0);
-                    if ui.button(tr(self.lang, "about.close")).clicked() {
+                    ui.with_layout(
+                        egui::Layout::top_down(egui::Align::Max).with_cross_align(egui::Align::Max),
+                        |ui| {
+                            Frame::NONE
+                                .fill(t.surface_bg)
+                                .stroke(Stroke::new(1.0_f32, t.border))
+                                .corner_radius(CornerRadius::same(4))
+                                .inner_margin(Margin::symmetric(8, 4))
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!("v{APP_VERSION}"))
+                                            .monospace()
+                                            .size(12.0)
+                                            .color(t.accent),
+                                    );
+                                });
+                        },
+                    );
+                });
+
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(10.0);
+
+                // Update section card
+                Frame::NONE
+                    .fill(t.surface_bg)
+                    .stroke(Stroke::new(1.0_f32, t.border))
+                    .corner_radius(CornerRadius::same(6))
+                    .inner_margin(Margin::symmetric(12, 10))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(
+                            egui::RichText::new(tr(self.lang, "about.update_section"))
+                                .size(13.0)
+                                .strong()
+                                .color(t.text_primary),
+                        );
+                        ui.add_space(8.0);
+
+                        let status_h = 52.0;
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), status_h),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                match self.updater.phase() {
+                                    UpdatePhase::Idle => {
+                                        ui.label(
+                                            egui::RichText::new("—")
+                                                .size(12.0)
+                                                .color(t.text_muted),
+                                        );
+                                    }
+                                    UpdatePhase::Checking => {
+                                        ui.horizontal(|ui| {
+                                            ui.spinner();
+                                            ui.label(tr(self.lang, "update.checking"));
+                                        });
+                                    }
+                                    UpdatePhase::UpToDate => {
+                                        ui.label(
+                                            egui::RichText::new(tr(self.lang, "update.up_to_date"))
+                                                .color(t.text_primary),
+                                        );
+                                    }
+                                    UpdatePhase::Available { manifest, .. } => {
+                                        ui.label(format!(
+                                            "{}: v{}",
+                                            tr(self.lang, "update.available"),
+                                            manifest.version
+                                        ));
+                                        if let Some(notes) = manifest.notes.as_deref() {
+                                            ui.add_space(2.0);
+                                            egui::ScrollArea::vertical()
+                                                .max_height(36.0)
+                                                .show(ui, |ui| {
+                                                    ui.label(
+                                                        egui::RichText::new(notes)
+                                                            .size(11.0)
+                                                            .color(t.text_muted),
+                                                    );
+                                                });
+                                        }
+                                    }
+                                    UpdatePhase::Downloading { received, total } => {
+                                        ui.label(tr(self.lang, "update.downloading"));
+                                        let frac = if *total > 0 {
+                                            *received as f32 / *total as f32
+                                        } else {
+                                            0.0
+                                        };
+                                        ui.add(egui::ProgressBar::new(frac).show_percentage());
+                                    }
+                                    UpdatePhase::Ready(_) => {
+                                        ui.label(
+                                            egui::RichText::new(tr(self.lang, "update.ready"))
+                                                .color(t.text_primary),
+                                        );
+                                    }
+                                    UpdatePhase::Error(msg) => {
+                                        ui.colored_label(
+                                            Color32::from_rgb(0xFF, 0x6B, 0x6B),
+                                            msg,
+                                        );
+                                    }
+                                }
+                            },
+                        );
+
+                        ui.add_space(8.0);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 8.0;
+                            if ui
+                                .add(
+                                    egui::Button::new(tr(self.lang, "update.check"))
+                                        .min_size(BTN),
+                                )
+                                .clicked()
+                            {
+                                self.updater.check_now();
+                            }
+                            if matches!(self.updater.phase(), UpdatePhase::Available { .. })
+                                && ui
+                                    .add(
+                                        egui::Button::new(tr(self.lang, "update.download"))
+                                            .min_size(BTN)
+                                            .fill(t.accent)
+                                            .stroke(Stroke::NONE),
+                                    )
+                                    .clicked()
+                            {
+                                self.updater.download_available();
+                            }
+                            if matches!(self.updater.phase(), UpdatePhase::Ready(_))
+                                && ui
+                                    .add(
+                                        egui::Button::new(tr(self.lang, "update.install"))
+                                            .min_size(BTN)
+                                            .fill(t.accent)
+                                            .stroke(Stroke::NONE),
+                                    )
+                                    .clicked()
+                            {
+                                let _ = self.updater.apply_ready_and_exit();
+                            }
+                        });
+                    });
+
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(tr(self.lang, "about.close"))
+                                .min_size(egui::vec2(72.0, 28.0)),
+                        )
+                        .clicked()
+                    {
                         close_requested = true;
                     }
                 });

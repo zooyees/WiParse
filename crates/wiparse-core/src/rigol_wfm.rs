@@ -160,7 +160,7 @@ fn load_1000z(bytes: &[u8]) -> Result<Vec<WaveformTrace>, WaveformFileError> {
         }
         traces.push(WaveformTrace {
             channel: format!("CH{}", i + 1),
-            x,
+            x: x.into(),
             y,
             x_unit: "s".into(),
             y_unit: "V".into(),
@@ -260,7 +260,7 @@ fn load_1000b(bytes: &[u8]) -> Result<Vec<WaveformTrace>, WaveformFileError> {
         }
         traces.push(WaveformTrace {
             channel: format!("CH{}", i + 1),
-            x,
+            x: x.into(),
             y,
             x_unit: "s".into(),
             y_unit: "V".into(),
@@ -355,7 +355,7 @@ fn load_4000(bytes: &[u8]) -> Result<Vec<WaveformTrace>, WaveformFileError> {
         }
         traces.push(WaveformTrace {
             channel: format!("CH{}", i + 1),
-            x,
+            x: x.into(),
             y,
             x_unit: "s".into(),
             y_unit: "V".into(),
@@ -453,7 +453,7 @@ fn load_dho800(bytes: &[u8]) -> Result<Vec<WaveformTrace>, WaveformFileError> {
         }
         traces.push(WaveformTrace {
             channel: format!("CH{}", ch + 1),
-            x,
+            x: x.into(),
             y,
             x_unit: "s".into(),
             y_unit: "V".into(),

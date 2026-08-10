@@ -9,13 +9,17 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
-use crossbeam_channel::{Receiver, unbounded};
+use crossbeam_channel::{Receiver, Sender, unbounded};
+use rayon::prelude::*;
+use wiparse_core::bus_decode::{
+    compact_bus_decode_indices, decode_bus, BusDecodeResult, BusDecodeSettings, BusKind,
+};
 use wiparse_core::config::{load_config, save_config, AppConfig};
 use wiparse_core::i18n::{tr, Lang};
 use wiparse_core::instrument::WaveformTrace;
 use wiparse_core::paths::project_path;
 use wiparse_core::wave_display::{
-    build_overview_envelope, build_viewport_series, quantize_view_cache_key,
+    build_load_snapshot, build_viewport_series, quantize_view_cache_key,
     viewport_column_count, WaveViewportSeries,
 };
 use wiparse_core::waveform_file::{
@@ -77,6 +81,8 @@ struct LoadedWave {
     y_min: f64,
     y_max: f64,
     measures: WaveformMeasurements,
+    /// True until tier-2 frequency / robust extent finish.
+    measures_pending: bool,
     color: Color32,
     /// Display-only vertical shift (plot Y units); measurements use raw trace.
     y_offset: f64,
@@ -104,7 +110,31 @@ struct LoadedChannelDraft {
 
 struct PendingWaveLoad {
     path: PathBuf,
-    rx: Receiver<Result<(Vec<LoadedChannelDraft>, usize), String>>,
+    rx: Receiver<WaveLoadEvent>,
+    /// Wave indices inserted by tier-1 preview (updated when preview arrives).
+    wave_range: Option<(usize, usize)>,
+}
+
+enum WaveLoadEvent {
+    Preview {
+        channels: Vec<LoadedChannelDraft>,
+        max_pts: usize,
+    },
+    Final {
+        measures: Vec<WaveformMeasurements>,
+        extents: Vec<(f64, f64, f64, f64)>,
+    },
+    Error(String),
+}
+
+struct PendingViewportBuild {
+    view_key: u64,
+    rx: Receiver<(u64, HashMap<usize, WaveViewportSeries>)>,
+}
+
+struct PendingBusDecode {
+    generation: u64,
+    rx: Receiver<(u64, BusDecodeResult)>,
 }
 
 pub struct WaveformAnalysisPanel {
@@ -145,10 +175,21 @@ pub struct WaveformAnalysisPanel {
     extent_dirty: bool,
     /// Background file parse in progress.
     pending_load: Option<PendingWaveLoad>,
+    /// Background viewport LOD rebuild.
+    pending_viewport: Option<PendingViewportBuild>,
     /// Dragging a channel position handle on the right axis strip.
     dragging_channel_offset: Option<usize>,
     /// Ctrl+drag on channel strip adjusts vertical scale.
     dragging_channel_scale: Option<usize>,
+    /// Bus decode configuration and results.
+    bus_settings: BusDecodeSettings,
+    bus_result: Option<BusDecodeResult>,
+    bus_decode_gen: u64,
+    pending_bus_decode: Option<PendingBusDecode>,
+    selected_bus_frame: Option<usize>,
+    bus_decode_dirty: bool,
+    /// Optional manual UART baud entry (empty = auto).
+    uart_baud_text: String,
 }
 
 impl WaveformAnalysisPanel {
@@ -189,8 +230,16 @@ impl WaveformAnalysisPanel {
             cached_extent: None,
             extent_dirty: true,
             pending_load: None,
+            pending_viewport: None,
             dragging_channel_offset: None,
             dragging_channel_scale: None,
+            bus_settings: BusDecodeSettings::default(),
+            bus_result: None,
+            bus_decode_gen: 0,
+            pending_bus_decode: None,
+            selected_bus_frame: None,
+            bus_decode_dirty: false,
+            uart_baud_text: String::new(),
         };
         panel.refresh_wave_browser();
         panel
@@ -202,6 +251,11 @@ impl WaveformAnalysisPanel {
 
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
         self.poll_pending_loads(lang);
+        self.poll_pending_viewport();
+        self.poll_pending_bus_decode();
+        if self.bus_decode_dirty && self.schedule_bus_decode() {
+            self.bus_decode_dirty = false;
+        }
         let typing = ui.ctx().wants_keyboard_input();
         if !typing && ui.input(|i| i.key_pressed(egui::Key::Escape)) && self.selected.is_some() {
             self.selected = None;
@@ -232,19 +286,32 @@ impl WaveformAnalysisPanel {
             self.toolbar(ui, lang, tokens);
         });
 
-        // Browser (top ~58%) + measurements (bottom), matching serial sidebar card width.
-        let browser_h = ((body_h - PANEL_GAP) * 0.58).max(180.0).min(body_h * 0.72);
-        let meas_h = (body_h - browser_h - PANEL_GAP).max(100.0);
+        // Browser (~45%) + bus decode (~30%) + measurements (rest).
+        let body_inner = (body_h - PANEL_GAP * 2.0).max(200.0);
+        let browser_h = (body_inner * 0.45).max(140.0);
+        let bus_h = (body_inner * 0.30).max(110.0);
+        let meas_h = (body_inner - browser_h - bus_h).max(90.0);
         let browser_rect =
             egui::Rect::from_min_size(side_rect.min, egui::vec2(side_w, browser_h));
-        let meas_rect = egui::Rect::from_min_size(
+        let bus_rect = egui::Rect::from_min_size(
             egui::pos2(side_rect.min.x, side_rect.min.y + browser_h + PANEL_GAP),
+            egui::vec2(side_w, bus_h),
+        );
+        let meas_rect = egui::Rect::from_min_size(
+            egui::pos2(side_rect.min.x, side_rect.min.y + browser_h + bus_h + PANEL_GAP * 2.0),
             egui::vec2(side_w, meas_h),
         );
 
         panel_in_rect(ui, browser_rect, |ui| {
             self.browser_panel(ui, lang, tokens);
         });
+        card_in_rect(
+            ui,
+            bus_rect,
+            tokens,
+            &t(lang, "协议分析", "Bus Decode"),
+            |ui| self.bus_decode_panel(ui, lang, tokens),
+        );
         card_in_rect(
             ui,
             meas_rect,
@@ -304,6 +371,9 @@ impl WaveformAnalysisPanel {
                                 self.last_y_range = None;
                                 self.pending_bounds = None;
                                 self.fit_request = false;
+                                self.bus_result = None;
+                                self.pending_bus_decode = None;
+                                self.selected_bus_frame = None;
                             } else {
                                 self.activate_wave(0);
                             }
@@ -439,7 +509,7 @@ impl WaveformAnalysisPanel {
                         ))
                         .clicked()
                     {
-                        self.apply_y_zoom_factor(0.5);
+                        self.apply_y_zoom_factor(2.0);
                     }
                     if ui
                         .add(egui::Button::new("Y−").min_size(egui::vec2(36.0, 28.0)))
@@ -458,7 +528,7 @@ impl WaveformAnalysisPanel {
                         ))
                         .clicked()
                     {
-                        self.apply_y_zoom_factor(2.0);
+                        self.apply_y_zoom_factor(0.5);
                     }
                     if ui
                         .add_enabled(self.selected.is_some(), {
@@ -628,19 +698,22 @@ impl WaveformAnalysisPanel {
         self.fit_request = false;
     }
 
-    /// Y zoom: per-channel scale when a channel is selected, else global plot Y range.
-    fn apply_y_zoom_factor(&mut self, factor: f64) {
-        if !factor.is_finite() || (factor - 1.0).abs() <= 1e-6 {
+    /// Y zoom using egui_plot convention: `zoom > 1` zooms in, `zoom < 1` zooms out.
+    ///
+    /// Selected channel → multiply `y_scale` (taller wave = zoom in).
+    /// No selection → shrink/expand plot Y span (inverse of `zoom`).
+    fn apply_y_zoom_factor(&mut self, zoom: f64) {
+        if !zoom.is_finite() || (zoom - 1.0).abs() <= 1e-6 {
             return;
         }
         if let Some(i) = self.selected {
             if let Some(w) = self.waves.get_mut(i) {
-                w.y_scale = (w.y_scale * factor).clamp(1e-12, 1e12);
+                w.y_scale = (w.y_scale * zoom).clamp(1e-12, 1e12);
                 self.mark_extent_dirty();
                 return;
             }
         }
-        self.request_zoom_axis(false, factor);
+        self.request_zoom_axis(false, 1.0 / zoom);
     }
 
     fn data_extent(&self) -> Option<PlotBounds> {
@@ -1046,81 +1119,29 @@ impl WaveformAnalysisPanel {
             return;
         }
         let (tx, rx) = unbounded();
-        self.pending_load = Some(PendingWaveLoad { path: path.clone(), rx });
+        self.pending_load = Some(PendingWaveLoad {
+            path: path.clone(),
+            rx,
+            wave_range: None,
+        });
         self.status = format!(
             "{} {}…",
             t(lang, "正在加载", "Loading"),
             path.display()
         );
         thread::spawn(move || {
-            let result = load_waveform_file_worker(&path);
-            let _ = tx.send(result);
+            load_waveform_file_worker(&path, tx);
         });
     }
 
-    fn poll_pending_loads(&mut self, lang: Lang) {
-        let Some(load) = self.pending_load.as_ref() else {
-            return;
-        };
-        let Ok(result) = load.rx.try_recv() else {
-            return;
-        };
-        let path = load.path.clone();
-        self.pending_load = None;
-        match result {
-            Ok((channels, max_pts)) => {
-                let nch = channels.len();
-                let first_idx = self.waves.len();
-                for draft in channels {
-                    let color = color_for_channel(&draft.trace.channel).unwrap_or_else(|| {
-                        let c = TRACE_COLORS[self.next_color % TRACE_COLORS.len()];
-                        self.next_color += 1;
-                        c
-                    });
-                    self.waves.push(LoadedWave {
-                        path: path.clone(),
-                        label: draft.label,
-                        trace: draft.trace,
-                        overview: draft.overview,
-                        x_min: draft.x_min,
-                        x_max: draft.x_max,
-                        y_min: draft.y_min,
-                        y_max: draft.y_max,
-                        measures: draft.measures,
-                        color,
-                        y_offset: 0.0,
-                        y_scale: 1.0,
-                    });
-                }
-                if nch > 1 {
-                    let end = self.waves.len();
-                    auto_stagger_channel_offsets(&mut self.waves, first_idx..end);
-                }
-                self.view_line_cache = None;
-                self.gated_measure_cache = None;
-                self.mark_extent_dirty();
-                self.activate_wave(first_idx);
-                self.fit_request = true;
-                self.status = format!(
-                    "{} {} ({} ch, {} pts/ch)",
-                    t(lang, "已加载", "Loaded"),
-                    path.display(),
-                    nch,
-                    max_pts
-                );
-            }
-            Err(err) => {
-                self.status = format!(
-                    "{} {}: {err}",
-                    t(lang, "加载失败", "Load failed"),
-                    path.display()
-                );
-            }
-        }
-    }
-
-    fn load_path_sync(&mut self, path: &Path) -> Result<usize, String> {
-        let (channels, max_pts) = load_waveform_file_worker(path)?;
+    fn apply_preview_channels(
+        &mut self,
+        path: &Path,
+        channels: Vec<LoadedChannelDraft>,
+        max_pts: usize,
+        lang: Lang,
+    ) -> (usize, usize) {
+        let nch = channels.len();
         let first_idx = self.waves.len();
         for draft in channels {
             let color = color_for_channel(&draft.trace.channel).unwrap_or_else(|| {
@@ -1138,19 +1159,568 @@ impl WaveformAnalysisPanel {
                 y_min: draft.y_min,
                 y_max: draft.y_max,
                 measures: draft.measures,
+                measures_pending: true,
                 color,
                 y_offset: 0.0,
                 y_scale: 1.0,
             });
         }
         let end = self.waves.len();
-        if end - first_idx > 1 {
+        if nch > 1 {
             auto_stagger_channel_offsets(&mut self.waves, first_idx..end);
+        }
+        self.view_line_cache = None;
+        self.pending_viewport = None;
+        self.gated_measure_cache = None;
+        self.mark_extent_dirty();
+        self.activate_wave(first_idx);
+        self.fit_request = true;
+        self.status = format!(
+            "{} {} ({} ch, {} pts/ch)",
+            t(lang, "已加载", "Loaded"),
+            path.display(),
+            nch,
+            max_pts
+        );
+        self.bus_decode_dirty = true;
+        (first_idx, end)
+    }
+
+    fn apply_final_measures(&mut self, wave_range: (usize, usize), measures: Vec<WaveformMeasurements>, extents: Vec<(f64, f64, f64, f64)>) {
+        let (first, end) = wave_range;
+        for (i, (m, (x_min, x_max, y_min, y_max))) in (first..end)
+            .zip(measures.into_iter().zip(extents.into_iter()))
+        {
+            if let Some(w) = self.waves.get_mut(i) {
+                w.measures = m;
+                w.x_min = x_min;
+                w.x_max = x_max;
+                w.y_min = y_min;
+                w.y_max = y_max;
+                w.measures_pending = false;
+            }
+        }
+        self.mark_extent_dirty();
+        self.gated_measure_cache = None;
+    }
+
+    fn poll_pending_loads(&mut self, lang: Lang) {
+        loop {
+            let event = {
+                let Some(load) = self.pending_load.as_ref() else {
+                    return;
+                };
+                match load.rx.try_recv() {
+                    Ok(ev) => ev,
+                    Err(_) => return,
+                }
+            };
+            let path = self
+                .pending_load
+                .as_ref()
+                .map(|l| l.path.clone())
+                .unwrap_or_default();
+            match event {
+                WaveLoadEvent::Preview { channels, max_pts } => {
+                    let (first, end) =
+                        self.apply_preview_channels(&path, channels, max_pts, lang);
+                    if let Some(load) = self.pending_load.as_mut() {
+                        load.wave_range = Some((first, end));
+                    }
+                }
+                WaveLoadEvent::Final {
+                    measures,
+                    extents,
+                } => {
+                    if let Some((first, end)) = self
+                        .pending_load
+                        .as_ref()
+                        .and_then(|l| l.wave_range)
+                    {
+                        self.apply_final_measures((first, end), measures, extents);
+                    }
+                    self.pending_load = None;
+                }
+                WaveLoadEvent::Error(err) => {
+                    self.pending_load = None;
+                    self.status = format!(
+                        "{} {}: {err}",
+                        t(lang, "加载失败", "Load failed"),
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+
+    fn poll_pending_viewport(&mut self) {
+        let Some(pending) = self.pending_viewport.as_ref() else {
+            return;
+        };
+        let Ok((key, per_wave)) = pending.rx.try_recv() else {
+            return;
+        };
+        let expected_key = pending.view_key;
+        self.pending_viewport = None;
+        if key == expected_key {
+            self.view_line_cache = Some(ViewLineCache {
+                view_key: key,
+                per_wave,
+            });
+        }
+    }
+
+    fn schedule_viewport_build(&mut self, key: u64, x0: f64, x1: f64, plot_width_px: f32) {
+        if self
+            .pending_viewport
+            .as_ref()
+            .is_some_and(|p| p.view_key == key)
+        {
+            return;
+        }
+        let jobs: Vec<ViewportBuildJob> = self
+            .waves
+            .iter()
+            .enumerate()
+            .filter_map(|(i, w)| {
+                if view_covers_overview(x0, x1, w.x_min, w.x_max) {
+                    return None;
+                }
+                let lo = x0.min(x1);
+                let hi = x0.max(x1);
+                let pad = (hi - lo).abs() * 0.02;
+                if w.x_max < lo - pad || w.x_min > hi + pad {
+                    return None;
+                }
+                let n = w.trace.x.len().min(w.trace.y.len());
+                Some(ViewportBuildJob {
+                    index: i,
+                    x: Arc::clone(&w.trace.x),
+                    y: w.trace.y[..n].to_vec(),
+                    x0,
+                    x1,
+                    plot_width_px,
+                })
+            })
+            .collect();
+        if jobs.is_empty() {
+            self.view_line_cache = Some(ViewLineCache {
+                view_key: key,
+                per_wave: HashMap::new(),
+            });
+            return;
+        }
+        let (tx, rx) = unbounded();
+        self.pending_viewport = Some(PendingViewportBuild { view_key: key, rx });
+        thread::spawn(move || {
+            let mut per_wave = HashMap::new();
+            for job in jobs {
+                let n = job.x.len().min(job.y.len());
+                per_wave.insert(
+                    job.index,
+                    build_viewport_series(
+                        &job.x[..n],
+                        &job.y[..n],
+                        job.x0,
+                        job.x1,
+                        job.plot_width_px,
+                    ),
+                );
+            }
+            let _ = tx.send((key, per_wave));
+        });
+    }
+
+    fn bus_channels_ready(&self) -> bool {
+        match self.bus_settings.kind {
+            BusKind::Off => false,
+            BusKind::Uart => self.bus_settings.channels.uart_signal.is_some(),
+            BusKind::I2c => {
+                self.bus_settings.channels.i2c_scl.is_some()
+                    && self.bus_settings.channels.i2c_sda.is_some()
+            }
+            BusKind::Spi => {
+                self.bus_settings.channels.spi_clk.is_some()
+                    && self.bus_settings.channels.spi_mosi.is_some()
+            }
+            BusKind::I2s => {
+                self.bus_settings.channels.i2s_bclk.is_some()
+                    && self.bus_settings.channels.i2s_ws.is_some()
+                    && self.bus_settings.channels.i2s_data.is_some()
+            }
+        }
+    }
+
+    fn effective_bus_settings(&self) -> BusDecodeSettings {
+        let mut settings = self.bus_settings.clone();
+        settings.uart.baud = self
+            .uart_baud_text
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|&b| b > 0.0)
+            .or(settings.uart.baud);
+        if let (Some(a), Some(b)) = (self.x1, self.x2) {
+            settings.time_gate = Some((a, b));
+        } else {
+            settings.time_gate = None;
+        }
+        settings
+    }
+
+    fn schedule_bus_decode(&mut self) -> bool {
+        if self.bus_settings.kind == BusKind::Off || self.waves.is_empty() {
+            self.bus_result = None;
+            self.pending_bus_decode = None;
+            self.selected_bus_frame = None;
+            return true;
+        }
+        if !self.bus_channels_ready() {
+            self.bus_result = None;
+            return true;
+        }
+        if self.pending_bus_decode.is_some() {
+            return false;
+        }
+        let settings = self.effective_bus_settings();
+        let (indices, settings) =
+            compact_bus_decode_indices(self.waves.len(), &settings);
+        let traces: Vec<WaveformTrace> = indices
+            .iter()
+            .filter_map(|&i| self.waves.get(i).map(|w| w.trace.clone()))
+            .collect();
+        let generation = self.bus_decode_gen.wrapping_add(1);
+        self.bus_decode_gen = generation;
+        let (tx, rx) = unbounded();
+        self.pending_bus_decode = Some(PendingBusDecode { generation, rx });
+        thread::spawn(move || {
+            let result = decode_bus(&traces, &settings);
+            let _ = tx.send((generation, result));
+        });
+        true
+    }
+
+    fn poll_pending_bus_decode(&mut self) {
+        let Some(pending) = self.pending_bus_decode.as_ref() else {
+            return;
+        };
+        let Ok((gen, result)) = pending.rx.try_recv() else {
+            return;
+        };
+        self.pending_bus_decode = None;
+        if gen != self.bus_decode_gen {
+            return;
+        }
+        self.bus_result = Some(result);
+        self.selected_bus_frame = None;
+    }
+
+    fn bus_decode_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        let mut changed = false;
+        if self.waves.is_empty() {
+            ui.label(
+                RichText::new(t(lang, "加载波形后可用", "Load a waveform first"))
+                    .small()
+                    .color(tokens.text_muted),
+            );
+            return;
+        }
+
+        let layout = bus_form_layout(ui);
+        ui.spacing_mut().item_spacing.y = 4.0;
+
+        egui::Grid::new("bus_decode_form")
+            .num_columns(2)
+            .spacing([6.0, 4.0])
+            .show(ui, |ui| {
+                let prev = self.bus_settings.kind;
+                bus_grid_label(ui, layout, &t(lang, "协议", "Protocol"));
+                egui::ComboBox::from_id_salt("bus_kind")
+                    .selected_text(self.bus_settings.kind.label())
+                    .width(layout.field_w)
+                    .show_ui(ui, |ui| {
+                        for kind in BusKind::all_selectable() {
+                            if ui
+                                .selectable_label(self.bus_settings.kind == *kind, kind.label())
+                                .clicked()
+                            {
+                                self.bus_settings.kind = *kind;
+                                changed = true;
+                            }
+                        }
+                    });
+                if self.bus_settings.kind != prev {
+                    changed = true;
+                }
+                ui.end_row();
+
+                match self.bus_settings.kind {
+                    BusKind::Off => {}
+                    BusKind::Uart => {
+                        changed |= bus_grid_channel_combo(
+                            ui,
+                            layout,
+                            "uart_sig",
+                            &t(lang, "信号", "Signal"),
+                            &self.waves,
+                            &mut self.bus_settings.channels.uart_signal,
+                        );
+                        bus_grid_label(ui, layout, &t(lang, "波特率", "Baud"));
+                        let baud_hint = t(lang, "自动", "auto");
+                        let resp = ui.add_sized(
+                            [layout.field_w, layout.row_h],
+                            egui::TextEdit::singleline(&mut self.uart_baud_text)
+                                .hint_text(baud_hint),
+                        );
+                        let enter = ui.input(|i| {
+                            i.events.iter().any(|e| {
+                                matches!(
+                                    e,
+                                    egui::Event::Key {
+                                        key: egui::Key::Enter,
+                                        pressed: true,
+                                        ..
+                                    }
+                                )
+                            })
+                        });
+                        if resp.lost_focus() || (resp.has_focus() && enter) {
+                            changed = true;
+                        }
+                        ui.end_row();
+                    }
+                    BusKind::I2c => {
+                        changed |= bus_grid_channel_combo(
+                            ui,
+                            layout,
+                            "i2c_scl",
+                            "SCL",
+                            &self.waves,
+                            &mut self.bus_settings.channels.i2c_scl,
+                        );
+                        changed |= bus_grid_channel_combo(
+                            ui,
+                            layout,
+                            "i2c_sda",
+                            "SDA",
+                            &self.waves,
+                            &mut self.bus_settings.channels.i2c_sda,
+                        );
+                    }
+                    BusKind::Spi => {
+                        changed |= bus_grid_channel_combo(
+                            ui,
+                            layout,
+                            "spi_clk",
+                            "CLK",
+                            &self.waves,
+                            &mut self.bus_settings.channels.spi_clk,
+                        );
+                        changed |= bus_grid_channel_combo(
+                            ui,
+                            layout,
+                            "spi_mosi",
+                            "MOSI",
+                            &self.waves,
+                            &mut self.bus_settings.channels.spi_mosi,
+                        );
+                        changed |= bus_grid_channel_combo(
+                            ui,
+                            layout,
+                            "spi_miso",
+                            &t(lang, "MISO", "MISO"),
+                            &self.waves,
+                            &mut self.bus_settings.channels.spi_miso,
+                        );
+                        changed |= bus_grid_channel_combo(
+                            ui,
+                            layout,
+                            "spi_cs",
+                            &t(lang, "CS", "CS"),
+                            &self.waves,
+                            &mut self.bus_settings.channels.spi_cs,
+                        );
+                    }
+                    BusKind::I2s => {
+                        changed |= bus_grid_channel_combo(
+                            ui,
+                            layout,
+                            "i2s_bclk",
+                            "BCLK",
+                            &self.waves,
+                            &mut self.bus_settings.channels.i2s_bclk,
+                        );
+                        changed |= bus_grid_channel_combo(
+                            ui,
+                            layout,
+                            "i2s_ws",
+                            "WS",
+                            &self.waves,
+                            &mut self.bus_settings.channels.i2s_ws,
+                        );
+                        changed |= bus_grid_channel_combo(
+                            ui,
+                            layout,
+                            "i2s_data",
+                            "DATA",
+                            &self.waves,
+                            &mut self.bus_settings.channels.i2s_data,
+                        );
+                        bus_grid_label(ui, layout, &t(lang, "位宽", "Bits"));
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            let bits = self.bus_settings.i2s.bits_per_sample;
+                            for (label, value) in [("16", 16u8), ("24", 24), ("32", 32)] {
+                                if ui
+                                    .add_sized(
+                                        [28.0, layout.row_h],
+                                        egui::Button::new(label).selected(bits == value),
+                                    )
+                                    .clicked()
+                                    && bits != value
+                                {
+                                    self.bus_settings.i2s.bits_per_sample = value;
+                                    changed = true;
+                                }
+                            }
+                        });
+                        ui.end_row();
+                    }
+                }
+            });
+
+        if self.bus_settings.kind == BusKind::Off {
+            ui.label(
+                RichText::new(t(lang, "选择协议并映射通道", "Pick a protocol and map channels"))
+                    .small()
+                    .color(tokens.text_muted),
+            );
+        }
+
+        ui.add_space(4.0);
+        if changed {
+            self.bus_decode_dirty = true;
+        }
+
+        if self.pending_bus_decode.is_some() {
+            ui.label(
+                RichText::new(t(lang, "解码中…", "Decoding…"))
+                    .small()
+                    .color(tokens.text_muted),
+            );
+        }
+        if let Some(result) = &self.bus_result {
+            if let Some(err) = &result.error {
+                ui.label(RichText::new(err).small().color(tokens.stop_bg));
+            }
+            if !result.info.is_empty() {
+                ui.label(RichText::new(&result.info).small().color(tokens.text_muted));
+            }
+            if result.frames.is_empty() && result.error.is_none() {
+                ui.label(
+                    RichText::new(t(lang, "无解码帧", "No decoded frames"))
+                        .small()
+                        .color(tokens.text_muted),
+                );
+            }
+            if !result.frames.is_empty() {
+                let list_h = ui.available_height().max(48.0);
+                let mut clicked_frame: Option<usize> = None;
+                let selected = self.selected_bus_frame;
+                egui::ScrollArea::vertical()
+                    .id_salt("bus_decode_frames")
+                    .max_height(list_h)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for (i, frame) in result.frames.iter().enumerate() {
+                            let row_selected = selected == Some(i);
+                            let label = format!(
+                                "{}\t{}",
+                                format_eng(frame.t_start, "s"),
+                                frame.summary
+                            );
+                            if ui.selectable_label(row_selected, label).clicked() {
+                                clicked_frame = Some(i);
+                            }
+                        }
+                    });
+                if let Some(i) = clicked_frame {
+                    self.selected_bus_frame = Some(i);
+                    if let Some(frame) = self
+                        .bus_result
+                        .as_ref()
+                        .and_then(|r| r.frames.get(i))
+                        .cloned()
+                    {
+                        self.zoom_to_bus_frame(&frame);
+                    }
+                }
+            }
+        }
+    }
+
+    fn zoom_to_bus_frame(&mut self, frame: &wiparse_core::bus_decode::BusFrame) {
+        let pad = (frame.t_end - frame.t_start).abs().max(1e-6) * 6.0;
+        let x0 = frame.t_start - pad;
+        let x1 = frame.t_end + pad;
+        if let Some(ext) = self.document_extent().or_else(|| self.data_extent()) {
+            let y0 = ext.min()[1];
+            let y1 = ext.max()[1];
+            self.pending_bounds = Some(PlotBounds::from_min_max([x0, y0], [x1, y1]));
+            self.last_x_range = Some((x0, x1));
+            self.last_y_range = Some((y0, y1));
+        } else {
+            self.pending_bounds = Some(PlotBounds::from_min_max([x0, -1.0], [x1, 1.0]));
+        }
+    }
+
+    fn load_path_sync(&mut self, path: &Path) -> Result<usize, String> {
+        let (tx, rx) = unbounded();
+        load_waveform_file_worker(path, tx);
+        let WaveLoadEvent::Preview { channels, max_pts } = rx
+            .recv()
+            .map_err(|e| e.to_string())?
+        else {
+            return Err("unexpected load event".into());
+        };
+        let (first, end) = {
+            let nch = channels.len();
+            let first_idx = self.waves.len();
+            for draft in channels {
+                let color = color_for_channel(&draft.trace.channel).unwrap_or_else(|| {
+                    let c = TRACE_COLORS[self.next_color % TRACE_COLORS.len()];
+                    self.next_color += 1;
+                    c
+                });
+                self.waves.push(LoadedWave {
+                    path: path.to_path_buf(),
+                    label: draft.label,
+                    trace: draft.trace,
+                    overview: draft.overview,
+                    x_min: draft.x_min,
+                    x_max: draft.x_max,
+                    y_min: draft.y_min,
+                    y_max: draft.y_max,
+                    measures: draft.measures,
+                    measures_pending: true,
+                    color,
+                    y_offset: 0.0,
+                    y_scale: 1.0,
+                });
+            }
+            let end = self.waves.len();
+            if nch > 1 {
+                auto_stagger_channel_offsets(&mut self.waves, first_idx..end);
+            }
+            (first_idx, end)
+        };
+        if let Ok(WaveLoadEvent::Final { measures, extents }) = rx.recv() {
+            self.apply_final_measures((first, end), measures, extents);
         }
         self.view_line_cache = None;
         self.gated_measure_cache = None;
         self.mark_extent_dirty();
-        self.activate_wave(first_idx);
+        self.activate_wave(first);
         Ok(max_pts)
     }
 
@@ -1223,6 +1793,17 @@ impl WaveformAnalysisPanel {
                         .small()
                         .color(tokens.text_muted),
                 );
+                if w.measures_pending && gated.is_none() {
+                    ui.label(
+                        RichText::new(t(
+                            lang,
+                            "精确测量计算中…",
+                            "Refining measurements…",
+                        ))
+                        .small()
+                        .color(tokens.text_muted),
+                    );
+                }
                 ui.add_space(2.0);
                 measure_row(ui, tokens, "N", &m.count.to_string());
                 measure_row(ui, tokens, "min", &format_eng(m.min, yu));
@@ -1723,33 +2304,7 @@ impl WaveformAnalysisPanel {
                 .map(|c| c.view_key != key)
                 .unwrap_or(true);
             if need {
-                let mut per_wave = HashMap::new();
-                for (i, w) in self.waves.iter().enumerate() {
-                    if view_covers_overview(x0, x1, w.x_min, w.x_max) {
-                        continue;
-                    }
-                    let lo = x0.min(x1);
-                    let hi = x0.max(x1);
-                    let pad = (hi - lo).abs() * 0.02;
-                    if w.x_max < lo - pad || w.x_min > hi + pad {
-                        continue;
-                    }
-                    let n = w.trace.x.len().min(w.trace.y.len());
-                    per_wave.insert(
-                        i,
-                        build_viewport_series(
-                            &w.trace.x[..n],
-                            &w.trace.y[..n],
-                            x0,
-                            x1,
-                            plot_width_px,
-                        ),
-                    );
-                }
-                self.view_line_cache = Some(ViewLineCache {
-                    view_key: key,
-                    per_wave,
-                });
+                self.schedule_viewport_build(key, x0, x1, plot_width_px);
             }
         } else {
             self.view_line_cache = None;
@@ -1761,6 +2316,17 @@ impl WaveformAnalysisPanel {
         let y1 = self.y1;
         let y2 = self.y2;
         let dragging = self.dragging_cursor;
+        let bus_markers: Vec<(f64, bool)> = self
+            .bus_result
+            .as_ref()
+            .map(|r| {
+                r.frames
+                    .iter()
+                    .enumerate()
+                    .map(|(i, f)| (f.t_start, self.selected_bus_frame == Some(i)))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         Plot::new("waveform-analysis-plot")
             .height(height)
@@ -1941,6 +2507,19 @@ impl WaveformAnalysisPanel {
                     );
                 }
 
+                for (t, selected) in &bus_markers {
+                    plot_ui.vline(
+                        VLine::new(*t)
+                            .color(if *selected {
+                                Color32::from_rgb(0xFF, 0x6B, 0x6B)
+                            } else {
+                                Color32::from_rgb(0xA7, 0x8B, 0xFA)
+                            })
+                            .width(if *selected { 2.0_f32 } else { 1.0_f32 })
+                            .name("bus"),
+                    );
+                }
+
                 let resp = plot_ui.response().clone();
                 let primary_down = plot_ui.ctx().input(|i| i.pointer.primary_down());
                 if let Some(ptr) = plot_ui.pointer_coordinate() {
@@ -2048,9 +2627,11 @@ impl WaveformAnalysisPanel {
         // Apply Ctrl+Shift+wheel Y zoom after ranges are captured for this frame.
         if y_wheel != 0.0 && response.response.hovered() {
             let zoom_speed = ui.ctx().options(|o| o.scroll_zoom_speed);
-            // Inverted: scroll up zooms in (matches scope-style Y+ expectation).
-            let factor = (zoom_speed * -y_wheel).exp() as f64;
-            self.apply_y_zoom_factor(factor);
+            // Same sign as egui Ctrl+wheel → X zoom: positive wheel delta zooms in.
+            // (Previously this path fed a range-multiplier into apply_y_zoom_factor,
+            // so selected-channel scale moved opposite to the Y+/Y− buttons.)
+            let zoom = (zoom_speed * y_wheel).exp() as f64;
+            self.apply_y_zoom_factor(zoom);
         }
 
         if let Some((which, v)) = drag_cursor {
@@ -2061,6 +2642,9 @@ impl WaveformAnalysisPanel {
                 (CursorAxis::Y, 1) => self.y1 = Some(v),
                 (CursorAxis::Y, 2) => self.y2 = Some(v),
                 _ => {}
+            }
+            if self.cursor_axis == CursorAxis::X {
+                self.bus_decode_dirty = true;
             }
         }
         if end_drag {
@@ -2084,6 +2668,9 @@ impl WaveformAnalysisPanel {
                         self.y2 = None;
                     }
                 },
+            }
+            if self.cursor_axis == CursorAxis::X {
+                self.bus_decode_dirty = true;
             }
         }
 
@@ -2257,33 +2844,71 @@ impl WaveformAnalysisPanel {
     }
 }
 
-fn load_waveform_file_worker(path: &Path) -> Result<(Vec<LoadedChannelDraft>, usize), String> {
-    let traces = load_waveform_file_all(path).map_err(|e| e.to_string())?;
-    if traces.is_empty() {
-        return Err("empty waveform".into());
+struct ViewportBuildJob {
+    index: usize,
+    x: Arc<[f64]>,
+    y: Vec<f64>,
+    x0: f64,
+    x1: f64,
+    plot_width_px: f32,
+}
+
+fn load_waveform_file_worker(path: &Path, tx: Sender<WaveLoadEvent>) {
+    let result = (|| -> Result<(), String> {
+        let traces = load_waveform_file_all(path).map_err(|e| e.to_string())?;
+        if traces.is_empty() {
+            return Err("empty waveform".into());
+        }
+        let max_pts = traces.iter().map(|t| t.x.len()).max().unwrap_or(0);
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("wave");
+
+        let phase2_traces: Vec<WaveformTrace> = traces
+            .par_iter()
+            .map(|t| WaveformTrace {
+                channel: t.channel.clone(),
+                x: Arc::clone(&t.x),
+                y: t.y.clone(),
+                x_unit: t.x_unit.clone(),
+                y_unit: t.y_unit.clone(),
+            })
+            .collect();
+
+        let channels: Vec<LoadedChannelDraft> = traces
+            .into_par_iter()
+            .map(|trace| {
+                let (overview, snap) = build_load_snapshot(&trace.x, &trace.y);
+                LoadedChannelDraft {
+                    label: format!("{file_name} · {}", trace.channel),
+                    trace,
+                    overview,
+                    x_min: snap.x_min,
+                    x_max: snap.x_max,
+                    y_min: snap.y_min,
+                    y_max: snap.y_max,
+                    measures: snap.to_quick_measures(),
+                }
+            })
+            .collect();
+
+        tx.send(WaveLoadEvent::Preview { channels, max_pts })
+            .map_err(|e| e.to_string())?;
+
+        let (measures, extents): (Vec<_>, Vec<_>) = phase2_traces
+            .par_iter()
+            .map(|t| (measure_waveform(t), trace_extent(t)))
+            .unzip();
+
+        tx.send(WaveLoadEvent::Final { measures, extents })
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    })();
+
+    if let Err(err) = result {
+        let _ = tx.send(WaveLoadEvent::Error(err));
     }
-    let max_pts = traces.iter().map(|t| t.x.len()).max().unwrap_or(0);
-    let file_name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("wave");
-    let mut channels = Vec::with_capacity(traces.len());
-    for trace in traces {
-        let measures = measure_waveform(&trace);
-        let overview = build_overview_envelope(&trace.x, &trace.y);
-        let (x_min, x_max, y_min, y_max) = trace_extent(&trace);
-        channels.push(LoadedChannelDraft {
-            label: format!("{file_name} · {}", trace.channel),
-            trace,
-            overview,
-            x_min,
-            x_max,
-            y_min,
-            y_max,
-            measures,
-        });
-    }
-    Ok((channels, max_pts))
 }
 
 /// Tektronix default channel colors (2/3/4/5/6 Series FAQ):
@@ -2761,6 +3386,66 @@ fn card_in_rect(
                 });
             });
     });
+}
+
+fn bus_form_layout(ui: &egui::Ui) -> BusFormLayout {
+    let w = ui.available_width().max(140.0);
+    let label_w = 78.0_f32.min(w * 0.36).max(54.0);
+    BusFormLayout {
+        label_w,
+        field_w: (w - label_w - 6.0).max(76.0),
+        row_h: 24.0,
+    }
+}
+
+#[derive(Clone, Copy)]
+struct BusFormLayout {
+    label_w: f32,
+    field_w: f32,
+    row_h: f32,
+}
+
+fn bus_grid_label(ui: &mut egui::Ui, layout: BusFormLayout, text: &str) {
+    ui.add_sized(
+        [layout.label_w, layout.row_h],
+        egui::Label::new(RichText::new(text).small()),
+    );
+}
+
+fn bus_grid_channel_combo(
+    ui: &mut egui::Ui,
+    layout: BusFormLayout,
+    id: &str,
+    label: &str,
+    waves: &[LoadedWave],
+    current: &mut Option<usize>,
+) -> bool {
+    let mut changed = false;
+    bus_grid_label(ui, layout, label);
+    let selected = current
+        .and_then(|i| waves.get(i))
+        .map(|w| w.label.as_str())
+        .unwrap_or("—");
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(selected)
+        .width(layout.field_w)
+        .show_ui(ui, |ui| {
+            if ui.selectable_label(current.is_none(), "—").clicked() {
+                *current = None;
+                changed = true;
+            }
+            for (i, w) in waves.iter().enumerate() {
+                if ui
+                    .selectable_label(*current == Some(i), &w.label)
+                    .clicked()
+                {
+                    *current = Some(i);
+                    changed = true;
+                }
+            }
+        });
+    ui.end_row();
+    changed
 }
 
 fn t(lang: Lang, zh: &str, en: &str) -> String {

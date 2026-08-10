@@ -812,6 +812,9 @@ pub fn show_virtual_search_pane<S: LogStore + ?Sized>(
                     let primary_released = ui.input(|input| input.pointer.primary_released());
 
                     // Same as the main log pane: anchor at press, extend on drag.
+                    // Jump on plain click is decided on primary_released (not only
+                    // response.clicked): with Sense::click_and_drag, egui sometimes
+                    // classifies a micro-move click as a drag and skips clicked().
                     if response.drag_started() {
                         if let Some(pos) = response.interact_pointer_pos().or(pointer) {
                             response.request_focus();
@@ -864,6 +867,18 @@ pub fn show_virtual_search_pane<S: LogStore + ?Sized>(
                                 copy_search_selection(store, search_map, selection)
                                     .unwrap_or_default();
                         } else {
+                            // Plain click → jump even when egui.clicked() is false.
+                            let pos = selection
+                                .select_origin
+                                .or(response.interact_pointer_pos())
+                                .or(pointer);
+                            if let Some(pos) = pos {
+                                let row =
+                                    ((pos.y - body.top()) / line_h).floor().max(0.0) as usize;
+                                if row < search_map.len() {
+                                    clicked = Some(row);
+                                }
+                            }
                             selection.clear();
                         }
                     } else if response.clicked() && !response.dragged() {
@@ -1021,8 +1036,11 @@ pub fn show_virtual_search_pane<S: LogStore + ?Sized>(
                         }
                     }
 
-                    if response.clicked() {
-                        if let Some(pos) = response.interact_pointer_pos() {
+                    // Backup: egui reported a click without going through drag_started
+                    // (e.g. press began outside then released on the row).
+                    if clicked.is_none() && response.clicked() {
+                        let pos = response.interact_pointer_pos().or(pointer);
+                        if let Some(pos) = pos {
                             let row = ((pos.y - body.top()) / line_h).floor().max(0.0) as usize;
                             if row < search_map.len() {
                                 clicked = Some(row);
@@ -1041,6 +1059,9 @@ pub fn show_virtual_search_pane<S: LogStore + ?Sized>(
         t.text_primary,
     );
 
+    if clicked.is_some() {
+        ui.ctx().request_repaint();
+    }
     clicked
 }
 

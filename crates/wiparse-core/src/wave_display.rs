@@ -5,6 +5,8 @@
 
 use std::sync::Arc;
 
+use crate::waveform_file::WaveformMeasurements;
+
 /// One screen column: time span `[x0, x1]` with min/max amplitude in that bucket.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScopeEnvelopeColumn {
@@ -61,11 +63,243 @@ pub fn viewport_column_count(plot_width_px: f32) -> usize {
 
 /// Build global overview envelope for a full trace.
 pub fn build_overview_envelope(x: &[f64], y: &[f64]) -> Arc<Vec<ScopeEnvelopeColumn>> {
-    Arc::new(decimate_envelope_columns(
-        x,
-        y,
-        overview_column_count(),
-    ))
+    build_load_snapshot(x, y).0
+}
+
+/// Quick stats + overview envelope in a single O(N) pass (tier-1 file load).
+#[derive(Debug, Clone, Copy)]
+pub struct TraceLoadSnapshot {
+    pub x_min: f64,
+    pub x_max: f64,
+    pub y_min: f64,
+    pub y_max: f64,
+    pub count: usize,
+    pub min: f64,
+    pub max: f64,
+    pub mean: f64,
+    pub rms: f64,
+    pub dt: f64,
+}
+
+impl TraceLoadSnapshot {
+    pub fn to_quick_measures(&self) -> WaveformMeasurements {
+        WaveformMeasurements {
+            count: self.count,
+            dt: self.dt,
+            min: self.min,
+            max: self.max,
+            pp: self.max - self.min,
+            mean: self.mean,
+            rms: self.rms,
+            freq_hz: None,
+            period: None,
+        }
+    }
+}
+
+/// One-pass overview envelope + autoscale extent + basic measurements (no frequency).
+pub fn build_load_snapshot(x: &[f64], y: &[f64]) -> (Arc<Vec<ScopeEnvelopeColumn>>, TraceLoadSnapshot) {
+    let n = x.len().min(y.len());
+    if n == 0 {
+        return (
+            Arc::new(Vec::new()),
+            TraceLoadSnapshot {
+                x_min: 0.0,
+                x_max: 1.0,
+                y_min: 0.0,
+                y_max: 1.0,
+                count: 0,
+                min: 0.0,
+                max: 0.0,
+                mean: 0.0,
+                rms: 0.0,
+                dt: 0.0,
+            },
+        );
+    }
+    let max_columns = overview_column_count();
+    let (columns, stats) = if n >= 2 && x_is_monotonic(x, n) {
+        decimate_envelope_time_buckets_with_stats(x, y, n, max_columns)
+    } else {
+        decimate_envelope_index_buckets_with_stats(x, y, n, max_columns)
+    };
+    let dt = if n >= 2 {
+        (x[n - 1] - x[0]) / (n as f64 - 1.0)
+    } else {
+        0.0
+    };
+    let (mean, rms) = stats.mean_rms();
+    let snapshot = TraceLoadSnapshot {
+        x_min: stats.x_min,
+        x_max: stats.x_max,
+        y_min: stats.y_min,
+        y_max: stats.y_max,
+        count: stats.count,
+        min: stats.y_min,
+        max: stats.y_max,
+        mean,
+        rms,
+        dt,
+    };
+    (Arc::new(columns), snapshot)
+}
+
+#[derive(Default)]
+struct LoadPassStats {
+    count: usize,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+    sum: f64,
+    sum_sq: f64,
+}
+
+impl LoadPassStats {
+    fn new() -> Self {
+        Self {
+            x_min: f64::INFINITY,
+            x_max: f64::NEG_INFINITY,
+            y_min: f64::INFINITY,
+            y_max: f64::NEG_INFINITY,
+            ..Default::default()
+        }
+    }
+
+    fn add_sample(&mut self, x: f64, y: f64) {
+        if x.is_finite() {
+            self.x_min = self.x_min.min(x);
+            self.x_max = self.x_max.max(x);
+        }
+        if y.is_finite() {
+            self.count += 1;
+            self.y_min = self.y_min.min(y);
+            self.y_max = self.y_max.max(y);
+            self.sum += y;
+            self.sum_sq += y * y;
+        }
+    }
+
+    fn mean_rms(&self) -> (f64, f64) {
+        if self.count == 0 {
+            return (0.0, 0.0);
+        }
+        let mean = self.sum / self.count as f64;
+        let rms = (self.sum_sq / self.count as f64).sqrt();
+        (mean, rms)
+    }
+
+    fn finalize_bounds(&mut self) {
+        if !self.x_min.is_finite() {
+            self.x_min = 0.0;
+            self.x_max = 1.0;
+        }
+        if !self.y_min.is_finite() {
+            self.y_min = 0.0;
+            self.y_max = 1.0;
+        }
+    }
+}
+
+fn decimate_envelope_index_buckets_with_stats(
+    x: &[f64],
+    y: &[f64],
+    n: usize,
+    max_columns: usize,
+) -> (Vec<ScopeEnvelopeColumn>, LoadPassStats) {
+    let mut out = Vec::with_capacity(max_columns);
+    let mut stats = LoadPassStats::new();
+    for b in 0..max_columns {
+        let start = b * n / max_columns;
+        let end = ((b + 1) * n / max_columns).max(start + 1).min(n);
+        if let Some(col) = envelope_column_range_with_stats(x, y, start, end, &mut stats) {
+            out.push(col);
+        }
+    }
+    stats.finalize_bounds();
+    (out, stats)
+}
+
+fn decimate_envelope_time_buckets_with_stats(
+    x: &[f64],
+    y: &[f64],
+    n: usize,
+    max_columns: usize,
+) -> (Vec<ScopeEnvelopeColumn>, LoadPassStats) {
+    let mut x0 = x[0];
+    let mut x1 = x[n - 1];
+    if !x0.is_finite() || !x1.is_finite() {
+        return decimate_envelope_index_buckets_with_stats(x, y, n, max_columns);
+    }
+    if x1 < x0 {
+        std::mem::swap(&mut x0, &mut x1);
+    }
+    let span = (x1 - x0).abs().max(f64::EPSILON);
+    let mut out = Vec::with_capacity(max_columns);
+    let mut stats = LoadPassStats::new();
+    let mut idx = 0usize;
+    for b in 0..max_columns {
+        let t0 = x0 + span * (b as f64) / max_columns as f64;
+        let t1 = if b + 1 == max_columns {
+            x1 + f64::EPSILON
+        } else {
+            x0 + span * ((b + 1) as f64) / max_columns as f64
+        };
+        while idx < n && x[idx] < t0 {
+            idx += 1;
+        }
+        let start = idx;
+        while idx < n && x[idx] <= t1 {
+            idx += 1;
+        }
+        let end = idx.max(start + 1).min(n);
+        if let Some(col) = envelope_column_range_with_stats(x, y, start, end, &mut stats) {
+            out.push(col);
+        }
+    }
+    stats.finalize_bounds();
+    (out, stats)
+}
+
+fn envelope_column_range_with_stats(
+    x: &[f64],
+    y: &[f64],
+    start: usize,
+    end: usize,
+    stats: &mut LoadPassStats,
+) -> Option<ScopeEnvelopeColumn> {
+    if start >= end {
+        return None;
+    }
+    let (mut ymin, mut ymax) = (f64::INFINITY, f64::NEG_INFINITY);
+    let mut any = false;
+    for i in start..end {
+        let xv = x[i];
+        let yv = y[i];
+        stats.add_sample(xv, yv);
+        if yv.is_finite() {
+            any = true;
+            ymin = ymin.min(yv);
+            ymax = ymax.max(yv);
+        }
+    }
+    if !any {
+        return None;
+    }
+    let mut col_x0 = x[start];
+    let mut col_x1 = x[end - 1];
+    if col_x1 < col_x0 {
+        std::mem::swap(&mut col_x0, &mut col_x1);
+    }
+    if (col_x1 - col_x0).abs() < f64::EPSILON {
+        col_x1 = col_x0;
+    }
+    Some(ScopeEnvelopeColumn {
+        x0: col_x0,
+        x1: col_x1,
+        y_min: ymin,
+        y_max: ymax,
+    })
 }
 
 /// Scope-style min/max envelope with explicit column time span (professional display).

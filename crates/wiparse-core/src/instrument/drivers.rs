@@ -567,13 +567,38 @@ pub enum ScopeWaveformDensity {
     Source,
 }
 
+/// Shared time axis storage (multi-channel CSV shares one X buffer).
+pub type WaveAxis = std::sync::Arc<[f64]>;
+
+mod arc_f64_slice {
+    use super::WaveAxis;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(v: &WaveAxis, s: S) -> Result<S::Ok, S::Error> {
+        v.as_ref().serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<WaveAxis, D::Error> {
+        let v: Vec<f64> = Vec::deserialize(d)?;
+        Ok(v.into())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WaveformTrace {
     pub channel: String,
-    pub x: Vec<f64>,
+    #[serde(with = "arc_f64_slice")]
+    pub x: WaveAxis,
     pub y: Vec<f64>,
     pub x_unit: String,
     pub y_unit: String,
+}
+
+impl WaveformTrace {
+    #[inline]
+    pub fn wave_axis(data: Vec<f64>) -> WaveAxis {
+        data.into()
+    }
 }
 
 pub struct InstrumentDevice {
@@ -2694,7 +2719,7 @@ fn decode_scope_bytes(
     }
     Ok(WaveformTrace {
         channel: format!("CH{channel}"),
-        x,
+        x: x.into(),
         y,
         x_unit: normalize_wave_unit(x_unit, "s"),
         y_unit: normalize_wave_unit(y_unit, "V"),

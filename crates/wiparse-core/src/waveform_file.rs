@@ -13,6 +13,9 @@ use crate::rigol_wfm::{load_rigol_wfm_all, looks_like_rigol_wfm};
 use std::path::Path;
 use thiserror::Error;
 
+/// Files larger than this are memory-mapped for parse (avoids an extra RAM copy).
+const MMAP_THRESHOLD: u64 = 16 * 1024 * 1024;
+
 #[derive(Debug, Error)]
 pub enum WaveformFileError {
     #[error("io error: {0}")]
@@ -49,7 +52,6 @@ pub fn load_waveform_file_all(
     path: impl AsRef<Path>,
 ) -> Result<Vec<WaveformTrace>, WaveformFileError> {
     let path = path.as_ref();
-    let bytes = std::fs::read(path)?;
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -60,7 +62,25 @@ pub fn load_waveform_file_all(
         .and_then(|s| s.to_str())
         .unwrap_or("CH1")
         .to_string();
-    load_waveform_bytes_all(&bytes, &ext, &stem)
+    load_waveform_file_at(path, &ext, &stem)
+}
+
+fn load_waveform_file_at(
+    path: &Path,
+    ext: &str,
+    stem: &str,
+) -> Result<Vec<WaveformTrace>, WaveformFileError> {
+    if let Ok(meta) = std::fs::metadata(path) {
+        if meta.len() >= MMAP_THRESHOLD {
+            use memmap2::Mmap;
+            let file = std::fs::File::open(path)?;
+            // SAFETY: read-only map; parsers only read bytes during this call.
+            let map = unsafe { Mmap::map(&file)? };
+            return load_waveform_bytes_all(&map, ext, stem);
+        }
+    }
+    let bytes = std::fs::read(path)?;
+    load_waveform_bytes_all(&bytes, ext, stem)
 }
 
 /// Load all traces from bytes (see [`load_waveform_file_all`]).
@@ -625,7 +645,7 @@ fn try_parse_wiparse_csv(lines: &[&str]) -> Result<Option<WaveformTrace>, Wavefo
     }
     Ok(Some(WaveformTrace {
         channel,
-        x,
+        x: x.into(),
         y,
         x_unit,
         y_unit,
@@ -738,7 +758,7 @@ fn try_parse_spreadsheet_csv(
     }
     Ok(Some(WaveformTrace {
         channel,
-        x,
+        x: x.into(),
         y,
         x_unit,
         y_unit,
@@ -779,7 +799,7 @@ fn try_parse_numeric_pairs(
     }
     Ok(WaveformTrace {
         channel: default_channel.to_string(),
-        x,
+        x: x.into(),
         y,
         x_unit: "s".into(),
         y_unit: "V".into(),
@@ -1151,7 +1171,7 @@ fn load_tek_wfm_structured_all(
                 .get(idx)
                 .cloned()
                 .unwrap_or_else(|| format!("CH{}", idx + 1)),
-            x,
+            x: x.into(),
             y,
             x_unit: x_unit.clone(),
             y_unit: y_unit.clone(),
@@ -1408,7 +1428,7 @@ fn load_tek_wfm_legacy_fixed(
 
     Ok(WaveformTrace {
         channel: default_channel.to_string(),
-        x,
+        x: x.into(),
         y,
         x_unit: "s".into(),
         y_unit: "V".into(),
@@ -1559,12 +1579,13 @@ fn try_parse_spreadsheet_csv_multi(
     if xs.len() < 2 {
         return Ok(None);
     }
+    let x_shared: std::sync::Arc<[f64]> = xs.into();
     let traces = names
         .into_iter()
         .zip(ys)
         .map(|(channel, y)| WaveformTrace {
             channel,
-            x: xs.clone(),
+            x: std::sync::Arc::clone(&x_shared),
             y,
             x_unit: "s".into(),
             y_unit: "V".into(),
@@ -1667,7 +1688,7 @@ fn load_tek_isf(bytes: &[u8], default_channel: &str) -> Result<WaveformTrace, Wa
 
     Ok(WaveformTrace {
         channel,
-        x,
+        x: x.into(),
         y,
         x_unit,
         y_unit,
@@ -1913,7 +1934,7 @@ mod tests {
     fn spreadsheet_csv_roundtrip() {
         let trace = WaveformTrace {
             channel: "CH2".into(),
-            x: vec![0.0, 1e-6],
+            x: vec![0.0, 1e-6].into(),
             y: vec![0.5, -0.5],
             x_unit: "s".into(),
             y_unit: "V".into(),
@@ -1928,7 +1949,7 @@ mod tests {
     fn wfm_export_load_roundtrip() {
         let trace = WaveformTrace {
             channel: "CH1".into(),
-            x: vec![0.0, 1e-6, 2e-6, 3e-6],
+            x: vec![0.0, 1e-6, 2e-6, 3e-6].into(),
             y: vec![0.0, 1.0, -1.0, 0.5],
             x_unit: "s".into(),
             y_unit: "V".into(),
@@ -2001,7 +2022,7 @@ mod tests {
     fn save_converts_csv_trace_to_isf() {
         let trace = WaveformTrace {
             channel: "CH1".into(),
-            x: (0..64).map(|i| i as f64 * 1e-6).collect(),
+            x: (0..64).map(|i| i as f64 * 1e-6).collect::<Vec<_>>().into(),
             y: (0..64).map(|i| (i as f64 * 0.1).sin()).collect(),
             x_unit: "s".into(),
             y_unit: "V".into(),
@@ -2054,7 +2075,7 @@ mod tests {
 
         let trace = WaveformTrace {
             channel: "CH1".into(),
-            x: (0..256).map(|i| i as f64 * 1e-6).collect(),
+            x: (0..256).map(|i| i as f64 * 1e-6).collect::<Vec<_>>().into(),
             y: (0..256).map(|i| (i as f64 * 0.01).sin()).collect(),
             x_unit: "s".into(),
             y_unit: "V".into(),

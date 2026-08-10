@@ -1646,7 +1646,10 @@ impl LogTabPage {
                         {
                             let master_idx = *master_idx;
                             self.panes[idx].scroll_to_master = Some(master_idx);
-                            self.panes[idx].scroll_hold_frames = 12;
+                            // Hold long enough for ScrollArea layout to settle; unpin
+                            // live-tail follow so stick_to_bottom cannot yank away.
+                            self.panes[idx].scroll_hold_frames = 16;
+                            self.panes[idx].scroll_pinned = false;
                             self.panes[idx].highlight_master = Some(master_idx);
                             self.panes[idx].parse_row = None;
                         }
