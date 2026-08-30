@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use wiparse_core::config::{load_config, save_config, AppConfig};
 use wiparse_core::i18n::{tr, tr_fmt, tr_monitoring, Lang};
 use wiparse_core::log::{build_file_store_worker, FileBuildEvent, LogStore};
@@ -29,6 +29,8 @@ struct LogBrowserFolder {
 const DRAIN_LINES_PER_FRAME: usize = 400;
 /// Backlog cap — drop oldest when exceeded (~200 KB at typical line size).
 const MAX_PENDING_LINES: usize = 1_000;
+/// Flush the live log writer at this interval when save-to-disk is on.
+const LIVE_FLUSH_INTERVAL: Duration = Duration::from_secs(5);
 
 enum SerialEvent {
     Line(String),
@@ -63,6 +65,8 @@ pub struct SerialToolPanel {
     write_tx: Option<Sender<Vec<u8>>>,
     live_file: Option<PathBuf>,
     live_writer: Option<BufWriter<File>>,
+    save_live_to_disk: bool,
+    last_live_flush: Instant,
     last_lang: Lang,
     tab_scroll_x: f32,
     tab_wheel_last_switch_at: Option<f64>,
@@ -123,6 +127,8 @@ impl SerialToolPanel {
             write_tx: None,
             live_file: None,
             live_writer: None,
+            save_live_to_disk: cfg.log_monitor.save_live_to_disk,
+            last_live_flush: Instant::now(),
             last_lang: lang,
             tab_scroll_x: 0.0,
             tab_wheel_last_switch_at: None,
@@ -163,6 +169,7 @@ impl SerialToolPanel {
                 cfg.log_monitor.open_log_files = paths;
                 cfg.log_monitor.last_open_dir = self.open_dir.clone();
                 cfg.log_monitor.log_browser_dir = self.browser_dir.clone();
+                cfg.log_monitor.save_live_to_disk = self.save_live_to_disk;
                 let _ = save_config(&cfg);
             }
             Err(_) => {
@@ -172,6 +179,7 @@ impl SerialToolPanel {
                 cfg.log_monitor.open_log_files = paths;
                 cfg.log_monitor.last_open_dir = self.open_dir.clone();
                 cfg.log_monitor.log_browser_dir = self.browser_dir.clone();
+                cfg.log_monitor.save_live_to_disk = self.save_live_to_disk;
                 let _ = save_config(&cfg);
             }
         }
@@ -259,6 +267,21 @@ impl SerialToolPanel {
         };
         if name == self.committed_live_name {
             self.live_name = name;
+            return true;
+        }
+
+        if !self.save_live_to_disk {
+            self.live_name = name;
+            self.committed_live_name = self.live_name.clone();
+            if let Some(live) = self.tabs.get_mut(0) {
+                live.title = self.committed_live_name.clone();
+            }
+            self.persist_live_log_name();
+            self.status = format!(
+                "{}: {}",
+                tr(lang, "status.rename_ok"),
+                self.committed_live_name
+            );
             return true;
         }
 
@@ -394,6 +417,9 @@ impl SerialToolPanel {
     }
 
     fn append_to_live_file(&mut self, line: &str) {
+        if !self.save_live_to_disk {
+            return;
+        }
         if self.live_writer.is_none() {
             if self.ensure_live_file().is_err() {
                 return;
@@ -401,6 +427,49 @@ impl SerialToolPanel {
         }
         if let Some(w) = &mut self.live_writer {
             let _ = writeln!(w, "{line}");
+        }
+    }
+
+    fn set_save_live_to_disk(&mut self, on: bool) {
+        if self.save_live_to_disk == on {
+            return;
+        }
+        self.save_live_to_disk = on;
+        if on {
+            if self.monitoring {
+                if self.ensure_live_file().is_ok() {
+                    if let Some(live) = self.tabs.first() {
+                        let lines = live.lines_slice(0, live.line_count());
+                        if let Some(w) = &mut self.live_writer {
+                            for line in lines {
+                                let _ = writeln!(w, "{line}");
+                            }
+                        }
+                    }
+                    self.flush_live_writer();
+                    self.last_live_flush = Instant::now();
+                }
+            }
+        } else {
+            self.close_live_writer();
+        }
+        self.persist_open_log_files();
+    }
+
+    fn release_writer_if_target_is_being_edited(&mut self) {
+        let Some(live) = self.live_file.clone() else {
+            return;
+        };
+        let live_s = normalize_path(&live.to_string_lossy());
+        let editing = self.tabs.iter().any(|tab| {
+            tab.is_editing()
+                && tab
+                    .filepath
+                    .as_deref()
+                    .is_some_and(|p| same_log_path(p, &live_s))
+        });
+        if editing {
+            self.close_live_writer();
         }
     }
 
@@ -450,9 +519,14 @@ impl SerialToolPanel {
                 return Err(self.status.clone());
             }
         };
-        if let Err(e) = self.ensure_live_file() {
-            self.status = format!("{}: {e}", tr(lang, "status.create_failed"));
-            return Err(self.status.clone());
+        if self.save_live_to_disk {
+            if let Err(e) = self.ensure_live_file() {
+                self.status = format!("{}: {e}", tr(lang, "status.create_failed"));
+                return Err(self.status.clone());
+            }
+            self.last_live_flush = Instant::now();
+        } else {
+            self.close_live_writer();
         }
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = unbounded();
@@ -540,6 +614,18 @@ impl SerialToolPanel {
     }
 
     fn new_live_log(&mut self, lang: Lang) {
+        if !self.save_live_to_disk {
+            self.clear_live_display();
+            let stamp = Local::now().format("%Y%m%d_%H%M%S");
+            self.live_name = format!("{} {}", tr(lang, "log.default_filename"), stamp);
+            self.committed_live_name = self.live_name.clone();
+            if let Some(live) = self.tabs.get_mut(0) {
+                live.title = self.live_name.clone();
+            }
+            self.persist_live_log_name();
+            self.status = format!("new live log: {}", self.live_name);
+            return;
+        }
         // Flush current live to disk, then push it right as a file tab and
         // insert a fresh live tab at index 0 (newest live stays leftmost).
         if let Err(e) = self.ensure_live_file() {
@@ -796,9 +882,13 @@ impl SerialToolPanel {
                     }
                     Ok(FileBuildEvent::Done(store)) => {
                         if let Some(tab) = self.tabs.get_mut(load.tab_idx) {
-                            let total = store.line_count();
-                            tab.set_file_store(store);
-                            self.status = format!("opened {} ({total} lines)", tab.title);
+                            if tab.is_editing() {
+                                drop(store);
+                            } else {
+                                let total = store.line_count();
+                                tab.set_file_store(store);
+                                self.status = format!("opened {} ({total} lines)", tab.title);
+                            }
                         }
                         finished = true;
                         break;
@@ -832,6 +922,7 @@ impl SerialToolPanel {
         update_live_filters: bool,
         api: Option<&crate::backend::ApiBridge>,
     ) {
+        self.release_writer_if_target_is_being_edited();
         for tab in &mut self.tabs {
             tab.poll_background_tasks();
         }
@@ -906,16 +997,30 @@ impl SerialToolPanel {
         }
 
         if !batch.is_empty() {
-            for line in &batch {
-                self.append_to_live_file(line);
-                if let Some(api) = api {
-                    api.publish_serial_line(line);
+            if self.save_live_to_disk {
+                for line in &batch {
+                    self.append_to_live_file(line);
+                    if let Some(api) = api {
+                        api.publish_serial_line(line);
+                    }
+                }
+            } else {
+                for line in &batch {
+                    if let Some(api) = api {
+                        api.publish_serial_line(line);
+                    }
                 }
             }
-            self.flush_live_writer();
             if let Some(live) = self.tabs.get_mut(0) {
                 live.append_lines(batch, update_live_filters);
             }
+        }
+        if self.save_live_to_disk
+            && self.live_writer.is_some()
+            && self.last_live_flush.elapsed() >= LIVE_FLUSH_INTERVAL
+        {
+            self.flush_live_writer();
+            self.last_live_flush = Instant::now();
         }
     }
 
@@ -1189,6 +1294,19 @@ impl SerialToolPanel {
                             });
                             if (name_edit.has_focus() || name_edit.lost_focus()) && enter_pressed {
                                 self.commit_live_name(lang);
+                            }
+
+                            let mut save_data = self.save_live_to_disk;
+                            let save_chk = ui
+                                .checkbox(
+                                    &mut save_data,
+                                    egui::RichText::new(tr(lang, "log.save_data"))
+                                        .size(12.0)
+                                        .color(t.text_muted),
+                                )
+                                .on_hover_text(tr(lang, "log.save_data_hint"));
+                            if save_chk.changed() {
+                                self.set_save_live_to_disk(save_data);
                             }
 
                             ui.label(

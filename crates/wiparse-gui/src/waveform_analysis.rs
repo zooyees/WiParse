@@ -1,9 +1,12 @@
 //! Offline waveform analysis — folder browser, open scope sources, zoom/pan, measure.
 
-use crate::plot::ScopeEnvelopePlotItem;
+use crate::plot::{ScopeEnvelopePlotItem, ScopeVectorPlotItem};
 use crate::theme::Tokens;
-use egui::{Color32, CornerRadius, Frame, Margin, RichText, Stroke, Vec2b};
-use egui_plot::{HLine, Legend, Line, Plot, PlotBounds, PlotPoints, Points, VLine};
+use egui::{Align2, Color32, CornerRadius, Frame, Margin, RichText, Stroke, Vec2b};
+use egui_plot::{
+    CoordinatesFormatter, Corner, GridMark, HLine, Legend, Plot, PlotBounds, PlotPoint, PlotPoints,
+    Points, Text, VLine,
+};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,14 +15,15 @@ use std::thread;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use rayon::prelude::*;
 use wiparse_core::bus_decode::{
-    compact_bus_decode_indices, decode_bus, BusDecodeResult, BusDecodeSettings, BusKind,
+    compact_bus_decode_indices, decode_bus, BusDecodeResult, BusDecodeSettings, BusKind, I2sFormat,
+    SpiMode, SpiWire, UartParity,
 };
 use wiparse_core::config::{load_config, save_config, AppConfig};
 use wiparse_core::i18n::{tr, Lang};
 use wiparse_core::instrument::WaveformTrace;
 use wiparse_core::paths::project_path;
 use wiparse_core::wave_display::{
-    build_load_snapshot, build_viewport_series, quantize_view_cache_key,
+    build_load_snapshot, build_viewport_series_ex, quantize_view_cache_key,
     viewport_column_count, WaveViewportSeries,
 };
 use wiparse_core::waveform_file::{
@@ -84,10 +88,13 @@ struct LoadedWave {
     /// True until tier-2 frequency / robust extent finish.
     measures_pending: bool,
     color: Color32,
-    /// Display-only vertical shift (plot Y units); measurements use raw trace.
+    /// Plot-Y of channel ground (native 0). Display y = raw × scale + offset.
+    /// Measurements use the raw trace.
     y_offset: f64,
-    /// Per-channel vertical scale (1.0 = native); display y = raw × scale + offset.
+    /// Per-channel vertical scale (1.0 = native); zoom expands around ground.
     y_scale: f64,
+    /// Full-trace X is non-decreasing (viewport decimate can skip a second scan).
+    x_monotonic: bool,
 }
 
 /// Viewport envelope cache: one entry per visible wave when zoomed.
@@ -106,6 +113,7 @@ struct LoadedChannelDraft {
     y_min: f64,
     y_max: f64,
     label: String,
+    x_monotonic: bool,
 }
 
 struct PendingWaveLoad {
@@ -177,6 +185,8 @@ pub struct WaveformAnalysisPanel {
     pending_load: Option<PendingWaveLoad>,
     /// Background viewport LOD rebuild.
     pending_viewport: Option<PendingViewportBuild>,
+    /// Latest pan/zoom request while a viewport job is already running.
+    queued_viewport: Option<(u64, f64, f64, f32)>,
     /// Dragging a channel position handle on the right axis strip.
     dragging_channel_offset: Option<usize>,
     /// Ctrl+drag on channel strip adjusts vertical scale.
@@ -231,6 +241,7 @@ impl WaveformAnalysisPanel {
             extent_dirty: true,
             pending_load: None,
             pending_viewport: None,
+            queued_viewport: None,
             dragging_channel_offset: None,
             dragging_channel_scale: None,
             bus_settings: BusDecodeSettings::default(),
@@ -700,7 +711,7 @@ impl WaveformAnalysisPanel {
 
     /// Y zoom using egui_plot convention: `zoom > 1` zooms in, `zoom < 1` zooms out.
     ///
-    /// Selected channel → multiply `y_scale` (taller wave = zoom in).
+    /// Selected channel → multiply `y_scale` around ground (native 0 / `y_offset`).
     /// No selection → shrink/expand plot Y span (inverse of `zoom`).
     fn apply_y_zoom_factor(&mut self, zoom: f64) {
         if !zoom.is_finite() || (zoom - 1.0).abs() <= 1e-6 {
@@ -766,6 +777,13 @@ impl WaveformAnalysisPanel {
     fn selected_extent(&self) -> Option<PlotBounds> {
         let w = self.selected.and_then(|i| self.waves.get(i))?;
         extent_of_traces(&[w])
+    }
+
+    /// Channel used for Y-cursor / hover readout (selected, else first).
+    fn y_measure_wave_index(&self) -> Option<usize> {
+        self.selected
+            .filter(|&i| i < self.waves.len())
+            .or_else(|| (!self.waves.is_empty()).then_some(0))
     }
 
     /// Extent of every channel that belongs to the selected file (multi-channel WFM).
@@ -1163,6 +1181,7 @@ impl WaveformAnalysisPanel {
                 color,
                 y_offset: 0.0,
                 y_scale: 1.0,
+                x_monotonic: draft.x_monotonic,
             });
         }
         let end = self.waves.len();
@@ -1171,6 +1190,7 @@ impl WaveformAnalysisPanel {
         }
         self.view_line_cache = None;
         self.pending_viewport = None;
+        self.queued_viewport = None;
         self.gated_measure_cache = None;
         self.mark_extent_dirty();
         self.activate_wave(first_idx);
@@ -1262,11 +1282,18 @@ impl WaveformAnalysisPanel {
         };
         let expected_key = pending.view_key;
         self.pending_viewport = None;
-        if key == expected_key {
+        let queued = self.queued_viewport.take();
+        let latest = queued.as_ref().map(|q| q.0).unwrap_or(expected_key);
+        if key == expected_key && key == latest {
             self.view_line_cache = Some(ViewLineCache {
                 view_key: key,
                 per_wave,
             });
+        }
+        if let Some((qk, x0, x1, plot_width_px)) = queued {
+            if qk != key {
+                self.schedule_viewport_build(qk, x0, x1, plot_width_px);
+            }
         }
     }
 
@@ -1276,8 +1303,14 @@ impl WaveformAnalysisPanel {
             .as_ref()
             .is_some_and(|p| p.view_key == key)
         {
+            self.queued_viewport = None;
             return;
         }
+        if self.pending_viewport.is_some() {
+            self.queued_viewport = Some((key, x0, x1, plot_width_px));
+            return;
+        }
+        self.queued_viewport = None;
         let jobs: Vec<ViewportBuildJob> = self
             .waves
             .iter()
@@ -1292,14 +1325,20 @@ impl WaveformAnalysisPanel {
                 if w.x_max < lo - pad || w.x_min > hi + pad {
                     return None;
                 }
-                let n = w.trace.x.len().min(w.trace.y.len());
+                let prev_uniform = self
+                    .view_line_cache
+                    .as_ref()
+                    .and_then(|c| c.per_wave.get(&i))
+                    .is_some_and(|s| s.is_uniform());
                 Some(ViewportBuildJob {
                     index: i,
                     x: Arc::clone(&w.trace.x),
-                    y: w.trace.y[..n].to_vec(),
+                    y: Arc::clone(&w.trace.y),
                     x0,
                     x1,
                     plot_width_px,
+                    prev_uniform,
+                    x_monotonic: w.x_monotonic,
                 })
             })
             .collect();
@@ -1313,22 +1352,37 @@ impl WaveformAnalysisPanel {
         let (tx, rx) = unbounded();
         self.pending_viewport = Some(PendingViewportBuild { view_key: key, rx });
         thread::spawn(move || {
-            let mut per_wave = HashMap::new();
-            for job in jobs {
-                let n = job.x.len().min(job.y.len());
-                per_wave.insert(
-                    job.index,
-                    build_viewport_series(
-                        &job.x[..n],
-                        &job.y[..n],
-                        job.x0,
-                        job.x1,
-                        job.plot_width_px,
-                    ),
-                );
-            }
+            let per_wave: HashMap<usize, WaveViewportSeries> = jobs
+                .into_par_iter()
+                .map(|job| {
+                    let n = job.x.len().min(job.y.len());
+                    (
+                        job.index,
+                        build_viewport_series_ex(
+                            &job.x[..n],
+                            &job.y[..n],
+                            job.x0,
+                            job.x1,
+                            job.plot_width_px,
+                            job.prev_uniform,
+                            job.x_monotonic,
+                        ),
+                    )
+                })
+                .collect();
             let _ = tx.send((key, per_wave));
         });
+    }
+
+    fn bus_overlay_channel(&self) -> Option<usize> {
+        let ch = &self.bus_settings.channels;
+        match self.bus_settings.kind {
+            BusKind::Off => None,
+            BusKind::Uart => ch.uart_signal,
+            BusKind::I2c => ch.i2c_sda.or(ch.i2c_scl),
+            BusKind::Spi => ch.spi_mosi.or(ch.spi_clk),
+            BusKind::I2s => ch.i2s_data.or(ch.i2s_ws).or(ch.i2s_bclk),
+        }
     }
 
     fn bus_channels_ready(&self) -> bool {
@@ -1340,8 +1394,20 @@ impl WaveformAnalysisPanel {
                     && self.bus_settings.channels.i2c_sda.is_some()
             }
             BusKind::Spi => {
-                self.bus_settings.channels.spi_clk.is_some()
-                    && self.bus_settings.channels.spi_mosi.is_some()
+                let clk = self.bus_settings.channels.spi_clk.is_some();
+                let io0 = self.bus_settings.channels.spi_mosi.is_some();
+                match self.bus_settings.spi.wire {
+                    SpiWire::TwoWire | SpiWire::FourWire => clk && io0,
+                    SpiWire::Dual => {
+                        clk && io0 && self.bus_settings.channels.spi_miso.is_some()
+                    }
+                    SpiWire::Quad => {
+                        clk && io0
+                            && self.bus_settings.channels.spi_miso.is_some()
+                            && self.bus_settings.channels.spi_io2.is_some()
+                            && self.bus_settings.channels.spi_io3.is_some()
+                    }
+                }
             }
             BusKind::I2s => {
                 self.bus_settings.channels.i2s_bclk.is_some()
@@ -1488,6 +1554,35 @@ impl WaveformAnalysisPanel {
                             changed = true;
                         }
                         ui.end_row();
+                        changed |= bus_grid_buttons(
+                            ui,
+                            layout,
+                            &t(lang, "数据位", "Data"),
+                            &mut self.bus_settings.uart.data_bits,
+                            &[("5", 5), ("6", 6), ("7", 7), ("8", 8), ("9", 9)],
+                            22.0,
+                        );
+                        changed |= bus_grid_parity(
+                            ui,
+                            layout,
+                            &t(lang, "校验", "Parity"),
+                            &mut self.bus_settings.uart.parity,
+                        );
+                        changed |= bus_grid_buttons(
+                            ui,
+                            layout,
+                            &t(lang, "停止位", "Stop"),
+                            &mut self.bus_settings.uart.stop_bits,
+                            &[("1", 1), ("2", 2)],
+                            28.0,
+                        );
+                        changed |= bus_grid_bool_pair(
+                            ui,
+                            layout,
+                            &t(lang, "极性", "Polarity"),
+                            &mut self.bus_settings.uart.inverted,
+                            ("TTL", "Inv"),
+                        );
                     }
                     BusKind::I2c => {
                         changed |= bus_grid_channel_combo(
@@ -1506,8 +1601,43 @@ impl WaveformAnalysisPanel {
                             &self.waves,
                             &mut self.bus_settings.channels.i2c_sda,
                         );
+                        bus_grid_label(ui, layout, &t(lang, "寄存器位宽", "Reg bits"));
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            let bits = if self.bus_settings.i2c.reg_addr_bits == 16 {
+                                16u8
+                            } else {
+                                8
+                            };
+                            for (label, value) in [("8", 8u8), ("16", 16)] {
+                                if ui
+                                    .add_sized(
+                                        [28.0, layout.row_h],
+                                        egui::Button::new(label).selected(bits == value),
+                                    )
+                                    .clicked()
+                                    && bits != value
+                                {
+                                    self.bus_settings.i2c.reg_addr_bits = value;
+                                    changed = true;
+                                }
+                            }
+                        });
+                        ui.end_row();
                     }
                     BusKind::Spi => {
+                        changed |= bus_grid_spi_wire(
+                            ui,
+                            layout,
+                            &t(lang, "线制", "Wires"),
+                            &mut self.bus_settings.spi.wire,
+                        );
+                        changed |= bus_grid_spi_mode(
+                            ui,
+                            layout,
+                            &t(lang, "模式", "Mode"),
+                            &mut self.bus_settings.spi.mode,
+                        );
                         changed |= bus_grid_channel_combo(
                             ui,
                             layout,
@@ -1516,29 +1646,72 @@ impl WaveformAnalysisPanel {
                             &self.waves,
                             &mut self.bus_settings.channels.spi_clk,
                         );
+                        let packed = self.bus_settings.spi.wire.is_packed();
                         changed |= bus_grid_channel_combo(
                             ui,
                             layout,
                             "spi_mosi",
-                            "MOSI",
+                            if packed { "IO0" } else { "MOSI" },
                             &self.waves,
                             &mut self.bus_settings.channels.spi_mosi,
                         );
-                        changed |= bus_grid_channel_combo(
-                            ui,
-                            layout,
-                            "spi_miso",
-                            &t(lang, "MISO", "MISO"),
-                            &self.waves,
-                            &mut self.bus_settings.channels.spi_miso,
-                        );
+                        if self.bus_settings.spi.wire != SpiWire::TwoWire {
+                            changed |= bus_grid_channel_combo(
+                                ui,
+                                layout,
+                                "spi_miso",
+                                if packed { "IO1" } else { "MISO" },
+                                &self.waves,
+                                &mut self.bus_settings.channels.spi_miso,
+                            );
+                        }
+                        if self.bus_settings.spi.wire == SpiWire::Quad {
+                            changed |= bus_grid_channel_combo(
+                                ui,
+                                layout,
+                                "spi_io2",
+                                "IO2",
+                                &self.waves,
+                                &mut self.bus_settings.channels.spi_io2,
+                            );
+                            changed |= bus_grid_channel_combo(
+                                ui,
+                                layout,
+                                "spi_io3",
+                                "IO3",
+                                &self.waves,
+                                &mut self.bus_settings.channels.spi_io3,
+                            );
+                        }
                         changed |= bus_grid_channel_combo(
                             ui,
                             layout,
                             "spi_cs",
-                            &t(lang, "CS", "CS"),
+                            "CS",
                             &self.waves,
                             &mut self.bus_settings.channels.spi_cs,
+                        );
+                        changed |= bus_grid_buttons(
+                            ui,
+                            layout,
+                            &t(lang, "位宽", "Word"),
+                            &mut self.bus_settings.spi.word_bits,
+                            &[("8", 8), ("16", 16), ("24", 24), ("32", 32)],
+                            28.0,
+                        );
+                        changed |= bus_grid_bool_pair(
+                            ui,
+                            layout,
+                            &t(lang, "位序", "Bit order"),
+                            &mut self.bus_settings.spi.msb_first,
+                            ("LSB", "MSB"),
+                        );
+                        changed |= bus_grid_bool_pair(
+                            ui,
+                            layout,
+                            &t(lang, "片选", "Chip sel"),
+                            &mut self.bus_settings.spi.cs_active_low,
+                            ("High", "Low"),
                         );
                     }
                     BusKind::I2s => {
@@ -1585,6 +1758,12 @@ impl WaveformAnalysisPanel {
                             }
                         });
                         ui.end_row();
+                        changed |= bus_grid_i2s_format(
+                            ui,
+                            layout,
+                            &t(lang, "格式", "Format"),
+                            &mut self.bus_settings.i2s.format,
+                        );
                     }
                 }
             });
@@ -1613,6 +1792,17 @@ impl WaveformAnalysisPanel {
             if let Some(err) = &result.error {
                 ui.label(RichText::new(err).small().color(tokens.stop_bg));
             }
+            if result.truncated {
+                ui.label(
+                    RichText::new(t(
+                        lang,
+                        "已达 512 字节上限，后续数据未解析",
+                        "Stopped at 512-byte limit; remaining data was not decoded",
+                    ))
+                    .small()
+                    .color(tokens.text_muted),
+                );
+            }
             if !result.info.is_empty() {
                 ui.label(RichText::new(&result.info).small().color(tokens.text_muted));
             }
@@ -1622,39 +1812,22 @@ impl WaveformAnalysisPanel {
                         .small()
                         .color(tokens.text_muted),
                 );
-            }
-            if !result.frames.is_empty() {
-                let list_h = ui.available_height().max(48.0);
-                let mut clicked_frame: Option<usize> = None;
-                let selected = self.selected_bus_frame;
-                egui::ScrollArea::vertical()
-                    .id_salt("bus_decode_frames")
-                    .max_height(list_h)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        for (i, frame) in result.frames.iter().enumerate() {
-                            let row_selected = selected == Some(i);
-                            let label = format!(
-                                "{}\t{}",
-                                format_eng(frame.t_start, "s"),
-                                frame.summary
-                            );
-                            if ui.selectable_label(row_selected, label).clicked() {
-                                clicked_frame = Some(i);
-                            }
-                        }
-                    });
-                if let Some(i) = clicked_frame {
-                    self.selected_bus_frame = Some(i);
-                    if let Some(frame) = self
-                        .bus_result
-                        .as_ref()
-                        .and_then(|r| r.frames.get(i))
-                        .cloned()
-                    {
-                        self.zoom_to_bus_frame(&frame);
-                    }
-                }
+            } else if !result.frames.is_empty() {
+                ui.label(
+                    RichText::new(t(
+                        lang,
+                        &format!(
+                            "已在波形上标注 {} 条（点击标注可定位）",
+                            result.frames.len()
+                        ),
+                        &format!(
+                            "{} annotations on the waveform (click a label to zoom)",
+                            result.frames.len()
+                        ),
+                    ))
+                    .small()
+                    .color(tokens.text_muted),
+                );
             }
         }
     }
@@ -1706,6 +1879,7 @@ impl WaveformAnalysisPanel {
                     color,
                     y_offset: 0.0,
                     y_scale: 1.0,
+                    x_monotonic: draft.x_monotonic,
                 });
             }
             let end = self.waves.len();
@@ -1831,7 +2005,7 @@ impl WaveformAnalysisPanel {
                 ui.add_space(4.0);
                 match self.cursor_axis {
                     CursorAxis::X => self.draw_x_cursor_measures(ui, tokens, lang, &w.trace, xu, yu),
-                    CursorAxis::Y => self.draw_y_cursor_measures(ui, tokens, lang),
+                    CursorAxis::Y => self.draw_y_cursor_measures(ui, tokens, lang, Some(i)),
                 }
             });
     }
@@ -1911,10 +2085,23 @@ impl WaveformAnalysisPanel {
         ui: &mut egui::Ui,
         tokens: &Tokens,
         lang: Lang,
+        measure_idx: Option<usize>,
     ) {
+        let measure_idx = measure_idx.or_else(|| self.y_measure_wave_index());
         match (self.y1, self.y2) {
             (Some(y1_plot), Some(y2_plot)) => {
-                for (idx, w) in self.waves.iter().enumerate() {
+                // Always lead with the active channel (GND = 0 for that channel).
+                let order: Vec<usize> = {
+                    let mut idx: Vec<usize> = (0..self.waves.len()).collect();
+                    if let Some(sel) = measure_idx {
+                        if let Some(pos) = idx.iter().position(|&i| i == sel) {
+                            idx.swap(0, pos);
+                        }
+                    }
+                    idx
+                };
+                for (k, idx) in order.iter().enumerate() {
+                    let w = &self.waves[*idx];
                     let ch = short_channel_label(&w.trace.channel);
                     let yu = w.trace.y_unit.as_str();
                     let y1 = plot_y_to_native(y1_plot, w.y_scale, w.y_offset);
@@ -1930,17 +2117,13 @@ impl WaveformAnalysisPanel {
                     measure_row(ui, tokens, "Y2", &format_eng(y2, yu));
                     measure_row(ui, tokens, "ΔY", &format_eng(dy, yu));
                     measure_row(ui, tokens, "|ΔY|", &format_eng(dy.abs(), yu));
-                    if self.waves.len() > 1 && idx + 1 < self.waves.len() {
+                    if k + 1 < order.len() {
                         ui.add_space(6.0);
                     }
                 }
             }
             (Some(y1_plot), None) => {
-                if let Some(w) = self.selected.and_then(|i| self.waves.get(i)) {
-                    let yu = w.trace.y_unit.as_str();
-                    let y1 = plot_y_to_native(y1_plot, w.y_scale, w.y_offset);
-                    measure_row(ui, tokens, "Y1", &format_eng(y1, yu));
-                } else if let Some(w) = self.waves.first() {
+                if let Some(w) = measure_idx.and_then(|i| self.waves.get(i)) {
                     let yu = w.trace.y_unit.as_str();
                     let y1 = plot_y_to_native(y1_plot, w.y_scale, w.y_offset);
                     measure_row(ui, tokens, "Y1", &format_eng(y1, yu));
@@ -2012,7 +2195,15 @@ impl WaveformAnalysisPanel {
                 Stroke::new(0.5_f32, tokens.border.gamma_multiply(0.65)),
             );
             if show_tick_labels {
-                let y_val = y_lo + (1.0 - f64::from(frac)) * (y_hi - y_lo);
+                let y_plot = y_lo + (1.0 - f64::from(frac)) * (y_hi - y_lo);
+                let tick_ch = self
+                    .selected
+                    .filter(|&i| i < n)
+                    .or(if n > 0 { Some(0) } else { None });
+                let y_val = tick_ch
+                    .and_then(|i| self.waves.get(i))
+                    .map(|w| plot_y_to_native(y_plot, w.y_scale, w.y_offset))
+                    .unwrap_or(y_plot);
                 painter.text(
                     egui::pos2(rect.right() - 1.0, y),
                     egui::Align2::RIGHT_CENTER,
@@ -2023,18 +2214,17 @@ impl WaveformAnalysisPanel {
             }
         }
 
-        let plot_y_to_screen = |y_plot: f64| -> f32 {
-            let t = ((y_plot - y_lo) / y_span).clamp(0.0, 1.0) as f32;
-            egui::lerp(rect.bottom()..=rect.top(), t)
-        };
-
         let axis_cx = rect.center().x;
-        let centers: Vec<f64> = self.waves.iter().map(wave_display_y_center).collect();
+        // Channel marker tracks native 0 V (GND), not the amplitude midpoint.
+        let zeros: Vec<f64> = self.waves.iter().map(wave_display_y_zero).collect();
+        let handle_y = |i: usize| -> (f32, bool) {
+            channel_gnd_screen_y(zeros[i], y_lo, y_span, rect)
+        };
         let pick_at = |pos: egui::Pos2| -> Option<usize> {
             let mut best = None;
             let mut best_d2 = 14.0_f32 * 14.0_f32;
             for i in 0..n {
-                let hy = plot_y_to_screen(centers[i]);
+                let (hy, _) = handle_y(i);
                 let d2 = pos.distance_sq(egui::pos2(axis_cx, hy));
                 if d2 < best_d2 {
                     best_d2 = d2;
@@ -2048,8 +2238,7 @@ impl WaveformAnalysisPanel {
         for i in 0..n {
             let w = &self.waves[i];
             let color = w.color;
-            let hy = plot_y_to_screen(centers[i])
-                .clamp(rect.top() + 10.0, rect.bottom() - 16.0);
+            let (hy, on_screen) = handle_y(i);
             let selected = self.selected == Some(i);
             let active = self.dragging_channel_offset == Some(i)
                 || self.dragging_channel_scale == Some(i);
@@ -2059,12 +2248,16 @@ impl WaveformAnalysisPanel {
             } else {
                 AXIS_HANDLE_RADIUS
             };
-            painter.circle_stroke(
-                egui::pos2(axis_cx, hy),
+            paint_channel_gnd_handle(
+                &painter,
+                rect,
+                axis_cx,
+                hy,
+                on_screen,
                 radius,
-                Stroke::new(if highlighted { 2.0_f32 } else { 1.2_f32 }, color),
+                color,
+                highlighted,
             );
-            painter.circle_filled(egui::pos2(axis_cx, hy), (radius - 1.2).max(2.0), color);
             if highlighted {
                 let channel = short_channel_label(&w.trace.channel);
                 painter.text(
@@ -2172,18 +2365,17 @@ impl WaveformAnalysisPanel {
         if resp.hovered() {
             if let Some(i) = active_ch {
                 let y_unit = self.waves[i].trace.y_unit.clone();
-                let off = self.waves[i].y_offset;
                 let sc = self.waves[i].y_scale;
                 let ch = short_channel_label(&self.waves[i].trace.channel);
                 let div = format_channel_div(&self.waves[i], y_span);
                 let tip = format!(
                     "{}\n{}\n{}\n{}\n{}: {}\n{}: {}\n{}: {}",
                     ch,
-                    t(lang, "拖动：垂直位移", "Drag: vertical offset"),
-                    t(lang, "滚轮：比例 · Shift+滚轮：位移", "Wheel: scale · Shift+wheel: offset"),
+                    t(lang, "拖动：移动零基准（GND）", "Drag: move ground (0)"),
+                    t(lang, "滚轮：比例（绕零基准） · Shift+滚轮：位移", "Wheel: scale about ground · Shift+wheel: offset"),
                     t(lang, "Ctrl+拖动：比例缩放", "Ctrl+drag: scale"),
-                    t(lang, "偏移", "Offset"),
-                    format_eng(off, &y_unit),
+                    t(lang, "零基准", "Ground"),
+                    format_eng(0.0, &y_unit),
                     t(lang, "比例", "Scale"),
                     format_scale(sc),
                     t(lang, "量程", "Range"),
@@ -2258,6 +2450,7 @@ impl WaveformAnalysisPanel {
         let mut next_x_range = None;
         let mut next_y_range = None;
         let mut click_val = None;
+        let mut click_bus_frame: Option<usize> = None;
         let mut drag_cursor: Option<(u8, f64)> = None;
         let mut end_drag = false;
         let mut needs_clamp = false;
@@ -2274,11 +2467,22 @@ impl WaveformAnalysisPanel {
             .and_then(|i| self.waves.get(i))
             .map(|w| w.trace.x_unit.clone())
             .unwrap_or_else(|| "s".into());
-        let yu = self
-            .selected
-            .and_then(|i| self.waves.get(i))
-            .map(|w| w.trace.y_unit.clone())
-            .unwrap_or_else(|| "V".into());
+        let y_maps: Vec<(String, f64, f64, String)> = self
+            .waves
+            .iter()
+            .map(|w| {
+                (
+                    w.label.clone(),
+                    w.y_scale,
+                    w.y_offset,
+                    w.trace.y_unit.clone(),
+                )
+            })
+            .collect();
+        let y_prefer = self.y_measure_wave_index();
+        let y_axis_map = y_prefer.and_then(|i| y_maps.get(i).cloned()).or_else(|| {
+            y_maps.first().cloned()
+        });
 
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
@@ -2316,14 +2520,27 @@ impl WaveformAnalysisPanel {
         let y1 = self.y1;
         let y2 = self.y2;
         let dragging = self.dragging_cursor;
-        let bus_markers: Vec<(f64, bool)> = self
+        let bus_overlay_y = self.bus_overlay_channel().and_then(|i| {
+            self.waves
+                .get(i)
+                .map(|w| (w.y_offset, w.y_scale, w.y_min, w.y_max))
+        });
+        let bus_markers: Vec<(usize, f64, f64, bool, String)> = self
             .bus_result
             .as_ref()
             .map(|r| {
                 r.frames
                     .iter()
                     .enumerate()
-                    .map(|(i, f)| (f.t_start, self.selected_bus_frame == Some(i)))
+                    .map(|(i, f)| {
+                        (
+                            i,
+                            f.t_start,
+                            f.t_end,
+                            self.selected_bus_frame == Some(i),
+                            f.summary.clone(),
+                        )
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -2335,25 +2552,53 @@ impl WaveformAnalysisPanel {
             .allow_scroll(!ctrl)
             .allow_boxed_zoom(mode == InteractMode::Pan)
             .legend(Legend::default())
+            .y_axis_formatter({
+                let map = y_axis_map.clone();
+                move |mark: GridMark, _range| {
+                    let y = match &map {
+                        Some((_, sc, off, _)) => plot_y_to_native(mark.value, *sc, *off),
+                        None => mark.value,
+                    };
+                    format_axis_tick(y, "", false)
+                }
+            })
             .label_formatter({
                 let xu = xu.clone();
-                let yu = yu.clone();
+                let maps = y_maps.clone();
+                let prefer = y_prefer;
                 move |name, value| {
+                    let (y, yu) = native_y_for_series(value.y, name, &maps, prefer);
                     if name.is_empty() {
                         format!(
-                            "t={}\ny={}",
+                            "t={}\nv={}",
                             format_eng(value.x, &xu),
-                            format_eng(value.y, &yu)
+                            format_eng(y, &yu)
                         )
                     } else {
                         format!(
-                            "{name}\nt={}\ny={}",
+                            "{name}\nt={}\nv={}",
                             format_eng(value.x, &xu),
-                            format_eng(value.y, &yu)
+                            format_eng(y, &yu)
                         )
                     }
                 }
             })
+            .coordinates_formatter(
+                Corner::LeftBottom,
+                CoordinatesFormatter::new({
+                    let xu = xu.clone();
+                    let maps = y_maps.clone();
+                    let prefer = y_prefer;
+                    move |value, _bounds| {
+                        let (y, yu) = native_y_for_series(value.y, "", &maps, prefer);
+                        format!(
+                            "t={}   v={}",
+                            format_eng(value.x, &xu),
+                            format_eng(y, &yu)
+                        )
+                    }
+                }),
+            )
             .show(ui, |plot_ui| {
                 // IMPORTANT: `plot_ui.plot_bounds()` returns *last frame* until the plot
                 // is drawn. `set_plot_bounds` only queues a modification. Never seed
@@ -2427,25 +2672,15 @@ impl WaveformAnalysisPanel {
                                 ));
                             }
                             WaveViewportSeries::Uniform(pts) if pts.len() >= 2 => {
-                                let scale = w.y_scale;
-                                let y_off = w.y_offset;
-                                let line_pts = if (scale - 1.0).abs() > f64::EPSILON
-                                    || y_off.abs() > f64::EPSILON
-                                {
-                                    PlotPoints::from(
-                                        pts.iter()
-                                            .map(|p| [p[0], p[1] * scale + y_off])
-                                            .collect::<Vec<[f64; 2]>>(),
-                                    )
-                                } else {
-                                    PlotPoints::from((**pts).clone())
-                                };
-                                plot_ui.line(
-                                    Line::new(line_pts)
-                                        .name(&w.label)
-                                        .color(w.color)
-                                        .width(stroke),
-                                );
+                                plot_ui.add(ScopeVectorPlotItem::new(
+                                    Arc::clone(pts),
+                                    w.color,
+                                    stroke,
+                                    w.label.clone(),
+                                    highlighted,
+                                    w.y_scale,
+                                    w.y_offset,
+                                ));
                             }
                             _ => {
                                 if !w.overview.is_empty() {
@@ -2507,17 +2742,66 @@ impl WaveformAnalysisPanel {
                     );
                 }
 
-                for (t, selected) in &bus_markers {
-                    plot_ui.vline(
-                        VLine::new(*t)
-                            .color(if *selected {
-                                Color32::from_rgb(0xFF, 0x6B, 0x6B)
-                            } else {
-                                Color32::from_rgb(0xA7, 0x8B, 0xFA)
-                            })
-                            .width(if *selected { 2.0_f32 } else { 1.0_f32 })
-                            .name("bus"),
+                let label_y = {
+                    let pad = y_span * 0.02;
+                    if let Some((off, sc, ymin, ymax)) = bus_overlay_y {
+                        let top = off + sc * ymax;
+                        let bot = off + sc * ymin;
+                        let ch_span = (top - bot).abs().max(y_span * 0.02);
+                        (top + ch_span * 0.18).clamp(
+                            bounds.min()[1] + pad,
+                            bounds.max()[1] - pad,
+                        )
+                    } else {
+                        bounds.max()[1] - y_span * 0.06
+                    }
+                };
+                let min_label_dt = x_span * (42.0 / plot_width_px as f64);
+                let mut last_label_t = f64::NEG_INFINITY;
+                let x_lo = bounds.min()[0];
+                let x_hi = bounds.max()[0];
+                for (_i, t0, t1, selected, summary) in &bus_markers {
+                    if *t1 < x_lo || *t0 > x_hi {
+                        continue;
+                    }
+                    let is_event = matches!(
+                        summary.as_str(),
+                        "START" | "Sr" | "STOP" | "CS" | "CS#" | "BREAK"
                     );
+                    let color = if *selected {
+                        Color32::from_rgb(0xFF, 0x6B, 0x6B)
+                    } else if summary == "START" || summary == "Sr" || summary == "CS" {
+                        Color32::from_rgb(0x22, 0xC5, 0x5E)
+                    } else if summary == "STOP" || summary == "CS#" || summary == "BREAK" {
+                        Color32::from_rgb(0xF9, 0x73, 0x16)
+                    } else {
+                        Color32::from_rgb(0xA7, 0x8B, 0xFA)
+                    };
+                    plot_ui.vline(
+                        VLine::new(*t0)
+                            .color(color)
+                            .width(if *selected { 2.0_f32 } else { 1.0_f32 })
+                            .name(""),
+                    );
+                    let t_label = if is_event {
+                        *t0
+                    } else {
+                        (*t0 + *t1) * 0.5
+                    };
+                    let show_text = *selected
+                        || is_event
+                        || (t_label - last_label_t).abs() >= min_label_dt;
+                    if show_text {
+                        last_label_t = t_label;
+                        plot_ui.text(
+                            Text::new(PlotPoint::new(t_label, label_y), summary.as_str())
+                                .color(color)
+                                .anchor(Align2::CENTER_BOTTOM)
+                                .highlight(*selected)
+                                .allow_hover(false)
+                                .name(""),
+                        );
+                    }
                 }
 
                 let resp = plot_ui.response().clone();
@@ -2528,6 +2812,27 @@ impl WaveformAnalysisPanel {
                             .radius(0.01_f32)
                             .color(Color32::TRANSPARENT),
                     );
+
+                    let pick_bus = || {
+                        if (ptr.y - label_y).abs() > y_span * 0.10 {
+                            return None;
+                        }
+                        let mut best: Option<(f64, usize)> = None;
+                        let hit = grab_x * 4.0;
+                        for (i, t0, t1, _, _) in &bus_markers {
+                            let lo = t0.min(*t1);
+                            let hi = t0.max(*t1);
+                            let dist = if ptr.x >= lo && ptr.x <= hi {
+                                0.0
+                            } else {
+                                (ptr.x - *t0).abs().min((ptr.x - *t1).abs())
+                            };
+                            if dist <= hit && best.map(|(d, _)| dist < d).unwrap_or(true) {
+                                best = Some((dist, *i));
+                            }
+                        }
+                        best.map(|(_, i)| i)
+                    };
 
                     if mode == InteractMode::Cursor {
                         if resp.drag_started()
@@ -2574,10 +2879,18 @@ impl WaveformAnalysisPanel {
                             end_drag = true;
                         }
                         if resp.clicked() && dragging.is_none() && drag_cursor.is_none() {
-                            click_val = Some(match axis {
-                                CursorAxis::X => ptr.x,
-                                CursorAxis::Y => ptr.y,
-                            });
+                            if let Some(i) = pick_bus() {
+                                click_bus_frame = Some(i);
+                            } else {
+                                click_val = Some(match axis {
+                                    CursorAxis::X => ptr.x,
+                                    CursorAxis::Y => ptr.y,
+                                });
+                            }
+                        }
+                    } else if resp.clicked() {
+                        if let Some(i) = pick_bus() {
+                            click_bus_frame = Some(i);
                         }
                     }
                 } else if dragging.is_some() && !primary_down {
@@ -2673,6 +2986,17 @@ impl WaveformAnalysisPanel {
                 self.bus_decode_dirty = true;
             }
         }
+        if let Some(i) = click_bus_frame {
+            self.selected_bus_frame = Some(i);
+            if let Some(frame) = self
+                .bus_result
+                .as_ref()
+                .and_then(|r| r.frames.get(i))
+                .cloned()
+            {
+                self.zoom_to_bus_frame(&frame);
+            }
+        }
 
         // On-plot measurement overlay (X1/X2 or Y1/Y2 + delta).
         let overlay = match self.cursor_axis {
@@ -2695,7 +3019,7 @@ impl WaveformAnalysisPanel {
                 _ => None,
             },
             CursorAxis::Y => {
-                let sel = self.selected.or(if self.waves.len() == 1 { Some(0) } else { None });
+                let sel = self.y_measure_wave_index();
                 match (sel, self.y1, self.y2) {
                     (Some(i), Some(y1p), Some(y2p)) if self.waves.get(i).is_some() => {
                         let w = &self.waves[i];
@@ -2710,19 +3034,16 @@ impl WaveformAnalysisPanel {
                             short_channel_label(&w.trace.channel),
                         ))
                     }
-                    (_, Some(y1p), None) => {
-                        if let Some(i) = sel {
-                            if let Some(w) = self.waves.get(i) {
-                                let y1 = plot_y_to_native(y1p, w.y_scale, w.y_offset);
-                                Some(format!(
-                                    "Y1={}   Y2=—",
-                                    format_eng(y1, w.trace.y_unit.as_str())
-                                ))
-                            } else {
-                                Some(format!("Y1={}   Y2=—", format_eng(y1p, &yu)))
-                            }
+                    (Some(i), Some(y1p), None) => {
+                        if let Some(w) = self.waves.get(i) {
+                            let y1 = plot_y_to_native(y1p, w.y_scale, w.y_offset);
+                            Some(format!(
+                                "Y1={}   Y2=— ({})",
+                                format_eng(y1, w.trace.y_unit.as_str()),
+                                short_channel_label(&w.trace.channel),
+                            ))
                         } else {
-                            Some(format!("Y1={}   Y2=—", format_eng(y1p, &yu)))
+                            None
                         }
                     }
                     _ => None,
@@ -2847,10 +3168,12 @@ impl WaveformAnalysisPanel {
 struct ViewportBuildJob {
     index: usize,
     x: Arc<[f64]>,
-    y: Vec<f64>,
+    y: Arc<[f64]>,
     x0: f64,
     x1: f64,
     plot_width_px: f32,
+    prev_uniform: bool,
+    x_monotonic: bool,
 }
 
 fn load_waveform_file_worker(path: &Path, tx: Sender<WaveLoadEvent>) {
@@ -2865,30 +3188,20 @@ fn load_waveform_file_worker(path: &Path, tx: Sender<WaveLoadEvent>) {
             .and_then(|n| n.to_str())
             .unwrap_or("wave");
 
-        let phase2_traces: Vec<WaveformTrace> = traces
-            .par_iter()
-            .map(|t| WaveformTrace {
-                channel: t.channel.clone(),
-                x: Arc::clone(&t.x),
-                y: t.y.clone(),
-                x_unit: t.x_unit.clone(),
-                y_unit: t.y_unit.clone(),
-            })
-            .collect();
-
         let channels: Vec<LoadedChannelDraft> = traces
-            .into_par_iter()
+            .par_iter()
             .map(|trace| {
                 let (overview, snap) = build_load_snapshot(&trace.x, &trace.y);
                 LoadedChannelDraft {
                     label: format!("{file_name} · {}", trace.channel),
-                    trace,
+                    trace: trace.clone(),
                     overview,
                     x_min: snap.x_min,
                     x_max: snap.x_max,
                     y_min: snap.y_min,
                     y_max: snap.y_max,
                     measures: snap.to_quick_measures(),
+                    x_monotonic: snap.x_monotonic,
                 }
             })
             .collect();
@@ -2896,7 +3209,7 @@ fn load_waveform_file_worker(path: &Path, tx: Sender<WaveLoadEvent>) {
         tx.send(WaveLoadEvent::Preview { channels, max_pts })
             .map_err(|e| e.to_string())?;
 
-        let (measures, extents): (Vec<_>, Vec<_>) = phase2_traces
+        let (measures, extents): (Vec<_>, Vec<_>) = traces
             .par_iter()
             .map(|t| (measure_waveform(t), trace_extent(t)))
             .unzip();
@@ -3053,9 +3366,62 @@ fn ordered(a: f64, b: f64) -> (f64, f64) {
     }
 }
 
-/// Display-space Y center of a loaded wave (scale + offset applied).
-fn wave_display_y_center(w: &LoadedWave) -> f64 {
-    0.5 * (w.y_min + w.y_max) * w.y_scale + w.y_offset
+/// Plot-Y of channel ground (native 0 V after scale/offset).
+///
+/// Display mapping is `y_plot = y_raw * y_scale + y_offset`, so ground is `y_offset`.
+/// Scale zoom must not move this value — the marker stays locked to 0 V.
+fn wave_display_y_zero(w: &LoadedWave) -> f64 {
+    w.y_offset
+}
+
+/// Screen Y of a channel ground marker, plus whether ground is inside the current Y view.
+fn channel_gnd_screen_y(y_zero_plot: f64, y_lo: f64, y_span: f64, rect: egui::Rect) -> (f32, bool) {
+    let t = ((y_zero_plot - y_lo) / y_span) as f32;
+    let hy = egui::lerp(rect.bottom()..=rect.top(), t);
+    if hy >= rect.top() && hy <= rect.bottom() {
+        (hy, true)
+    } else if hy < rect.top() {
+        (rect.top() + 7.0, false)
+    } else {
+        (rect.bottom() - 7.0, false)
+    }
+}
+
+fn paint_channel_gnd_handle(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    axis_cx: f32,
+    hy: f32,
+    on_screen: bool,
+    radius: f32,
+    color: Color32,
+    highlighted: bool,
+) {
+    let origin = egui::pos2(axis_cx, hy);
+    if on_screen {
+        painter.line_segment(
+            [egui::pos2(rect.left(), hy), egui::pos2(axis_cx - radius, hy)],
+            Stroke::new(if highlighted { 1.4_f32 } else { 1.0_f32 }, color),
+        );
+        painter.circle_stroke(
+            origin,
+            radius,
+            Stroke::new(if highlighted { 2.0_f32 } else { 1.2_f32 }, color),
+        );
+        painter.circle_filled(origin, (radius - 1.2).max(2.0), color);
+    } else {
+        let up = hy <= rect.top() + 8.0;
+        let dy = if up { -6.0 } else { 6.0 };
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                egui::pos2(axis_cx - 4.5, hy),
+                egui::pos2(axis_cx + 4.5, hy),
+                egui::pos2(axis_cx, hy + dy),
+            ],
+            color,
+            Stroke::NONE,
+        ));
+    }
 }
 
 /// Display-space Y bounds for a loaded wave (scale + offset applied).
@@ -3094,12 +3460,32 @@ fn format_channel_div(w: &LoadedWave, plot_y_span: f64) -> String {
     format!("{}/div", format_eng(per_div, w.trace.y_unit.as_str()))
 }
 
-/// Convert plot Y coordinate to native channel value.
+/// Convert plot Y coordinate to native channel value (0 = that channel's GND).
 fn plot_y_to_native(y_plot: f64, y_scale: f64, y_offset: f64) -> f64 {
     if y_scale.abs() < f64::EPSILON {
         y_plot
     } else {
         (y_plot - y_offset) / y_scale
+    }
+}
+
+/// Native Y for a plot coordinate: match series name, else the preferred channel.
+fn native_y_for_series(
+    y_plot: f64,
+    series_name: &str,
+    maps: &[(String, f64, f64, String)],
+    prefer: Option<usize>,
+) -> (f64, String) {
+    if !series_name.is_empty() {
+        if let Some((_, sc, off, unit)) = maps.iter().find(|(label, ..)| label == series_name) {
+            return (plot_y_to_native(y_plot, *sc, *off), unit.clone());
+        }
+    }
+    let i = prefer.filter(|i| *i < maps.len()).unwrap_or(0);
+    if let Some((_, sc, off, unit)) = maps.get(i) {
+        (plot_y_to_native(y_plot, *sc, *off), unit.clone())
+    } else {
+        (y_plot, "V".into())
     }
 }
 
@@ -3448,9 +3834,275 @@ fn bus_grid_channel_combo(
     changed
 }
 
+fn bus_grid_buttons(
+    ui: &mut egui::Ui,
+    layout: BusFormLayout,
+    label: &str,
+    current: &mut u8,
+    options: &[(&str, u8)],
+    btn_w: f32,
+) -> bool {
+    let mut changed = false;
+    bus_grid_label(ui, layout, label);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let cur = *current;
+        for (text, value) in options {
+            if ui
+                .add_sized(
+                    [btn_w, layout.row_h],
+                    egui::Button::new(*text).selected(cur == *value),
+                )
+                .clicked()
+                && cur != *value
+            {
+                *current = *value;
+                changed = true;
+            }
+        }
+    });
+    ui.end_row();
+    changed
+}
+
+fn bus_grid_parity(
+    ui: &mut egui::Ui,
+    layout: BusFormLayout,
+    label: &str,
+    current: &mut UartParity,
+) -> bool {
+    let mut changed = false;
+    bus_grid_label(ui, layout, label);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let cur = *current;
+        for (text, value) in [
+            ("N", UartParity::None),
+            ("E", UartParity::Even),
+            ("O", UartParity::Odd),
+        ] {
+            if ui
+                .add_sized(
+                    [22.0, layout.row_h],
+                    egui::Button::new(text).selected(cur == value),
+                )
+                .clicked()
+                && cur != value
+            {
+                *current = value;
+                changed = true;
+            }
+        }
+    });
+    ui.end_row();
+    changed
+}
+
+fn bus_grid_spi_wire(
+    ui: &mut egui::Ui,
+    layout: BusFormLayout,
+    label: &str,
+    current: &mut SpiWire,
+) -> bool {
+    let mut changed = false;
+    bus_grid_label(ui, layout, label);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 3.0;
+        let cur = *current;
+        for (text, value) in [
+            ("2", SpiWire::TwoWire),
+            ("4", SpiWire::FourWire),
+            ("Dual", SpiWire::Dual),
+            ("Quad", SpiWire::Quad),
+        ] {
+            let w = if text.len() > 1 { 40.0 } else { 24.0 };
+            if ui
+                .add_sized(
+                    [w, layout.row_h],
+                    egui::Button::new(text).selected(cur == value),
+                )
+                .clicked()
+                && cur != value
+            {
+                *current = value;
+                changed = true;
+            }
+        }
+    });
+    ui.end_row();
+    changed
+}
+
+fn bus_grid_spi_mode(
+    ui: &mut egui::Ui,
+    layout: BusFormLayout,
+    label: &str,
+    current: &mut SpiMode,
+) -> bool {
+    let mut changed = false;
+    bus_grid_label(ui, layout, label);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let cur = *current;
+        for (text, value) in [
+            ("0", SpiMode::Mode0),
+            ("1", SpiMode::Mode1),
+            ("2", SpiMode::Mode2),
+            ("3", SpiMode::Mode3),
+        ] {
+            if ui
+                .add_sized(
+                    [22.0, layout.row_h],
+                    egui::Button::new(text).selected(cur == value),
+                )
+                .clicked()
+                && cur != value
+            {
+                *current = value;
+                changed = true;
+            }
+        }
+    });
+    ui.end_row();
+    changed
+}
+
+fn bus_grid_bool_pair(
+    ui: &mut egui::Ui,
+    layout: BusFormLayout,
+    label: &str,
+    current: &mut bool,
+    (false_l, true_l): (&str, &str),
+) -> bool {
+    let mut changed = false;
+    bus_grid_label(ui, layout, label);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let cur = *current;
+        for (text, value) in [(false_l, false), (true_l, true)] {
+            let w = (text.len() as f32 * 8.0 + 12.0).clamp(28.0, 52.0);
+            if ui
+                .add_sized(
+                    [w, layout.row_h],
+                    egui::Button::new(text).selected(cur == value),
+                )
+                .clicked()
+                && cur != value
+            {
+                *current = value;
+                changed = true;
+            }
+        }
+    });
+    ui.end_row();
+    changed
+}
+
+fn bus_grid_i2s_format(
+    ui: &mut egui::Ui,
+    layout: BusFormLayout,
+    label: &str,
+    current: &mut I2sFormat,
+) -> bool {
+    let mut changed = false;
+    bus_grid_label(ui, layout, label);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let cur = *current;
+        for (text, value) in [("Philips", I2sFormat::Philips), ("Left-J", I2sFormat::LeftJustified)]
+        {
+            if ui
+                .add_sized(
+                    [52.0, layout.row_h],
+                    egui::Button::new(text).selected(cur == value),
+                )
+                .clicked()
+                && cur != value
+            {
+                *current = value;
+                changed = true;
+            }
+        }
+    });
+    ui.end_row();
+    changed
+}
+
 fn t(lang: Lang, zh: &str, en: &str) -> String {
     match lang {
         Lang::Zh => zh.to_string(),
         Lang::En => en.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn channel_ground_stays_at_offset_when_scale_changes() {
+        let y_offset = 1.25;
+        for scale in [0.25_f64, 1.0, 4.0, 16.0] {
+            let gnd = 0.0 * scale + y_offset;
+            assert!((gnd - y_offset).abs() < 1e-15);
+        }
+        // Amplitude midpoint is not ground and walks when scale changes.
+        let y_min = 0.2;
+        let y_max = 1.0;
+        let mid_1 = 0.5 * (y_min + y_max) * 1.0 + y_offset;
+        let mid_4 = 0.5 * (y_min + y_max) * 4.0 + y_offset;
+        assert!((mid_1 - y_offset).abs() > 0.1);
+        assert!((mid_4 - mid_1).abs() > 0.5);
+    }
+
+    #[test]
+    fn gnd_screen_y_matches_plot_zero_inside_view() {
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(28.0, 100.0));
+        let y_lo = -2.0;
+        let y_span = 4.0;
+        let (hy, on) = channel_gnd_screen_y(0.0, y_lo, y_span, rect);
+        assert!(on);
+        assert!((hy - 50.0).abs() < 0.01);
+        let (hy_pos, on_pos) = channel_gnd_screen_y(1.0, y_lo, y_span, rect);
+        assert!(on_pos);
+        assert!((hy_pos - 25.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn gnd_screen_y_pins_to_edge_when_off_view() {
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(28.0, 100.0));
+        let (hy, on) = channel_gnd_screen_y(10.0, -1.0, 2.0, rect);
+        assert!(!on);
+        assert!((hy - 7.0).abs() < 0.01);
+        let (hy2, on2) = channel_gnd_screen_y(-10.0, -1.0, 2.0, rect);
+        assert!(!on2);
+        assert!((hy2 - 93.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn y_cursor_zero_matches_channel_ground() {
+        let y_offset = 3.5;
+        let y_scale = 2.0;
+        assert!((plot_y_to_native(y_offset, y_scale, y_offset)).abs() < 1e-12);
+        assert!((plot_y_to_native(y_offset + 4.0, y_scale, y_offset) - 2.0).abs() < 1e-12);
+        assert!((plot_y_to_native(y_offset - 1.0, y_scale, y_offset) + 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn y_readout_uses_hovered_channel_map_not_plot_axis() {
+        let maps = vec![
+            ("CH1".into(), 1.0, 0.0, "V".into()),
+            ("CH2".into(), 1.0, 5.0, "V".into()),
+        ];
+        let (y_ch2, unit) = native_y_for_series(5.0, "CH2", &maps, Some(0));
+        assert_eq!(unit, "V");
+        assert!(
+            y_ch2.abs() < 1e-12,
+            "CH2 GND at plot Y=5 must read 0, got {y_ch2}"
+        );
+        let (y_ch1, _) = native_y_for_series(5.0, "CH1", &maps, Some(0));
+        assert!((y_ch1 - 5.0).abs() < 1e-12);
+        let (y_pref, _) = native_y_for_series(5.0, "", &maps, Some(1));
+        assert!(y_pref.abs() < 1e-12, "preferred CH2 GND must read 0");
     }
 }

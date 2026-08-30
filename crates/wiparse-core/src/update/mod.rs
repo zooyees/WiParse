@@ -82,7 +82,7 @@ mod tests {
     #[test]
     fn evaluate_finds_newer_package() {
         let manifest: UpdateManifest = serde_json::from_str(include_str!(
-            "../../../packaging/update/latest.json.example"
+            "../../../../packaging/update/latest.json.example"
         ))
         .unwrap();
         let avail = evaluate_manifest("1.0.0", &manifest, UpdateTarget::WindowsX64);

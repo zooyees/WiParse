@@ -1,19 +1,22 @@
 //! Log tab — disk-backed file store + live ring buffer, virtualized viewport.
 
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::io;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 use crossbeam_channel::Receiver;
 use egui::text::{CCursor, CCursorRange};
 use egui::{Align2, Color32, CornerRadius, FontId, Frame, Margin, Pos2, RichText, Stroke, Vec2};
 use wiparse_core::i18n::{tr, tr_fmt, Lang};
 use wiparse_core::log::{
-    build_file_store_worker, collect_match_indices, line_matches_prepared, parse_filter_patterns,
-    prepared_needles, FileBuildEvent, FileLogStore, LiveLogStore, LogStore,
+    build_file_store_worker, collect_match_hits, match_ranges_in_line, parse_filter_patterns,
+    prepared_needles, unique_match_rows, FileBuildEvent, FileLogStore, LiveLogStore, LogStore,
+    TextHit, MAX_FILTER_MATCHES, MAX_LIVE_LINES,
 };
 use wiparse_core::protocol::{decode_qi_message, format_qi_tooltip, QiTipLine, QiTipRole};
 
@@ -35,6 +38,13 @@ static NEXT_LOG_VIEW_ID: AtomicU64 = AtomicU64::new(1);
 pub(crate) struct TextCaret {
     pub row: usize,
     pub col: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FindJump {
+    Next,
+    Prev,
+    FirstAt { row: usize, start: usize },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -91,6 +101,13 @@ pub(crate) struct PaneState {
     pub(crate) cached_row_height: Option<(f32, f32)>, // font_size, height
     /// Last first-visible master row — used to prefetch on tab activate.
     pub(crate) last_view_row: Option<usize>,
+    pub(crate) find_hits: Vec<TextHit>,
+    pub(crate) find_current: Option<usize>,
+    pub(crate) find_truncated: bool,
+    pub(crate) find_jump: Option<FindJump>,
+    pub(crate) filter_apply_at: Option<f64>,
+    pub(crate) request_find: bool,
+    pub(crate) request_goto: bool,
     filter_rx: Option<Receiver<FilterScanResult>>,
     filter_busy: bool,
     filter_generation: u64,
@@ -127,6 +144,13 @@ impl Default for PaneState {
             reset_horizontal_scroll: true,
             cached_row_height: None,
             last_view_row: None,
+            find_hits: Vec::new(),
+            find_current: None,
+            find_truncated: false,
+            find_jump: None,
+            filter_apply_at: None,
+            request_find: false,
+            request_goto: false,
             filter_rx: None,
             filter_busy: false,
             filter_generation: 0,
@@ -136,7 +160,8 @@ impl Default for PaneState {
 
 struct FilterScanResult {
     generation: u64,
-    map: Vec<usize>,
+    hits: Vec<TextHit>,
+    truncated: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -157,7 +182,7 @@ fn pane_split_heights(available: f32, ratio: f32, fixed: f32) -> PaneSplitHeight
 }
 
 impl PaneState {
-    fn has_text_selection(&self) -> bool {
+    pub(crate) fn has_text_selection(&self) -> bool {
         matches!(
             (self.sel_anchor, self.sel_focus),
             (Some(anchor), Some(focus)) if anchor != focus
@@ -170,10 +195,69 @@ impl PaneState {
         self.selecting = false;
         self.select_origin = None;
         self.select_dragged = false;
+        self.last_selected_text.clear();
     }
 
     fn clear_search_sel(&mut self) {
         self.search_selection.clear();
+    }
+
+    fn reset_navigation(&mut self) {
+        self.clear_sel();
+        self.clear_search_sel();
+        self.parse_tip = None;
+        self.parse_hint.clear();
+        self.parse_row = None;
+        self.highlight_master = None;
+        self.scroll_to_master = None;
+        self.find_current = None;
+        self.find_jump = None;
+        self.last_selected_text.clear();
+        self.last_view_row = None;
+    }
+
+    fn apply_find_index(&mut self, idx: usize) {
+        let Some(hit) = self.find_hits.get(idx).copied() else {
+            return;
+        };
+        self.find_current = Some(idx);
+        self.scroll_to_master = Some(hit.row);
+        self.scroll_hold_frames = 16;
+        self.scroll_pinned = false;
+        self.highlight_master = Some(hit.row);
+        self.parse_row = None;
+    }
+
+    fn consume_find_jump(&mut self) {
+        let Some(jump) = self.find_jump.take() else {
+            return;
+        };
+        if self.find_hits.is_empty() {
+            self.find_current = None;
+            return;
+        }
+        let last = self.find_hits.len() - 1;
+        let idx = match jump {
+            FindJump::Next => self
+                .find_current
+                .map(|i| if i >= last { 0 } else { i + 1 })
+                .unwrap_or(0),
+            FindJump::Prev => self
+                .find_current
+                .map(|i| if i == 0 { last } else { i - 1 })
+                .unwrap_or(last),
+            FindJump::FirstAt { row, start } => self
+                .find_hits
+                .iter()
+                .position(|hit| (hit.row, hit.start) >= (row, start))
+                .unwrap_or(0),
+        };
+        self.apply_find_index(idx);
+    }
+
+    fn current_find_hit(&self) -> Option<TextHit> {
+        self.find_current
+            .and_then(|idx| self.find_hits.get(idx).copied())
     }
 
     fn shift_after_front_eviction(&mut self, evicted: usize) {
@@ -199,9 +283,33 @@ impl PaneState {
         self.highlight_master = self
             .highlight_master
             .and_then(|row| row.checked_sub(evicted));
-        self.last_view_row = self
-            .last_view_row
-            .and_then(|row| row.checked_sub(evicted));
+        self.last_view_row = self.last_view_row.and_then(|row| row.checked_sub(evicted));
+        let dropped = self
+            .find_hits
+            .iter()
+            .take_while(|hit| hit.row < evicted)
+            .count();
+        self.find_hits = self
+            .find_hits
+            .iter()
+            .filter_map(|hit| {
+                hit.row.checked_sub(evicted).map(|row| TextHit {
+                    row,
+                    start: hit.start,
+                    end: hit.end,
+                })
+            })
+            .collect();
+        self.find_current = self.find_current.and_then(|idx| {
+            idx.checked_sub(dropped)
+                .filter(|next| *next < self.find_hits.len())
+        });
+        if let Some(FindJump::FirstAt { row, start }) = self.find_jump {
+            self.find_jump = row.checked_sub(evicted).map(|row| FindJump::FirstAt {
+                row,
+                start,
+            });
+        }
         self.search_map = self
             .search_map
             .iter()
@@ -260,6 +368,9 @@ pub struct LogTabPage {
     edit_match_status: String,
     edit_cursor_status: String,
     edit_exit_confirm_open: bool,
+    goto_open: bool,
+    goto_focus_requested: bool,
+    goto_draft: String,
     file_reload_rx: Option<Receiver<FileBuildEvent>>,
     /// Live filter maps are stale (appended while serial tab was hidden).
     filter_dirty: bool,
@@ -310,6 +421,9 @@ impl LogTabPage {
             edit_match_status: String::new(),
             edit_cursor_status: String::new(),
             edit_exit_confirm_open: false,
+            goto_open: false,
+            goto_focus_requested: false,
+            goto_draft: String::new(),
             file_reload_rx: None,
             filter_dirty: false,
         }
@@ -336,9 +450,9 @@ impl LogTabPage {
         };
         match std::fs::read_to_string(path) {
             Ok(text) => {
-                // FileLogStore owns a read-only mmap. Drop it before editing so
-                // Windows allows the document to be truncated and rewritten.
-                self.backend = TabBackend::Pending;
+                // FileLogStore holds a Windows read-only mmap. Drop every mapping
+                // (backend + in-flight reload) before editing so Save can truncate.
+                self.release_mapped_file();
                 for pane in &mut self.panes {
                     pane.filter_rx = None;
                     pane.filter_busy = false;
@@ -391,6 +505,9 @@ impl LogTabPage {
         self.edit_mode = false;
         self.edit_exit_confirm_open = false;
         self.clear_edit_ui_state();
+        if let Some(path) = self.filepath.as_ref().map(PathBuf::from) {
+            self.start_file_reload(path);
+        }
         true
     }
 
@@ -410,11 +527,11 @@ impl LogTabPage {
             return false;
         };
         let path = PathBuf::from(path);
-        match std::fs::write(&path, &self.edit_buffer) {
+        self.release_mapped_file();
+        match write_log_file(&path, self.edit_buffer.as_bytes()) {
             Ok(()) => {
                 self.edit_dirty = false;
                 self.edit_status.clear();
-                self.start_file_reload(path);
                 true
             }
             Err(e) => {
@@ -425,7 +542,7 @@ impl LogTabPage {
     }
 
     fn save_edit_as(&mut self, path: PathBuf) -> bool {
-        match std::fs::write(&path, &self.edit_buffer) {
+        match write_log_file(&path, self.edit_buffer.as_bytes()) {
             Ok(()) => {
                 self.filepath = Some(path.to_string_lossy().into_owned());
                 self.title = path
@@ -434,7 +551,6 @@ impl LogTabPage {
                     .unwrap_or_else(|| path.to_string_lossy().into_owned());
                 self.edit_dirty = false;
                 self.edit_status.clear();
-                self.start_file_reload(path);
                 true
             }
             Err(error) => {
@@ -442,6 +558,20 @@ impl LogTabPage {
                 false
             }
         }
+    }
+
+    /// Drop mmap / in-flight file workers so Windows can truncate the log.
+    fn release_mapped_file(&mut self) {
+        self.backend = TabBackend::Pending;
+        if let Some(rx) = self.file_reload_rx.take() {
+            while let Ok(ev) = rx.try_recv() {
+                drop(ev);
+            }
+        }
+    }
+
+    pub fn is_editing(&self) -> bool {
+        self.edit_mode
     }
 
     fn start_file_reload(&mut self, path: PathBuf) {
@@ -468,9 +598,9 @@ impl LogTabPage {
             }
             Ok(FileBuildEvent::Done(store)) => {
                 if self.edit_mode {
-                    self.backend = TabBackend::File(store);
-                    self.loading = false;
-                    self.index_progress = self.line_count();
+                    // Do not remap while the user is still editing — Windows
+                    // denies truncate/write on a mapped file (os error 5).
+                    drop(store);
                 } else {
                     self.set_file_store(store);
                 }
@@ -505,6 +635,9 @@ impl LogTabPage {
             s.clear();
         }
         self.filter_dirty = false;
+        for pane in &mut self.panes {
+            pane.reset_navigation();
+        }
         self.refresh_all_views();
     }
 
@@ -568,7 +701,7 @@ impl LogTabPage {
         let line_count = live.line_count();
         let start = line_count.saturating_sub(added);
 
-        let pane_updates: Vec<Option<Vec<usize>>> = self
+        let pane_updates: Vec<Option<(Vec<TextHit>, bool)>> = self
             .panes
             .iter()
             .enumerate()
@@ -579,22 +712,39 @@ impl LogTabPage {
                     pane.filter_applied.as_str()
                 };
                 if filter.is_empty() {
-                    return None; // clear/skip
+                    return None;
                 }
                 let patterns = parse_filter_patterns(filter);
                 let needles = prepared_needles(patterns.as_deref(), case_sensitive);
                 if needles.is_empty() {
                     return None;
                 }
-                let mut new_matches = Vec::new();
+                if pane.find_hits.len() >= MAX_FILTER_MATCHES {
+                    return Some((Vec::new(), true));
+                }
+                let mut new_hits = Vec::new();
+                let mut truncated = pane.find_truncated;
                 for idx in start..line_count {
                     if let Some(line) = live.line_at(idx) {
-                        if line_matches_prepared(&line, &needles, case_sensitive) {
-                            new_matches.push(idx);
+                        for (byte_start, byte_end) in
+                            match_ranges_in_line(&line, &needles, case_sensitive)
+                        {
+                            if pane.find_hits.len() + new_hits.len() >= MAX_FILTER_MATCHES {
+                                truncated = true;
+                                break;
+                            }
+                            new_hits.push(TextHit {
+                                row: idx,
+                                start: byte_start,
+                                end: byte_end,
+                            });
                         }
                     }
+                    if truncated {
+                        break;
+                    }
                 }
-                Some(new_matches)
+                Some((new_hits, truncated))
             })
             .collect();
 
@@ -602,9 +752,14 @@ impl LogTabPage {
             match update {
                 None => {
                     pane.search_map.clear();
+                    pane.find_hits.clear();
+                    pane.find_truncated = false;
+                    pane.find_current = None;
                 }
-                Some(new_matches) => {
-                    pane.search_map.extend(new_matches);
+                Some((new_hits, truncated)) => {
+                    pane.find_truncated = truncated;
+                    pane.find_hits.extend(new_hits);
+                    pane.search_map = unique_match_rows(&pane.find_hits);
                 }
             }
         }
@@ -614,6 +769,9 @@ impl LogTabPage {
         self.backend = TabBackend::File(store);
         self.loading = false;
         self.index_progress = self.line_count();
+        for pane in &mut self.panes {
+            pane.reset_navigation();
+        }
         self.refresh_all_views();
     }
 
@@ -659,44 +817,47 @@ impl LogTabPage {
         }
     }
 
-    fn refresh_live_views_incremental(&mut self) {
-        let case_sensitive = self.case_sensitive;
-        let split = self.split_enabled;
-        let TabBackend::Live(live) = &self.backend else {
+    fn apply_filter(&mut self, idx: usize) {
+        let Some(pane) = self.panes.get_mut(idx) else {
             return;
         };
-        let maps: Vec<Vec<usize>> = self
-            .panes
-            .iter()
-            .enumerate()
-            .map(|(i, pane)| {
-                let filter = if !split && i > 0 {
-                    ""
-                } else {
-                    pane.filter_applied.as_str()
-                };
-                let patterns = parse_filter_patterns(filter);
-                let needles = prepared_needles(patterns.as_deref(), case_sensitive);
-                if needles.is_empty() {
-                    Vec::new()
-                } else {
-                    collect_match_indices(live, &needles, case_sensitive)
-                }
-            })
-            .collect();
-        for (pane, map) in self.panes.iter_mut().zip(maps) {
-            pane.search_map = map;
-            // Receiving another live row must not undo an explicit close.
-            // Applying/changing the filter opens the panel in refresh_all_views;
-            // incremental updates only refresh its contents.
+        pane.filter_apply_at = None;
+        let changed = pane.filter_applied != pane.filter_draft;
+        if !changed {
+            if !pane.filter_busy {
+                pane.consume_find_jump();
+            }
+            return;
+        }
+        pane.filter_applied = pane.filter_draft.clone();
+        if !matches!(pane.find_jump, Some(FindJump::FirstAt { .. })) {
+            pane.find_current = None;
+        }
+        self.rebuild_pane_matches(idx);
+    }
+
+    fn list_all_matches(&mut self, idx: usize) {
+        self.apply_filter(idx);
+        if let Some(pane) = self.panes.get_mut(idx) {
+            pane.show_search = !pane.filter_applied.is_empty();
         }
     }
 
-    fn apply_filter(&mut self, idx: usize) {
+    fn caret_byte(&self, caret: TextCaret) -> usize {
+        self.backend
+            .line_at(caret.row)
+            .map(|line| line.chars().take(caret.col).map(|ch| ch.len_utf8()).sum())
+            .unwrap_or(0)
+    }
+
+    fn queue_find_jump(&mut self, idx: usize, jump: FindJump) {
         if let Some(pane) = self.panes.get_mut(idx) {
-            pane.filter_applied = pane.filter_draft.clone();
+            pane.find_jump = Some(jump);
+            if pane.filter_busy {
+                return;
+            }
+            pane.consume_find_jump();
         }
-        self.refresh_all_views();
     }
 
     pub fn poll_background_tasks(&mut self) {
@@ -709,11 +870,22 @@ impl LogTabPage {
                 Ok(result) => {
                     if result.generation == pane.filter_generation {
                         let was_visible = pane.show_search;
-                        pane.search_map = result.map;
+                        pane.find_hits = result.hits;
+                        pane.find_truncated = result.truncated;
+                        pane.search_map = unique_match_rows(&pane.find_hits);
                         pane.show_search = was_visible
                             && (!pane.search_map.is_empty() || !pane.filter_applied.is_empty());
+                        pane.filter_busy = false;
+                        if pane
+                            .find_current
+                            .is_some_and(|i| i >= pane.find_hits.len())
+                        {
+                            pane.find_current = None;
+                        }
+                        pane.consume_find_jump();
+                    } else {
+                        pane.filter_busy = false;
                     }
-                    pane.filter_busy = false;
                 }
                 Err(crossbeam_channel::TryRecvError::Empty) => {
                     pane.filter_rx = Some(rx);
@@ -745,118 +917,139 @@ impl LogTabPage {
         if needles.is_empty() {
             if let Some(pane) = self.panes.get_mut(pane_idx) {
                 pane.search_map.clear();
-                pane.show_search = false;
+                pane.find_hits.clear();
+                pane.find_truncated = false;
+                pane.find_current = None;
             }
             return;
         }
         let (tx, rx) = crossbeam_channel::unbounded();
         let generation = if let Some(pane) = self.panes.get_mut(pane_idx) {
-            pane.filter_generation = pane.filter_generation.wrapping_add(1);
             pane.filter_rx = Some(rx);
             pane.filter_busy = true;
-            pane.show_search = true;
             pane.filter_generation
         } else {
             return;
         };
         thread::spawn(move || {
-            let map = collect_match_indices(file.as_ref(), &needles, case_sensitive);
-            let _ = tx.send(FilterScanResult { generation, map });
+            let (hits, truncated) = collect_match_hits(file.as_ref(), &needles, case_sensitive);
+            let _ = tx.send(FilterScanResult {
+                generation,
+                hits,
+                truncated,
+            });
         });
     }
 
-    fn refresh_all_views(&mut self) {
+    fn rebuild_pane_matches(&mut self, pane_idx: usize) {
         let case_sensitive = self.case_sensitive;
         let split = self.split_enabled;
-        let is_file = matches!(self.backend, TabBackend::File(_));
+        let filter = self
+            .panes
+            .get(pane_idx)
+            .map(|pane| {
+                if !split && pane_idx > 0 {
+                    String::new()
+                } else {
+                    pane.filter_applied.clone()
+                }
+            })
+            .unwrap_or_default();
+        let patterns = parse_filter_patterns(&filter);
+        let needles = prepared_needles(patterns.as_deref(), case_sensitive);
 
-        let live_maps = if let TabBackend::Live(live) = &self.backend {
-            Some(
-                self.panes
-                    .iter()
-                    .enumerate()
-                    .map(|(i, pane)| {
-                        let filter = if !split && i > 0 {
-                            ""
-                        } else {
-                            pane.filter_applied.as_str()
-                        };
-                        let patterns = parse_filter_patterns(filter);
-                        let needles = prepared_needles(patterns.as_deref(), case_sensitive);
-                        if needles.is_empty() {
-                            Vec::new()
-                        } else {
-                            collect_match_indices(live, &needles, case_sensitive)
-                        }
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        } else {
-            None
-        };
-
-        for (i, pane) in self.panes.iter_mut().enumerate() {
+        if let Some(pane) = self.panes.get_mut(pane_idx) {
             pane.filter_generation = pane.filter_generation.wrapping_add(1);
             pane.filter_rx = None;
             pane.filter_busy = false;
-            pane.clear_sel();
-            pane.clear_search_sel();
-            pane.scroll_to_master = None;
-            pane.scroll_generation = 0;
-            pane.scroll_hold_frames = 0;
-            pane.highlight_master = None;
-            pane.parse_row = None;
-
-            let filter = if !split && i > 0 {
-                ""
-            } else {
-                pane.filter_applied.as_str()
-            };
-            let patterns = parse_filter_patterns(filter);
-            let needles = prepared_needles(patterns.as_deref(), case_sensitive);
-
             if needles.is_empty() {
                 pane.search_map.clear();
+                pane.find_hits.clear();
+                pane.find_truncated = false;
+                pane.find_current = None;
+                pane.find_jump = None;
                 pane.show_search = false;
-            } else if is_file {
-                pane.search_map.clear();
-                pane.show_search = true;
-            } else if let Some(maps) = &live_maps {
-                pane.search_map = maps[i].clone();
-                pane.show_search = !pane.search_map.is_empty() || !pane.filter_applied.is_empty();
-            } else {
-                // File index is still loading. Preserve the committed search
-                // intent so set_file_store() can start the scan afterwards.
-                pane.search_map.clear();
-                pane.show_search = !pane.filter_applied.is_empty();
+                return;
             }
         }
 
-        if is_file {
-            for i in 0..self.panes.len() {
-                if !self.panes[i].filter_applied.is_empty() {
-                    self.start_file_filter_scan(i);
+        match &self.backend {
+            TabBackend::Live(live) => {
+                let (hits, truncated) = collect_match_hits(live, &needles, case_sensitive);
+                if let Some(pane) = self.panes.get_mut(pane_idx) {
+                    pane.find_hits = hits;
+                    pane.find_truncated = truncated;
+                    pane.search_map = unique_match_rows(&pane.find_hits);
+                    if pane
+                        .find_current
+                        .is_some_and(|i| i >= pane.find_hits.len())
+                    {
+                        pane.find_current = None;
+                    }
+                    pane.consume_find_jump();
+                }
+            }
+            TabBackend::File(_) => {
+                if let Some(pane) = self.panes.get_mut(pane_idx) {
+                    pane.search_map.clear();
+                    pane.find_hits.clear();
+                    pane.find_truncated = false;
+                    if pane.find_jump.is_none() {
+                        pane.find_current = None;
+                    }
+                }
+                self.start_file_filter_scan(pane_idx);
+            }
+            TabBackend::Pending => {
+                if let Some(pane) = self.panes.get_mut(pane_idx) {
+                    pane.search_map.clear();
+                    pane.find_hits.clear();
+                    pane.find_truncated = false;
+                    if pane.find_jump.is_none() {
+                        pane.find_current = None;
+                    }
                 }
             }
         }
     }
 
+    fn refresh_all_views(&mut self) {
+        let n = self.panes.len();
+        for i in 0..n {
+            if let Some(pane) = self.panes.get_mut(i) {
+                if pane.find_jump.is_none() {
+                    pane.find_current = None;
+                }
+            }
+            self.rebuild_pane_matches(i);
+        }
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
         self.poll_background_tasks();
+        let now = ui.input(|input| input.time);
+        self.poll_filter_debounce(now);
+        self.handle_view_shortcuts(ui);
 
         const TOOLBAR_ROW_H: f32 = 28.0;
-        egui::ScrollArea::horizontal()
-            .id_salt("log_toolbar")
-            .max_height(TOOLBAR_ROW_H)
-            .auto_shrink([false, true])
-            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.set_min_height(TOOLBAR_ROW_H);
-                    ui.set_max_height(TOOLBAR_ROW_H);
-                    self.toolbar_body(ui, lang, t);
-                });
-            });
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), TOOLBAR_ROW_H),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                egui::ScrollArea::horizontal()
+                    .id_salt("log_toolbar")
+                    .max_height(TOOLBAR_ROW_H)
+                    .auto_shrink([false, true])
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.set_min_height(TOOLBAR_ROW_H);
+                            ui.set_max_height(TOOLBAR_ROW_H);
+                            self.toolbar_row_main(ui, lang, t);
+                        });
+                    });
+            },
+        );
 
         ui.add_space(2.0);
         Frame::NONE
@@ -865,11 +1058,538 @@ impl LogTabPage {
             .show(ui, |ui| {
                 self.content_body(ui, lang, t);
             });
-        if self.has_background_filter() {
+        if self.has_background_filter()
+            || self
+                .panes
+                .iter()
+                .any(|pane| pane.filter_apply_at.is_some())
+        {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(33));
         }
         self.paint_edit_exit_confirm(ui.ctx(), lang, t);
+        self.paint_goto_dialog(ui.ctx(), lang, t);
+        self.handle_pane_requests();
+    }
+
+    fn poll_filter_debounce(&mut self, now: f64) {
+        let due: Vec<usize> = self
+            .panes
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, pane)| {
+                pane.filter_apply_at.filter(|at| now >= *at).map(|_| idx)
+            })
+            .collect();
+        for idx in due {
+            self.apply_filter(idx);
+        }
+    }
+
+    fn handle_view_shortcuts(&mut self, ui: &egui::Ui) {
+        let ctrl = ui.input(|input| input.modifiers.ctrl || input.modifiers.command);
+        let shift = ui.input(|input| input.modifiers.shift);
+        let key_f = ui.input(|input| input.key_pressed(egui::Key::F));
+        let key_f3 = ui.input(|input| input.key_pressed(egui::Key::F3));
+        let key_g = ui.input(|input| input.key_pressed(egui::Key::G));
+
+        if self.edit_mode {
+            if ctrl && key_f {
+                self.edit_show_find = true;
+            }
+            return;
+        }
+        if self.goto_open || self.edit_exit_confirm_open {
+            return;
+        }
+
+        let pane_idx = self.selected_pane.min(self.panes.len().saturating_sub(1));
+        if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+            if let Some(pane) = self.panes.get_mut(pane_idx) {
+                pane.clear_sel();
+                pane.clear_search_sel();
+            }
+        }
+        if ctrl && key_g {
+            self.open_goto_dialog();
+            return;
+        }
+        if ctrl && key_f {
+            let has_selection = self
+                .panes
+                .get(pane_idx)
+                .is_some_and(|pane| pane.has_text_selection() && !pane.last_selected_text.is_empty());
+            self.focus_find(pane_idx, has_selection);
+            return;
+        }
+        if key_f3 && ctrl {
+            self.find_selection_or_next(pane_idx);
+            return;
+        }
+        if key_f3 {
+            self.ensure_filter_applied(pane_idx);
+            if shift {
+                self.queue_find_jump(pane_idx, FindJump::Prev);
+            } else {
+                self.queue_find_jump(pane_idx, FindJump::Next);
+            }
+        }
+    }
+
+    fn open_goto_dialog(&mut self) {
+        let pane_idx = self.selected_pane.min(self.panes.len().saturating_sub(1));
+        let line = self
+            .panes
+            .get(pane_idx)
+            .and_then(|pane| {
+                pane.sel_focus
+                    .map(|caret| caret.row)
+                    .or(pane.highlight_master)
+                    .or(pane.last_view_row)
+            })
+            .unwrap_or(0)
+            + 1;
+        self.goto_draft = line.to_string();
+        self.goto_open = true;
+        self.goto_focus_requested = true;
+    }
+
+    fn goto_line(&mut self, line_1based: usize) {
+        let total = self.line_count();
+        if total == 0 {
+            return;
+        }
+        let row = line_1based.saturating_sub(1).min(total - 1);
+        let pane_idx = self.selected_pane.min(self.panes.len().saturating_sub(1));
+        if let Some(pane) = self.panes.get_mut(pane_idx) {
+            pane.scroll_to_master = Some(row);
+            pane.scroll_hold_frames = 16;
+            pane.scroll_pinned = false;
+            pane.highlight_master = Some(row);
+        }
+    }
+
+    fn focus_find(&mut self, pane_idx: usize, jump: bool) {
+        let (selected_text, caret) = self.panes.get(pane_idx).map_or((String::new(), None), |pane| {
+            let text = if pane.has_text_selection() {
+                pane.last_selected_text.clone()
+            } else {
+                String::new()
+            };
+            (text, pane.sel_anchor)
+        });
+        if let Some(pane) = self.panes.get_mut(pane_idx) {
+            pane.focus_filter_requested = true;
+            if !selected_text.is_empty() {
+                pane.filter_draft = selected_text;
+            }
+        }
+        if jump {
+            let start = caret
+                .map(|c| (c.row, self.caret_byte(c)))
+                .unwrap_or((0, 0));
+            if let Some(pane) = self.panes.get_mut(pane_idx) {
+                pane.find_jump = Some(FindJump::FirstAt {
+                    row: start.0,
+                    start: start.1,
+                });
+            }
+            self.apply_filter(pane_idx);
+        }
+    }
+
+    fn find_selection_or_next(&mut self, pane_idx: usize) {
+        let selected = self
+            .panes
+            .get(pane_idx)
+            .and_then(|pane| {
+                pane.has_text_selection()
+                    .then(|| pane.last_selected_text.clone())
+                    .filter(|text| !text.is_empty())
+            })
+            .unwrap_or_default();
+        if selected.is_empty() {
+            self.ensure_filter_applied(pane_idx);
+            self.queue_find_jump(pane_idx, FindJump::Next);
+            return;
+        }
+        let caret = self.panes.get(pane_idx).and_then(|pane| pane.sel_focus);
+        if let Some(pane) = self.panes.get_mut(pane_idx) {
+            pane.filter_draft = selected;
+        }
+        let start = caret
+            .map(|c| (c.row, self.caret_byte(c)))
+            .unwrap_or((0, 0));
+        if let Some(pane) = self.panes.get_mut(pane_idx) {
+            pane.find_jump = Some(FindJump::FirstAt {
+                row: start.0,
+                start: start.1.saturating_add(1),
+            });
+        }
+        self.apply_filter(pane_idx);
+    }
+
+    fn ensure_filter_applied(&mut self, pane_idx: usize) {
+        let dirty = self
+            .panes
+            .get(pane_idx)
+            .is_some_and(|pane| pane.filter_draft != pane.filter_applied);
+        if dirty {
+            self.apply_filter(pane_idx);
+        }
+    }
+
+    fn handle_pane_requests(&mut self) {
+        let mut find_idx = None;
+        let mut goto = false;
+        for (idx, pane) in self.panes.iter_mut().enumerate() {
+            if pane.request_find {
+                pane.request_find = false;
+                find_idx = Some(idx);
+            }
+            if pane.request_goto {
+                pane.request_goto = false;
+                goto = true;
+            }
+        }
+        if let Some(idx) = find_idx {
+            self.focus_find(idx, true);
+        }
+        if goto {
+            self.open_goto_dialog();
+        }
+    }
+
+    fn paint_goto_dialog(&mut self, ctx: &egui::Context, lang: Lang, t: &Tokens) {
+        if !self.goto_open {
+            return;
+        }
+        let mut open = true;
+        let mut dismiss = false;
+        let mut go = false;
+        let request_focus = self.goto_focus_requested;
+        self.goto_focus_requested = false;
+        egui::Window::new(tr(lang, "log.goto_title"))
+            .id(egui::Id::new(("log-goto", self.view_id)))
+            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .frame(
+                Frame::window(&ctx.style())
+                    .fill(t.panel_bg)
+                    .stroke(Stroke::new(1.0_f32, t.border))
+                    .corner_radius(CornerRadius::same(6))
+                    .inner_margin(Margin::same(16)),
+            )
+            .show(ctx, |ui| {
+                ui.set_min_width(240.0);
+                let edit = ui.add(
+                    egui::TextEdit::singleline(&mut self.goto_draft)
+                        .hint_text(tr(lang, "log.goto_placeholder"))
+                        .desired_width(200.0),
+                );
+                if request_focus {
+                    edit.request_focus();
+                }
+                let enter = ui.input(|input| input.key_pressed(egui::Key::Enter));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button(tr(lang, "log.goto")).clicked() || (edit.has_focus() && enter)
+                    {
+                        go = true;
+                    }
+                    if ui.button(tr(lang, "log.cancel")).clicked() {
+                        dismiss = true;
+                    }
+                });
+            });
+        if go {
+            if let Ok(line) = self.goto_draft.trim().parse::<usize>() {
+                if line > 0 {
+                    self.goto_line(line);
+                }
+            }
+            dismiss = true;
+        }
+        if !open || dismiss {
+            self.goto_open = false;
+            self.goto_focus_requested = false;
+        }
+    }
+
+    fn toolbar_row_main(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
+        if !self.live && !self.loading {
+            self.toolbar_edit_controls(ui, lang, t);
+            ui.separator();
+        }
+
+        if !self.edit_mode {
+            self.toolbar_row_find(ui, lang, t);
+            ui.separator();
+        }
+
+        let was_split = self.split_enabled;
+        ui.checkbox(
+            &mut self.split_enabled,
+            RichText::new(tr(lang, "log.split_enable")).size(12.5),
+        );
+        if self.split_enabled != was_split {
+            if self.split_enabled {
+                self.ensure_panes(self.pane_count.max(2));
+            } else {
+                self.same_page = false;
+                self.ensure_panes(1);
+            }
+        }
+
+        ui.add_enabled_ui(self.split_enabled, |ui| {
+            ui.label(
+                RichText::new(format!("{}:", tr(lang, "log.split_count")))
+                    .size(12.5)
+                    .color(t.text_muted),
+            );
+            let mut count = self.pane_count as i32;
+            if ui
+                .add_sized([34.0, 24.0], egui::DragValue::new(&mut count).range(1..=16))
+                .changed()
+            {
+                self.pane_count = count as usize;
+                self.ensure_panes(self.pane_count);
+            }
+            ui.checkbox(
+                &mut self.same_page,
+                RichText::new(tr(lang, "log.same_page")).size(12.5),
+            );
+        });
+
+        ui.separator();
+        if ui
+            .checkbox(
+                &mut self.auto_scroll,
+                RichText::new(tr(lang, "log.follow_tail")).size(12.5),
+            )
+            .changed()
+            && self.auto_scroll
+        {
+            for pane in &mut self.panes {
+                pane.scroll_pinned = true;
+            }
+        }
+
+        if ui
+            .add_sized(
+                [56.0, 24.0],
+                egui::Button::new(tr(lang, "log.goto")),
+            )
+            .clicked()
+        {
+            self.open_goto_dialog();
+        }
+
+        if self.loading {
+            let n = if self.index_progress > 0 {
+                self.index_progress
+            } else {
+                self.line_count()
+            };
+            ui.label(
+                RichText::new(tr_fmt(lang, "log.loading_lines", n))
+                    .size(12.5)
+                    .color(t.text_muted),
+            );
+        }
+
+        if self.live && self.line_count() >= MAX_LIVE_LINES {
+            ui.label(
+                RichText::new(tr(lang, "log.live_cap"))
+                    .size(11.0)
+                    .color(Color32::from_rgb(0xF5, 0x9E, 0x0B)),
+            );
+        }
+
+        let pane_idx = self.selected_pane.min(self.panes.len().saturating_sub(1));
+        if let Some(pane) = self.panes.get(pane_idx) {
+            let line = pane
+                .sel_focus
+                .map(|caret| caret.row)
+                .or(pane.highlight_master)
+                .or(pane.last_view_row)
+                .unwrap_or(0)
+                + 1;
+            ui.label(
+                RichText::new(format!("{} {line}", tr(lang, "log.line")))
+                    .size(11.0)
+                    .color(t.text_muted),
+            );
+        }
+    }
+
+    fn toolbar_row_find(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
+        let n_filters = if self.split_enabled {
+            self.pane_count
+        } else {
+            1
+        };
+        self.ensure_panes(n_filters);
+
+        let mut apply_idx = None;
+        let mut next_idx = None;
+        let mut prev_idx = None;
+        let mut list_idx = None;
+        let mut refresh_case = false;
+        let mut focused_filter = None;
+        let now = ui.input(|input| input.time);
+        let focus_target = self.selected_pane.min(n_filters.saturating_sub(1));
+
+        for i in 0..n_filters {
+            if self.split_enabled {
+                ui.label(
+                    RichText::new(tr_fmt(lang, "log.pane_filter", i + 1))
+                        .size(12.5)
+                        .color(t.text_muted),
+                );
+            } else {
+                ui.label(
+                    RichText::new(tr(lang, "log.find"))
+                        .size(12.5)
+                        .color(t.text_muted),
+                );
+            }
+            {
+                let pane = &mut self.panes[i];
+                let filter_width = if self.split_enabled { 140.0 } else { 200.0 };
+                let edit = ui.add_sized(
+                    [filter_width, 24.0],
+                    egui::TextEdit::singleline(&mut pane.filter_draft)
+                        .hint_text(tr(lang, "log.filter_placeholder"))
+                        .margin(egui::vec2(6.0, 3.0)),
+                );
+                if edit.changed() {
+                    if pane.filter_draft.is_empty() {
+                        pane.filter_apply_at = Some(now);
+                    } else {
+                        pane.filter_apply_at = Some(now + 0.15);
+                    }
+                }
+                let enter_pressed = ui.input(|input| {
+                    input.events.iter().any(|event| {
+                        matches!(
+                            event,
+                            egui::Event::Key {
+                                key: egui::Key::Enter,
+                                pressed: true,
+                                modifiers,
+                                ..
+                            } if !modifiers.shift
+                        )
+                    })
+                });
+                if pane.focus_filter_requested && i == focus_target {
+                    edit.request_focus();
+                    pane.focus_filter_requested = false;
+                }
+                if edit.has_focus() {
+                    focused_filter = Some(i);
+                }
+                if (edit.has_focus() || edit.lost_focus()) && enter_pressed {
+                    apply_idx = Some(i);
+                    next_idx = Some(i);
+                }
+            }
+            if i == 0
+                && ui
+                    .checkbox(
+                        &mut self.case_sensitive,
+                        RichText::new(tr(lang, "log.case_sensitive")).size(12.5),
+                    )
+                    .changed()
+            {
+                refresh_case = true;
+            }
+            ui.checkbox(
+                &mut self.panes[i].auto_parse,
+                RichText::new(tr(lang, "log.auto_parse")).size(12.5),
+            );
+        }
+
+        if let Some(i) = focused_filter {
+            self.selected_pane = i;
+        }
+        let selected = self.selected_pane.min(n_filters.saturating_sub(1));
+
+        if ui
+            .add_sized(
+                [56.0, 24.0],
+                egui::Button::new(tr(lang, "log.find_prev")),
+            )
+            .clicked()
+        {
+            prev_idx = Some(selected);
+        }
+        if ui
+            .add_sized(
+                [56.0, 24.0],
+                egui::Button::new(tr(lang, "log.find_next")),
+            )
+            .clicked()
+        {
+            next_idx = Some(selected);
+        }
+        if ui
+            .add_sized(
+                [72.0, 24.0],
+                egui::Button::new(tr(lang, "log.list_all")),
+            )
+            .clicked()
+        {
+            list_idx = Some(selected);
+        }
+
+        let pane = &self.panes[selected];
+        let count_text = if pane.filter_busy {
+            tr(lang, "log.search_scanning")
+        } else if pane.filter_applied.is_empty() {
+            String::new()
+        } else if pane.find_hits.is_empty() {
+            tr(lang, "log.no_matches")
+        } else {
+            let current = pane.find_current.map(|idx| idx + 1).unwrap_or(0);
+            let mut text = format!("{current}/{}", pane.find_hits.len());
+            if pane.find_truncated {
+                text.push(' ');
+                text.push_str(&tr(lang, "log.truncated"));
+            }
+            text
+        };
+        if !count_text.is_empty() {
+            ui.label(
+                RichText::new(count_text)
+                    .size(12.0)
+                    .color(t.text_muted),
+            );
+        }
+        ui.label(
+            RichText::new(tr(lang, "log.find_hint"))
+                .size(11.0)
+                .color(t.text_muted),
+        );
+
+        if let Some(i) = list_idx {
+            self.list_all_matches(i);
+        } else if let Some(i) = apply_idx {
+            self.apply_filter(i);
+        } else if refresh_case {
+            self.refresh_all_views();
+        }
+        if let Some(i) = next_idx {
+            self.ensure_filter_applied(i);
+            self.queue_find_jump(i, FindJump::Next);
+        }
+        if let Some(i) = prev_idx {
+            self.ensure_filter_applied(i);
+            self.queue_find_jump(i, FindJump::Prev);
+        }
     }
 
     fn paint_edit_exit_confirm(&mut self, ctx: &egui::Context, lang: Lang, t: &Tokens) {
@@ -912,196 +1632,6 @@ impl LogTabPage {
             });
         if !open || dismiss {
             self.edit_exit_confirm_open = false;
-        }
-    }
-
-    fn toolbar_body(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
-        let focus_edit_find = self.edit_mode
-            && !self.live
-            && ui.input(|input| {
-                (input.modifiers.ctrl || input.modifiers.command) && input.key_pressed(egui::Key::F)
-            });
-        if focus_edit_find {
-            self.edit_show_find = true;
-        }
-
-        let focus_filter = !self.edit_mode
-            && ui.input(|input| {
-                (input.modifiers.ctrl || input.modifiers.command) && input.key_pressed(egui::Key::F)
-            });
-
-        if !self.live && !self.loading {
-            self.toolbar_edit_controls(ui, lang, t);
-            ui.separator();
-        }
-
-        let was_split = self.split_enabled;
-        ui.checkbox(
-            &mut self.split_enabled,
-            RichText::new(tr(lang, "log.split_enable")).size(12.5),
-        );
-        if self.split_enabled != was_split {
-            if self.split_enabled {
-                self.ensure_panes(self.pane_count.max(2));
-            } else {
-                self.same_page = false;
-                self.ensure_panes(1);
-            }
-        }
-
-        ui.add_enabled_ui(self.split_enabled, |ui| {
-            ui.label(
-                RichText::new(format!("{}:", tr(lang, "log.split_count")))
-                    .size(12.5)
-                    .color(t.text_muted),
-            );
-            let mut count = self.pane_count as i32;
-            if ui
-                .add_sized([34.0, 24.0], egui::DragValue::new(&mut count).range(1..=16))
-                .changed()
-            {
-                self.pane_count = count as usize;
-                self.ensure_panes(self.pane_count);
-            }
-            ui.checkbox(
-                &mut self.same_page,
-                RichText::new(tr(lang, "log.same_page")).size(12.5),
-            );
-        });
-
-        ui.separator();
-        let n_filters = if self.split_enabled {
-            self.pane_count
-        } else {
-            1
-        };
-        self.ensure_panes(n_filters);
-
-        let mut apply_idx = None;
-        let mut refresh_case = false;
-        for i in 0..n_filters {
-            if self.split_enabled {
-                ui.label(
-                    RichText::new(tr_fmt(lang, "log.pane_filter", i + 1))
-                        .size(12.5)
-                        .color(t.text_muted),
-                );
-            } else {
-                ui.label(
-                    RichText::new(tr(lang, "log.filter"))
-                        .size(12.5)
-                        .color(t.text_muted),
-                );
-            }
-            {
-                let pane = &mut self.panes[i];
-                if focus_filter
-                    && i == self.selected_pane.min(n_filters - 1)
-                    && pane.has_text_selection()
-                    && !pane.last_selected_text.is_empty()
-                {
-                    pane.filter_draft = pane.last_selected_text.clone();
-                }
-                let edit = ui.add_sized(
-                    [if self.split_enabled { 110.0 } else { 180.0 }, 24.0],
-                    egui::TextEdit::singleline(&mut pane.filter_draft)
-                        .hint_text(tr(lang, "log.filter_placeholder"))
-                        .margin(egui::vec2(6.0, 3.0)),
-                );
-                let enter_pressed = ui.input(|i| {
-                    i.events.iter().any(|e| {
-                        matches!(
-                            e,
-                            egui::Event::Key {
-                                key: egui::Key::Enter,
-                                pressed: true,
-                                ..
-                            }
-                        )
-                    })
-                });
-                if (focus_filter || pane.focus_filter_requested)
-                    && i == self.selected_pane.min(n_filters - 1)
-                {
-                    edit.request_focus();
-                    pane.focus_filter_requested = false;
-                }
-                // A single-line TextEdit can relinquish focus while handling
-                // Enter. Accept both response states so Enter and Apply always
-                // commit through the same path.
-                if (edit.has_focus() || edit.lost_focus()) && enter_pressed {
-                    apply_idx = Some(i);
-                }
-                if ui
-                    .add_sized(
-                        [46.0, 24.0],
-                        egui::Button::new(tr(lang, "log.filter_apply")),
-                    )
-                    .clicked()
-                {
-                    apply_idx = Some(i);
-                }
-            }
-            if i == 0
-                && ui
-                    .checkbox(
-                        &mut self.case_sensitive,
-                        RichText::new(tr(lang, "log.case_sensitive")).size(12.5),
-                    )
-                    .changed()
-            {
-                refresh_case = true;
-            }
-            ui.checkbox(
-                &mut self.panes[i].auto_parse,
-                RichText::new(tr(lang, "log.auto_parse")).size(12.5),
-            );
-            if self.panes[i].filter_draft != self.panes[i].filter_applied {
-                ui.label(
-                    RichText::new(tr(lang, "log.filter_pending"))
-                        .size(11.0)
-                        .color(Color32::from_rgb(0xF5, 0x9E, 0x0B)),
-                );
-            }
-        }
-
-        if self.loading {
-            let n = if self.index_progress > 0 {
-                self.index_progress
-            } else {
-                self.line_count()
-            };
-            ui.label(
-                RichText::new(tr_fmt(lang, "log.loading_lines", n))
-                    .size(12.5)
-                    .color(t.text_muted),
-            );
-        } else if self.panes.iter().any(|p| p.filter_busy) {
-            ui.label(
-                RichText::new(tr(lang, "log.filter_pending"))
-                    .size(12.5)
-                    .color(t.text_muted),
-            );
-        }
-
-        ui.separator();
-        if ui
-            .checkbox(
-                &mut self.auto_scroll,
-                RichText::new(tr(lang, "log.follow_tail")).size(12.5),
-            )
-            .changed()
-            && self.auto_scroll
-        {
-            for pane in &mut self.panes {
-                pane.scroll_pinned = true;
-            }
-        }
-
-        if let Some(i) = apply_idx {
-            self.apply_filter(i);
-        } else if refresh_case {
-            self.refresh_all_views();
         }
     }
 
@@ -1221,10 +1751,21 @@ impl LogTabPage {
         #[derive(Clone, Copy)]
         enum FindAction {
             Next,
+            Prev,
             Replace,
             ReplaceAll,
         }
         let mut find_action = None;
+        let f3 = ui.input(|input| input.key_pressed(egui::Key::F3));
+        let shift = ui.input(|input| input.modifiers.shift);
+        if f3 {
+            self.edit_show_find = true;
+            find_action = Some(if shift {
+                FindAction::Prev
+            } else {
+                FindAction::Next
+            });
+        }
         if self.edit_show_find {
             Frame::NONE
                 .fill(t.surface_bg)
@@ -1250,6 +1791,9 @@ impl LogTabPage {
                         );
                         if ui.button(tr(lang, "log.find_next")).clicked() {
                             find_action = Some(FindAction::Next);
+                        }
+                        if ui.button(tr(lang, "log.find_prev")).clicked() {
+                            find_action = Some(FindAction::Prev);
                         }
                         if ui.button(tr(lang, "log.replace_one")).clicked() {
                             find_action = Some(FindAction::Replace);
@@ -1314,12 +1858,31 @@ impl LogTabPage {
             .map(|range| range.as_ccursor_range())
             .unwrap_or_else(|| CCursorRange::one(CCursor::new(0)));
         if let Some(action) = find_action {
+            let (sel_lo, sel_hi) = sorted_char_range(current_range);
             match action {
                 FindAction::Next => {
                     if let Some((start, end, ordinal, total)) = find_next_range(
                         &self.edit_buffer,
                         &self.edit_find,
-                        current_range.primary.index,
+                        sel_hi,
+                        self.case_sensitive,
+                    ) {
+                        output.state.cursor.set_char_range(Some(CCursorRange::two(
+                            CCursor::new(start),
+                            CCursor::new(end),
+                        )));
+                        output.state.store(ui.ctx(), editor_id);
+                        output.response.request_focus();
+                        self.edit_match_status = format!("{ordinal}/{total}");
+                    } else {
+                        self.edit_match_status = tr(lang, "log.no_matches");
+                    }
+                }
+                FindAction::Prev => {
+                    if let Some((start, end, ordinal, total)) = find_prev_range(
+                        &self.edit_buffer,
+                        &self.edit_find,
+                        sel_lo,
                         self.case_sensitive,
                     ) {
                         output.state.cursor.set_char_range(Some(CCursorRange::two(
@@ -1445,6 +2008,9 @@ impl LogTabPage {
         if self.panes.get(idx).is_none() {
             return;
         }
+        if ui.ui_contains_pointer() {
+            self.selected_pane = idx;
+        }
         let auto_parse = self.panes[idx].auto_parse;
         if !auto_parse {
             self.panes[idx].parse_tip = None;
@@ -1485,6 +2051,13 @@ impl LogTabPage {
                             || self.panes[idx].filter_busy
                             || !self.panes[idx].filter_applied.is_empty());
                     let avail = ui.available_height().max(0.0);
+                    let search_needles = {
+                        let patterns = parse_filter_patterns(&self.panes[idx].filter_applied);
+                        prepared_needles(patterns.as_deref(), self.case_sensitive)
+                    };
+                    let current_hit = self.panes[idx]
+                        .current_find_hit()
+                        .map(|hit| (hit.row, hit.start, hit.end));
 
                     if show_search {
                         let split_h = 6.0_f32.min(avail);
@@ -1493,9 +2066,6 @@ impl LogTabPage {
                         let heights = pane_split_heights(avail, ratio, header_h + split_h);
                         let bottom_h = heights.bottom;
                         let top_h = heights.top;
-                        let patterns = parse_filter_patterns(&self.panes[idx].filter_applied);
-                        let search_needles =
-                            prepared_needles(patterns.as_deref(), self.case_sensitive);
 
                         let scroll_once = self.panes[idx].scroll_hold_frames > 0;
                         if self.panes[idx].scroll_hold_frames > 0 {
@@ -1521,6 +2091,9 @@ impl LogTabPage {
                                 highlight,
                                 t,
                                 lang,
+                                &search_needles,
+                                self.case_sensitive,
+                                current_hit,
                             ),
                             TabBackend::File(s) => show_virtual_log_pane(
                                 ui,
@@ -1533,6 +2106,9 @@ impl LogTabPage {
                                 highlight,
                                 t,
                                 lang,
+                                &search_needles,
+                                self.case_sensitive,
+                                current_hit,
                             ),
                             TabBackend::Pending => {
                                 ui.allocate_ui_with_layout(
@@ -1573,9 +2149,14 @@ impl LogTabPage {
                                 ui.set_min_height(header_h);
                                 ui.label(
                                     RichText::new(format!(
-                                        "{} ({})",
+                                        "{} ({}){}",
                                         tr(lang, "log.search_results"),
-                                        self.panes[idx].search_map.len()
+                                        self.panes[idx].search_map.len(),
+                                        if self.panes[idx].find_truncated {
+                                            format!(" · {}", tr(lang, "log.truncated"))
+                                        } else {
+                                            String::new()
+                                        }
                                     ))
                                     .size(12.0)
                                     .color(t.text_muted),
@@ -1652,6 +2233,10 @@ impl LogTabPage {
                             self.panes[idx].scroll_pinned = false;
                             self.panes[idx].highlight_master = Some(master_idx);
                             self.panes[idx].parse_row = None;
+                            self.panes[idx].find_current = self.panes[idx]
+                                .find_hits
+                                .iter()
+                                .position(|hit| hit.row == master_idx);
                         }
                     } else {
                         let scroll_once = self.panes[idx].scroll_hold_frames > 0;
@@ -1682,6 +2267,9 @@ impl LogTabPage {
                                 highlight,
                                 t,
                                 lang,
+                                &search_needles,
+                                self.case_sensitive,
+                                current_hit,
                             ),
                             TabBackend::File(s) => show_virtual_log_pane(
                                 ui,
@@ -1694,6 +2282,9 @@ impl LogTabPage {
                                 highlight,
                                 t,
                                 lang,
+                                &search_needles,
+                                self.case_sensitive,
+                                current_hit,
                             ),
                             TabBackend::Pending => {
                                 ui.centered_and_justified(|ui| {
@@ -1933,6 +2524,23 @@ fn find_next_range(
         .map(|(start, end)| (*start, *end, index + 1, total))
 }
 
+fn find_prev_range(
+    text: &str,
+    needle: &str,
+    before: usize,
+    case_sensitive: bool,
+) -> Option<(usize, usize, usize, usize)> {
+    let ranges = find_match_ranges(text, needle, case_sensitive);
+    let total = ranges.len();
+    let index = ranges
+        .iter()
+        .rposition(|(start, _)| *start < before)
+        .unwrap_or(total.saturating_sub(1));
+    ranges
+        .get(index)
+        .map(|(start, end)| (*start, *end, index + 1, total))
+}
+
 fn replace_all_matches(
     text: &mut String,
     needle: &str,
@@ -1944,6 +2552,27 @@ fn replace_all_matches(
         replace_char_range(text, start, end, replacement);
     }
     ranges.len()
+}
+
+/// Write a log file, retrying Windows sharing/access errors after mmap teardown.
+fn write_log_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut last = None;
+    for _ in 0..12 {
+        match std::fs::write(path, bytes) {
+            Ok(()) => return Ok(()),
+            Err(e) if is_file_lock_error(&e) => {
+                last = Some(e);
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| io::Error::from_raw_os_error(5)))
+}
+
+fn is_file_lock_error(e: &io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(5) | Some(32))
+        || e.kind() == io::ErrorKind::PermissionDenied
 }
 
 fn line_column_at(text: &str, char_index: usize) -> (usize, usize) {
@@ -1993,7 +2622,7 @@ mod tests {
         page.apply_filter(0);
 
         assert_eq!(page.panes[0].filter_applied, "ASK");
-        assert!(page.panes[0].show_search);
+        assert!(!page.panes[0].show_search);
         assert!(!page.panes[0].filter_busy);
     }
 
@@ -2026,7 +2655,19 @@ mod tests {
         page.panes[0].filter_rx = Some(rx);
         tx.send(FilterScanResult {
             generation: 1,
-            map: vec![3, 7],
+            hits: vec![
+                TextHit {
+                    row: 3,
+                    start: 0,
+                    end: 3,
+                },
+                TextHit {
+                    row: 7,
+                    start: 0,
+                    end: 3,
+                },
+            ],
+            truncated: false,
         })
         .unwrap();
 
@@ -2041,7 +2682,19 @@ mod tests {
         page.panes[0].filter_busy = true;
         tx.send(FilterScanResult {
             generation: 2,
-            map: vec![3, 7],
+            hits: vec![
+                TextHit {
+                    row: 3,
+                    start: 0,
+                    end: 3,
+                },
+                TextHit {
+                    row: 7,
+                    start: 0,
+                    end: 3,
+                },
+            ],
+            truncated: false,
         })
         .unwrap();
         page.poll_background_tasks();
@@ -2055,6 +2708,8 @@ mod tests {
         page.append_lines(vec!["ASK first".into()], true);
         page.panes[0].filter_draft = "ASK".into();
         page.apply_filter(0);
+        assert!(!page.panes[0].show_search);
+        page.list_all_matches(0);
         assert!(page.panes[0].show_search);
 
         page.panes[0].show_search = false;
@@ -2087,6 +2742,36 @@ mod tests {
         assert_eq!(first.2, 1);
         assert_eq!(second.2, 2);
         assert_eq!((wrapped.0, wrapped.1), (first.0, first.1));
+        let prev = find_prev_range(text, "ASK", second.0, true).unwrap();
+        assert_eq!((prev.0, prev.1), (first.0, first.1));
+    }
+
+    #[test]
+    fn apply_filter_does_not_open_results_panel_until_list_all() {
+        let mut page = LogTabPage::live_tab(Lang::En);
+        page.append_lines(vec!["ASK first".into(), "FSK second".into()], true);
+        page.panes[0].filter_draft = "ASK".into();
+        page.apply_filter(0);
+        assert!(!page.panes[0].show_search);
+        assert_eq!(page.panes[0].find_hits.len(), 1);
+        page.list_all_matches(0);
+        assert!(page.panes[0].show_search);
+    }
+
+    #[test]
+    fn find_jump_wraps_across_hits() {
+        let mut page = LogTabPage::live_tab(Lang::En);
+        page.append_lines(vec!["ASK a".into(), "x".into(), "ASK b".into()], true);
+        page.panes[0].filter_draft = "ASK".into();
+        page.panes[0].find_jump = Some(FindJump::FirstAt { row: 0, start: 0 });
+        page.apply_filter(0);
+        assert_eq!(page.panes[0].find_current, Some(0));
+        page.queue_find_jump(0, FindJump::Next);
+        assert_eq!(page.panes[0].find_current, Some(1));
+        page.queue_find_jump(0, FindJump::Next);
+        assert_eq!(page.panes[0].find_current, Some(0));
+        page.queue_find_jump(0, FindJump::Prev);
+        assert_eq!(page.panes[0].find_current, Some(1));
     }
 
     #[test]
@@ -2100,5 +2785,64 @@ mod tests {
     #[test]
     fn document_cursor_reports_line_and_column() {
         assert_eq!(line_column_at("abc\n中文", 6), (2, 3));
+    }
+
+    #[test]
+    fn debounce_clears_timer_when_draft_matches_applied() {
+        let mut page = LogTabPage::live_tab(Lang::En);
+        page.panes[0].filter_draft = "ASK".into();
+        page.panes[0].filter_applied = "ASK".into();
+        page.panes[0].filter_apply_at = Some(1.0);
+        page.poll_filter_debounce(1.0);
+        assert!(page.panes[0].filter_apply_at.is_none());
+    }
+
+    #[test]
+    fn apply_filter_keeps_current_hit_when_query_unchanged() {
+        let mut page = LogTabPage::live_tab(Lang::En);
+        page.append_lines(vec!["ASK a".into(), "ASK b".into()], true);
+        page.panes[0].filter_draft = "ASK".into();
+        page.panes[0].find_jump = Some(FindJump::FirstAt { row: 0, start: 0 });
+        page.apply_filter(0);
+        page.queue_find_jump(0, FindJump::Next);
+        assert_eq!(page.panes[0].find_current, Some(1));
+        page.apply_filter(0);
+        assert_eq!(page.panes[0].find_current, Some(1));
+        assert_eq!(page.panes[0].find_hits.len(), 2);
+        page.panes[0].find_jump = Some(FindJump::FirstAt { row: 0, start: 0 });
+        page.apply_filter(0);
+        assert_eq!(page.panes[0].find_current, Some(0));
+    }
+
+    #[test]
+    fn apply_filter_resets_current_hit_when_query_changes() {
+        let mut page = LogTabPage::live_tab(Lang::En);
+        page.append_lines(vec!["ASK a".into(), "FSK b".into()], true);
+        page.panes[0].filter_draft = "ASK".into();
+        page.panes[0].find_jump = Some(FindJump::FirstAt { row: 0, start: 0 });
+        page.apply_filter(0);
+        assert_eq!(page.panes[0].find_current, Some(0));
+        page.panes[0].filter_draft = "FSK".into();
+        page.apply_filter(0);
+        assert_eq!(page.panes[0].find_current, None);
+        assert_eq!(page.panes[0].find_hits.len(), 1);
+        assert_eq!(page.panes[0].find_hits[0].row, 1);
+    }
+
+    #[test]
+    fn clear_display_drops_selection_and_find_cursor() {
+        let mut page = LogTabPage::live_tab(Lang::En);
+        page.append_lines(vec!["ASK a".into()], true);
+        page.panes[0].filter_draft = "ASK".into();
+        page.panes[0].find_jump = Some(FindJump::FirstAt { row: 0, start: 0 });
+        page.apply_filter(0);
+        page.panes[0].sel_anchor = Some(TextCaret { row: 0, col: 0 });
+        page.panes[0].sel_focus = Some(TextCaret { row: 0, col: 3 });
+        page.panes[0].highlight_master = Some(0);
+        page.clear_display();
+        assert!(page.panes[0].sel_anchor.is_none());
+        assert!(page.panes[0].find_current.is_none());
+        assert!(page.panes[0].highlight_master.is_none());
+        assert!(page.panes[0].find_hits.is_empty());
     }
 }

@@ -646,7 +646,7 @@ fn try_parse_wiparse_csv(lines: &[&str]) -> Result<Option<WaveformTrace>, Wavefo
     Ok(Some(WaveformTrace {
         channel,
         x: x.into(),
-        y,
+        y: y.into(),
         x_unit,
         y_unit,
     }))
@@ -759,7 +759,7 @@ fn try_parse_spreadsheet_csv(
     Ok(Some(WaveformTrace {
         channel,
         x: x.into(),
-        y,
+        y: y.into(),
         x_unit,
         y_unit,
     }))
@@ -800,7 +800,7 @@ fn try_parse_numeric_pairs(
     Ok(WaveformTrace {
         channel: default_channel.to_string(),
         x: x.into(),
-        y,
+        y: y.into(),
         x_unit: "s".into(),
         y_unit: "V".into(),
     })
@@ -1172,7 +1172,7 @@ fn load_tek_wfm_structured_all(
                 .cloned()
                 .unwrap_or_else(|| format!("CH{}", idx + 1)),
             x: x.into(),
-            y,
+            y: y.into(),
             x_unit: x_unit.clone(),
             y_unit: y_unit.clone(),
         });
@@ -1429,7 +1429,7 @@ fn load_tek_wfm_legacy_fixed(
     Ok(WaveformTrace {
         channel: default_channel.to_string(),
         x: x.into(),
-        y,
+        y: y.into(),
         x_unit: "s".into(),
         y_unit: "V".into(),
     })
@@ -1586,7 +1586,7 @@ fn try_parse_spreadsheet_csv_multi(
         .map(|(channel, y)| WaveformTrace {
             channel,
             x: std::sync::Arc::clone(&x_shared),
-            y,
+            y: y.into(),
             x_unit: "s".into(),
             y_unit: "V".into(),
         })
@@ -1689,7 +1689,7 @@ fn load_tek_isf(bytes: &[u8], default_channel: &str) -> Result<WaveformTrace, Wa
     Ok(WaveformTrace {
         channel,
         x: x.into(),
-        y,
+        y: y.into(),
         x_unit,
         y_unit,
     })
@@ -1935,7 +1935,7 @@ mod tests {
         let trace = WaveformTrace {
             channel: "CH2".into(),
             x: vec![0.0, 1e-6].into(),
-            y: vec![0.5, -0.5],
+            y: vec![0.5, -0.5].into(),
             x_unit: "s".into(),
             y_unit: "V".into(),
         };
@@ -1950,7 +1950,7 @@ mod tests {
         let trace = WaveformTrace {
             channel: "CH1".into(),
             x: vec![0.0, 1e-6, 2e-6, 3e-6].into(),
-            y: vec![0.0, 1.0, -1.0, 0.5],
+            y: vec![0.0, 1.0, -1.0, 0.5].into(),
             x_unit: "s".into(),
             y_unit: "V".into(),
         };
@@ -2023,7 +2023,7 @@ mod tests {
         let trace = WaveformTrace {
             channel: "CH1".into(),
             x: (0..64).map(|i| i as f64 * 1e-6).collect::<Vec<_>>().into(),
-            y: (0..64).map(|i| (i as f64 * 0.1).sin()).collect(),
+            y: (0..64).map(|i| (i as f64 * 0.1).sin()).collect::<Vec<_>>().into(),
             x_unit: "s".into(),
             y_unit: "V".into(),
         };
@@ -2076,7 +2076,7 @@ mod tests {
         let trace = WaveformTrace {
             channel: "CH1".into(),
             x: (0..256).map(|i| i as f64 * 1e-6).collect::<Vec<_>>().into(),
-            y: (0..256).map(|i| (i as f64 * 0.01).sin()).collect(),
+            y: (0..256).map(|i| (i as f64 * 0.01).sin()).collect::<Vec<_>>().into(),
             x_unit: "s".into(),
             y_unit: "V".into(),
         };

@@ -7,9 +7,9 @@ mod spi;
 mod uart;
 
 pub use digital::{analog_to_edges, default_threshold, DigitalEdge, EdgeKind};
-pub use i2c::decode_i2c;
-pub use i2s::{decode_i2s, I2sConfig};
-pub use spi::decode_spi;
+pub use i2c::{decode_i2c, I2cConfig};
+pub use i2s::{decode_i2s, I2sConfig, I2sFormat};
+pub use spi::{decode_spi, SpiConfig, SpiMode, SpiWire};
 pub use uart::{decode_uart, UartConfig, UartParity};
 
 use crate::instrument::WaveformTrace;
@@ -50,12 +50,33 @@ pub struct BusFrame {
     pub bytes: Vec<u8>,
 }
 
+/// Hard cap on decoded payload bytes (all bus protocols). Further data is skipped.
+pub const MAX_DECODE_BYTES: usize = 512;
+
+pub(crate) fn try_push_frame(
+    frames: &mut Vec<BusFrame>,
+    used: &mut usize,
+    frame: BusFrame,
+) -> bool {
+    let n = frame.bytes.len();
+    if n > 0 && *used >= MAX_DECODE_BYTES {
+        return false;
+    }
+    if n > 0 && *used + n > MAX_DECODE_BYTES {
+        return false;
+    }
+    *used = used.saturating_add(n);
+    frames.push(frame);
+    true
+}
+
 /// Result of a bus decode pass.
 #[derive(Debug, Clone, Default)]
 pub struct BusDecodeResult {
     pub frames: Vec<BusFrame>,
     pub info: String,
     pub error: Option<String>,
+    pub truncated: bool,
 }
 
 /// Channel indices into the loaded `waves` vector.
@@ -68,6 +89,8 @@ pub struct BusChannelMap {
     pub spi_mosi: Option<usize>,
     pub spi_miso: Option<usize>,
     pub spi_cs: Option<usize>,
+    pub spi_io2: Option<usize>,
+    pub spi_io3: Option<usize>,
     pub i2s_bclk: Option<usize>,
     pub i2s_ws: Option<usize>,
     pub i2s_data: Option<usize>,
@@ -78,6 +101,8 @@ pub struct BusDecodeSettings {
     pub kind: BusKind,
     pub channels: BusChannelMap,
     pub uart: UartConfig,
+    pub i2c: I2cConfig,
+    pub spi: SpiConfig,
     pub i2s: I2sConfig,
     pub threshold: Option<f64>,
     pub idle_high: bool,
@@ -91,6 +116,8 @@ impl Default for BusDecodeSettings {
             kind: BusKind::Off,
             channels: BusChannelMap::default(),
             uart: UartConfig::default(),
+            i2c: I2cConfig::default(),
+            spi: SpiConfig::default(),
             i2s: I2sConfig::default(),
             threshold: None,
             idle_high: true,
@@ -132,22 +159,34 @@ pub fn decode_bus(waves: &[WaveformTrace], settings: &BusDecodeSettings) -> BusD
                 &slice_trace(scl),
                 &slice_trace(sda),
                 settings.threshold,
-                settings.idle_high,
+                &settings.i2c,
             )
         }
         BusKind::Spi => {
-            let (Some(clk_i), Some(mosi_i)) = (settings.channels.spi_clk, settings.channels.spi_mosi)
-            else {
-                return need_channel("SPI CLK + MOSI");
+            let Some(clk_i) = settings.channels.spi_clk else {
+                return need_channel("SPI CLK");
             };
-            let clk = waves.get(clk_i);
-            let mosi = waves.get(mosi_i);
-            let (Some(clk), Some(mosi)) = (clk, mosi) else {
+            let Some(clk) = waves.get(clk_i) else {
                 return invalid_channel();
             };
-            let miso = settings
+            let io0 = settings
+                .channels
+                .spi_mosi
+                .and_then(|i| waves.get(i))
+                .map(|t| slice_trace(t));
+            let io1 = settings
                 .channels
                 .spi_miso
+                .and_then(|i| waves.get(i))
+                .map(|t| slice_trace(t));
+            let io2 = settings
+                .channels
+                .spi_io2
+                .and_then(|i| waves.get(i))
+                .map(|t| slice_trace(t));
+            let io3 = settings
+                .channels
+                .spi_io3
                 .and_then(|i| waves.get(i))
                 .map(|t| slice_trace(t));
             let cs = settings
@@ -155,13 +194,27 @@ pub fn decode_bus(waves: &[WaveformTrace], settings: &BusDecodeSettings) -> BusD
                 .spi_cs
                 .and_then(|i| waves.get(i))
                 .map(|t| slice_trace(t));
+            match settings.spi.wire {
+                SpiWire::TwoWire | SpiWire::FourWire if io0.is_none() => {
+                    return need_channel("SPI CLK + MOSI");
+                }
+                SpiWire::Dual if io0.is_none() || io1.is_none() => {
+                    return need_channel("SPI CLK + IO0 + IO1");
+                }
+                SpiWire::Quad if io0.is_none() || io1.is_none() || io2.is_none() || io3.is_none() => {
+                    return need_channel("SPI CLK + IO0 + IO1 + IO2 + IO3");
+                }
+                _ => {}
+            }
             decode_spi(
                 &slice_trace(clk),
-                &slice_trace(mosi),
-                miso.as_ref(),
+                io0.as_ref(),
+                io1.as_ref(),
+                io2.as_ref(),
+                io3.as_ref(),
                 cs.as_ref(),
                 settings.threshold,
-                settings.idle_high,
+                &settings.spi,
             )
         }
         BusKind::I2s => {
@@ -218,6 +271,8 @@ pub fn compact_bus_decode_indices(
     ch.spi_mosi = remap(ch.spi_mosi);
     ch.spi_miso = remap(ch.spi_miso);
     ch.spi_cs = remap(ch.spi_cs);
+    ch.spi_io2 = remap(ch.spi_io2);
+    ch.spi_io3 = remap(ch.spi_io3);
     ch.i2s_bclk = remap(ch.i2s_bclk);
     ch.i2s_ws = remap(ch.i2s_ws);
     ch.i2s_data = remap(ch.i2s_data);
@@ -253,7 +308,7 @@ fn gate_trace(trace: &WaveformTrace, gate: Option<(f64, f64)>) -> WaveformTrace 
     WaveformTrace {
         channel: trace.channel.clone(),
         x: trace.x[start..end].to_vec().into(),
-        y: trace.y[start..end].to_vec(),
+        y: trace.y[start..end].to_vec().into(),
         x_unit: trace.x_unit.clone(),
         y_unit: trace.y_unit.clone(),
     }
@@ -264,6 +319,7 @@ fn need_channel(what: &str) -> BusDecodeResult {
         frames: Vec::new(),
         info: String::new(),
         error: Some(format!("Assign channel(s): {what}")),
+        ..Default::default()
     }
 }
 
@@ -272,6 +328,7 @@ fn invalid_channel() -> BusDecodeResult {
         frames: Vec::new(),
         info: String::new(),
         error: Some("Selected channel index out of range".into()),
+        ..Default::default()
     }
 }
 
@@ -284,7 +341,7 @@ mod tests {
         let trace = WaveformTrace {
             channel: "CH1".into(),
             x: (0..100).map(|i| i as f64 * 1e-6).collect::<Vec<_>>().into(),
-            y: vec![0.0; 100],
+            y: vec![0.0; 100].into(),
             x_unit: "s".into(),
             y_unit: "V".into(),
         };

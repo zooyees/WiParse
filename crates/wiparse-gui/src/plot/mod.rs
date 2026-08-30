@@ -2,4 +2,4 @@
 
 mod scope_columns;
 
-pub use scope_columns::{paint_envelope_columns, ScopeEnvelopePlotItem};
+pub use scope_columns::{paint_envelope_columns, ScopeEnvelopePlotItem, ScopeVectorPlotItem};

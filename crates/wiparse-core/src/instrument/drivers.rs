@@ -589,7 +589,8 @@ pub struct WaveformTrace {
     pub channel: String,
     #[serde(with = "arc_f64_slice")]
     pub x: WaveAxis,
-    pub y: Vec<f64>,
+    #[serde(with = "arc_f64_slice")]
+    pub y: WaveAxis,
     pub x_unit: String,
     pub y_unit: String,
 }
@@ -2720,7 +2721,7 @@ fn decode_scope_bytes(
     Ok(WaveformTrace {
         channel: format!("CH{channel}"),
         x: x.into(),
-        y,
+        y: y.into(),
         x_unit: normalize_wave_unit(x_unit, "s"),
         y_unit: normalize_wave_unit(y_unit, "V"),
     })

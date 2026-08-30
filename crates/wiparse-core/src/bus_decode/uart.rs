@@ -1,14 +1,17 @@
 //! UART (async NRZ) decode from a single analog trace.
 
 use super::digital::{analog_to_edges, default_threshold, edge_intervals, level_at_time, EdgeKind};
-use super::{BusDecodeResult, BusFrame};
+use super::{try_push_frame, BusDecodeResult, BusFrame, MAX_DECODE_BYTES};
 use crate::instrument::WaveformTrace;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UartParity {
+    #[default]
     None,
     Even,
     Odd,
+    Mark,
+    Space,
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +35,26 @@ impl Default for UartConfig {
     }
 }
 
+impl UartConfig {
+    pub fn normalized_data_bits(&self) -> u8 {
+        self.data_bits.clamp(5, 9)
+    }
+
+    pub fn normalized_stop_bits(&self) -> u8 {
+        if self.stop_bits >= 2 {
+            2
+        } else {
+            1
+        }
+    }
+}
+
+const STANDARD_BAUD: &[f64] = &[
+    300.0, 600.0, 1_200.0, 2_400.0, 4_800.0, 9_600.0, 19_200.0, 38_400.0, 57_600.0, 115_200.0,
+    230_400.0, 250_000.0, 460_800.0, 500_000.0, 921_600.0, 1_000_000.0, 1_500_000.0, 2_000_000.0,
+    3_000_000.0,
+];
+
 pub fn decode_uart(
     trace: &WaveformTrace,
     threshold: Option<f64>,
@@ -44,16 +67,19 @@ pub fn decode_uart(
             frames: Vec::new(),
             info: String::new(),
             error: Some("Trace too short for UART decode".into()),
+            ..Default::default()
         };
     }
 
     let thr = threshold.unwrap_or_else(|| default_threshold(trace));
     let edges = analog_to_edges(trace, thr, 0.08);
-    if edges.len() < 4 {
+    // A 0x00 / 0xFF frame has only two edges (start + stop). Require a start edge.
+    if edges.len() < 2 {
         return BusDecodeResult {
             frames: Vec::new(),
             info: String::new(),
             error: Some("No digital edges detected — check threshold / signal".into()),
+            ..Default::default()
         };
     }
 
@@ -70,34 +96,63 @@ pub fn decode_uart(
             frames: Vec::new(),
             info: String::new(),
             error: Some("Could not estimate UART bit time".into()),
+            ..Default::default()
         };
     }
 
+    let idle = idle_high ^ cfg.inverted;
+    let db = cfg.normalized_data_bits();
+    let sb = cfg.normalized_stop_bits();
+    let bits_total = 1.0 + f64::from(db) + parity_bits(cfg.parity) + f64::from(sb);
+
     let mut frames = Vec::new();
-    for (i, e) in edges.iter().enumerate() {
-        let is_start = if idle_high ^ cfg.inverted {
+    let mut used = 0usize;
+    let mut truncated = false;
+    let mut next_t = f64::NEG_INFINITY;
+    for e in edges.iter() {
+        let is_start = if idle {
             e.kind == EdgeKind::Falling
         } else {
             e.kind == EdgeKind::Rising
         };
-        if !is_start {
+        if !is_start || e.time < next_t {
             continue;
         }
-        if let Some(frame) = decode_frame_at(trace, thr, e.time, bit_time, idle_high, cfg) {
-            frames.push(frame);
+        if used >= MAX_DECODE_BYTES {
+            truncated = true;
+            break;
         }
-        let _ = i;
+        match decode_frame_at(trace, thr, e.time, bit_time, idle, cfg, bits_total) {
+            FrameKind::Skip => {}
+            FrameKind::Break(frame) | FrameKind::Data(frame) => {
+                // Allow the next start at the end of the first stop bit, even if
+                // the user selected 2 stop bits but the link uses 1.
+                next_t = e.time + (1.0 + f64::from(db) + parity_bits(cfg.parity) + 0.80) * bit_time;
+                if !try_push_frame(&mut frames, &mut used, frame) {
+                    truncated = true;
+                    break;
+                }
+            }
+        }
     }
 
     let baud_est = 1.0 / bit_time;
-    let info = format!(
-        "UART {}-{}-{} @ {:.0} baud (est.), {} frame(s)",
-        cfg.data_bits,
+    let auto = if cfg.baud.filter(|&b| b > 0.0).is_some() {
+        ""
+    } else {
+        " (auto)"
+    };
+    let mut info = format!(
+        "UART {}-{}-{} @ {:.0} baud{auto}, {} frame(s)",
+        db,
         parity_label(cfg.parity),
-        cfg.stop_bits,
+        sb,
         baud_est,
         frames.len()
     );
+    if truncated {
+        info.push_str(&format!("; truncated at {MAX_DECODE_BYTES} bytes"));
+    }
 
     let empty = frames.is_empty();
     BusDecodeResult {
@@ -108,6 +163,7 @@ pub fn decode_uart(
         } else {
             None
         },
+        truncated,
     }
 }
 
@@ -116,25 +172,63 @@ fn parity_label(p: UartParity) -> &'static str {
         UartParity::None => "N",
         UartParity::Even => "E",
         UartParity::Odd => "O",
+        UartParity::Mark => "M",
+        UartParity::Space => "S",
+    }
+}
+
+fn parity_bits(p: UartParity) -> f64 {
+    if p == UartParity::None {
+        0.0
+    } else {
+        1.0
     }
 }
 
 fn estimate_bit_time(edges: &[super::digital::DigitalEdge]) -> Option<f64> {
     let mut widths = edge_intervals(edges);
+    widths.retain(|w| w.is_finite() && *w > 0.0);
     if widths.is_empty() {
         return None;
     }
     widths.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let idx = widths.len() / 4;
-    let mut bt = widths[idx];
-    for &nom in &[1.0 / 115_200.0, 1.0 / 57_600.0, 1.0 / 38_400.0, 1.0 / 19_200.0, 1.0 / 9_600.0]
-    {
-        if (bt - nom).abs() < nom * 0.15 {
-            bt = nom;
-            break;
-        }
+    // Drop the shortest ~5% as ringing / glitch pulses.
+    let start = (widths.len() / 20).min(widths.len() - 1);
+    let min_bit = widths[start];
+    let ones: Vec<f64> = widths
+        .iter()
+        .copied()
+        .filter(|w| *w <= min_bit * 1.45)
+        .collect();
+    let mut bt = ones[ones.len() / 2];
+    if let Some(std) = snap_baud(1.0 / bt) {
+        bt = 1.0 / std;
     }
     Some(bt)
+}
+
+fn snap_baud(est: f64) -> Option<f64> {
+    if !est.is_finite() || est <= 0.0 {
+        return None;
+    }
+    STANDARD_BAUD
+        .iter()
+        .copied()
+        .find(|&nom| ((est - nom) / nom).abs() < 0.08)
+}
+
+enum FrameKind {
+    Skip,
+    Data(BusFrame),
+    Break(BusFrame),
+}
+
+fn logic_one(level: bool, idle_high: bool) -> bool {
+    if idle_high {
+        level
+    } else {
+        !level
+    }
 }
 
 fn decode_frame_at(
@@ -144,57 +238,96 @@ fn decode_frame_at(
     bit_time: f64,
     idle_high: bool,
     cfg: &UartConfig,
-) -> Option<BusFrame> {
-    let mut data: u8 = 0;
-    let db = cfg.data_bits.min(8);
+    bits_total: f64,
+) -> FrameKind {
+    let start_mid = t_start + 0.5 * bit_time;
+    let Some(lvl) = level_at_time(trace, threshold, start_mid) else {
+        return FrameKind::Skip;
+    };
+    if logic_one(lvl, idle_high) {
+        return FrameKind::Skip;
+    }
+
+    let db = cfg.normalized_data_bits();
+    let t_end = t_start + bits_total * bit_time;
+
+    let mut all_zero = true;
+    let mut data: u16 = 0;
     for bit in 0..db {
         let t = t_start + (1.5 + f64::from(bit)) * bit_time;
-        let lvl = level_at_time(trace, threshold, t)?;
-        let one = if idle_high ^ cfg.inverted { lvl } else { !lvl };
+        let Some(lvl) = level_at_time(trace, threshold, t) else {
+            return FrameKind::Skip;
+        };
+        let one = logic_one(lvl, idle_high);
         if one {
+            all_zero = false;
             data |= 1 << bit;
         }
     }
 
     let mut parity_ok = true;
+    let mut parity_bit = false;
     if cfg.parity != UartParity::None {
         let t = t_start + (1.5 + f64::from(db)) * bit_time;
         if let Some(lvl) = level_at_time(trace, threshold, t) {
-            let bit = if idle_high ^ cfg.inverted { lvl } else { !lvl };
-            let ones = (0..db).map(|b| (data >> b) & 1).sum::<u8>();
+            parity_bit = logic_one(lvl, idle_high);
+            if parity_bit {
+                all_zero = false;
+            }
+            let ones = (0..db).map(|b| (data >> b) & 1).sum::<u16>();
+            let data_odd = ones % 2 == 1;
             parity_ok = match cfg.parity {
-                UartParity::Even => bit == (ones % 2 == 0),
-                UartParity::Odd => bit == (ones % 2 == 1),
+                // Even: total number of 1s (data + parity) is even → parity = data_odd.
+                UartParity::Even => parity_bit == data_odd,
+                // Odd: total number of 1s is odd → parity = !data_odd.
+                UartParity::Odd => parity_bit != data_odd,
+                UartParity::Mark => parity_bit,
+                UartParity::Space => !parity_bit,
                 UartParity::None => true,
             };
         }
     }
 
-    let stop_offset = 1.5 + f64::from(db) + if cfg.parity != UartParity::None { 1.0 } else { 0.0 };
+    let stop_offset = 1.5 + f64::from(db) + parity_bits(cfg.parity);
     let t_stop = t_start + stop_offset * bit_time;
     let stop_ok = level_at_time(trace, threshold, t_stop)
-        .map(|lvl| if idle_high ^ cfg.inverted { lvl } else { !lvl })
+        .map(|lvl| logic_one(lvl, idle_high))
         .unwrap_or(false);
 
-    let t_end = t_start + (stop_offset + f64::from(cfg.stop_bits)) * bit_time;
-    let ascii = if data.is_ascii() && data >= 0x20 && data < 0x7f {
-        format!(" '{}'", data as char)
+    if all_zero && !stop_ok {
+        return FrameKind::Break(BusFrame {
+            t_start,
+            t_end,
+            summary: "BREAK".into(),
+            bytes: Vec::new(),
+        });
+    }
+
+    let ascii = if db <= 8 && data >= 0x20 && data < 0x7f {
+        format!(" '{}'", data as u8 as char)
     } else {
         String::new()
     };
-    let mut summary = format!("0x{data:02X}{ascii}");
+    let hex_w = if db > 8 { 3 } else { 2 };
+    let mut summary = format!("0x{data:0hex_w$X}{ascii}");
     if !stop_ok {
-        summary.push_str(" [stop?]");
+        summary.push_str(" [framing]");
     }
     if !parity_ok {
-        summary.push_str(" [parity?]");
+        summary.push_str(" [parity]");
     }
 
-    Some(BusFrame {
+    let bytes = if db > 8 {
+        vec![(data & 0xFF) as u8, (data >> 8) as u8]
+    } else {
+        vec![(data & 0xFF) as u8]
+    };
+    let _ = parity_bit;
+    FrameKind::Data(BusFrame {
         t_start,
         t_end,
         summary,
-        bytes: vec![data],
+        bytes,
     })
 }
 
@@ -203,6 +336,15 @@ mod tests {
     use super::*;
 
     fn synth_uart_byte(byte: u8, baud: f64, samples_per_bit: usize) -> WaveformTrace {
+        synth_uart_bytes(&[byte], baud, samples_per_bit, UartParity::None)
+    }
+
+    fn synth_uart_bytes(
+        bytes: &[u8],
+        baud: f64,
+        samples_per_bit: usize,
+        parity: UartParity,
+    ) -> WaveformTrace {
         let bit_t = 1.0 / baud;
         let mut x = Vec::new();
         let mut y = Vec::new();
@@ -213,26 +355,36 @@ mod tests {
             y.push(level);
             *t += dt;
         };
-        for _ in 0..samples_per_bit {
-            push(&mut x, &mut y, &mut t, dt, 3.3);
-        }
-        for _ in 0..samples_per_bit {
-            push(&mut x, &mut y, &mut t, dt, 0.0);
-        }
-        for bit in 0..8 {
-            let high = (byte >> bit) & 1 == 1;
-            let v = if high { 3.3 } else { 0.0 };
+        let hold = |x: &mut Vec<f64>, y: &mut Vec<f64>, t: &mut f64, level: f64| {
             for _ in 0..samples_per_bit {
-                push(&mut x, &mut y, &mut t, dt, v);
+                push(x, y, t, dt, level);
             }
+        };
+        hold(&mut x, &mut y, &mut t, 3.3);
+        for &byte in bytes {
+            hold(&mut x, &mut y, &mut t, 0.0);
+            let mut ones = 0u8;
+            for bit in 0..8 {
+                let high = (byte >> bit) & 1 == 1;
+                if high {
+                    ones += 1;
+                }
+                hold(&mut x, &mut y, &mut t, if high { 3.3 } else { 0.0 });
+            }
+            match parity {
+                UartParity::None => {}
+                UartParity::Even => hold(&mut x, &mut y, &mut t, if ones % 2 == 1 { 3.3 } else { 0.0 }),
+                UartParity::Odd => hold(&mut x, &mut y, &mut t, if ones % 2 == 0 { 3.3 } else { 0.0 }),
+                UartParity::Mark => hold(&mut x, &mut y, &mut t, 3.3),
+                UartParity::Space => hold(&mut x, &mut y, &mut t, 0.0),
+            }
+            hold(&mut x, &mut y, &mut t, 3.3);
         }
-        for _ in 0..samples_per_bit {
-            push(&mut x, &mut y, &mut t, dt, 3.3);
-        }
+        hold(&mut x, &mut y, &mut t, 3.3);
         WaveformTrace {
             channel: "CH1".into(),
             x: x.into(),
-            y,
+            y: y.into(),
             x_unit: "s".into(),
             y_unit: "V".into(),
         }
@@ -245,5 +397,70 @@ mod tests {
         assert!(r.error.is_none(), "{:?}", r.error);
         assert!(!r.frames.is_empty());
         assert_eq!(r.frames[0].bytes[0], 0x55);
+    }
+
+    #[test]
+    fn skips_data_edges_inside_frame() {
+        let trace = synth_uart_bytes(&[0xAA], 115_200.0, 8, UartParity::None);
+        let r = decode_uart(&trace, None, true, &UartConfig::default());
+        let data: Vec<_> = r.frames.iter().filter(|f| !f.bytes.is_empty()).collect();
+        assert_eq!(data.len(), 1, "{:?}", r.frames.iter().map(|f| &f.summary).collect::<Vec<_>>());
+        assert_eq!(data[0].bytes[0], 0xAA);
+    }
+
+    #[test]
+    fn even_parity_ok() {
+        let trace = synth_uart_bytes(&[0x55], 115_200.0, 8, UartParity::Even);
+        let mut cfg = UartConfig::default();
+        cfg.parity = UartParity::Even;
+        let r = decode_uart(&trace, None, true, &cfg);
+        assert!(r.frames.iter().any(|f| f.bytes.first() == Some(&0x55) && !f.summary.contains("parity")));
+    }
+
+    #[test]
+    fn even_parity_flags_wrong_bit() {
+        // 0x55 has 4 ones (even) → even parity bit must be 0. Force a 1.
+        let mut cfg = UartConfig::default();
+        cfg.parity = UartParity::Even;
+        let trace = synth_uart_bytes(&[0x55], 115_200.0, 8, UartParity::Odd);
+        let r = decode_uart(&trace, None, true, &cfg);
+        assert!(
+            r.frames.iter().any(|f| f.summary.contains("parity")),
+            "{:?}",
+            r.frames.iter().map(|f| &f.summary).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn decodes_all_zero_and_all_one_bytes() {
+        let mut cfg = UartConfig::default();
+        cfg.baud = Some(115_200.0);
+        for byte in [0x00u8, 0xFF] {
+            let trace = synth_uart_byte(byte, 115_200.0, 8);
+            let r = decode_uart(&trace, None, true, &cfg);
+            assert!(r.error.is_none(), "0x{byte:02X} {:?}", r.error);
+            assert_eq!(
+                r.frames[0].bytes[0],
+                byte,
+                "{:?}",
+                r.frames[0].summary
+            );
+            assert!(!r.frames[0].summary.contains("framing"));
+        }
+    }
+
+    #[test]
+    fn two_stop_setting_does_not_skip_8n1_next_byte() {
+        let trace = synth_uart_bytes(&[0x11, 0x22], 115_200.0, 8, UartParity::None);
+        let mut cfg = UartConfig::default();
+        cfg.stop_bits = 2;
+        let r = decode_uart(&trace, None, true, &cfg);
+        let data: Vec<u8> = r
+            .frames
+            .iter()
+            .filter(|f| !f.bytes.is_empty())
+            .map(|f| f.bytes[0])
+            .collect();
+        assert_eq!(data, vec![0x11, 0x22], "{:?}", r.frames.iter().map(|f| &f.summary).collect::<Vec<_>>());
     }
 }

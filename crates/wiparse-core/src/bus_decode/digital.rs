@@ -15,24 +15,36 @@ pub struct DigitalEdge {
     pub level_after: bool,
 }
 
-/// Mid-point threshold from Y extrema (robust for scope digital probes).
+/// Mid-point threshold from robust Y extents (5th/95th percentile, spike-resistant).
 pub fn default_threshold(trace: &WaveformTrace) -> f64 {
-    let n = trace.y.len();
-    if n == 0 {
-        return 0.5;
-    }
-    let (mut ymin, mut ymax) = (f64::INFINITY, f64::NEG_INFINITY);
-    for &v in &trace.y {
-        if v.is_finite() {
-            ymin = ymin.min(v);
-            ymax = ymax.max(v);
-        }
-    }
+    let (ymin, ymax) = robust_extents(&trace.y);
     if ymin.is_finite() && ymax.is_finite() {
         0.5 * (ymin + ymax)
     } else {
         0.5
     }
+}
+
+fn robust_extents(y: &[f64]) -> (f64, f64) {
+    let n = y.len();
+    if n == 0 {
+        return (f64::NAN, f64::NAN);
+    }
+    let step = (n / 4096).max(1);
+    let mut samples: Vec<f64> = y
+        .iter()
+        .step_by(step)
+        .copied()
+        .filter(|v| v.is_finite())
+        .collect();
+    if samples.is_empty() {
+        return (f64::NAN, f64::NAN);
+    }
+    samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let last = samples.len() - 1;
+    let lo = samples[(samples.len() / 20).min(last)];
+    let hi = samples[(samples.len() * 19 / 20).min(last)];
+    (lo, hi)
 }
 
 fn level_at(y: f64, threshold: f64, hysteresis: f64, prev: bool) -> bool {
@@ -90,7 +102,7 @@ pub fn analog_to_edges(
     edges
 }
 
-/// Sample logic level at time `t` via linear interpolation.
+/// Sample logic level at time `t` via linear interpolation (UART mid-bit).
 pub fn level_at_time(trace: &WaveformTrace, threshold: f64, t: f64) -> Option<bool> {
     let n = trace.x.len().min(trace.y.len());
     if n == 0 {
@@ -116,6 +128,19 @@ pub fn level_at_time(trace: &WaveformTrace, threshold: f64, t: f64) -> Option<bo
     let frac = (t - x0) / (x1 - x0);
     let y = y0 + frac * (y1 - y0);
     Some(y > threshold)
+}
+
+/// Logic level of the last sample strictly before `t` (SPI/I2C/I2S setup time).
+pub fn level_before(trace: &WaveformTrace, threshold: f64, t: f64) -> Option<bool> {
+    let n = trace.x.len().min(trace.y.len());
+    if n == 0 {
+        return None;
+    }
+    let idx = trace.x[..n].partition_point(|&x| x < t);
+    if idx == 0 {
+        return Some(trace.y[0] > threshold);
+    }
+    Some(trace.y[idx - 1] > threshold)
 }
 
 /// Pulse widths between consecutive edges.

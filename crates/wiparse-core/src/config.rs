@@ -116,6 +116,9 @@ pub struct LogMonitorConfig {
     /// Root directory for the serial sidebar log-folder browser (subfolders with `.txt`).
     #[serde(default)]
     pub log_browser_dir: String,
+    /// When true, live serial RX is written to the save-dir file (flushed every 5s).
+    #[serde(default = "default_true")]
+    pub save_live_to_disk: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -328,6 +331,7 @@ impl Default for LogMonitorConfig {
             open_log_files: Vec::new(),
             last_open_dir: String::new(),
             log_browser_dir: String::new(),
+            save_live_to_disk: true,
         }
     }
 }
