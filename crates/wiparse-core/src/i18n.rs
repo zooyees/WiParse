@@ -283,6 +283,8 @@ pub fn tr(lang: Lang, key: &str) -> String {
         (Lang::En, "log.column") => "Col",
         (Lang::Zh, "log.characters") => "字符",
         (Lang::En, "log.characters") => "characters",
+        (Lang::Zh, "log.line_count") => "行",
+        (Lang::En, "log.line_count") => "lines",
         (Lang::Zh, "scope.connect") => "连接",
         (Lang::En, "scope.connect") => "Connect",
         (Lang::Zh, "scope.refresh") => "刷新",

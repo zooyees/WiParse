@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use crossbeam_channel::Receiver;
 use egui::text::{CCursor, CCursorRange};
-use egui::{Align2, Color32, CornerRadius, FontId, Frame, Margin, Pos2, RichText, Stroke, Vec2};
+use egui::{Align2, Color32, CornerRadius, Frame, Margin, Pos2, RichText, Stroke, Vec2};
 use wiparse_core::i18n::{tr, tr_fmt, Lang};
 use wiparse_core::log::{
     build_file_store_worker, collect_match_hits, match_ranges_in_line, parse_filter_patterns,
@@ -20,7 +20,9 @@ use wiparse_core::log::{
 };
 use wiparse_core::protocol::{decode_qi_message, format_qi_tooltip, QiTipLine, QiTipRole};
 
-use crate::log_view::{show_virtual_log_pane, show_virtual_search_pane};
+use crate::log_view::{
+    show_virtual_line_editor, show_virtual_log_pane, show_virtual_search_pane, LineEditorSession,
+};
 use crate::theme::Tokens;
 
 pub(crate) const LOG_FONT_DEFAULT: f32 = 13.0;
@@ -359,7 +361,7 @@ pub struct LogTabPage {
     selected_pane: usize,
     auto_scroll: bool,
     edit_mode: bool,
-    edit_buffer: String,
+    edit: LineEditorSession,
     edit_dirty: bool,
     edit_status: String,
     edit_find: String,
@@ -412,7 +414,7 @@ impl LogTabPage {
             selected_pane: 0,
             auto_scroll: true,
             edit_mode: false,
-            edit_buffer: String::new(),
+            edit: LineEditorSession::default(),
             edit_dirty: false,
             edit_status: String::new(),
             edit_find: String::new(),
@@ -458,7 +460,7 @@ impl LogTabPage {
                     pane.filter_busy = false;
                     pane.clear_sel();
                 }
-                self.edit_buffer = text;
+                self.edit = LineEditorSession::from_text(&text);
                 self.edit_dirty = false;
                 self.edit_status.clear();
                 self.edit_match_status.clear();
@@ -474,7 +476,7 @@ impl LogTabPage {
     }
 
     fn clear_edit_ui_state(&mut self) {
-        self.edit_buffer.clear();
+        self.edit.clear();
         self.edit_status.clear();
         self.edit_match_status.clear();
         self.edit_cursor_status.clear();
@@ -514,7 +516,7 @@ impl LogTabPage {
     fn discard_edit(&mut self) {
         if let Some(path) = self.filepath.as_ref() {
             if let Ok(text) = std::fs::read_to_string(path) {
-                self.edit_buffer = text;
+                self.edit = LineEditorSession::from_text(&text);
             }
         }
         self.edit_dirty = false;
@@ -528,7 +530,7 @@ impl LogTabPage {
         };
         let path = PathBuf::from(path);
         self.release_mapped_file();
-        match write_log_file(&path, self.edit_buffer.as_bytes()) {
+        match write_log_file(&path, self.edit.to_text().as_bytes()) {
             Ok(()) => {
                 self.edit_dirty = false;
                 self.edit_status.clear();
@@ -542,7 +544,7 @@ impl LogTabPage {
     }
 
     fn save_edit_as(&mut self, path: PathBuf) -> bool {
-        match write_log_file(&path, self.edit_buffer.as_bytes()) {
+        match write_log_file(&path, self.edit.to_text().as_bytes()) {
             Ok(()) => {
                 self.filepath = Some(path.to_string_lossy().into_owned());
                 self.title = path
@@ -1780,6 +1782,9 @@ impl LogTabPage {
                                 .desired_width(180.0)
                                 .hint_text(tr(lang, "log.find_placeholder")),
                         );
+                        if find.has_focus() {
+                            self.edit.has_focus = false;
+                        }
                         if find.lost_focus()
                             && ui.input(|input| input.key_pressed(egui::Key::Enter))
                         {
@@ -1817,129 +1822,106 @@ impl LogTabPage {
             ui.add_space(4.0);
         }
 
-        let editor_id = ui.make_persistent_id(("log-document-editor", self.view_id));
+        let editor_id_salt = format!("log-document-editor-{}", self.view_id);
         let available_height = ui.available_height().max(120.0);
-        let desired_rows = ((available_height - 28.0) / (font_size + 4.0)).max(4.0) as usize;
-        let mut output = egui::ScrollArea::both()
-            .id_salt(("log-document-scroll", self.view_id))
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.set_min_size(egui::vec2(
-                    ui.available_width().max(320.0),
-                    available_height - 28.0,
-                ));
-                egui::TextEdit::multiline(&mut self.edit_buffer)
-                    .id(editor_id)
-                    .font(FontId::monospace(font_size))
-                    .desired_width(f32::INFINITY)
-                    .desired_rows(desired_rows)
-                    .code_editor()
-                    .show(ui)
-            })
-            .inner;
-
-        if output.response.changed() {
+        let status_h = 22.0;
+        let editor_h = (available_height - status_h).max(80.0);
+        if show_virtual_line_editor(
+            ui,
+            &mut self.edit,
+            font_size,
+            &editor_id_salt,
+            editor_h,
+            t,
+        ) {
             self.edit_dirty = true;
         }
-        if output.response.clicked() {
-            if let Some(pointer) = output.response.interact_pointer_pos() {
-                let cursor = output.galley.cursor_from_pos(pointer - output.galley_pos);
-                output
-                    .state
-                    .cursor
-                    .set_char_range(Some(CCursorRange::one(cursor.ccursor)));
-                output.state.clone().store(ui.ctx(), output.response.id);
-                output.response.request_focus();
-            }
-        }
 
-        let current_range = output
-            .cursor_range
-            .map(|range| range.as_ccursor_range())
-            .unwrap_or_else(|| CCursorRange::one(CCursor::new(0)));
         if let Some(action) = find_action {
-            let (sel_lo, sel_hi) = sorted_char_range(current_range);
+            let row = self.edit.row;
+            let col = self.edit.col;
             match action {
                 FindAction::Next => {
-                    if let Some((start, end, ordinal, total)) = find_next_range(
-                        &self.edit_buffer,
+                    if let Some((hit_row, start, end, ordinal, total)) = find_next_in_lines(
+                        &self.edit.lines,
                         &self.edit_find,
-                        sel_hi,
+                        row,
+                        col,
                         self.case_sensitive,
                     ) {
-                        output.state.cursor.set_char_range(Some(CCursorRange::two(
-                            CCursor::new(start),
-                            CCursor::new(end),
-                        )));
-                        output.state.store(ui.ctx(), editor_id);
-                        output.response.request_focus();
+                        apply_edit_find_hit(&mut self.edit, hit_row, start, end);
                         self.edit_match_status = format!("{ordinal}/{total}");
                     } else {
                         self.edit_match_status = tr(lang, "log.no_matches");
                     }
                 }
                 FindAction::Prev => {
-                    if let Some((start, end, ordinal, total)) = find_prev_range(
-                        &self.edit_buffer,
+                    if let Some((hit_row, start, end, ordinal, total)) = find_prev_in_lines(
+                        &self.edit.lines,
                         &self.edit_find,
-                        sel_lo,
+                        row,
+                        col,
                         self.case_sensitive,
                     ) {
-                        output.state.cursor.set_char_range(Some(CCursorRange::two(
-                            CCursor::new(start),
-                            CCursor::new(end),
-                        )));
-                        output.state.store(ui.ctx(), editor_id);
-                        output.response.request_focus();
+                        apply_edit_find_hit(&mut self.edit, hit_row, start, end);
                         self.edit_match_status = format!("{ordinal}/{total}");
                     } else {
                         self.edit_match_status = tr(lang, "log.no_matches");
                     }
                 }
                 FindAction::Replace => {
-                    let (start, end) = sorted_char_range(current_range);
-                    let selected = char_slice(&self.edit_buffer, start, end);
-                    if !self.edit_find.is_empty()
-                        && text_equals(selected, &self.edit_find, self.case_sensitive)
-                    {
-                        replace_char_range(&mut self.edit_buffer, start, end, &self.edit_replace);
+                    let row = self.edit.row.min(self.edit.lines.len().saturating_sub(1));
+                    let col = self.edit.col;
+                    if let Some((s, e)) = current_line_match(
+                        &self.edit.lines[row],
+                        &self.edit_find,
+                        col,
+                        self.case_sensitive,
+                    ) {
+                        replace_char_range(
+                            &mut self.edit.lines[row],
+                            s,
+                            e,
+                            &self.edit_replace,
+                        );
                         self.edit_dirty = true;
-                        let replacement_end = start + self.edit_replace.chars().count();
-                        output.state.cursor.set_char_range(Some(CCursorRange::two(
-                            CCursor::new(start),
-                            CCursor::new(replacement_end),
-                        )));
-                        output.state.store(ui.ctx(), editor_id);
+                        self.edit.rescan_max_chars();
+                        let new_col = s + self.edit_replace.chars().count();
+                        self.edit.col = new_col;
+                        self.edit.pending_cursor = Some(CCursorRange::two(
+                            CCursor::new(s),
+                            CCursor::new(new_col),
+                        ));
+                        self.edit.want_focus = true;
                     } else {
                         self.edit_match_status = tr(lang, "log.select_match");
                     }
                 }
                 FindAction::ReplaceAll => {
-                    let count = replace_all_matches(
-                        &mut self.edit_buffer,
+                    let count = replace_all_in_lines(
+                        &mut self.edit.lines,
                         &self.edit_find,
                         &self.edit_replace,
                         self.case_sensitive,
                     );
                     if count > 0 {
                         self.edit_dirty = true;
+                        self.edit.rescan_max_chars();
                     }
                     self.edit_match_status = format!("{}: {count}", tr(lang, "log.replaced"));
                 }
             }
         }
 
-        if let Some(range) = output.cursor_range {
-            let index = range.primary.ccursor.index;
-            let (line, column) = line_column_at(&self.edit_buffer, index);
-            self.edit_cursor_status = format!(
-                "{} {line}, {} {column}  |  {} {}",
-                tr(lang, "log.line"),
-                tr(lang, "log.column"),
-                tr(lang, "log.characters"),
-                self.edit_buffer.chars().count()
-            );
-        }
+        self.edit_cursor_status = format!(
+            "{} {}, {} {}  |  {} {}",
+            tr(lang, "log.line"),
+            self.edit.row + 1,
+            tr(lang, "log.column"),
+            self.edit.col + 1,
+            tr(lang, "log.line_count"),
+            self.edit.lines.len()
+        );
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(&self.edit_cursor_status)
@@ -2462,12 +2444,6 @@ fn byte_to_char(text: &str, byte_index: usize) -> usize {
     text[..byte_index.min(text.len())].chars().count()
 }
 
-fn sorted_char_range(range: CCursorRange) -> (usize, usize) {
-    let a = range.primary.index;
-    let b = range.secondary.index;
-    (a.min(b), a.max(b))
-}
-
 fn char_slice(text: &str, start: usize, end: usize) -> &str {
     &text[char_to_byte(text, start)..char_to_byte(text, end)]
 }
@@ -2476,14 +2452,6 @@ fn replace_char_range(text: &mut String, start: usize, end: usize, replacement: 
     let byte_start = char_to_byte(text, start);
     let byte_end = char_to_byte(text, end);
     text.replace_range(byte_start..byte_end, replacement);
-}
-
-fn text_equals(left: &str, right: &str, case_sensitive: bool) -> bool {
-    if case_sensitive {
-        left == right
-    } else {
-        left.eq_ignore_ascii_case(right)
-    }
 }
 
 fn find_match_ranges(text: &str, needle: &str, case_sensitive: bool) -> Vec<(usize, usize)> {
@@ -2539,6 +2507,97 @@ fn find_prev_range(
     ranges
         .get(index)
         .map(|(start, end)| (*start, *end, index + 1, total))
+}
+
+fn collect_line_hits(
+    lines: &[String],
+    needle: &str,
+    case_sensitive: bool,
+) -> Vec<(usize, usize, usize)> {
+    let mut hits = Vec::new();
+    for (row, line) in lines.iter().enumerate() {
+        for (start, end) in find_match_ranges(line, needle, case_sensitive) {
+            hits.push((row, start, end));
+        }
+    }
+    hits
+}
+
+fn find_next_in_lines(
+    lines: &[String],
+    needle: &str,
+    after_row: usize,
+    after_col: usize,
+    case_sensitive: bool,
+) -> Option<(usize, usize, usize, usize, usize)> {
+    let hits = collect_line_hits(lines, needle, case_sensitive);
+    let total = hits.len();
+    if total == 0 {
+        return None;
+    }
+    let index = hits
+        .iter()
+        .position(|(row, start, _)| *row > after_row || (*row == after_row && *start >= after_col))
+        .unwrap_or(0);
+    let (row, start, end) = hits[index];
+    Some((row, start, end, index + 1, total))
+}
+
+fn find_prev_in_lines(
+    lines: &[String],
+    needle: &str,
+    before_row: usize,
+    before_col: usize,
+    case_sensitive: bool,
+) -> Option<(usize, usize, usize, usize, usize)> {
+    let hits = collect_line_hits(lines, needle, case_sensitive);
+    let total = hits.len();
+    if total == 0 {
+        return None;
+    }
+    let index = hits
+        .iter()
+        .rposition(|(row, start, _)| {
+            *row < before_row || (*row == before_row && *start < before_col)
+        })
+        .unwrap_or(total.saturating_sub(1));
+    let (row, start, end) = hits[index];
+    Some((row, start, end, index + 1, total))
+}
+
+fn current_line_match(
+    line: &str,
+    needle: &str,
+    col: usize,
+    case_sensitive: bool,
+) -> Option<(usize, usize)> {
+    let ranges = find_match_ranges(line, needle, case_sensitive);
+    ranges
+        .iter()
+        .copied()
+        .find(|(start, end)| *start <= col && col <= *end)
+        .or_else(|| ranges.first().copied())
+}
+
+fn apply_edit_find_hit(edit: &mut LineEditorSession, row: usize, start: usize, end: usize) {
+    edit.row = row;
+    edit.col = end;
+    edit.pending_cursor = Some(CCursorRange::two(CCursor::new(start), CCursor::new(end)));
+    edit.scroll_to = Some(row);
+    edit.want_focus = true;
+}
+
+fn replace_all_in_lines(
+    lines: &mut [String],
+    needle: &str,
+    replacement: &str,
+    case_sensitive: bool,
+) -> usize {
+    let mut count = 0;
+    for line in lines.iter_mut() {
+        count += replace_all_matches(line, needle, replacement, case_sensitive);
+    }
+    count
 }
 
 fn replace_all_matches(
@@ -2780,6 +2839,17 @@ mod tests {
         let count = replace_all_matches(&mut text, "ask", "FSK", false);
         assert_eq!(count, 3);
         assert_eq!(text, "FSK FSK FSK");
+    }
+
+    #[test]
+    fn document_find_in_lines_wraps_without_joining_the_file() {
+        let lines = vec!["ASK a".into(), "x".into(), "ASK b".into()];
+        let first = find_next_in_lines(&lines, "ASK", 0, 0, true).unwrap();
+        assert_eq!((first.0, first.1, first.3), (0, 0, 1));
+        let second = find_next_in_lines(&lines, "ASK", first.0, first.2, true).unwrap();
+        assert_eq!((second.0, second.3), (2, 2));
+        let wrapped = find_next_in_lines(&lines, "ASK", second.0, second.2, true).unwrap();
+        assert_eq!((wrapped.0, wrapped.1), (first.0, first.1));
     }
 
     #[test]

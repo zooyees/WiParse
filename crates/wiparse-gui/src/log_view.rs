@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use crate::theme::Tokens;
 use egui::{
-    text::{CCursor, LayoutJob, TextFormat},
-    Align, Align2, Color32, FontId, Layout, Pos2, Rect, Sense, Stroke, Ui, UiBuilder, Vec2,
+    text::{CCursor, CCursorRange, LayoutJob, TextFormat},
+    Align, Align2, Color32, Event, FontId, ImeEvent, Key, Layout, Margin, Pos2, Rect, Sense, Stroke,
+    Ui, UiBuilder, Vec2,
 };
 use wiparse_core::i18n::{tr, Lang};
 use wiparse_core::log::{match_ranges_in_line, LogStore};
@@ -1415,6 +1416,534 @@ fn copy_selection<S: LogStore + ?Sized>(store: &S, pane: &PaneState) -> Option<S
     }
 }
 
+/// Line-oriented document used by the serial-tool TXT editor.
+///
+/// View mode already virtualizes; edit mode previously fed the whole file to
+/// `TextEdit::multiline`, which laid out every character every frame.
+pub struct LineEditorSession {
+    pub lines: Vec<String>,
+    pub newline: String,
+    pub row: usize,
+    pub col: usize,
+    pub max_chars: usize,
+    pub scroll_to: Option<usize>,
+    pub want_focus: bool,
+    pub has_focus: bool,
+    pub pending_cursor: Option<CCursorRange>,
+}
+
+impl Default for LineEditorSession {
+    fn default() -> Self {
+        Self {
+            lines: vec![String::new()],
+            newline: "\n".into(),
+            row: 0,
+            col: 0,
+            max_chars: 1,
+            scroll_to: None,
+            want_focus: false,
+            has_focus: false,
+            pending_cursor: None,
+        }
+    }
+}
+
+impl LineEditorSession {
+    pub fn from_text(text: &str) -> Self {
+        let newline = if text.contains("\r\n") {
+            "\r\n".to_string()
+        } else {
+            "\n".to_string()
+        };
+        let mut lines: Vec<String> = text
+            .split('\n')
+            .map(|line| line.trim_end_matches('\r').to_string())
+            .collect();
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+        let max_chars = lines
+            .iter()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or(1)
+            .max(1);
+        Self {
+            lines,
+            newline,
+            row: 0,
+            col: 0,
+            max_chars,
+            scroll_to: Some(0),
+            want_focus: true,
+            has_focus: false,
+            pending_cursor: None,
+        }
+    }
+
+    pub fn to_text(&self) -> String {
+        self.lines.join(&self.newline)
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    fn clamp_caret(&mut self) {
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+        self.row = self.row.min(self.lines.len() - 1);
+        let len = self.lines[self.row].chars().count();
+        self.col = self.col.min(len);
+    }
+
+    fn note_line_chars(&mut self, n: usize) {
+        self.max_chars = self.max_chars.max(n.max(1));
+    }
+
+    pub fn rescan_max_chars(&mut self) {
+        self.max_chars = self
+            .lines
+            .iter()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or(1)
+            .max(1);
+    }
+}
+
+fn editor_char_to_byte(text: &str, char_index: usize) -> usize {
+    text.char_indices()
+        .nth(char_index)
+        .map(|(i, _)| i)
+        .unwrap_or(text.len())
+}
+
+fn editor_insert_text(session: &mut LineEditorSession, text: &str) {
+    session.clamp_caret();
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let parts: Vec<&str> = normalized.split('\n').collect();
+    if parts.is_empty() {
+        return;
+    }
+    let row = session.row;
+    let byte = editor_char_to_byte(&session.lines[row], session.col);
+    let suffix = session.lines[row][byte..].to_string();
+    session.lines[row].truncate(byte);
+    session.lines[row].push_str(parts[0]);
+    if parts.len() == 1 {
+        session.col = session.lines[row].chars().count();
+        session.lines[row].push_str(&suffix);
+        session.note_line_chars(session.lines[row].chars().count());
+        session.pending_cursor = Some(CCursorRange::one(CCursor::new(session.col)));
+    } else {
+        session.note_line_chars(session.lines[row].chars().count());
+        let last = parts.len() - 1;
+        for (i, part) in parts.iter().enumerate().skip(1) {
+            let mut line = (*part).to_string();
+            if i == last {
+                line.push_str(&suffix);
+            }
+            session.note_line_chars(line.chars().count());
+            session.lines.insert(row + i, line);
+        }
+        session.row = row + last;
+        session.col = parts[last].chars().count();
+        session.pending_cursor = Some(CCursorRange::one(CCursor::new(session.col)));
+        session.scroll_to = Some(session.row);
+    }
+    session.want_focus = true;
+}
+
+fn editor_split_line(session: &mut LineEditorSession) {
+    session.clamp_caret();
+    let row = session.row;
+    let old_len = session.lines[row].chars().count();
+    let byte = editor_char_to_byte(&session.lines[row], session.col);
+    let rest = session.lines[row].split_off(byte);
+    session.note_line_chars(session.lines[row].chars().count());
+    session.note_line_chars(rest.chars().count());
+    session.lines.insert(row + 1, rest);
+    if old_len >= session.max_chars {
+        session.rescan_max_chars();
+    }
+    session.row = row + 1;
+    session.col = 0;
+    session.pending_cursor = Some(CCursorRange::one(CCursor::new(0)));
+    session.scroll_to = Some(session.row);
+    session.want_focus = true;
+}
+
+fn editor_join_prev(session: &mut LineEditorSession) -> bool {
+    session.clamp_caret();
+    if session.row == 0 {
+        return false;
+    }
+    let row = session.row;
+    let cur = session.lines.remove(row);
+    let removed_len = cur.chars().count();
+    let prev_len = session.lines[row - 1].chars().count();
+    session.lines[row - 1].push_str(&cur);
+    session.note_line_chars(session.lines[row - 1].chars().count());
+    if removed_len >= session.max_chars {
+        session.rescan_max_chars();
+    }
+    session.row = row - 1;
+    session.col = prev_len;
+    session.pending_cursor = Some(CCursorRange::one(CCursor::new(prev_len)));
+    session.scroll_to = Some(session.row);
+    session.want_focus = true;
+    true
+}
+
+fn editor_join_next(session: &mut LineEditorSession) -> bool {
+    session.clamp_caret();
+    let row = session.row;
+    if row + 1 >= session.lines.len() {
+        return false;
+    }
+    let next = session.lines.remove(row + 1);
+    let removed_len = next.chars().count();
+    let col = session.lines[row].chars().count();
+    session.lines[row].push_str(&next);
+    session.note_line_chars(session.lines[row].chars().count());
+    if removed_len >= session.max_chars {
+        session.rescan_max_chars();
+    }
+    session.col = col;
+    session.pending_cursor = Some(CCursorRange::one(CCursor::new(col)));
+    session.want_focus = true;
+    true
+}
+
+fn editor_move_row(session: &mut LineEditorSession, delta: isize) {
+    session.clamp_caret();
+    let n = session.lines.len();
+    let target = if delta < 0 {
+        session.row.saturating_sub((-delta) as usize)
+    } else {
+        (session.row + delta as usize).min(n.saturating_sub(1))
+    };
+    if target == session.row {
+        return;
+    }
+    let col = session.col;
+    session.row = target;
+    session.col = col.min(session.lines[target].chars().count());
+    session.pending_cursor = Some(CCursorRange::one(CCursor::new(session.col)));
+    session.scroll_to = Some(session.row);
+    session.want_focus = true;
+}
+
+/// Virtualized line editor: only visible rows are laid out; typing mutates one line.
+pub fn show_virtual_line_editor(
+    ui: &mut Ui,
+    session: &mut LineEditorSession,
+    font_size: f32,
+    salt: &str,
+    height: f32,
+    t: &Tokens,
+) -> bool {
+    let mut changed = false;
+    session.clamp_caret();
+
+    let line_h = row_height(ui, font_size);
+    let page_rows = ((height / line_h).floor() as isize - 1).max(1);
+
+    if session.has_focus {
+        let mut ate_enter = false;
+        let mut ate_backspace = false;
+        let mut ate_delete = false;
+        let mut paste: Option<String> = None;
+        let ime_busy = ui.input(|i| {
+            i.events.iter().any(|event| {
+                matches!(
+                    event,
+                    Event::Ime(ImeEvent::Preedit(_) | ImeEvent::Commit(_))
+                )
+            })
+        });
+        ui.input(|i| {
+            for event in &i.events {
+                match event {
+                    Event::Paste(text) if text.contains('\n') || text.contains('\r') => {
+                        paste = Some(text.clone());
+                    }
+                    Event::Key {
+                        key,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                        ..
+                    } if !(modifiers.ctrl || modifiers.command || modifiers.alt) => {
+                        match key {
+                            Key::Enter if !ime_busy => ate_enter = true,
+                            Key::Backspace if session.col == 0 => ate_backspace = true,
+                            Key::Delete
+                                if session.col
+                                    == session.lines[session.row].chars().count() =>
+                            {
+                                ate_delete = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+        if paste.is_some() || ate_enter || ate_backspace || ate_delete {
+            ui.input_mut(|i| {
+                i.events.retain(|event| match event {
+                    Event::Paste(text) if text.contains('\n') || text.contains('\r') => false,
+                    Event::Key {
+                        key: Key::Enter,
+                        pressed: true,
+                        repeat: false,
+                        ..
+                    } if ate_enter => false,
+                    Event::Key {
+                        key: Key::Backspace,
+                        pressed: true,
+                        repeat: false,
+                        ..
+                    } if ate_backspace => false,
+                    Event::Key {
+                        key: Key::Delete,
+                        pressed: true,
+                        repeat: false,
+                        ..
+                    } if ate_delete => false,
+                    _ => true,
+                });
+            });
+        }
+        if let Some(text) = paste {
+            editor_insert_text(session, &text);
+            changed = true;
+        }
+        if ate_enter {
+            editor_split_line(session);
+            changed = true;
+        }
+        if ate_backspace && editor_join_prev(session) {
+            changed = true;
+        }
+        if ate_delete && editor_join_next(session) {
+            changed = true;
+        }
+
+        let ctrl = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
+        if ui.input(|i| i.key_pressed(Key::ArrowUp)) {
+            editor_move_row(session, -1);
+        }
+        if ui.input(|i| i.key_pressed(Key::ArrowDown)) {
+            editor_move_row(session, 1);
+        }
+        if ui.input(|i| i.key_pressed(Key::PageUp)) {
+            editor_move_row(session, -page_rows);
+        }
+        if ui.input(|i| i.key_pressed(Key::PageDown)) {
+            editor_move_row(session, page_rows);
+        }
+        if ctrl && ui.input(|i| i.key_pressed(Key::Home)) {
+            session.row = 0;
+            session.col = 0;
+            session.pending_cursor = Some(CCursorRange::one(CCursor::new(0)));
+            session.scroll_to = Some(0);
+            session.want_focus = true;
+        }
+        if ctrl && ui.input(|i| i.key_pressed(Key::End)) {
+            session.row = session.lines.len().saturating_sub(1);
+            session.col = session.lines[session.row].chars().count();
+            session.pending_cursor = Some(CCursorRange::one(CCursor::new(session.col)));
+            session.scroll_to = Some(session.row);
+            session.want_focus = true;
+        }
+    }
+
+    let total_lines = session.lines.len().max(1);
+    let glyph_w = ui
+        .fonts(|f| f.glyph_width(&FontId::monospace(font_size), '0'))
+        .max(4.0);
+    let gutter_w = line_gutter_width(total_lines, glyph_w);
+    let content_w = (gutter_w
+        + session.max_chars as f32 * glyph_w * 2.0
+        + 24.0)
+        .max(ui.available_width());
+
+    let viewport_size = Vec2::new(ui.available_width().max(1.0), height.max(0.0));
+    let (viewport_rect, _) = ui.allocate_exact_size(viewport_size, Sense::hover());
+    if viewport_rect.height() <= 0.0 {
+        return changed;
+    }
+
+    let mut gutter_rows: Vec<(f32, f32, usize)> = Vec::new();
+    ui.scope_builder(
+        UiBuilder::new()
+            .max_rect(viewport_rect)
+            .layout(Layout::top_down(Align::Min)),
+        |ui| {
+            ui.set_clip_rect(viewport_rect);
+            let mut scroll_area = egui::ScrollArea::both()
+                .id_salt(salt)
+                .auto_shrink([false, false])
+                .drag_to_scroll(false)
+                .max_width(viewport_rect.width())
+                .max_height(height)
+                .animated(false);
+            if let Some(row) = session.scroll_to.take() {
+                scroll_area = scroll_area.vertical_scroll_offset(vertical_offset_for_row(
+                    row,
+                    line_h,
+                    viewport_rect.height(),
+                ));
+            }
+            scroll_area.show(ui, |ui| {
+                let total_h = (total_lines as f32 * line_h).max(line_h);
+                let (body, _) =
+                    ui.allocate_exact_size(Vec2::new(content_w, total_h), Sense::hover());
+                let clip = ui.clip_rect();
+                let interact_rect = text_select_interact_rect(ui, body, clip);
+                let response = ui.interact(
+                    interact_rect,
+                    ui.id().with(("line_edit_hit", salt)),
+                    Sense::hover(),
+                );
+
+                if response.contains_pointer() && ui.input(|i| i.pointer.primary_clicked()) {
+                    if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                        let row = ((pos.y - body.top()) / line_h)
+                            .floor()
+                            .max(0.0) as usize;
+                        let row = row.min(total_lines.saturating_sub(1));
+                        if row != session.row {
+                            let col = ((pos.x - body.left() - gutter_w - TEXT_LEFT_PAD)
+                                / glyph_w)
+                                .floor()
+                                .max(0.0) as usize;
+                            session.row = row;
+                            session.col = col.min(session.lines[row].chars().count());
+                            session.pending_cursor =
+                                Some(CCursorRange::one(CCursor::new(session.col)));
+                            session.want_focus = true;
+                        }
+                    }
+                }
+
+                let visible =
+                    visible_row_range(body.top(), clip.top(), clip.height(), line_h, total_lines);
+                let focus_row = session.row;
+
+                for row in visible.start..visible.end {
+                    let row_top = body.top() + row as f32 * line_h;
+                    let row_rect = Rect::from_min_max(
+                        Pos2::new(body.left(), row_top),
+                        Pos2::new(body.right(), row_top + line_h),
+                    );
+                    gutter_rows.push((row_rect.top(), row_rect.bottom(), row));
+                    if row == focus_row {
+                        ui.painter().rect_filled(
+                            row_rect,
+                            0.0,
+                            Color32::from_rgba_unmultiplied(2, 132, 199, 40),
+                        );
+                    }
+                    let text_rect = Rect::from_min_max(
+                        Pos2::new(body.left() + gutter_w, row_rect.top()),
+                        row_rect.max,
+                    );
+                    if row == focus_row {
+                        let prev_len = session.lines[row].chars().count();
+                        let mut line = std::mem::take(&mut session.lines[row]);
+                        let editor_id = ui.id().with(("line-edit-row", salt));
+                        let inner = ui.allocate_new_ui(
+                            UiBuilder::new()
+                                .max_rect(text_rect)
+                                .layout(Layout::left_to_right(Align::Center)),
+                            |ui| {
+                                ui.set_min_width(text_rect.width());
+                                let mut output = egui::TextEdit::singleline(&mut line)
+                                    .id(editor_id)
+                                    .font(FontId::monospace(font_size))
+                                    .desired_width(text_rect.width().max(80.0))
+                                    .frame(false)
+                                    .margin(Margin::symmetric(TEXT_LEFT_PAD as i8, 0))
+                                    .clip_text(false)
+                                    .lock_focus(true)
+                                    .show(ui);
+                                if let Some(range) = session.pending_cursor.take() {
+                                    output.state.cursor.set_char_range(Some(range));
+                                    output.state.store(ui.ctx(), output.response.id);
+                                }
+                                if session.want_focus {
+                                    output.response.request_focus();
+                                    session.want_focus = false;
+                                }
+                                if output.response.changed() {
+                                    changed = true;
+                                }
+                                session.col = output
+                                    .cursor_range
+                                    .map(|range| range.primary.ccursor.index)
+                                    .unwrap_or(session.col);
+                                session.has_focus = output.response.has_focus();
+                            },
+                        );
+                        let _ = inner;
+                        let new_len = line.chars().count();
+                        session.lines[row] = line;
+                        if new_len < prev_len && prev_len >= session.max_chars {
+                            session.rescan_max_chars();
+                        } else {
+                            session.note_line_chars(new_len);
+                        }
+                    } else {
+                        let galley = layout_log_line(
+                            ui,
+                            &session.lines[row],
+                            font_size,
+                            t.text_primary,
+                        );
+                        ui.painter().with_clip_rect(clip).galley(
+                            Pos2::new(text_rect.left() + TEXT_LEFT_PAD, text_rect.top()),
+                            galley,
+                            t.text_primary,
+                        );
+                    }
+                }
+            });
+        },
+    );
+
+    let gutter_clip = Rect::from_min_max(
+        viewport_rect.min,
+        Pos2::new(
+            (viewport_rect.left() + gutter_w).min(viewport_rect.right()),
+            viewport_rect.bottom(),
+        ),
+    );
+    ui.painter().rect_filled(gutter_clip, 0.0, t.surface_bg);
+    ui.painter().vline(
+        gutter_clip.right() - 1.0,
+        gutter_clip.y_range(),
+        Stroke::new(1.0_f32, t.border),
+    );
+    for (top, bottom, row) in gutter_rows {
+        let y = (top + bottom) * 0.5;
+        ui.painter().with_clip_rect(gutter_clip).text(
+            Pos2::new(gutter_clip.right() - 4.0, y),
+            Align2::RIGHT_CENTER,
+            format!("{}", row + 1),
+            FontId::monospace(font_size),
+            t.text_muted,
+        );
+    }
+
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1569,5 +2098,38 @@ mod tests {
         let legacy = split_timestamp_prefix("[20:30:30:616] ASK 28");
         assert_eq!(legacy.prefix, "[20:30:30:616] ");
         assert_eq!(legacy.rest, "ASK 28");
+    }
+
+    #[test]
+    fn line_editor_preserves_windows_newlines() {
+        let session = LineEditorSession::from_text("a\r\nb\r\n");
+        assert_eq!(session.newline, "\r\n");
+        assert_eq!(session.lines, vec!["a".to_string(), "b".to_string(), String::new()]);
+        assert_eq!(session.to_text(), "a\r\nb\r\n");
+    }
+
+    #[test]
+    fn line_editor_split_and_join_keep_caret() {
+        let mut session = LineEditorSession::from_text("hello world");
+        session.col = 5;
+        editor_split_line(&mut session);
+        assert_eq!(session.lines, vec!["hello".to_string(), " world".to_string()]);
+        assert_eq!(session.row, 1);
+        assert_eq!(session.col, 0);
+        assert!(editor_join_prev(&mut session));
+        assert_eq!(session.to_text(), "hello world");
+        assert_eq!(session.row, 0);
+        assert_eq!(session.col, 5);
+    }
+
+    #[test]
+    fn line_editor_split_rescans_max_chars() {
+        let mut session = LineEditorSession::from_text("abcdefghij");
+        session.rescan_max_chars();
+        assert_eq!(session.max_chars, 10);
+        session.col = 1;
+        editor_split_line(&mut session);
+        assert_eq!(session.lines, vec!["a".to_string(), "bcdefghij".to_string()]);
+        assert_eq!(session.max_chars, 9);
     }
 }

@@ -1,11 +1,11 @@
 //! Offline waveform analysis — folder browser, open scope sources, zoom/pan, measure.
 
-use crate::plot::{ScopeEnvelopePlotItem, ScopeVectorPlotItem};
+use crate::plot::{PlotTextLabel, ScopeEnvelopePlotItem, ScopeVectorPlotItem};
 use crate::theme::Tokens;
-use egui::{Align2, Color32, CornerRadius, Frame, Margin, RichText, Stroke, Vec2b};
+use egui::{Color32, CornerRadius, Frame, Margin, RichText, Stroke, Vec2b};
 use egui_plot::{
-    CoordinatesFormatter, Corner, GridMark, HLine, Legend, Plot, PlotBounds, PlotPoint, PlotPoints,
-    Points, Text, VLine,
+    CoordinatesFormatter, Corner, GridMark, HLine, Legend, Plot, PlotBounds, PlotPoints, Points,
+    VLine,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -2756,7 +2756,7 @@ impl WaveformAnalysisPanel {
                         bounds.max()[1] - y_span * 0.06
                     }
                 };
-                let min_label_dt = x_span * (42.0 / plot_width_px as f64);
+                let min_label_dt = x_span * (64.0 / plot_width_px as f64);
                 let mut last_label_t = f64::NEG_INFINITY;
                 let x_lo = bounds.min()[0];
                 let x_hi = bounds.max()[0];
@@ -2780,7 +2780,7 @@ impl WaveformAnalysisPanel {
                     plot_ui.vline(
                         VLine::new(*t0)
                             .color(color)
-                            .width(if *selected { 2.0_f32 } else { 1.0_f32 })
+                            .width(if *selected { 3.25_f32 } else { 2.15_f32 })
                             .name(""),
                     );
                     let t_label = if is_event {
@@ -2793,13 +2793,9 @@ impl WaveformAnalysisPanel {
                         || (t_label - last_label_t).abs() >= min_label_dt;
                     if show_text {
                         last_label_t = t_label;
-                        plot_ui.text(
-                            Text::new(PlotPoint::new(t_label, label_y), summary.as_str())
-                                .color(color)
-                                .anchor(Align2::CENTER_BOTTOM)
-                                .highlight(*selected)
-                                .allow_hover(false)
-                                .name(""),
+                        plot_ui.add(
+                            PlotTextLabel::new(t_label, label_y, summary.as_str(), color, 15.0)
+                                .highlight(*selected),
                         );
                     }
                 }
@@ -2814,7 +2810,7 @@ impl WaveformAnalysisPanel {
                     );
 
                     let pick_bus = || {
-                        if (ptr.y - label_y).abs() > y_span * 0.10 {
+                        if (ptr.y - label_y).abs() > y_span * 0.14 {
                             return None;
                         }
                         let mut best: Option<(f64, usize)> = None;
