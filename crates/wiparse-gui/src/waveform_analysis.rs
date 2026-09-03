@@ -3132,7 +3132,6 @@ impl WaveformAnalysisPanel {
     }
 
     /// Load a path programmatically (e.g. deep-link / automation).
-    #[allow(dead_code)]
     pub fn open_path(&mut self, path: &Path, lang: Lang) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             self.open_dir = parent.to_path_buf();
@@ -3165,6 +3164,169 @@ impl WaveformAnalysisPanel {
                 Err(err)
             }
         }
+    }
+
+    pub fn api_snapshot(&self) -> serde_json::Value {
+        let files: Vec<_> = self
+            .waves
+            .iter()
+            .map(|w| {
+                serde_json::json!({
+                    "path": w.path.display().to_string(),
+                    "channel": w.trace.channel,
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "status": self.status,
+            "selected": self.selected,
+            "files": files,
+            "browser_dir": self.browser_dir,
+            "bus": self.bus_settings.kind.label(),
+            "cursors": {
+                "x1": self.x1, "x2": self.x2, "y1": self.y1, "y2": self.y2
+            }
+        })
+    }
+
+    pub fn api_open(&mut self, lang: Lang, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let Some(path) = params.get("path").and_then(|v| v.as_str()) else {
+            return err("ui.wave.open", "missing path");
+        };
+        match self.open_path(Path::new(path), lang) {
+            Ok(()) => ok("ui.wave.open", self.api_snapshot()),
+            Err(e) => err("ui.wave.open", &e),
+        }
+    }
+
+    pub fn api_close(&mut self, lang: Lang) -> crate::backend::InvokeReply {
+        use crate::backend::invoke_ok as ok;
+        self.waves.clear();
+        self.selected = None;
+        self.next_color = 0;
+        self.view_line_cache = None;
+        self.gated_measure_cache = None;
+        self.bus_result = None;
+        self.status = t(lang, "已关闭", "Closed").into();
+        ok("ui.wave.close", self.api_snapshot())
+    }
+
+    pub fn api_cursors(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::invoke_ok as ok;
+        if let Some(v) = params.get("x1").and_then(|x| x.as_f64()) {
+            self.x1 = Some(v);
+        }
+        if let Some(v) = params.get("x2").and_then(|x| x.as_f64()) {
+            self.x2 = Some(v);
+        }
+        if let Some(v) = params.get("y1").and_then(|x| x.as_f64()) {
+            self.y1 = Some(v);
+        }
+        if let Some(v) = params.get("y2").and_then(|x| x.as_f64()) {
+            self.y2 = Some(v);
+        }
+        if params.get("clear").and_then(|x| x.as_bool()) == Some(true) {
+            self.x1 = None;
+            self.x2 = None;
+            self.y1 = None;
+            self.y2 = None;
+        }
+        ok("ui.wave.cursor", self.api_snapshot())
+    }
+
+    pub fn api_fit(&mut self) -> crate::backend::InvokeReply {
+        use crate::backend::invoke_ok as ok;
+        self.fit_request = true;
+        ok("ui.wave.fit", serde_json::json!({ "fit": true }))
+    }
+
+    pub fn api_bus(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        if let Some(kind) = params.get("kind").and_then(|v| v.as_str()) {
+            self.bus_settings.kind = match kind.trim().to_ascii_lowercase().as_str() {
+                "off" | "none" => BusKind::Off,
+                "uart" => BusKind::Uart,
+                "i2c" => BusKind::I2c,
+                "spi" => BusKind::Spi,
+                "i2s" => BusKind::I2s,
+                _ => return err("ui.wave.bus", "kind must be off|uart|i2c|spi|i2s"),
+            };
+        }
+        let ch = &mut self.bus_settings.channels;
+        fn idx(v: &serde_json::Value, key: &str) -> Option<usize> {
+            v.get(key).and_then(|x| x.as_u64()).map(|n| n as usize)
+        }
+        if let Some(n) = idx(params, "uart") {
+            ch.uart_signal = Some(n);
+        }
+        if let Some(n) = idx(params, "scl") {
+            ch.i2c_scl = Some(n);
+        }
+        if let Some(n) = idx(params, "sda") {
+            ch.i2c_sda = Some(n);
+        }
+        if let Some(n) = idx(params, "clk") {
+            ch.spi_clk = Some(n);
+        }
+        if let Some(n) = idx(params, "mosi") {
+            ch.spi_mosi = Some(n);
+        }
+        if let Some(n) = idx(params, "miso") {
+            ch.spi_miso = Some(n);
+        }
+        if let Some(n) = idx(params, "cs") {
+            ch.spi_cs = Some(n);
+        }
+        if let Some(n) = idx(params, "bclk") {
+            ch.i2s_bclk = Some(n);
+        }
+        if let Some(n) = idx(params, "ws") {
+            ch.i2s_ws = Some(n);
+        }
+        if let Some(n) = idx(params, "data") {
+            ch.i2s_data = Some(n);
+        }
+        if let Some(v) = params.get("threshold").and_then(|x| x.as_f64()) {
+            self.bus_settings.threshold = Some(v);
+        }
+        if let Some(v) = params.get("baud").and_then(|x| x.as_f64()) {
+            self.bus_settings.uart.baud = Some(v);
+            self.uart_baud_text = format!("{v}");
+        }
+        self.bus_decode_dirty = true;
+        ok("ui.wave.bus", self.api_snapshot())
+    }
+
+    pub fn api_select(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let Some(index) = params
+            .get("index")
+            .or_else(|| params.get("selected"))
+            .and_then(|v| v.as_u64())
+            .map(|n| n as usize)
+        else {
+            return err("ui.wave.select", "missing index");
+        };
+        if index >= self.waves.len() {
+            return err("ui.wave.select", "index out of range");
+        }
+        self.activate_wave(index);
+        ok("ui.wave.select", self.api_snapshot())
+    }
+
+    pub fn api_set_browser_dir(
+        &mut self,
+        params: &serde_json::Value,
+    ) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let Some(dir) = params.get("dir").and_then(|v| v.as_str()) else {
+            return err("ui.wave.browser", "missing dir");
+        };
+        self.browser_dir = dir.to_string();
+        self.persist_browser_dir();
+        self.refresh_wave_browser();
+        ok("ui.wave.browser", self.api_snapshot())
     }
 
     fn export_selected(&mut self, lang: Lang) {

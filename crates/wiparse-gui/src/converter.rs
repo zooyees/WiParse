@@ -516,6 +516,85 @@ impl ConverterPanel {
         }
     }
 
+    pub(crate) fn api_get(&self) -> serde_json::Value {
+        serde_json::json!({
+            "tab": format!("{:?}", self.tab),
+            "radix_input": self.radix_input,
+            "source_base": self.source_base,
+            "target_base": self.target_base,
+            "radix_result": self.radix_result,
+            "expression": self.expression,
+            "expression_result": self.expression_result,
+            "byte_input": self.byte_input,
+            "byte_result": self.byte_result,
+        })
+    }
+
+    pub(crate) fn api_set(&mut self, fields: &serde_json::Value) {
+        if let Some(v) = fields.get("radix_input").and_then(|x| x.as_str()) {
+            self.radix_input = v.to_string();
+        }
+        if let Some(v) = fields.get("source_base").and_then(|x| x.as_u64()) {
+            self.source_base = v.clamp(2, 36) as u32;
+        }
+        if let Some(v) = fields.get("target_base").and_then(|x| x.as_u64()) {
+            self.target_base = v.clamp(2, 36) as u32;
+        }
+        if let Some(v) = fields.get("expression").and_then(|x| x.as_str()) {
+            self.expression = v.to_string();
+        }
+        if let Some(v) = fields.get("byte_input").and_then(|x| x.as_str()) {
+            self.byte_input = v.to_string();
+        }
+        if let Some(tab) = fields.get("tab").and_then(|x| x.as_str()) {
+            self.tab = match tab.to_ascii_lowercase().as_str() {
+                "ascii" | "byte" => ConverterTab::Ascii,
+                "radix" => ConverterTab::Radix,
+                "scientific" | "expr" => ConverterTab::Scientific,
+                _ => self.tab,
+            };
+        }
+        match self.tab {
+            ConverterTab::Radix => match convert_radix(&self.radix_input, self.source_base, self.target_base)
+            {
+                Ok(r) => {
+                    self.radix_result = r;
+                    self.radix_error = None;
+                }
+                Err(e) => {
+                    self.radix_result.clear();
+                    self.radix_error = Some(e);
+                }
+            },
+            ConverterTab::Scientific => match evaluate_expression(&self.expression, self.angle_mode) {
+                Ok(v) => {
+                    self.expression_result = format!("{v}");
+                    self.expression_error = None;
+                }
+                Err(e) => {
+                    self.expression_result.clear();
+                    self.expression_error = Some(e);
+                }
+            },
+            ConverterTab::Ascii => {
+                let result = match self.byte_direction {
+                    ByteDirection::TextToBytes => utf8_to_bytes(&self.byte_input, self.byte_base),
+                    ByteDirection::BytesToText => bytes_to_utf8(&self.byte_input, self.byte_base),
+                };
+                match result {
+                    Ok(r) => {
+                        self.byte_result = r;
+                        self.byte_error = None;
+                    }
+                    Err(e) => {
+                        self.byte_result.clear();
+                        self.byte_error = Some(e);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
         ui.heading(
             egui::RichText::new(text(

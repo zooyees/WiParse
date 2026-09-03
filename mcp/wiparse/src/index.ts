@@ -6,7 +6,7 @@ import { apiHealth, apiInvoke, defaultApiUrl } from "./http.js";
 
 const server = new McpServer({
   name: "wiparse",
-  version: "1.1.3",
+  version: "1.1.5",
 });
 
 function compact(body: unknown) {
@@ -101,6 +101,91 @@ server.tool(
   "Evidence-pack summary only (paths + brief + correlate). Write the report from this; do not open serial.txt.",
   {},
   async () => invoke("test.pack", {}),
+);
+
+const UI_METHODS = {
+  state: "ui.state",
+  show: "ui.show",
+  panels: "ui.panels",
+  prefs: "ui.prefs",
+  "serial.open": "ui.serial.open",
+  "serial.close": "ui.serial.close",
+  "serial.clear": "ui.serial.clear",
+  "serial.filter": "ui.serial.filter",
+  "serial.tab": "ui.serial.tab",
+  "serial.name": "ui.serial.name",
+  "serial.browser": "ui.serial.browser",
+  "wave.open": "ui.wave.open",
+  "wave.close": "ui.wave.close",
+  "wave.select": "ui.wave.select",
+  "wave.browser": "ui.wave.browser",
+  "wave.bus": "ui.wave.bus",
+  "wave.cursor": "ui.wave.cursor",
+  "wave.fit": "ui.wave.fit",
+  "calc.get": "ui.calc.get",
+  "calc.set": "ui.calc.set",
+  "instrument.select": "ui.instrument.select",
+  "instrument.scan": "instrument.scan",
+  "instrument.list": "instrument.list",
+  "instrument.connect": "instrument.connect",
+  "instrument.disconnect": "instrument.disconnect",
+  "instrument.measure": "instrument.measure",
+  "instrument.capture": "instrument.capture",
+  "instrument.waveform": "instrument.waveform",
+  "instrument.waveform_source": "instrument.waveform_source",
+  "instrument.command": "instrument.command",
+} as const;
+
+server.tool(
+  "wiparse_ui",
+  "Drive the running WiParse.exe UI: switch tabs, panels, prefs, serial log, waveform, calculator, instruments. GUI 1.1.5+.",
+  {
+    op: z.enum([
+      "state",
+      "show",
+      "panels",
+      "prefs",
+      "serial.open",
+      "serial.close",
+      "serial.clear",
+      "serial.filter",
+      "serial.tab",
+      "serial.name",
+      "serial.browser",
+      "wave.open",
+      "wave.close",
+      "wave.select",
+      "wave.browser",
+      "wave.bus",
+      "wave.cursor",
+      "wave.fit",
+      "calc.get",
+      "calc.set",
+      "instrument.select",
+      "instrument.scan",
+      "instrument.list",
+      "instrument.connect",
+      "instrument.disconnect",
+      "instrument.measure",
+      "instrument.capture",
+      "instrument.waveform",
+      "instrument.waveform_source",
+      "instrument.command",
+    ]),
+    tab: z
+      .enum(["serial", "calculator", "instruments", "waveform"])
+      .optional()
+      .describe("For op=show; also accepted inside params.tab"),
+    params: z.record(z.unknown()).optional(),
+  },
+  async ({ op, tab, params }) => {
+    const method = UI_METHODS[op];
+    const payload: Record<string, unknown> = { ...(params ?? {}) };
+    if (tab != null && payload.tab == null) {
+      payload.tab = tab;
+    }
+    return invoke(method, payload);
+  },
 );
 
 async function main() {

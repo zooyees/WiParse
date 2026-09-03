@@ -40,10 +40,16 @@ wiparse
 ├── parse   (line | metrics | file | stdin)
 ├── session (list | show)
 ├── wave    (live | session | export)
-└── scope   (list | shot | wave)  # 本地 VISA 示波器
+├── scope   (list | shot | wave)  # 本地 VISA 示波器
+└── ui      # 需 GUI：切页 / 面板 / 参数
+    ├── state | show | panels | prefs
+    ├── serial (open | close | clear | filter | tab | name | browser)
+    ├── wave   (open | close | select | browser | bus | cursor | fit)
+    ├── calc   (get | set)
+    └── instrument (select | scan | list | connect | disconnect | measure | capture | waveform | waveform-source | command)
 ```
 
-仪表控制（电源/负载/万用表）没有单独子命令，用 `api invoke instrument.*`。
+仪表页也可用 `wiparse ui instrument ...`；复杂 SCPI/控件仍可用 `api invoke instrument.command`。
 
 ---
 
@@ -106,6 +112,48 @@ wiparse api events --since-seq 0
 
 `wave live` 始终在本进程开串口；GUI 已占用该口时加 `--local` 会失败，应改用 `serial start` + 事件流。
 
+## GUI 页面控制（需 WiParse.exe）
+
+切主标签、显隐工具、改语言/主题、以及各页参数。画面必须开着。
+
+```powershell
+wiparse ui state
+wiparse ui show --tab serial
+wiparse ui show --tab calculator
+wiparse ui show --tab instruments
+wiparse ui show --tab waveform
+wiparse ui panels --serial true --waveform true
+wiparse ui prefs --language zh --theme dark --debug false
+
+wiparse ui serial open --path capture.txt
+wiparse ui serial filter --query ASK --tab-id 0
+wiparse ui serial tab --tab-id 0
+wiparse ui serial clear
+wiparse ui serial name --name "Live Packet Log"
+wiparse ui serial browser --dir D:\logs
+
+wiparse ui wave open --path scope.csv
+wiparse ui wave select --index 0
+wiparse ui wave bus --kind i2c --scl 0 --sda 1
+wiparse ui wave cursor --x1 0 --x2 0.001
+wiparse ui wave fit
+wiparse ui wave close
+
+wiparse ui calc get
+wiparse ui calc set --card lc --params "{\"inductance\":\"10\",\"capacitance\":\"100\"}"
+
+wiparse ui instrument scan
+wiparse ui instrument list
+wiparse ui instrument connect --resource "TCPIP0::192.168.1.1::INSTR" --kind oscilloscope
+wiparse ui instrument select --id 1
+wiparse ui instrument measure --id 1
+wiparse ui instrument capture --id 1
+wiparse ui instrument waveform --id 1 --channel 1 --points 10000
+wiparse ui instrument command --id 1 --query "*IDN?"
+```
+
+串口监控仍用 `serial start/stop/select/send`。仪表读写也可用 `api invoke instrument.*`。
+
 ## 闭环测试（GUI）
 
 执行器在 `WiParse.exe` 内跑：本地判定 / 宏白名单发送（默认可选 `allow_raw_hex`）/ 证据包落盘。AI 只看 `log brief` 和 `test pack` 摘要。
@@ -119,7 +167,18 @@ wiparse test pack
 
 证据目录：`evidence/<时间戳>_<plan_id>/`（`manifest.json`、`serial.txt`、`metrics.csv`、`events.jsonl`、`correlate.json`、`brief_final.json`、`report.skeleton.md`）。
 
-计划 JSON 字段：`id`、`macros`（名字→hex）、`allow_raw_hex`（默认 false；为 true 才允许 `action` 写裸 hex）、`abort`（`on_ept` / `csum_gt` / `timeout_s` / `vin_gt` / `capture_scope`）、`steps`（`wait` / `action` / `sleep` / `expect` / `capture_scope`）。`abort.timeout_s` 到期一律 Failed（空计划也不再算 Pass）。
+计划 JSON 字段：`id`、`macros`、`allow_raw_hex`、`abort`、`steps`。
+
+步骤：`wait`（`phase` / `packet` / `header` / `rising`）、`wait_line`（`regex` / `exclude`）、`action`、`sleep`、`expect`、`capture_scope`（`save` 默认 false）、`instrument.command`、`instrument.waveform_source`。
+
+`wait.packet` 用解码名（0x71 = `ID`）。`rising: true` 只计本步开始之后的新包。`capture_scope.save: true` 与 `instrument.waveform_source` 会阻塞到文件写出（ISF 可能 30–75s）。占位符 `{instruments.waveform_source_dir}`。工位说明：[`WORKSTATION_CLOSED_LOOP.md`](WORKSTATION_CLOSED_LOOP.md)。示例：[`examples/ask71_waveform_source.json`](examples/ask71_waveform_source.json)、[`examples/qi_pt_smoke.json`](examples/qi_pt_smoke.json)。
+
+```powershell
+wiparse ui instrument waveform-source --id 1 --dir D:\isf --filename wave.isf
+wiparse test run --plan docs/examples/ask71_waveform_source.json --port COM3
+```
+
+`abort.timeout_s` 到期一律 Failed（空计划也不再算 Pass）。
 
 ## 环境变量
 

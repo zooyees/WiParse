@@ -1,7 +1,9 @@
 //! Deterministic closed-loop test plan + driver (no LLM on the hot path).
 
 use crate::brief::{LiveBrief, QiPhase};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -28,14 +30,63 @@ pub struct AbortSpec {
 pub struct WaitSpec {
     #[serde(default)]
     pub phase: Option<String>,
+    /// Decoded Qi packet name (e.g. `ID` for header 0x71). Not a hardcoded header.
     #[serde(default)]
     pub packet: Option<String>,
+    /// Header byte as number (`113`) or string (`"0x71"` / `"71"`).
+    #[serde(default)]
+    pub header: Option<Value>,
+    /// When true, only packets/headers counted *after* this step starts count.
+    #[serde(default)]
+    pub rising: bool,
     #[serde(default = "default_timeout")]
     pub timeout_s: f64,
 }
 
 fn default_timeout() -> f64 {
     8.0
+}
+
+fn default_long_timeout() -> f64 {
+    600.0
+}
+
+fn default_capture_timeout() -> f64 {
+    60.0
+}
+
+/// Match a new live log line (rising-edge: lines present when the step starts are ignored).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WaitLineSpec {
+    pub regex: String,
+    #[serde(default)]
+    pub exclude: Option<String>,
+    #[serde(default = "default_long_timeout")]
+    pub timeout_s: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstrumentCommandSpec {
+    #[serde(default)]
+    pub device_id: Option<u64>,
+    pub command: Value,
+    #[serde(default = "default_long_timeout")]
+    pub timeout_s: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WaveformSourceSpec {
+    #[serde(default)]
+    pub device_id: Option<u64>,
+    /// Destination directory. Empty/omitted → GUI Save As dialog.
+    #[serde(default)]
+    pub dir: Option<String>,
+    #[serde(default)]
+    pub filename: Option<String>,
+    #[serde(default)]
+    pub overwrite: bool,
+    #[serde(default = "default_long_timeout")]
+    pub timeout_s: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -61,11 +112,28 @@ pub struct SleepSpec {
 pub struct CaptureSpec {
     #[serde(default)]
     pub tag: Option<String>,
+    /// When true, block until the PNG is written to evidence (or `timeout_s`).
+    /// Default false keeps the old fire-and-forget queue used by `qi_pt_smoke`.
+    #[serde(default)]
+    pub save: bool,
+    #[serde(default)]
+    pub device_id: Option<u64>,
+    #[serde(default = "default_capture_timeout")]
+    pub timeout_s: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TestStep {
+    WaitLine { wait_line: WaitLineSpec },
+    InstrumentCommand {
+        #[serde(rename = "instrument.command")]
+        command: InstrumentCommandSpec,
+    },
+    WaveformSource {
+        #[serde(rename = "instrument.waveform_source")]
+        waveform_source: WaveformSourceSpec,
+    },
     Wait { wait: WaitSpec },
     Action { action: String },
     Sleep { sleep: SleepSpec },
@@ -77,20 +145,33 @@ impl TestStep {
     pub fn kind_name(&self) -> &'static str {
         match self {
             Self::Wait { .. } => "wait",
+            Self::WaitLine { .. } => "wait_line",
             Self::Action { .. } => "action",
             Self::Sleep { .. } => "sleep",
             Self::Expect { .. } => "expect",
             Self::CaptureScope { .. } => "capture_scope",
+            Self::InstrumentCommand { .. } => "instrument.command",
+            Self::WaveformSource { .. } => "instrument.waveform_source",
         }
     }
 
     pub fn label(&self) -> String {
         match self {
-            Self::Wait { wait } => format!(
-                "wait {} {}",
-                wait.phase.as_deref().unwrap_or("-"),
-                wait.packet.as_deref().unwrap_or("")
-            ),
+            Self::Wait { wait } => {
+                let hdr = wait
+                    .header
+                    .as_ref()
+                    .and_then(parse_header)
+                    .map(|h| format!("0x{h:02X}"))
+                    .unwrap_or_default();
+                format!(
+                    "wait {} {} {}",
+                    wait.phase.as_deref().unwrap_or("-"),
+                    wait.packet.as_deref().unwrap_or(""),
+                    hdr
+                )
+            }
+            Self::WaitLine { wait_line } => format!("wait_line /{}/", wait_line.regex),
             Self::Action { action } => format!("action {action}"),
             Self::Sleep { sleep } => format!("sleep {}s", sleep.s),
             Self::Expect { expect } => format!(
@@ -101,8 +182,27 @@ impl TestStep {
             Self::CaptureScope { capture_scope } => {
                 format!("capture {}", capture_scope.tag.as_deref().unwrap_or("scope"))
             }
+            Self::InstrumentCommand { command } => {
+                format!("instrument.command {}", command_label(&command.command))
+            }
+            Self::WaveformSource { waveform_source } => format!(
+                "waveform_source {}",
+                waveform_source.dir.as_deref().unwrap_or("(dialog)")
+            ),
         }
     }
+}
+
+fn command_label(v: &Value) -> String {
+    if let Some(s) = v.as_str() {
+        return s.to_string();
+    }
+    if let Some(obj) = v.as_object() {
+        if let Some(k) = obj.keys().next() {
+            return k.clone();
+        }
+    }
+    "command".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,6 +274,28 @@ pub fn clean_hex(s: &str) -> Result<String, String> {
     Ok(cleaned.to_ascii_uppercase())
 }
 
+/// Replace `{instruments.waveform_source_dir}` in plan JSON strings.
+pub fn resolve_plan_placeholders(v: &mut Value, waveform_source_dir: &str) {
+    match v {
+        Value::String(s) => {
+            if s.contains("{instruments.waveform_source_dir}") {
+                *s = s.replace("{instruments.waveform_source_dir}", waveform_source_dir);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                resolve_plan_placeholders(item, waveform_source_dir);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values_mut() {
+                resolve_plan_placeholders(item, waveform_source_dir);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
     let cleaned = clean_hex(s)?;
     let mut out = Vec::with_capacity(cleaned.len() / 2);
@@ -205,11 +327,25 @@ pub struct StepRecord {
     pub result: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TickAction {
     None,
     Send { name: String, hex: String },
-    Capture { tag: String },
+    Capture {
+        tag: String,
+        save: bool,
+        device_id: Option<u64>,
+    },
+    WaveformSource {
+        device_id: Option<u64>,
+        dir: String,
+        filename: Option<String>,
+        overwrite: bool,
+    },
+    Command {
+        device_id: Option<u64>,
+        command: Value,
+    },
     Done,
 }
 
@@ -219,9 +355,16 @@ pub struct TestDriver {
     pub reason: String,
     pub step: usize,
     pub step_log: Vec<StepRecord>,
+    /// Last live line that satisfied `wait_line` (for the evidence pack).
+    pub last_hit_line: Option<String>,
     run_t0: Instant,
     step_t0: Instant,
     action_sent: bool,
+    wait_seeded: bool,
+    wait_pkt_base: u32,
+    wait_hdr_base: u32,
+    wait_line_seed_n: u64,
+    instrument_block: bool,
 }
 
 impl TestDriver {
@@ -233,9 +376,15 @@ impl TestDriver {
             reason: String::new(),
             step: 0,
             step_log: Vec::new(),
+            last_hit_line: None,
             run_t0: now,
             step_t0: now,
             action_sent: false,
+            wait_seeded: false,
+            wait_pkt_base: 0,
+            wait_hdr_base: 0,
+            wait_line_seed_n: 0,
+            instrument_block: false,
         }
     }
 
@@ -259,19 +408,36 @@ impl TestDriver {
         if !self.is_running() {
             return TickAction::None;
         }
+        self.instrument_block = false;
         self.verdict = RunVerdict::Aborted;
         self.reason = reason.to_string();
         self.record("abort", reason);
         if self.plan.abort.capture_scope {
             TickAction::Capture {
                 tag: "abort".into(),
+                save: false,
+                device_id: None,
             }
         } else {
             TickAction::Done
         }
     }
 
-    pub fn tick(&mut self, brief: &LiveBrief) -> TickAction {
+    /// Complete a blocking instrument step (`save: true` capture, command, waveform_source).
+    pub fn notify_job(&mut self, ok: bool, detail: &str) -> TickAction {
+        if !self.is_running() || !self.instrument_block {
+            return TickAction::None;
+        }
+        self.instrument_block = false;
+        if ok {
+            self.advance(if detail.is_empty() { "ok" } else { detail });
+            TickAction::None
+        } else {
+            self.fail(detail)
+        }
+    }
+
+    pub fn tick(&mut self, brief: &LiveBrief, live_lines: &[String]) -> TickAction {
         if !self.is_running() {
             return TickAction::None;
         }
@@ -290,8 +456,36 @@ impl TestDriver {
                 if step_elapsed >= wait.timeout_s {
                     return self.fail(&format!("wait timeout ({:.1}s)", wait.timeout_s));
                 }
-                if wait_met(&wait, brief) {
-                    self.advance("ok");
+                if wait.rising && !self.wait_seeded {
+                    self.seed_wait(&wait, brief);
+                    return TickAction::None;
+                }
+                match wait_met(&wait, brief, self.wait_pkt_base, self.wait_hdr_base) {
+                    Ok(true) => self.advance("ok"),
+                    Ok(false) => {}
+                    Err(e) => return self.fail(&e),
+                }
+                TickAction::None
+            }
+            TestStep::WaitLine { wait_line } => {
+                if step_elapsed >= wait_line.timeout_s {
+                    return self.fail(&format!(
+                        "wait_line timeout ({:.1}s)",
+                        wait_line.timeout_s
+                    ));
+                }
+                if !self.wait_seeded {
+                    self.wait_line_seed_n = brief.n_lines();
+                    self.wait_seeded = true;
+                    return TickAction::None;
+                }
+                match wait_line_hit(&wait_line, brief, live_lines, self.wait_line_seed_n) {
+                    Ok(Some(hit)) => {
+                        self.last_hit_line = Some(hit);
+                        self.advance("ok");
+                    }
+                    Ok(None) => {}
+                    Err(e) => return self.fail(&e),
                 }
                 TickAction::None
             }
@@ -343,13 +537,79 @@ impl TestDriver {
                 }
             }
             TestStep::CaptureScope { capture_scope } => {
+                if self.instrument_block {
+                    if step_elapsed >= capture_scope.timeout_s {
+                        return self.fail(&format!(
+                            "capture timeout ({:.1}s)",
+                            capture_scope.timeout_s
+                        ));
+                    }
+                    return TickAction::None;
+                }
                 let tag = capture_scope
                     .tag
                     .clone()
                     .unwrap_or_else(|| format!("s{}", self.step));
-                self.advance("queued");
-                TickAction::Capture { tag }
+                if capture_scope.save {
+                    self.instrument_block = true;
+                    TickAction::Capture {
+                        tag,
+                        save: true,
+                        device_id: capture_scope.device_id,
+                    }
+                } else {
+                    self.advance("queued");
+                    TickAction::Capture {
+                        tag,
+                        save: false,
+                        device_id: capture_scope.device_id,
+                    }
+                }
             }
+            TestStep::InstrumentCommand { command } => {
+                if self.instrument_block {
+                    if step_elapsed >= command.timeout_s {
+                        return self.fail(&format!(
+                            "instrument.command timeout ({:.1}s)",
+                            command.timeout_s
+                        ));
+                    }
+                    return TickAction::None;
+                }
+                self.instrument_block = true;
+                TickAction::Command {
+                    device_id: command.device_id,
+                    command: command.command,
+                }
+            }
+            TestStep::WaveformSource { waveform_source } => {
+                if self.instrument_block {
+                    if step_elapsed >= waveform_source.timeout_s {
+                        return self.fail(&format!(
+                            "waveform_source timeout ({:.1}s)",
+                            waveform_source.timeout_s
+                        ));
+                    }
+                    return TickAction::None;
+                }
+                self.instrument_block = true;
+                TickAction::WaveformSource {
+                    device_id: waveform_source.device_id,
+                    dir: waveform_source.dir.unwrap_or_default(),
+                    filename: waveform_source.filename,
+                    overwrite: waveform_source.overwrite,
+                }
+            }
+        }
+    }
+
+    fn seed_wait(&mut self, wait: &WaitSpec, brief: &LiveBrief) {
+        self.wait_seeded = true;
+        if let Some(pkt) = wait.packet.as_deref() {
+            self.wait_pkt_base = brief.packet_count(pkt);
+        }
+        if let Some(h) = wait.header.as_ref().and_then(parse_header) {
+            self.wait_hdr_base = brief.header_count(h);
         }
     }
 
@@ -386,6 +646,11 @@ impl TestDriver {
         self.step += 1;
         self.step_t0 = Instant::now();
         self.action_sent = false;
+        self.wait_seeded = false;
+        self.wait_pkt_base = 0;
+        self.wait_hdr_base = 0;
+        self.wait_line_seed_n = 0;
+        self.instrument_block = false;
         if self.step >= self.plan.steps.len() {
             self.verdict = RunVerdict::Passed;
             self.reason = "all steps ok".into();
@@ -393,12 +658,15 @@ impl TestDriver {
     }
 
     pub fn fail(&mut self, reason: &str) -> TickAction {
+        self.instrument_block = false;
         self.verdict = RunVerdict::Failed;
         self.reason = reason.to_string();
         self.record("fail", reason);
         if self.plan.abort.capture_scope {
             TickAction::Capture {
                 tag: "fail".into(),
+                save: false,
+                device_id: None,
             }
         } else {
             TickAction::Done
@@ -447,18 +715,77 @@ enum ExpectStatus {
     Wait,
 }
 
-fn wait_met(wait: &WaitSpec, brief: &LiveBrief) -> bool {
+fn wait_met(wait: &WaitSpec, brief: &LiveBrief, pkt_base: u32, hdr_base: u32) -> Result<bool, String> {
     if let Some(phase) = wait.phase.as_deref() {
         if !phase_matches(brief.phase(), phase) {
-            return false;
+            return Ok(false);
         }
     }
     if let Some(pkt) = wait.packet.as_deref() {
-        if !brief.seen_packet(pkt) {
-            return false;
+        let n = brief.packet_count(pkt);
+        if wait.rising {
+            if n <= pkt_base {
+                return Ok(false);
+            }
+        } else if n == 0 {
+            return Ok(false);
         }
     }
-    wait.phase.is_some() || wait.packet.is_some()
+    if let Some(raw) = wait.header.as_ref() {
+        let h = parse_header(raw).ok_or_else(|| format!("invalid wait.header {raw}"))?;
+        let n = brief.header_count(h);
+        if wait.rising {
+            if n <= hdr_base {
+                return Ok(false);
+            }
+        } else if n == 0 {
+            return Ok(false);
+        }
+    }
+    Ok(wait.phase.is_some() || wait.packet.is_some() || wait.header.is_some())
+}
+
+fn wait_line_hit(
+    spec: &WaitLineSpec,
+    brief: &LiveBrief,
+    live_lines: &[String],
+    seed_n: u64,
+) -> Result<Option<String>, String> {
+    let re = Regex::new(&spec.regex).map_err(|e| format!("wait_line regex: {e}"))?;
+    let excl = match spec.exclude.as_deref() {
+        Some(s) if !s.is_empty() => {
+            Some(Regex::new(s).map_err(|e| format!("wait_line exclude: {e}"))?)
+        }
+        _ => None,
+    };
+    let new_n = brief.n_lines().saturating_sub(seed_n) as usize;
+    if new_n == 0 {
+        return Ok(None);
+    }
+    let start = live_lines.len().saturating_sub(new_n);
+    for line in &live_lines[start..] {
+        if re.is_match(line) && !excl.as_ref().is_some_and(|e| e.is_match(line)) {
+            return Ok(Some(line.clone()));
+        }
+    }
+    Ok(None)
+}
+
+pub fn parse_header(v: &Value) -> Option<u8> {
+    if let Some(n) = v.as_u64() {
+        return u8::try_from(n).ok();
+    }
+    if let Some(n) = v.as_i64() {
+        return u8::try_from(n).ok();
+    }
+    let s = v.as_str()?.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        return u8::from_str_radix(hex, 16).ok();
+    }
+    if !s.is_empty() && s.len() <= 2 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return u8::from_str_radix(s, 16).ok();
+    }
+    s.parse::<u8>().ok()
 }
 
 fn expect_status(ex: &ExpectSpec, brief: &LiveBrief) -> ExpectStatus {
@@ -523,10 +850,10 @@ mod tests {
         .unwrap();
         let mut d = TestDriver::new(plan);
         let mut b = LiveBrief::new();
-        assert!(matches!(d.tick(&b), TickAction::None));
+        assert!(matches!(d.tick(&b, &[]), TickAction::None));
         b.ingest_line(0, "ASK 01 80 81 F ");
         b.ingest_line(1, "ASK 03 00 03 F ");
-        let _ = d.tick(&b);
+        let _ = d.tick(&b, &[]);
         assert_eq!(d.verdict, RunVerdict::Passed);
     }
 
@@ -538,7 +865,7 @@ mod tests {
         .unwrap();
         let mut d = TestDriver::new(plan);
         let b = LiveBrief::new();
-        let act = d.tick(&b);
+        let act = d.tick(&b, &[]);
         assert!(matches!(act, TickAction::Done) || d.verdict == RunVerdict::Failed);
         assert_eq!(d.verdict, RunVerdict::Failed);
     }
@@ -555,11 +882,11 @@ mod tests {
         .unwrap();
         let mut d = TestDriver::new(plan);
         let b = LiveBrief::new();
-        match d.tick(&b) {
+        match d.tick(&b, &[]) {
             TickAction::Send { hex, .. } => assert_eq!(hex, "AA55"),
             other => panic!("expected send, got {other:?}"),
         }
-        let _ = d.tick(&b);
+        let _ = d.tick(&b, &[]);
         assert_eq!(d.verdict, RunVerdict::Passed);
     }
 
@@ -568,7 +895,7 @@ mod tests {
         let plan = TestPlan::from_str(r#"{ "id": "t", "steps": [ { "action": "AABB" } ] }"#).unwrap();
         let mut d = TestDriver::new(plan);
         let b = LiveBrief::new();
-        let _ = d.tick(&b);
+        let _ = d.tick(&b, &[]);
         assert_eq!(d.verdict, RunVerdict::Failed);
 
         let plan = TestPlan::from_str(
@@ -576,7 +903,7 @@ mod tests {
         )
         .unwrap();
         let mut d = TestDriver::new(plan);
-        match d.tick(&b) {
+        match d.tick(&b, &[]) {
             TickAction::Send { hex, .. } => assert_eq!(hex, "AABB"),
             other => panic!("expected send, got {other:?}"),
         }
@@ -590,9 +917,9 @@ mod tests {
         .unwrap();
         let mut d = TestDriver::new(plan);
         let mut b = LiveBrief::new();
-        assert!(matches!(d.tick(&b), TickAction::None));
+        assert!(matches!(d.tick(&b, &[]), TickAction::None));
         b.ingest_line(0, "ASK 03 00 03 F ");
-        let _ = d.tick(&b);
+        let _ = d.tick(&b, &[]);
         assert_eq!(d.verdict, RunVerdict::Passed);
     }
 
@@ -601,8 +928,130 @@ mod tests {
         let plan = TestPlan::from_str(r#"{ "id": "t", "abort": { "timeout_s": 0 } }"#).unwrap();
         let mut d = TestDriver::new(plan);
         let b = LiveBrief::new();
-        let _ = d.tick(&b);
+        let _ = d.tick(&b, &[]);
         assert_eq!(d.verdict, RunVerdict::Failed);
         assert!(d.reason.contains("timeout_s"));
+    }
+
+    #[test]
+    fn wait_packet_rising_ignores_existing() {
+        let plan = TestPlan::from_str(
+            r#"{ "id": "t", "steps": [ { "wait": { "packet": "CE", "rising": true, "timeout_s": 5 } } ] }"#,
+        )
+        .unwrap();
+        let mut d = TestDriver::new(plan);
+        let mut b = LiveBrief::new();
+        b.ingest_line(0, "ASK 03 00 03 F ");
+        assert!(matches!(d.tick(&b, &[]), TickAction::None));
+        let _ = d.tick(&b, &[]);
+        assert_eq!(d.verdict, RunVerdict::Running);
+        b.ingest_line(1, "ASK 03 00 03 F ");
+        let _ = d.tick(&b, &[]);
+        assert_eq!(d.verdict, RunVerdict::Passed);
+    }
+
+    #[test]
+    fn wait_header_hex() {
+        assert_eq!(parse_header(&serde_json::json!("0x71")), Some(0x71));
+        assert_eq!(parse_header(&serde_json::json!(0x71)), Some(0x71));
+        let plan = TestPlan::from_str(
+            r#"{ "id": "t", "steps": [ { "wait": { "header": "0x03", "timeout_s": 5 } } ] }"#,
+        )
+        .unwrap();
+        let mut d = TestDriver::new(plan);
+        let mut b = LiveBrief::new();
+        assert!(matches!(d.tick(&b, &[]), TickAction::None));
+        b.ingest_line(0, "ASK 03 00 03 F ");
+        let _ = d.tick(&b, &[]);
+        assert_eq!(d.verdict, RunVerdict::Passed);
+    }
+
+    #[test]
+    fn wait_line_rising() {
+        let plan = TestPlan::from_str(
+            r#"{ "id": "t", "steps": [ { "wait_line": { "regex": "ASK\\s+71", "timeout_s": 5 } } ] }"#,
+        )
+        .unwrap();
+        let mut d = TestDriver::new(plan);
+        let mut b = LiveBrief::new();
+        let old = vec!["ASK 71 already on screen".to_string()];
+        b.ingest_line(0, &old[0]);
+        assert!(matches!(d.tick(&b, &old), TickAction::None));
+        let _ = d.tick(&b, &old);
+        assert_eq!(d.verdict, RunVerdict::Running);
+        let new_line = "ASK 71 01 02 F ".to_string();
+        b.ingest_line(1, &new_line);
+        let lines = vec![old[0].clone(), new_line.clone()];
+        let _ = d.tick(&b, &lines);
+        assert_eq!(d.verdict, RunVerdict::Passed);
+        assert_eq!(d.last_hit_line.as_deref(), Some(new_line.as_str()));
+    }
+
+    #[test]
+    fn capture_save_blocks_until_notify() {
+        let plan = TestPlan::from_str(
+            r#"{ "id": "t", "steps": [ { "capture_scope": { "tag": "x", "save": true, "timeout_s": 5 } } ] }"#,
+        )
+        .unwrap();
+        let mut d = TestDriver::new(plan);
+        let b = LiveBrief::new();
+        match d.tick(&b, &[]) {
+            TickAction::Capture { save, tag, .. } => {
+                assert!(save);
+                assert_eq!(tag, "x");
+            }
+            other => panic!("expected capture, got {other:?}"),
+        }
+        assert_eq!(d.verdict, RunVerdict::Running);
+        let _ = d.notify_job(true, "saved");
+        assert_eq!(d.verdict, RunVerdict::Passed);
+    }
+
+    #[test]
+    fn instrument_command_parses_string_unit() {
+        let plan = TestPlan::from_str(
+            r#"{ "id": "t", "steps": [ { "instrument.command": { "command": "ScopeStop", "timeout_s": 5 } } ] }"#,
+        )
+        .unwrap();
+        let mut d = TestDriver::new(plan);
+        let b = LiveBrief::new();
+        match d.tick(&b, &[]) {
+            TickAction::Command { command, .. } => {
+                assert_eq!(command, serde_json::json!("ScopeStop"));
+            }
+            other => panic!("expected command, got {other:?}"),
+        }
+        let _ = d.notify_job(true, "ok");
+        assert_eq!(d.verdict, RunVerdict::Passed);
+    }
+
+    #[test]
+    fn waveform_source_blocks() {
+        let plan = TestPlan::from_str(
+            r#"{ "id": "t", "steps": [ { "instrument.waveform_source": { "dir": "D:/isf", "timeout_s": 5 } } ] }"#,
+        )
+        .unwrap();
+        let mut d = TestDriver::new(plan);
+        let b = LiveBrief::new();
+        match d.tick(&b, &[]) {
+            TickAction::WaveformSource { dir, .. } => assert_eq!(dir, "D:/isf"),
+            other => panic!("expected waveform_source, got {other:?}"),
+        }
+        assert_eq!(d.verdict, RunVerdict::Running);
+        let _ = d.notify_job(true, r"D:/isf/wave.isf");
+        assert_eq!(d.verdict, RunVerdict::Passed);
+    }
+
+    #[test]
+    fn parse_scope_stop_string_and_null() {
+        use crate::instrument::parse_control_command;
+        assert!(matches!(
+            parse_control_command(&serde_json::json!("ScopeStop")).unwrap(),
+            crate::instrument::ControlCommand::ScopeStop
+        ));
+        assert!(matches!(
+            parse_control_command(&serde_json::json!({ "ScopeStop": null })).unwrap(),
+            crate::instrument::ControlCommand::ScopeStop
+        ));
     }
 }

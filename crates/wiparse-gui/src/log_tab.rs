@@ -819,6 +819,17 @@ impl LogTabPage {
         }
     }
 
+    pub(crate) fn set_pane_filter(&mut self, pane: usize, query: &str) -> Result<(), String> {
+        if self.panes.get(pane).is_none() {
+            return Err("pane not found".into());
+        }
+        if let Some(p) = self.panes.get_mut(pane) {
+            p.filter_draft = query.to_string();
+        }
+        self.apply_filter(pane);
+        Ok(())
+    }
+
     fn apply_filter(&mut self, idx: usize) {
         let Some(pane) = self.panes.get_mut(idx) else {
             return;

@@ -552,6 +552,26 @@ pub enum ControlCommand {
     },
 }
 
+/// Accept `"ScopeStop"` (unit variant) and `{ "ScopeStop": null }` as well as
+/// the usual `{ "ScopeStop": {} }` / `{ "RawWrite": "*IDN?" }` serde forms.
+pub fn parse_control_command(v: &serde_json::Value) -> Result<ControlCommand, String> {
+    if let Some(s) = v.as_str() {
+        let name = s.trim();
+        return serde_json::from_value(serde_json::json!({ name: serde_json::Value::Null }))
+            .map_err(|e| format!("unknown command {name}: {e}"));
+    }
+    if let Some(obj) = v.as_object() {
+        if obj.len() == 1 {
+            let (k, inner) = obj.iter().next().unwrap();
+            if inner.is_null() {
+                return serde_json::from_value(serde_json::json!({ k: serde_json::Value::Null }))
+                    .map_err(|e| format!("unknown command {k}: {e}"));
+            }
+        }
+    }
+    serde_json::from_value(v.clone()).map_err(|e| format!("invalid command: {e}"))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reading {
     pub channel: String,

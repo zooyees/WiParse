@@ -1,117 +1,113 @@
 //! Handle stateful API invokes on the GUI thread.
 
 use super::dispatch::{err, ok};
+use super::ui::{self, UiHost};
 use super::{ApiBridge, InvokeReply, PendingRequest};
-use crate::instrument_control::InstrumentControlPanel;
 use crate::serial_tool::SerialToolPanel;
 use serde_json::{json, Value};
 use wiparse_core::i18n::Lang;
-use wiparse_core::instrument::ControlCommand;
 
-pub fn drain_api_requests(
-    bridge: &ApiBridge,
-    serial: &mut SerialToolPanel,
-    instruments: &mut InstrumentControlPanel,
-    lang: Lang,
-    active_tab: &str,
-) {
+pub fn drain_api_requests(bridge: &ApiBridge, mut host: UiHost<'_>) -> bool {
+    let mut persist = false;
     while let Some(req) = bridge.try_recv() {
-        let reply = handle(bridge, serial, instruments, lang, active_tab, req);
-        let _ = reply; // reply already sent inside handle via req.reply
+        persist |= handle(bridge, &mut host, req);
     }
-    let (port, baud) = serial.current_port_baud();
-    bridge.set_monitoring(serial.is_monitoring(), port, Some(baud));
+    let (port, baud) = host.serial.current_port_baud();
+    bridge.set_monitoring(host.serial.is_monitoring(), port, Some(baud));
+    bridge.set_instrument_count(host.instruments.device_count());
+    persist
 }
 
-fn handle(
-    bridge: &ApiBridge,
-    serial: &mut SerialToolPanel,
-    instruments: &mut InstrumentControlPanel,
-    lang: Lang,
-    active_tab: &str,
-    req: PendingRequest,
-) {
+fn handle(bridge: &ApiBridge, host: &mut UiHost<'_>, req: PendingRequest) -> bool {
     let PendingRequest {
         method,
         params,
         reply,
     } = req;
-    let result = match method.as_str() {
-        "system.ui.state" => ok(
-            &method,
-            json!({
-                "active_tab": active_tab,
-                "monitoring": serial.is_monitoring(),
-                "status": serial.status_text(),
-                "instrument_devices": instruments.device_count(),
-            }),
-        ),
-        "serial.monitor.start" => serial_start(bridge, serial, lang, &params),
-        "serial.monitor.stop" => {
-            serial.api_stop_monitor(lang);
-            bridge.set_monitoring(false, None, None);
-            *bridge.serial_write.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            bridge.publish_serial_status("stopped");
-            ok(&method, json!({ "stopped": true }))
-        }
-        "serial.monitor.status" => {
-            let (port, baud) = serial.current_port_baud();
-            ok(
-                &method,
-                json!({
-                    "monitoring": serial.is_monitoring(),
-                    "port": port,
-                    "baud": baud,
-                    "status": serial.monitor_status_text(),
-                }),
-            )
-        }
-        "serial.select" => serial_select(serial, lang, &params),
-        "serial.send" => serial_send(bridge, serial, &params),
-        "serial.read" => serial_read(serial, &params),
-        "log.tabs.list" => ok(&method, serial.api_tabs_list()),
-        "log.lines.get" => serial.api_lines_get(&params),
-        "log.brief" => serial.api_brief(&params),
-        "test.start" => match serial.api_test_start(lang, &params) {
-            Ok(data) => {
-                if let Some(tx) = serial.take_write_sender() {
-                    *bridge.serial_write.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
-                }
-                let (port, baud) = serial.current_port_baud();
-                if serial.is_monitoring() {
-                    bridge.set_monitoring(true, port, Some(baud));
-                }
-                ok(&method, data)
+    let lang = *host.lang;
+    let (result, persist) = if let Some(pair) = ui::handle(host, &method, &params) {
+        pair
+    } else {
+        let result = match method.as_str() {
+            "serial.monitor.start" => serial_start(bridge, host.serial, lang, &params),
+            "serial.monitor.stop" => {
+                host.serial.api_stop_monitor(lang);
+                bridge.set_monitoring(false, None, None);
+                *bridge.serial_write.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                bridge.publish_serial_status("stopped");
+                ok(&method, json!({ "stopped": true }))
             }
-            Err(e) => err(&method, &e),
-        },
-        "test.status" => ok(&method, serial.api_test_status()),
-        "test.abort" => {
-            let reason = params
-                .get("reason")
-                .and_then(|v| v.as_str())
-                .unwrap_or("aborted");
-            match serial.api_test_abort(reason) {
+            "serial.monitor.status" => {
+                let (port, baud) = host.serial.current_port_baud();
+                ok(
+                    &method,
+                    json!({
+                        "monitoring": host.serial.is_monitoring(),
+                        "port": port,
+                        "baud": baud,
+                        "status": host.serial.monitor_status_text(),
+                    }),
+                )
+            }
+            "serial.select" => serial_select(host.serial, lang, &params),
+            "serial.send" => serial_send(bridge, host.serial, &params),
+            "serial.read" => serial_read(host.serial, &params),
+            "log.tabs.list" => ok(&method, host.serial.api_tabs_list()),
+            "log.lines.get" => host.serial.api_lines_get(&params),
+            "log.brief" => host.serial.api_brief(&params),
+            "test.start" => {
+                let mut params = params.clone();
+                if let Some(plan) = params.get_mut("plan") {
+                    wiparse_core::testrun::resolve_plan_placeholders(
+                        plan,
+                        &host.cfg.apps.instruments.waveform_source_dir,
+                    );
+                }
+                match host.serial.api_test_start(lang, &params) {
+                    Ok(data) => {
+                        if let Some(tx) = host.serial.take_write_sender() {
+                            *bridge.serial_write.lock().unwrap_or_else(|e| e.into_inner()) =
+                                Some(tx);
+                        }
+                        let (port, baud) = host.serial.current_port_baud();
+                        if host.serial.is_monitoring() {
+                            bridge.set_monitoring(true, port, Some(baud));
+                        }
+                        ok(&method, data)
+                    }
+                    Err(e) => err(&method, &e),
+                }
+            }
+            "test.status" => ok(&method, host.serial.api_test_status()),
+            "test.abort" => {
+                let reason = params
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("aborted");
+                match host.serial.api_test_abort(reason) {
+                    Ok(data) => ok(&method, data),
+                    Err(e) => err(&method, &e),
+                }
+            }
+            "test.pack" => match host.serial.api_test_pack() {
                 Ok(data) => ok(&method, data),
                 Err(e) => err(&method, &e),
-            }
-        }
-        "test.pack" => match serial.api_test_pack() {
-            Ok(data) => ok(&method, data),
-            Err(e) => err(&method, &e),
-        },
-        "instrument.scan" => instruments.api_scan(&params),
-        "instrument.list" => ok(&method, instruments.api_list()),
-        "instrument.connect" => instruments.api_connect(&params, lang),
-        "instrument.disconnect" => instruments.api_disconnect(&params),
-        "instrument.command" => instruments.api_command(&params),
-        "instrument.measure" => instruments.api_measure(&params),
-        "instrument.capture" => instruments.api_capture(&params),
-        "instrument.waveform" => instruments.api_waveform(&params),
-        _ => err(&method, &format!("stateful method not implemented: {method}")),
+            },
+            "instrument.scan" => host.instruments.api_scan(&params),
+            "instrument.list" => ok(&method, host.instruments.api_list()),
+            "instrument.connect" => host.instruments.api_connect(&params, lang),
+            "instrument.disconnect" => host.instruments.api_disconnect(&params),
+            "instrument.command" => host.instruments.api_command(&params),
+            "instrument.measure" => host.instruments.api_measure(&params),
+            "instrument.capture" => host.instruments.api_capture(&params),
+            "instrument.waveform" => host.instruments.api_waveform(&params),
+            "instrument.waveform_source" => host.instruments.api_waveform_source(&params),
+            _ => err(&method, &format!("stateful method not implemented: {method}")),
+        };
+        (result, false)
     };
-    bridge.set_instrument_count(instruments.device_count());
     let _ = reply.send(result);
+    persist
 }
 
 fn serial_start(
@@ -229,6 +225,3 @@ fn serial_read(serial: &SerialToolPanel, params: &Value) -> InvokeReply {
     )
 }
 
-pub fn parse_control_command(value: &Value) -> Result<ControlCommand, String> {
-    serde_json::from_value(value.clone()).map_err(|e| format!("invalid ControlCommand: {e}"))
-}

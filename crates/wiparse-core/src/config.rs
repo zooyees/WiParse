@@ -153,6 +153,10 @@ pub struct InstrumentControlConfig {
     /// (first-level subfolders containing CSV / ISF / TXT sources).
     #[serde(default)]
     pub waveform_browser_dir: String,
+    /// Default directory for `instrument.waveform_source` (ISF), independent of
+    /// `waveform_browser_dir`. Empty = caller must pass `dir`.
+    #[serde(default)]
+    pub waveform_source_dir: String,
 }
 
 /// Online update settings (HTTPS manifest + optional auto-check).
@@ -354,6 +358,7 @@ impl Default for InstrumentControlConfig {
             save_dir: default_instrument_dir(),
             known_tcpip_resources: Vec::new(),
             waveform_browser_dir: String::new(),
+            waveform_source_dir: String::new(),
         }
     }
 }

@@ -56,7 +56,8 @@
       "max_points": 10000,
       "save_dir": "instrument_data",
       "known_tcpip_resources": [],
-      "waveform_browser_dir": ""
+      "waveform_browser_dir": "",
+      "waveform_source_dir": ""
     }
   },
   "update": {

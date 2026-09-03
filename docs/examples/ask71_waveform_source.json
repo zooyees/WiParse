@@ -1,0 +1,37 @@
+{
+  "id": "ask71_waveform_source",
+  "abort": {
+    "timeout_s": 900,
+    "capture_scope": false
+  },
+  "steps": [
+    {
+      "wait": {
+        "packet": "ID",
+        "rising": true,
+        "timeout_s": 600
+      }
+    },
+    {
+      "instrument.command": {
+        "command": "ScopeStop",
+        "timeout_s": 15
+      }
+    },
+    {
+      "capture_scope": {
+        "tag": "ask71",
+        "save": true,
+        "timeout_s": 60
+      }
+    },
+    {
+      "instrument.waveform_source": {
+        "dir": "{instruments.waveform_source_dir}",
+        "filename": "ask71.isf",
+        "overwrite": false,
+        "timeout_s": 600
+      }
+    }
+  ]
+}

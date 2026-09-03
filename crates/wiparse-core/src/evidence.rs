@@ -151,6 +151,16 @@ impl EvidencePack {
         });
     }
 
+    pub fn note_artifact(&mut self, kind: &str, path: &str, t: f64) {
+        self.correlate.push(CorrelateRow {
+            t,
+            ev: format!("{kind} {path}"),
+            reason: None,
+            m: MetricWindow::default(),
+            s: None,
+        });
+    }
+
     pub fn close_pending(&mut self, now_s: f64, mut window: impl FnMut(f64, f64) -> crate::brief::MetricWindow) {
         for ev in self.take_due_events(now_s) {
             let w = window(ev.t - PRE_S, ev.t + POST_S);

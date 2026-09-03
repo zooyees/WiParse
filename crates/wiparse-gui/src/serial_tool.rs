@@ -5,6 +5,7 @@ use crate::theme::{self as ui_theme, Tokens};
 use chrono::{Local, NaiveDateTime, Timelike};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use egui::{Color32, CornerRadius, Frame, Margin, Stroke};
+use serde_json::json;
 use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -93,7 +94,27 @@ struct LiveTest {
     driver: TestDriver,
     pack: EvidencePack,
     scope_queue: Vec<String>,
+    instrument_jobs: Vec<TestInstrumentJob>,
     finished: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum TestInstrumentJob {
+    Capture {
+        tag: String,
+        save: bool,
+        device_id: Option<u64>,
+    },
+    WaveformSource {
+        device_id: Option<u64>,
+        dir: String,
+        filename: Option<String>,
+        overwrite: bool,
+    },
+    Command {
+        device_id: Option<u64>,
+        command: serde_json::Value,
+    },
 }
 
 impl SerialToolPanel {
@@ -730,6 +751,7 @@ impl SerialToolPanel {
             driver: TestDriver::new(plan),
             pack,
             scope_queue: Vec::new(),
+            instrument_jobs: Vec::new(),
             finished: false,
         });
         self.status = format!("test {run_id}");
@@ -861,6 +883,7 @@ impl SerialToolPanel {
                 s: None,
             })
             .collect();
+        let lines = self.api_recent_live_lines(5000);
         let act = {
             let SerialToolPanel {
                 live_brief,
@@ -871,7 +894,7 @@ impl SerialToolPanel {
                 for row in rows {
                     t.pack.push_correlate(row);
                 }
-                t.driver.tick(live_brief)
+                t.driver.tick(live_brief, &lines)
             } else {
                 TickAction::None
             }
@@ -904,21 +927,130 @@ impl SerialToolPanel {
                 if let Some(e) = send_err {
                     if let Some(t) = self.live_test.as_mut() {
                         let fail_act = t.driver.fail(&e);
-                        if let TickAction::Capture { tag } = fail_act {
-                            self.pending_scope.push(tag);
+                        match fail_act {
+                            TickAction::Capture { tag, save, device_id } => {
+                                self.queue_capture(tag, save, device_id);
+                            }
+                            other => self.apply_tick_action(other),
                         }
                     }
                     return;
                 }
                 self.status = format!("test send {name}");
             }
-            TickAction::Capture { tag } => {
-                self.pending_scope.push(tag.clone());
+            TickAction::Capture {
+                tag,
+                save,
+                device_id,
+            } => {
+                self.queue_capture(tag, save, device_id);
+            }
+            TickAction::WaveformSource {
+                device_id,
+                dir,
+                filename,
+                overwrite,
+            } => {
                 if let Some(t) = self.live_test.as_mut() {
-                    t.scope_queue.push(tag);
+                    t.instrument_jobs.push(TestInstrumentJob::WaveformSource {
+                        device_id,
+                        dir,
+                        filename,
+                        overwrite,
+                    });
+                }
+            }
+            TickAction::Command {
+                device_id,
+                command,
+            } => {
+                if let Some(t) = self.live_test.as_mut() {
+                    t.instrument_jobs
+                        .push(TestInstrumentJob::Command { device_id, command });
                 }
             }
             TickAction::Done => {}
+        }
+    }
+
+    fn queue_capture(&mut self, tag: String, save: bool, device_id: Option<u64>) {
+        if save {
+            if let Some(t) = self.live_test.as_mut() {
+                t.instrument_jobs.push(TestInstrumentJob::Capture {
+                    tag,
+                    save,
+                    device_id,
+                });
+            }
+        } else {
+            self.pending_scope.push(tag.clone());
+            if let Some(t) = self.live_test.as_mut() {
+                t.scope_queue.push(tag);
+            }
+        }
+    }
+
+    pub fn take_test_instrument_jobs(&mut self) -> Vec<TestInstrumentJob> {
+        self.live_test
+            .as_mut()
+            .map(|t| std::mem::take(&mut t.instrument_jobs))
+            .unwrap_or_default()
+    }
+
+    pub fn evidence_dir(&self) -> Option<PathBuf> {
+        self.live_test.as_ref().map(|t| t.pack.dir.clone())
+    }
+
+    pub fn notify_test_job(&mut self, result: &crate::instrument_control::InstrumentJobResult) {
+        if !self.live_test.as_ref().is_some_and(|t| !t.finished) {
+            return;
+        }
+        let t_s = self.live_brief.elapsed_s();
+        if let Some(t) = self.live_test.as_mut() {
+            if let Some(path) = result.detail.get("path").and_then(|v| v.as_str()) {
+                t.pack.note_artifact(&result.kind, path, t_s);
+            }
+            if result.kind == "capture" {
+                t.pack.note_scope(
+                    result
+                        .detail
+                        .get("tag")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("scope"),
+                    result.device_id,
+                    result.ok,
+                    t_s,
+                );
+            }
+        }
+        let detail = if result.ok {
+            result
+                .detail
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("ok")
+                .to_string()
+        } else {
+            result
+                .detail
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("instrument job failed")
+                .to_string()
+        };
+        let act = if let Some(t) = self.live_test.as_mut() {
+            t.driver.notify_job(result.ok, &detail)
+        } else {
+            TickAction::None
+        };
+        self.apply_tick_action(act);
+        self.tick_test();
+        if let Some(t) = self.live_test.as_ref() {
+            if !t.driver.is_running() && !t.finished {
+                let v = t.driver.verdict;
+                let r = t.driver.reason.clone();
+                let _ = self.finish_test(v, &r);
+            }
         }
     }
 
@@ -928,13 +1060,17 @@ impl SerialToolPanel {
         };
         t.finished = true;
         let live = self.live_file.clone();
-        let summary = t.pack.finalize(
+        let hit = t.driver.last_hit_line.clone();
+        let mut summary = t.pack.finalize(
             &self.live_brief,
             verdict,
             reason,
             &t.driver.step_log,
             live.as_deref(),
         )?;
+        if let Some(hit) = hit {
+            summary["last_hit_line"] = serde_json::json!(hit);
+        }
         self.status = format!("test {:?} ({reason})", verdict);
         self.last_pack = Some(summary.clone());
         Ok(summary)
@@ -2269,6 +2405,104 @@ impl SerialToolPanel {
         } else {
             "stopped".into()
         }
+    }
+
+    pub fn api_open_log(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let Some(path) = params.get("path").and_then(|v| v.as_str()) else {
+            return err("ui.serial.open", "missing path");
+        };
+        let pb = PathBuf::from(path);
+        if !pb.is_file() {
+            return err("ui.serial.open", &format!("not a file: {path}"));
+        }
+        match self.open_path(pb) {
+            Some(tab_id) => {
+                self.activate_tab(tab_id);
+                self.persist_open_log_files();
+                ok("ui.serial.open", json!({ "tab_id": tab_id, "path": path }))
+            }
+            None => err("ui.serial.open", &format!("could not open {path}")),
+        }
+    }
+
+    pub fn api_close_tab(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let tab_id = params.get("tab_id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        if tab_id == 0 {
+            return err("ui.serial.close", "cannot close live tab");
+        }
+        if tab_id >= self.tabs.len() {
+            return err("ui.serial.close", "tab not found");
+        }
+        self.close_tab(tab_id);
+        ok("ui.serial.close", self.api_tabs_list())
+    }
+
+    pub fn api_clear(&mut self) -> crate::backend::InvokeReply {
+        use crate::backend::invoke_ok as ok;
+        self.clear_live_display();
+        ok("ui.serial.clear", json!({ "cleared": true }))
+    }
+
+    pub fn api_filter(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let query = params
+            .get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let tab_id = params.get("tab_id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let pane = params.get("pane").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let Some(tab) = self.tabs.get_mut(tab_id) else {
+            return err("ui.serial.filter", "tab not found");
+        };
+        if let Err(e) = tab.set_pane_filter(pane, &query) {
+            return err("ui.serial.filter", &e);
+        }
+        ok(
+            "ui.serial.filter",
+            json!({ "tab_id": tab_id, "pane": pane, "query": query }),
+        )
+    }
+
+    pub fn api_activate_tab(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let tab_id = params.get("tab_id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        if tab_id >= self.tabs.len() {
+            return err("ui.serial.tab", "tab not found");
+        }
+        self.activate_tab(tab_id);
+        ok("ui.serial.tab", json!({ "tab_id": tab_id }))
+    }
+
+    pub fn api_set_live_name(
+        &mut self,
+        lang: Lang,
+        params: &serde_json::Value,
+    ) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let Some(name) = params.get("name").and_then(|v| v.as_str()) else {
+            return err("ui.serial.name", "missing name");
+        };
+        self.live_name = name.to_string();
+        if !self.commit_live_name(lang) {
+            return err("ui.serial.name", "invalid live log name");
+        }
+        ok(
+            "ui.serial.name",
+            json!({ "name": self.committed_live_name }),
+        )
+    }
+
+    pub fn api_set_browser_dir(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let Some(dir) = params.get("dir").and_then(|v| v.as_str()) else {
+            return err("ui.serial.browser", "missing dir");
+        };
+        self.browser_dir = dir.to_string();
+        self.refresh_log_browser();
+        ok("ui.serial.browser", json!({ "dir": self.browser_dir }))
     }
 }
 

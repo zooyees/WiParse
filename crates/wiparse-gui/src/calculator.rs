@@ -1092,6 +1092,140 @@ impl CalculatorPanel {
         ui.allocate_rect(available, Sense::hover());
     }
 
+    pub fn api_get(&self) -> serde_json::Value {
+        serde_json::json!({
+            "lc": {
+                "inductance": self.lc.inductance,
+                "inductance_unit": self.lc.inductance_unit.label(),
+                "capacitance": self.lc.capacitance,
+                "capacitance_unit": self.lc.capacitance_unit.label(),
+                "frequency_hz": self.lc.result.as_ref().map(|r| r.frequency_hz),
+                "error": self.lc.error.map(|e| format!("{e:?}")),
+            },
+            "bandpass": {
+                "r_hp": self.bandpass.r_hp,
+                "c_hp": self.bandpass.c_hp,
+                "r_lp": self.bandpass.r_lp,
+                "c_lp": self.bandpass.c_lp,
+                "f_low_hz": self.bandpass.result.as_ref().map(|r| r.f_low_hz),
+                "f_high_hz": self.bandpass.result.as_ref().map(|r| r.f_high_hz),
+                "error": self.bandpass.error.map(|e| format!("{e:?}")),
+            },
+            "q": {
+                "v1": self.q.v1, "v2": self.q.v2, "bias": self.q.bias, "intervals": self.q.intervals,
+            },
+            "rc": {
+                "resistance": self.rc.resistance,
+                "capacitance": self.rc.capacitance,
+            },
+            "crc": { "data": self.crc.data, "result": self.crc.result },
+            "converter": self.converter.api_get(),
+        })
+    }
+
+    pub fn api_set(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let card = params
+            .get("card")
+            .and_then(|v| v.as_str())
+            .unwrap_or("lc")
+            .to_ascii_lowercase();
+        let fields = params.get("fields").cloned().unwrap_or_else(|| params.clone());
+        fn s(v: &serde_json::Value, k: &str) -> Option<String> {
+            v.get(k).and_then(|x| {
+                x.as_str()
+                    .map(|s| s.to_string())
+                    .or_else(|| x.as_f64().map(|n| n.to_string()))
+                    .or_else(|| x.as_i64().map(|n| n.to_string()))
+                    .or_else(|| x.as_u64().map(|n| n.to_string()))
+            })
+        }
+        match card.as_str() {
+            "lc" => {
+                if let Some(v) = s(&fields, "inductance") {
+                    self.lc.inductance = v;
+                }
+                if let Some(v) = s(&fields, "inductor_esr") {
+                    self.lc.inductor_esr = v;
+                }
+                if let Some(v) = s(&fields, "capacitance") {
+                    self.lc.capacitance = v;
+                }
+                if let Some(v) = s(&fields, "capacitor_esr") {
+                    self.lc.capacitor_esr = v;
+                }
+                if let Some(u) = s(&fields, "inductance_unit") {
+                    if let Some(unit) = InductanceUnit::ALL.iter().copied().find(|x| {
+                        x.label().eq_ignore_ascii_case(&u)
+                    }) {
+                        self.lc.inductance_unit = unit;
+                    }
+                }
+                if let Some(u) = s(&fields, "capacitance_unit") {
+                    if let Some(unit) = CapacitanceUnit::FILTER_UNITS.iter().copied().find(|x| {
+                        x.label().eq_ignore_ascii_case(&u)
+                    }) {
+                        self.lc.capacitance_unit = unit;
+                    }
+                }
+                self.lc.calculate();
+            }
+            "bandpass" | "bpf" => {
+                if let Some(v) = s(&fields, "r_hp") {
+                    self.bandpass.r_hp = v;
+                }
+                if let Some(v) = s(&fields, "c_hp") {
+                    self.bandpass.c_hp = v;
+                }
+                if let Some(v) = s(&fields, "r_lp") {
+                    self.bandpass.r_lp = v;
+                }
+                if let Some(v) = s(&fields, "c_lp") {
+                    self.bandpass.c_lp = v;
+                }
+                self.bandpass.calculate();
+            }
+            "q" => {
+                if let Some(v) = s(&fields, "v1") {
+                    self.q.v1 = v;
+                }
+                if let Some(v) = s(&fields, "v2") {
+                    self.q.v2 = v;
+                }
+                if let Some(v) = s(&fields, "bias") {
+                    self.q.bias = v;
+                }
+                if let Some(v) = s(&fields, "intervals") {
+                    self.q.intervals = v;
+                }
+                self.q.calculate();
+            }
+            "rc" => {
+                if let Some(v) = s(&fields, "resistance") {
+                    self.rc.resistance = v;
+                }
+                if let Some(v) = s(&fields, "capacitance") {
+                    self.rc.capacitance = v;
+                }
+                if let Some(v) = s(&fields, "time") {
+                    self.rc.time = v;
+                }
+                self.rc.calculate();
+            }
+            "crc" => {
+                if let Some(v) = s(&fields, "data") {
+                    self.crc.data = v;
+                }
+                self.crc.calculate();
+            }
+            "convert" | "converter" => {
+                self.converter.api_set(&fields);
+            }
+            _ => return err("ui.calc.set", "card must be lc|bandpass|q|rc|crc|convert"),
+        }
+        ok("ui.calc.set", self.api_get())
+    }
+
     fn lc_ui(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
         tool_header(
             ui,

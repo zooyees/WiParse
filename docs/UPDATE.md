@@ -216,4 +216,4 @@ python -m http.server 8443
 
 ---
 
-**当前版本号来源**：工作区 `Cargo.toml` → `1.1.3`。发布新版本前请 bump workspace `version`、更新 [`CHANGELOG.md`](CHANGELOG.md) 并重新编译。
+**当前版本号来源**：工作区 `Cargo.toml` → `1.1.5`。发布新版本前请 bump workspace `version`、更新 [`CHANGELOG.md`](CHANGELOG.md) 并重新编译。

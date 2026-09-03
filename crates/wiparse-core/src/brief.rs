@@ -79,6 +79,7 @@ pub struct LiveBrief {
     other: u32,
     metric_n: u32,
     packet_counts: HashMap<String, u32>,
+    header_counts: HashMap<u8, u32>,
     ept_reasons: HashMap<String, u32>,
     phase: QiPhase,
     vin: Extrema,
@@ -153,6 +154,7 @@ impl LiveBrief {
             other: 0,
             metric_n: 0,
             packet_counts: HashMap::new(),
+            header_counts: HashMap::new(),
             ept_reasons: HashMap::new(),
             phase: QiPhase::Idle,
             vin: Extrema::default(),
@@ -185,6 +187,10 @@ impl LiveBrief {
         self.next_row
     }
 
+    pub fn n_lines(&self) -> u64 {
+        self.n_lines
+    }
+
     pub fn phase(&self) -> QiPhase {
         self.phase
     }
@@ -207,13 +213,23 @@ impl LiveBrief {
 
     /// True if a Qi packet type (e.g. `CE`, `EPT`) was counted this session.
     pub fn seen_packet(&self, name: &str) -> bool {
+        self.packet_count(name) > 0
+    }
+
+    pub fn packet_count(&self, name: &str) -> u32 {
         let want = name.trim().to_ascii_uppercase();
         if want.is_empty() {
-            return false;
+            return 0;
         }
         self.packet_counts
-            .keys()
-            .any(|k| k.eq_ignore_ascii_case(&want))
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(&want))
+            .map(|(_, n)| *n)
+            .unwrap_or(0)
+    }
+
+    pub fn header_count(&self, header: u8) -> u32 {
+        self.header_counts.get(&header).copied().unwrap_or(0)
     }
 
     pub fn last_hex(&self) -> Option<&str> {
@@ -284,6 +300,7 @@ impl LiveBrief {
             }
             let name = d.name.to_ascii_uppercase();
             *self.packet_counts.entry(name.clone()).or_insert(0) += 1;
+            *self.header_counts.entry(d.header).or_insert(0) += 1;
             if !d.known {
                 self.unk += 1;
                 self.last_unk = Some(format!("{} 0x{:02X}", d.direction, d.header));

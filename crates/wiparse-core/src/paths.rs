@@ -45,6 +45,31 @@ pub fn default_config_file() -> PathBuf {
     project_path("config.default.json")
 }
 
+/// If `overwrite` is false and `dir/filename` exists, append `-2`, `-3`, …
+pub fn unique_file_path(dir: &Path, filename: &str, overwrite: bool) -> PathBuf {
+    let dest = dir.join(filename);
+    if overwrite || !dest.exists() {
+        return dest;
+    }
+    let stem = dest
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file");
+    let ext = dest.extension().and_then(|s| s.to_str()).unwrap_or("");
+    for n in 2..10_000 {
+        let name = if ext.is_empty() {
+            format!("{stem}-{n}")
+        } else {
+            format!("{stem}-{n}.{ext}")
+        };
+        let p = dir.join(&name);
+        if !p.exists() {
+            return p;
+        }
+    }
+    dest
+}
+
 pub fn app_icon_path() -> Option<PathBuf> {
     let rel = Path::new("Icon").join("WiParse.ico");
     let candidate = project_path(&rel);
@@ -60,8 +85,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn project_path_joins() {
-        let p = project_path("config.json");
-        assert!(p.ends_with("config.json"));
+    fn unique_file_path_appends_suffix() {
+        let dir = std::env::temp_dir().join(format!("wiparse-unique-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let first = dir.join("wave.isf");
+        std::fs::write(&first, b"a").unwrap();
+        let p = unique_file_path(&dir, "wave.isf", false);
+        assert_eq!(p.file_name().unwrap(), "wave-2.isf");
+        let _ = std::fs::remove_file(&first);
+        let _ = std::fs::remove_dir(&dir);
     }
 }

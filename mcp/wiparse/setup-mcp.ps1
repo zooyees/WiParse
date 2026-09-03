@@ -180,7 +180,7 @@ try {
 }
 
 Write-Host ""
-Write-Host "Done. Restart Cursor and confirm tools: wiparse_brief, wiparse_select, wiparse_test, wiparse_send, wiparse_report_pack"
+Write-Host "Done. Fully quit and reopen Cursor. Confirm 6 tools: wiparse_brief, wiparse_select, wiparse_test, wiparse_send, wiparse_report_pack, wiparse_ui"
 if (-not $RegisterUser -and -not $ProjectDir) {
     Write-Host "This run did not register Cursor. Re-run with -RegisterUser, or copy cursor.mcp.generated.json into %USERPROFILE%\.cursor\mcp.json"
 }

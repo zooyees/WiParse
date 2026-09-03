@@ -10,11 +10,13 @@ mod capabilities;
 mod dispatch;
 mod events;
 mod stateful;
+mod ui;
 
 pub use capabilities::capabilities_json;
 pub use dispatch::{err as invoke_err, ok as invoke_ok};
 pub use events::{EventBus, EventEnvelope};
 pub use stateful::drain_api_requests;
+pub use ui::UiHost;
 
 use chrono::Local;
 use crossbeam_channel::{unbounded, Receiver, Sender};

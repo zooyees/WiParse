@@ -5,7 +5,7 @@
 - **长驻进程**：`WiParse.exe` 独占串口 / 仪器，画面走进程内通道（不经网络）。
 - **嵌入式 API**：默认 `http://127.0.0.1:7878`
 - **CLI**：默认 attach `WIPARSE_URL` / `--url` / `http://127.0.0.1:7878`；GUI 未运行则报连接错误，不会悄悄打开本机串口。`--local` 才在本进程独占设备。
-- **MCP**：`WIPARSE_URL` + `wiparse_brief` / `wiparse_select` / `wiparse_test` / `wiparse_send` / `wiparse_report_pack`（HTTP，紧凑 JSON）。
+- **MCP**：`WIPARSE_URL` + `wiparse_brief` / `wiparse_select` / `wiparse_test` / `wiparse_send` / `wiparse_report_pack` / `wiparse_ui`（HTTP，紧凑 JSON）。
 
 不单独部署 daemon。
 
@@ -100,7 +100,8 @@ Copy-Item target\release\wiparse.exe     dist\WiParse-CLI.exe -Force
 - `serial.monitor.start` / `stop` / `status`（`serial.status` 为 status 别名）
 - `serial.select`（只改口/波特率，不打开；监控已开时需先 stop）
 - `serial.send` / `serial.read`（需先 `monitor.start`；停着时读缓冲用 `log.lines.get`）
-- `instrument.*`、`log.tabs.list`、`log.lines.get`、`log.brief`、`system.ui.state`
+- `instrument.*`（含 `instrument.waveform_source`）、`log.tabs.list`、`log.lines.get`、`log.brief`、`system.ui.state`
+- `ui.show` / `ui.panels` / `ui.prefs` / `ui.serial.*` / `ui.wave.*` / `ui.calc.*` / `ui.instrument.select`
 - `test.start` / `status` / `abort` / `pack`（闭环执行器 + 证据包）
 
 无状态方法（parse / session / scope / wave 等）可在 API 线程直接执行。
@@ -132,6 +133,10 @@ $env:WIPARSE_URL = "http://127.0.0.1:7878"
 .\dist\WiParse-CLI.exe serial read --port COM3 --max-logs 50
 .\dist\WiParse-CLI.exe serial stop
 
+.\dist\WiParse-CLI.exe ui show --tab serial
+.\dist\WiParse-CLI.exe ui state
+.\dist\WiParse-CLI.exe ui calc set --card lc --params "{\"inductance\":\"10\",\"capacitance\":\"100\"}"
+
 .\dist\WiParse-CLI.exe api invoke serial.ports
 .\dist\WiParse-CLI.exe api invoke --method serial.ports --params "{}"
 ```
@@ -155,7 +160,9 @@ $env:WIPARSE_URL = "http://127.0.0.1:7878"
 
 ## 6. MCP（E：直连 HTTP）
 
-`mcp/wiparse` 五个工具（紧凑 JSON，HTTP）：`wiparse_brief`、`wiparse_select`、`wiparse_test`、`wiparse_send`、`wiparse_report_pack`。不要把 `serial.txt` 读进模型。
+`mcp/wiparse` 六个工具（紧凑 JSON，HTTP）：`wiparse_brief`、`wiparse_select`、`wiparse_test`、`wiparse_send`、`wiparse_report_pack`、`wiparse_ui`。不要把 `serial.txt` 或 ISF 点列读进模型。`wiparse_ui` 的 `op=instrument.waveform_source` 只返回路径/字节数。
+
+闭环计划与工位步骤见 [`WORKSTATION_CLOSED_LOOP.md`](WORKSTATION_CLOSED_LOOP.md)。
 
 对机部署（含安装脚本）：见 [`DEPLOY_MCP.md`](DEPLOY_MCP.md)。不要把本仓库开发路径写进对机的 Cursor 配置。
 
@@ -169,7 +176,7 @@ npm install
 npm run build
 ```
 
-Agent 推荐：`wiparse_select` 选口（不打开）→ `wiparse_test start` → 轮询 `wiparse_brief` → `wiparse_report_pack` 写报告。
+Agent 推荐：`wiparse_ui` 切到串口页 → `wiparse_select` 选口（不打开）→ `wiparse_test start` → 轮询 `wiparse_brief` → `wiparse_report_pack` 写报告。
 
 ---
 
@@ -187,7 +194,7 @@ Agent 推荐：`wiparse_select` 选口（不打开）→ `wiparse_test start` �
 
 - [ ] 启动 `WiParse.exe`
 - [ ] `WiParse-CLI.exe api health` → `ok: true`
-- [ ] `api capabilities` 含 `serial.select` / `serial.*` / `instrument.*`
-- [ ] `api invoke --method serial.ports`
-- [ ] MCP `wiparse_brief` / `wiparse_select` 有返回
+- [ ] `api capabilities` 含 `ui.show` / `serial.select` / `instrument.*`
+- [ ] `WiParse-CLI.exe ui state`（GUI 已开）
+- [ ] MCP `wiparse_brief` / `wiparse_select` / `wiparse_ui` 有返回
 - [ ] `dist` 中两个 exe 为本次 release 构建

@@ -13,9 +13,9 @@ use thiserror::Error;
 
 pub use drivers::{
     classify_instrument_kind, detect_profile, estimate_dc_source_channels,
-    format_human_scope_reading, humanize_scope_reading_text, ControlCommand, InstrumentDevice,
-    InstrumentProfile, MeasureFunction, Reading, ScopeMeasType, ScopeWaveformDensity,
-    WaveformTrace,
+    format_human_scope_reading, humanize_scope_reading_text, parse_control_command, ControlCommand,
+    InstrumentDevice, InstrumentProfile, MeasureFunction, Reading, ScopeMeasType,
+    ScopeWaveformDensity, WaveformTrace,
 };
 pub use recording::{export_csv, AcquisitionBuffer, Sample};
 

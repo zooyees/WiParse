@@ -86,6 +86,9 @@ enum Commands {
     /// VISA oscilloscope shortcuts (local). GUI instruments: api invoke instrument.*.
     #[command(subcommand, arg_required_else_help = true)]
     Scope(ScopeCmd),
+    /// Drive the running WiParse.exe UI (tabs, panels, inputs). Requires GUI.
+    #[command(subcommand, arg_required_else_help = true)]
+    Ui(UiCmd),
 }
 
 #[derive(Subcommand, Debug)]
@@ -310,6 +313,218 @@ enum ScopeCmd {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum UiCmd {
+    /// Snapshot active tab, panels, serial, instruments, waveform, calculator.
+    State,
+    /// Switch the main tab (also unhides it).
+    Show {
+        #[arg(long)]
+        tab: String,
+    },
+    /// Show or hide main tools (`--serial true`).
+    Panels {
+        #[arg(long, num_args = 1, value_parser = clap::builder::BoolishValueParser::new())]
+        serial: Option<bool>,
+        #[arg(long, num_args = 1, value_parser = clap::builder::BoolishValueParser::new())]
+        calculator: Option<bool>,
+        #[arg(long, num_args = 1, value_parser = clap::builder::BoolishValueParser::new())]
+        instruments: Option<bool>,
+        #[arg(long, num_args = 1, value_parser = clap::builder::BoolishValueParser::new())]
+        waveform: Option<bool>,
+    },
+    /// Language, theme, debug mode.
+    Prefs {
+        #[arg(long)]
+        language: Option<String>,
+        #[arg(long)]
+        theme: Option<String>,
+        #[arg(long, num_args = 1, value_parser = clap::builder::BoolishValueParser::new())]
+        debug: Option<bool>,
+    },
+    #[command(subcommand, arg_required_else_help = true)]
+    Serial(UiSerialCmd),
+    #[command(subcommand, arg_required_else_help = true)]
+    Wave(UiWaveCmd),
+    #[command(subcommand, arg_required_else_help = true)]
+    Calc(UiCalcCmd),
+    #[command(subcommand, arg_required_else_help = true)]
+    Instrument(UiInstrumentCmd),
+}
+
+#[derive(Subcommand, Debug)]
+enum UiSerialCmd {
+    /// Open a log file as a tab.
+    Open {
+        #[arg(long)]
+        path: PathBuf,
+    },
+    /// Close a file tab (not the live tab).
+    Close {
+        #[arg(long)]
+        tab_id: u64,
+    },
+    /// Clear the live log display.
+    Clear,
+    /// Apply a text filter on a tab pane.
+    Filter {
+        #[arg(long)]
+        query: String,
+        #[arg(long, default_value_t = 0)]
+        tab_id: u64,
+        #[arg(long, default_value_t = 0)]
+        pane: u64,
+    },
+    /// Activate a serial tab.
+    Tab {
+        #[arg(long)]
+        tab_id: u64,
+    },
+    /// Rename the live log tab.
+    Name {
+        #[arg(long)]
+        name: String,
+    },
+    /// Set the log file browser directory.
+    Browser {
+        #[arg(long)]
+        dir: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum UiWaveCmd {
+    /// Open a waveform file in the GUI analysis page.
+    Open {
+        #[arg(long)]
+        path: PathBuf,
+    },
+    /// Close all loaded waveforms.
+    Close,
+    /// Select a loaded channel by index.
+    Select {
+        #[arg(long)]
+        index: u64,
+    },
+    /// Set the waveform folder browser directory.
+    Browser {
+        #[arg(long)]
+        dir: PathBuf,
+    },
+    /// Configure bus decode (UART / I2C / SPI / I2S).
+    Bus {
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long)]
+        uart: Option<u64>,
+        #[arg(long)]
+        scl: Option<u64>,
+        #[arg(long)]
+        sda: Option<u64>,
+        #[arg(long)]
+        clk: Option<u64>,
+        #[arg(long)]
+        mosi: Option<u64>,
+        #[arg(long)]
+        miso: Option<u64>,
+        #[arg(long)]
+        cs: Option<u64>,
+        #[arg(long)]
+        bclk: Option<u64>,
+        #[arg(long)]
+        ws: Option<u64>,
+        #[arg(long)]
+        data: Option<u64>,
+        #[arg(long)]
+        threshold: Option<f64>,
+        #[arg(long)]
+        baud: Option<f64>,
+    },
+    Cursor {
+        #[arg(long)]
+        x1: Option<f64>,
+        #[arg(long)]
+        x2: Option<f64>,
+        #[arg(long)]
+        y1: Option<f64>,
+        #[arg(long)]
+        y2: Option<f64>,
+        #[arg(long)]
+        clear: bool,
+    },
+    Fit,
+}
+
+#[derive(Subcommand, Debug)]
+enum UiCalcCmd {
+    Get,
+    Set {
+        #[arg(long)]
+        card: String,
+        #[arg(long, default_value = "{}")]
+        params: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum UiInstrumentCmd {
+    Select {
+        #[arg(long)]
+        id: u64,
+    },
+    Scan,
+    List,
+    Connect {
+        #[arg(long)]
+        resource: String,
+        #[arg(long)]
+        kind: Option<String>,
+    },
+    Disconnect {
+        #[arg(long)]
+        id: u64,
+    },
+    Measure {
+        #[arg(long)]
+        id: u64,
+    },
+    Capture {
+        #[arg(long)]
+        id: Option<u64>,
+    },
+    Waveform {
+        #[arg(long)]
+        id: u64,
+        #[arg(long, default_value_t = 1)]
+        channel: u8,
+        #[arg(long)]
+        points: Option<u32>,
+    },
+    /// Read displayed-channel waveform source (ISF). Same as GUI「读取波形源文件」.
+    #[command(name = "waveform-source")]
+    WaveformSource {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        dir: Option<String>,
+        #[arg(long)]
+        filename: Option<String>,
+        #[arg(long)]
+        overwrite: bool,
+    },
+    Command {
+        #[arg(long)]
+        id: u64,
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long)]
+        write: Option<String>,
+        /// Raw ControlCommand JSON, e.g. `"ScopeRun"` or `{"ScopeChannel":{"channel":1,"enabled":true}}`.
+        #[arg(long = "json")]
+        command_json: Option<String>,
+    },
+}
+
 fn opts(cli: &Cli) -> OutputOptions {
     OutputOptions {
         pretty: cli.pretty,
@@ -472,6 +687,225 @@ fn map_to_invoke(cli: &Cli) -> Option<(String, serde_json::Value)> {
                 "out": out,
             }),
         )),
+        Commands::Ui(UiCmd::State) => Some(("ui.state".into(), json!({}))),
+        Commands::Ui(UiCmd::Show { tab }) => Some(("ui.show".into(), json!({ "tab": tab }))),
+        Commands::Ui(UiCmd::Panels {
+            serial,
+            calculator,
+            instruments,
+            waveform,
+        }) => {
+            let mut p = json!({});
+            if let Some(v) = serial {
+                p["serial"] = json!(v);
+            }
+            if let Some(v) = calculator {
+                p["calculator"] = json!(v);
+            }
+            if let Some(v) = instruments {
+                p["instruments"] = json!(v);
+            }
+            if let Some(v) = waveform {
+                p["waveform"] = json!(v);
+            }
+            Some(("ui.panels".into(), p))
+        }
+        Commands::Ui(UiCmd::Prefs {
+            language,
+            theme,
+            debug,
+        }) => {
+            let mut p = json!({});
+            if let Some(v) = language {
+                p["language"] = json!(v);
+            }
+            if let Some(v) = theme {
+                p["theme"] = json!(v);
+            }
+            if let Some(v) = debug {
+                p["debug"] = json!(v);
+            }
+            Some(("ui.prefs".into(), p))
+        }
+        Commands::Ui(UiCmd::Serial(UiSerialCmd::Open { path })) => Some((
+            "ui.serial.open".into(),
+            json!({ "path": path }),
+        )),
+        Commands::Ui(UiCmd::Serial(UiSerialCmd::Close { tab_id })) => Some((
+            "ui.serial.close".into(),
+            json!({ "tab_id": tab_id }),
+        )),
+        Commands::Ui(UiCmd::Serial(UiSerialCmd::Clear)) => {
+            Some(("ui.serial.clear".into(), json!({})))
+        }
+        Commands::Ui(UiCmd::Serial(UiSerialCmd::Filter { query, tab_id, pane })) => Some((
+            "ui.serial.filter".into(),
+            json!({ "query": query, "tab_id": tab_id, "pane": pane }),
+        )),
+        Commands::Ui(UiCmd::Serial(UiSerialCmd::Tab { tab_id })) => {
+            Some(("ui.serial.tab".into(), json!({ "tab_id": tab_id })))
+        }
+        Commands::Ui(UiCmd::Serial(UiSerialCmd::Name { name })) => {
+            Some(("ui.serial.name".into(), json!({ "name": name })))
+        }
+        Commands::Ui(UiCmd::Serial(UiSerialCmd::Browser { dir })) => {
+            Some(("ui.serial.browser".into(), json!({ "dir": dir })))
+        }
+        Commands::Ui(UiCmd::Wave(UiWaveCmd::Open { path })) => {
+            Some(("ui.wave.open".into(), json!({ "path": path })))
+        }
+        Commands::Ui(UiCmd::Wave(UiWaveCmd::Close)) => Some(("ui.wave.close".into(), json!({}))),
+        Commands::Ui(UiCmd::Wave(UiWaveCmd::Select { index })) => {
+            Some(("ui.wave.select".into(), json!({ "index": index })))
+        }
+        Commands::Ui(UiCmd::Wave(UiWaveCmd::Browser { dir })) => {
+            Some(("ui.wave.browser".into(), json!({ "dir": dir })))
+        }
+        Commands::Ui(UiCmd::Wave(UiWaveCmd::Bus {
+            kind,
+            uart,
+            scl,
+            sda,
+            clk,
+            mosi,
+            miso,
+            cs,
+            bclk,
+            ws,
+            data,
+            threshold,
+            baud,
+        })) => {
+            let mut p = json!({});
+            if let Some(v) = kind {
+                p["kind"] = json!(v);
+            }
+            if let Some(v) = uart {
+                p["uart"] = json!(v);
+            }
+            if let Some(v) = scl {
+                p["scl"] = json!(v);
+            }
+            if let Some(v) = sda {
+                p["sda"] = json!(v);
+            }
+            if let Some(v) = clk {
+                p["clk"] = json!(v);
+            }
+            if let Some(v) = mosi {
+                p["mosi"] = json!(v);
+            }
+            if let Some(v) = miso {
+                p["miso"] = json!(v);
+            }
+            if let Some(v) = cs {
+                p["cs"] = json!(v);
+            }
+            if let Some(v) = bclk {
+                p["bclk"] = json!(v);
+            }
+            if let Some(v) = ws {
+                p["ws"] = json!(v);
+            }
+            if let Some(v) = data {
+                p["data"] = json!(v);
+            }
+            if let Some(v) = threshold {
+                p["threshold"] = json!(v);
+            }
+            if let Some(v) = baud {
+                p["baud"] = json!(v);
+            }
+            Some(("ui.wave.bus".into(), p))
+        }
+        Commands::Ui(UiCmd::Wave(UiWaveCmd::Cursor {
+            x1,
+            x2,
+            y1,
+            y2,
+            clear,
+        })) => Some((
+            "ui.wave.cursor".into(),
+            json!({ "x1": x1, "x2": x2, "y1": y1, "y2": y2, "clear": clear }),
+        )),
+        Commands::Ui(UiCmd::Wave(UiWaveCmd::Fit)) => Some(("ui.wave.fit".into(), json!({}))),
+        Commands::Ui(UiCmd::Calc(UiCalcCmd::Get)) => Some(("ui.calc.get".into(), json!({}))),
+        Commands::Ui(UiCmd::Calc(UiCalcCmd::Set { card, params })) => {
+            let fields: serde_json::Value = serde_json::from_str(params).unwrap_or_else(|_| json!({}));
+            Some(("ui.calc.set".into(), json!({ "card": card, "fields": fields })))
+        }
+        Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::Select { id })) => Some((
+            "ui.instrument.select".into(),
+            json!({ "device_id": id }),
+        )),
+        Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::Scan)) => {
+            Some(("instrument.scan".into(), json!({})))
+        }
+        Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::List)) => {
+            Some(("instrument.list".into(), json!({})))
+        }
+        Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::Connect { resource, kind })) => Some((
+            "instrument.connect".into(),
+            json!({ "resource": resource, "kind": kind }),
+        )),
+        Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::Disconnect { id })) => Some((
+            "instrument.disconnect".into(),
+            json!({ "device_id": id }),
+        )),
+        Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::Measure { id })) => Some((
+            "instrument.measure".into(),
+            json!({ "device_id": id }),
+        )),
+        Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::Capture { id })) => Some((
+            "instrument.capture".into(),
+            json!({ "device_id": id }),
+        )),
+        Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::Waveform {
+            id,
+            channel,
+            points,
+        })) => Some((
+            "instrument.waveform".into(),
+            json!({ "device_id": id, "channel": channel, "points": points }),
+        )),
+        Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::WaveformSource {
+            id,
+            dir,
+            filename,
+            overwrite,
+        })) => {
+            let mut p = json!({ "overwrite": overwrite });
+            if let Some(id) = id {
+                p["device_id"] = json!(id);
+            }
+            if let Some(dir) = dir {
+                p["dir"] = json!(dir);
+            }
+            if let Some(filename) = filename {
+                p["filename"] = json!(filename);
+            }
+            Some(("instrument.waveform_source".into(), p))
+        },
+        Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::Command {
+            id,
+            query,
+            write,
+            command_json,
+        })) => {
+            let command = if let Some(raw) = command_json {
+                serde_json::from_str(raw).unwrap_or_else(|_| json!("Reset"))
+            } else if let Some(q) = query {
+                json!({ "RawQuery": q })
+            } else if let Some(w) = write {
+                json!({ "RawWrite": w })
+            } else {
+                json!("Reset")
+            };
+            Some((
+                "instrument.command".into(),
+                json!({ "device_id": id, "command": command }),
+            ))
+        }
         _ => None,
     }
 }
@@ -628,9 +1062,9 @@ fn run(cli: &Cli, _o: &OutputOptions) -> Result<(String, serde_json::Value), (St
             "serial.monitor".into(),
             "serial start/stop/status/select need a running WiParse.exe (drop --local)".into(),
         )),
-        Commands::Log(_) | Commands::Test(_) => Err((
-            "test".into(),
-            "log/test commands need a running WiParse.exe (drop --local)".into(),
+        Commands::Log(_) | Commands::Test(_) | Commands::Ui(_) => Err((
+            "ui".into(),
+            "ui/log/test commands need a running WiParse.exe (drop --local)".into(),
         )),
         Commands::Serial(SerialCmd::Read {
             port,

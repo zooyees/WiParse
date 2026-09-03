@@ -17,11 +17,34 @@ use wiparse_core::i18n::{parse_lang, tr, Lang};
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MainTab {
+pub(crate) enum MainTab {
     Serial,
     Calculator,
     Instruments,
     Waveform,
+}
+
+impl MainTab {
+    pub(crate) fn as_id(self) -> &'static str {
+        match self {
+            Self::Serial => "serial",
+            Self::Calculator => "calculator",
+            Self::Instruments => "instruments",
+            Self::Waveform => "waveform",
+        }
+    }
+
+    pub(crate) fn from_id(id: &str) -> Option<Self> {
+        match id.trim().to_ascii_lowercase().as_str() {
+            "serial" | "serial_tool" | "log" => Some(Self::Serial),
+            "calculator" | "calc" => Some(Self::Calculator),
+            "instruments" | "instrument" | "instrument_control" | "scope" => {
+                Some(Self::Instruments)
+            }
+            "waveform" | "wave" | "waveform_analysis" => Some(Self::Waveform),
+            _ => None,
+        }
+    }
 }
 
 fn initial_tab(
@@ -162,6 +185,10 @@ impl WiParseApp {
         self.cfg.ui.panels.calculator = self.show_calculator;
         self.cfg.ui.panels.instrument_control = self.show_instruments;
         self.cfg.ui.panels.waveform_analysis = self.show_waveform;
+        self.cfg.ui.language = match self.lang {
+            Lang::Zh => "zh".into(),
+            Lang::En => "en".into(),
+        };
         let _ = save_config(&self.cfg);
     }
 
@@ -649,6 +676,122 @@ impl WiParseApp {
             });
         self.about_open = open && !close_requested;
     }
+
+    fn dispatch_test_instrument_job(&mut self, job: crate::serial_tool::TestInstrumentJob) {
+        use crate::serial_tool::TestInstrumentJob;
+        let fallback = self.instruments.first_oscilloscope_id();
+        match job {
+            TestInstrumentJob::Capture {
+                tag,
+                save,
+                device_id,
+            } => {
+                let id = device_id.or(fallback);
+                let Some(device_id) = id else {
+                    self.serial.notify_test_job(&crate::instrument_control::InstrumentJobResult {
+                        job_id: 0,
+                        ok: false,
+                        kind: "capture".into(),
+                        device_id: None,
+                        detail: serde_json::json!({ "error": "no connected oscilloscope", "tag": tag }),
+                    });
+                    return;
+                };
+                let mut params = serde_json::json!({
+                    "device_id": device_id,
+                    "wait": save,
+                });
+                if save {
+                    if let Some(dir) = self.serial.evidence_dir() {
+                        let path = dir.join("scope").join(format!("{tag}.png"));
+                        params["path"] = serde_json::json!(path.display().to_string());
+                    }
+                }
+                let reply = self.instruments.api_capture(&params);
+                if !reply.ok {
+                    let msg = reply.error.unwrap_or_else(|| "capture rejected".into());
+                    self.serial.notify_test_job(&crate::instrument_control::InstrumentJobResult {
+                        job_id: 0,
+                        ok: false,
+                        kind: "capture".into(),
+                        device_id: Some(device_id),
+                        detail: serde_json::json!({ "error": msg, "tag": tag }),
+                    });
+                }
+            }
+            TestInstrumentJob::WaveformSource {
+                device_id,
+                dir,
+                filename,
+                overwrite,
+            } => {
+                let id = device_id.or(fallback);
+                let Some(device_id) = id else {
+                    self.serial.notify_test_job(&crate::instrument_control::InstrumentJobResult {
+                        job_id: 0,
+                        ok: false,
+                        kind: "waveform_source".into(),
+                        device_id: None,
+                        detail: serde_json::json!({ "error": "no connected oscilloscope" }),
+                    });
+                    return;
+                };
+                let mut params = serde_json::json!({
+                    "device_id": device_id,
+                    "overwrite": overwrite,
+                });
+                if !dir.is_empty() {
+                    params["dir"] = serde_json::json!(dir);
+                }
+                if let Some(name) = filename {
+                    params["filename"] = serde_json::json!(name);
+                }
+                let reply = self.instruments.api_waveform_source(&params);
+                if !reply.ok {
+                    let msg = reply
+                        .error
+                        .unwrap_or_else(|| "waveform_source rejected".into());
+                    self.serial.notify_test_job(&crate::instrument_control::InstrumentJobResult {
+                        job_id: 0,
+                        ok: false,
+                        kind: "waveform_source".into(),
+                        device_id: Some(device_id),
+                        detail: serde_json::json!({ "error": msg }),
+                    });
+                }
+            }
+            TestInstrumentJob::Command {
+                device_id,
+                command,
+            } => {
+                let id = device_id.or(fallback);
+                let Some(device_id) = id else {
+                    self.serial.notify_test_job(&crate::instrument_control::InstrumentJobResult {
+                        job_id: 0,
+                        ok: false,
+                        kind: "command".into(),
+                        device_id: None,
+                        detail: serde_json::json!({ "error": "no connected instrument" }),
+                    });
+                    return;
+                };
+                let reply = self.instruments.api_command(&serde_json::json!({
+                    "device_id": device_id,
+                    "command": command,
+                }));
+                if !reply.ok {
+                    let msg = reply.error.unwrap_or_else(|| "command rejected".into());
+                    self.serial.notify_test_job(&crate::instrument_control::InstrumentJobResult {
+                        job_id: 0,
+                        ok: false,
+                        kind: "command".into(),
+                        device_id: Some(device_id),
+                        detail: serde_json::json!({ "error": msg }),
+                    });
+                }
+            }
+        }
+    }
 }
 
 impl eframe::App for WiParseApp {
@@ -671,20 +814,27 @@ impl eframe::App for WiParseApp {
         if live_filters {
             self.serial.sync_visible_live_filters();
         }
-        // Drain Agent/CLI API requests on the UI thread (shared serial/instrument state).
-        let active_name = match self.active {
-            MainTab::Serial => "serial",
-            MainTab::Calculator => "calculator",
-            MainTab::Instruments => "instruments",
-            MainTab::Waveform => "waveform",
-        };
-        backend::drain_api_requests(
+        // Drain Agent/CLI API requests on the UI thread (shared serial/instrument/UI state).
+        let persist = backend::drain_api_requests(
             &self.api,
-            &mut self.serial,
-            &mut self.instruments,
-            self.lang,
-            active_name,
+            backend::UiHost {
+                cfg: &mut self.cfg,
+                lang: &mut self.lang,
+                active: &mut self.active,
+                show_serial: &mut self.show_serial,
+                show_calculator: &mut self.show_calculator,
+                show_instruments: &mut self.show_instruments,
+                show_waveform: &mut self.show_waveform,
+                serial: &mut self.serial,
+                instruments: &mut self.instruments,
+                calculator: &mut self.calculator,
+                waveform: &mut self.waveform,
+            },
         );
+        if persist {
+            self.persist_ui_prefs();
+            self.ensure_visible_tab();
+        }
         // Live filters only need refresh when serial UI shows the live tab.
         self.serial.drain_events_with_bus(live_filters, Some(&self.api));
         for tag in self.serial.take_scope_captures() {
@@ -698,6 +848,9 @@ impl eframe::App for WiParseApp {
             };
             self.serial.note_scope_capture(&tag, id, ok);
         }
+        for job in self.serial.take_test_instrument_jobs() {
+            self.dispatch_test_instrument_job(job);
+        }
         // Instrument workers can deliver large waveform/image payloads. Do not
         // deserialize, rebuild plots, or schedule its live repaint loop while
         // the user is working in another tool.
@@ -705,6 +858,9 @@ impl eframe::App for WiParseApp {
         // for heavy scope views only render on the Instruments tab.
         self.instruments
             .pump_with_bus(ctx, Some(&self.api.events));
+        for result in self.instruments.take_job_results() {
+            self.serial.notify_test_job(&result);
+        }
 
         let pump_serial = self.serial.is_monitoring() || self.serial.has_background_io();
         let pump_instruments = self.active == MainTab::Instruments

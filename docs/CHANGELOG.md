@@ -2,7 +2,59 @@
 
 产品版本以工作区 `Cargo.toml` 的 `workspace.package.version` 为准（GUI / CLI / `wiparse-core` 共用）。MCP 包 `mcp/wiparse/package.json` 与之对齐。
 
-发布流程：改版本号 → 更新本文 → `cargo build --release` 同步 `dist/` → 提交并推送。对机 MCP 安装见 [`DEPLOY_MCP.md`](DEPLOY_MCP.md)。
+发布流程：改版本号 → 更新本文 → `cargo build --release` 同步 `dist/` → 提交并推送。对机 MCP 安装见 [`DEPLOY_MCP.md`](DEPLOY_MCP.md)。工位闭环落地见 [`WORKSTATION_CLOSED_LOOP.md`](WORKSTATION_CLOSED_LOOP.md)。
+
+---
+
+## 1.1.5 — 2026-09-03
+
+通用闭环：等待任意包/头/行（上升沿），阻塞式示波器停采 / 截图落盘 / 读取波形源文件。ASK 71 只是示例计划，引擎不写死 0x71。
+
+### 新增
+
+- 计划步骤：`wait.packet` + `rising`、`wait.header`、`wait_line`（正则 + 可选 `exclude`）。
+- `instrument.command` 步骤（接受 `"ScopeStop"` 与 `{ "ScopeStop": null }`）；执行器等到完成或超时。
+- `capture_scope.save: true`：阻塞直到 PNG 写入 `evidence/.../scope/`；默认 `false` 保持 `qi_pt_smoke` 的排队即过。
+- `instrument.waveform_source`：与 GUI「读取波形源文件」同一路径。`dir` 有值则跳过另存为；`overwrite: false` 时加 `-2`、`-3`…。不改波形分析浏览器目录，不改 `instrument.waveform`（CURVe）。
+- 配置 `apps.instruments.waveform_source_dir`（与 `save_dir` / `waveform_browser_dir` 独立）。计划占位符 `{instruments.waveform_source_dir}`。
+- HTTP / CLI / MCP：`instrument.waveform_source`；完成事件 `instrument.job_done`（路径 + 字节数，无点列）。
+- 示例 [`docs/examples/ask71_waveform_source.json`](examples/ask71_waveform_source.json)；工位说明 [`WORKSTATION_CLOSED_LOOP.md`](WORKSTATION_CLOSED_LOOP.md)。
+
+### 行为
+
+- 闭环仪表步骤在 ISF/截图完成前保持 Running，不再 `advance("queued")` 假 Pass。
+- 空的 `waveform_source_dir` 不会回退到分析页目录。
+
+### 文档 / 部署
+
+- `CLI_REFERENCE`、`DEPLOY_API`、`DEPLOY_MCP`、MCP README 与 1.1.5 对齐。对机 zip 含示例计划与工位 MD。
+
+---
+
+## 1.1.4 — 2026-09-03
+
+CLI / MCP 可驱动 GUI 全部主页面（切页、显隐工具、参数输入）。
+
+### 新增
+
+- CLI：`wiparse ui …`（需已启动的 `WiParse.exe`，不要加 `--local`）。
+  - `state` / `show` / `panels` / `prefs`
+  - `serial`：open / close / clear / filter / tab / name / browser
+  - `wave`：open / close / select / browser / bus / cursor / fit
+  - `calc`：get / set（`lc` `bandpass` `q` `rc` `crc` `convert`）
+  - `instrument`：select / scan / list / connect / disconnect / measure / capture / waveform / command
+- HTTP 有状态方法：`ui.state`、`ui.show`、`ui.panels`、`ui.prefs`、`ui.serial.*`、`ui.wave.*`、`ui.calc.*`、`ui.instrument.select`。
+- MCP 第六个工具：`wiparse_ui`（`op` + 可选 `tab` / `params`）。
+
+### 文档 / 部署
+
+- `docs/CLI_REFERENCE.md`、`docs/DEPLOY_API.md`、`docs/DEPLOY_MCP.md`、`mcp/wiparse/README.md` 与 1.1.4 对齐。
+- 对机 zip 含 `DEPLOY_MCP.md`、安装脚本、已编译 MCP；GUI 与 MCP 需同为 **1.1.4+**。
+
+### 兼容性
+
+- 旧 MCP（5 工具）仍可连新 GUI，但没有页面控制；对机请用本版本 zip 里的 `mcp/wiparse` 并跑 `setup-mcp.cmd`，然后**完全退出 Cursor** 再开。
+- 切页不会打开串口；监控仍用 `serial start/stop/select/send`。
 
 ---
 
