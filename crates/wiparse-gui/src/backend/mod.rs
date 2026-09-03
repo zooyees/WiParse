@@ -73,6 +73,7 @@ pub struct ApiBridge {
     pub(crate) request_tx: Sender<PendingRequest>,
     pub serial_write: Arc<Mutex<Option<Sender<Vec<u8>>>>>,
     pub running: Arc<AtomicBool>,
+    egui_ctx: Arc<Mutex<Option<egui::Context>>>,
 }
 
 impl ApiBridge {
@@ -85,6 +86,7 @@ impl ApiBridge {
             request_tx,
             serial_write: Arc::new(Mutex::new(None)),
             running: Arc::new(AtomicBool::new(true)),
+            egui_ctx: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -92,11 +94,32 @@ impl ApiBridge {
         self.requests.try_recv().ok()
     }
 
+    /// Called from the UI thread so Agent/CLI can wake a sleeping event loop.
+    pub fn attach_egui_ctx(&self, ctx: &egui::Context) {
+        let mut slot = self.egui_ctx.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.is_none() {
+            *slot = Some(ctx.clone());
+        }
+    }
+
+    pub fn wake_ui(&self) {
+        if let Ok(slot) = self.egui_ctx.lock() {
+            if let Some(ctx) = slot.as_ref() {
+                ctx.request_repaint();
+            }
+        }
+    }
+
     pub fn set_monitoring(&self, monitoring: bool, port: Option<String>, baud: Option<u32>) {
         if let Ok(mut s) = self.status.lock() {
             s.monitoring = monitoring;
-            s.port = port;
-            s.baud = baud;
+            // Keep last selected port/baud when stopping so health matches brief.
+            if port.is_some() {
+                s.port = port;
+            }
+            if baud.is_some() {
+                s.baud = baud;
+            }
         }
     }
 
@@ -176,28 +199,29 @@ fn handle_request(mut request: Request, bridge: &ApiBridge) -> Result<(), String
             respond_json(request, 200, &envelope_ok("capabilities", capabilities_json()))
         }
         (Method::Post, "/v1/invoke") => {
-            let body = read_body(&mut request)?;
-            let parsed: Value =
-                serde_json::from_str(&body).map_err(|e| format!("invalid JSON: {e}"))?;
-            let method_name = parsed
-                .get("method")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| "missing method".to_string())?
-                .to_string();
-            let params = parsed.get("params").cloned().unwrap_or_else(|| json!({}));
-            let reply = dispatch::invoke(bridge, &method_name, params);
-            let code = if reply.ok { 200 } else { 400 };
-            let payload = if reply.ok {
-                envelope_ok(&reply.cmd, reply.data)
-            } else {
-                envelope_err(
-                    &reply.cmd,
-                    reply.error.as_deref().unwrap_or("error"),
-                )
-            };
-            respond_json(request, code, &payload)
+            let bridge = bridge.clone();
+            thread::Builder::new()
+                .name("wiparse-api-invoke".into())
+                .spawn(move || {
+                    if let Err(e) = handle_invoke(request, &bridge) {
+                        tracing::warn!("API invoke error: {e}");
+                    }
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(())
         }
-        (Method::Get, "/v1/events") => serve_events(request, bridge),
+        (Method::Get, "/v1/events") => {
+            let bridge = bridge.clone();
+            thread::Builder::new()
+                .name("wiparse-api-events".into())
+                .spawn(move || {
+                    if let Err(e) = serve_events(request, &bridge) {
+                        tracing::warn!("API events error: {e}");
+                    }
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        }
         (Method::Options, _) => {
             let mut response = Response::empty(204);
             if let Ok(h) = Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]) {
@@ -224,6 +248,40 @@ fn handle_request(mut request: Request, bridge: &ApiBridge) -> Result<(), String
             )
         }
     }
+}
+
+fn handle_invoke(mut request: Request, bridge: &ApiBridge) -> Result<(), String> {
+    let body = match read_body(&mut request) {
+        Ok(b) => b,
+        Err(e) => {
+            return respond_json(request, 400, &envelope_err("invoke", &e));
+        }
+    };
+    let parsed: Value = match serde_json::from_str(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            return respond_json(
+                request,
+                400,
+                &envelope_err("invoke", &format!("invalid JSON: {e}")),
+            );
+        }
+    };
+    let method_name = match parsed.get("method").and_then(|v| v.as_str()) {
+        Some(m) => m.to_string(),
+        None => {
+            return respond_json(request, 400, &envelope_err("invoke", "missing method"));
+        }
+    };
+    let params = parsed.get("params").cloned().unwrap_or_else(|| json!({}));
+    let reply = dispatch::invoke(bridge, &method_name, params);
+    let code = if reply.ok { 200 } else { 400 };
+    let payload = if reply.ok {
+        envelope_ok(&reply.cmd, reply.data)
+    } else {
+        envelope_err(&reply.cmd, reply.error.as_deref().unwrap_or("error"))
+    };
+    respond_json(request, code, &payload)
 }
 
 fn serve_events(request: Request, bridge: &ApiBridge) -> Result<(), String> {

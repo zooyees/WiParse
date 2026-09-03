@@ -8,16 +8,6 @@ export interface ApiEnvelope {
   ts?: string;
 }
 
-export function apiBaseUrl(): string | null {
-  const url = process.env.WIPARSE_URL?.trim();
-  if (url) return url.replace(/\/$/, "");
-  // Prefer GUI API when explicitly enabled; otherwise callers use CLI.
-  if (process.env.WIPARSE_API_PREFER === "1") {
-    return "http://127.0.0.1:7878";
-  }
-  return null;
-}
-
 export function defaultApiUrl(): string {
   return (process.env.WIPARSE_URL ?? "http://127.0.0.1:7878").replace(/\/$/, "");
 }

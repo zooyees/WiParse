@@ -13,11 +13,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+use wiparse_core::brief::{IngestResult, LiveBrief};
 use wiparse_core::config::{load_config, save_config, AppConfig};
+use wiparse_core::evidence::{evidence_root, EvidencePack};
 use wiparse_core::i18n::{tr, tr_fmt, tr_monitoring, Lang};
 use wiparse_core::log::{build_file_store_worker, FileBuildEvent, LogStore};
 use wiparse_core::paths::project_path;
 use wiparse_core::serial::{list_ports, CapturedEvent, SerialSession};
+use wiparse_core::testrun::{decode_hex, RunVerdict, TestDriver, TestPlan, TickAction};
 
 /// One subfolder under the log browser root that contains `.txt` files.
 struct LogBrowserFolder {
@@ -80,6 +83,17 @@ pub struct SerialToolPanel {
     /// Last path that was scanned into `browser_folders`.
     browser_scanned_dir: String,
     browser_folders: Vec<LogBrowserFolder>,
+    live_brief: LiveBrief,
+    live_test: Option<LiveTest>,
+    last_pack: Option<serde_json::Value>,
+    pending_scope: Vec<String>,
+}
+
+struct LiveTest {
+    driver: TestDriver,
+    pack: EvidencePack,
+    scope_queue: Vec<String>,
+    finished: bool,
 }
 
 impl SerialToolPanel {
@@ -138,6 +152,10 @@ impl SerialToolPanel {
             browser_dir,
             browser_scanned_dir: String::new(),
             browser_folders: Vec::new(),
+            live_brief: LiveBrief::new(),
+            live_test: None,
+            last_pack: None,
+            pending_scope: Vec::new(),
         };
         panel.restore_open_log_files(&cfg.log_monitor.open_log_files);
         panel.refresh_log_browser();
@@ -477,7 +495,36 @@ impl SerialToolPanel {
         let _ = self.api_start_monitor(lang, None, None);
     }
 
-    /// Start monitor; optional port/baud override for API.
+    fn apply_port_baud(&mut self, port_override: Option<String>, baud_override: Option<u32>) {
+        if let Some(ref p) = port_override {
+            if let Some(idx) = self.ports.iter().position(|x| x == p) {
+                self.selected_port = idx;
+            } else {
+                self.ports.insert(0, p.clone());
+                self.selected_port = 0;
+            }
+        }
+        if let Some(b) = baud_override {
+            self.baud = b.to_string();
+            self.baud_custom = !self.baud_options.iter().any(|x| x == &self.baud);
+        }
+    }
+
+    /// Select port/baud in the UI without opening the serial device.
+    pub fn api_select_port(
+        &mut self,
+        _lang: Lang,
+        port: Option<String>,
+        baud: Option<u32>,
+    ) -> Result<(Option<String>, u32), String> {
+        if self.monitoring {
+            return Err(
+                "serial monitor is running; call serial.monitor.stop before select".into(),
+            );
+        }
+        self.apply_port_baud(port, baud);
+        Ok(self.current_port_baud())
+    }
     pub fn api_start_monitor(
         &mut self,
         lang: Lang,
@@ -543,10 +590,14 @@ impl SerialToolPanel {
             live.title = self.live_name.clone();
         }
         self.active_tab = 0;
+        self.live_brief.reset();
         Ok((port, baud))
     }
 
     pub fn api_stop_monitor(&mut self, lang: Lang) {
+        if self.live_test.is_some() {
+            let _ = self.finish_test(RunVerdict::Aborted, "monitor stopped");
+        }
         self.stop_monitor(lang);
     }
 
@@ -600,6 +651,310 @@ impl SerialToolPanel {
             .first()
             .map(|t| t.recent_lines(limit))
             .unwrap_or_default()
+    }
+
+    pub fn current_port_baud(&self) -> (Option<String>, u32) {
+        let port = self.ports.get(self.selected_port).cloned();
+        let baud = self.baud.parse().unwrap_or(0);
+        (port, baud)
+    }
+
+    pub fn api_brief(&self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let since = params
+            .get("since_row")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let detail = params.get("detail").and_then(|v| v.as_str());
+        let mut data = self.live_brief.snapshot_json(since, detail);
+        let (port, baud) = self.current_port_baud();
+        data["monitoring"] = serde_json::json!(self.monitoring);
+        data["port"] = serde_json::json!(port);
+        data["baud"] = serde_json::json!(baud);
+        if let Some(t) = &self.live_test {
+            data["run"] = serde_json::json!({
+                "id": t.pack.run_id,
+                "plan": t.driver.plan.id,
+                "verdict": t.driver.verdict,
+                "reason": t.driver.reason,
+                "step": t.driver.current_label(),
+                "dir": t.pack.dir.display().to_string(),
+            });
+        }
+        if self.tabs.is_empty() {
+            return err("log.brief", "no live tab");
+        }
+        ok("log.brief", data)
+    }
+
+    pub fn api_test_start(
+        &mut self,
+        lang: Lang,
+        params: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        if self.is_test_running() {
+            return Err("a test is already running".into());
+        }
+        let plan_v = params
+            .get("plan")
+            .cloned()
+            .ok_or_else(|| "missing plan".to_string())?;
+        let plan = TestPlan::from_json(&plan_v)?;
+        let port_ov = params
+            .get("port")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let baud_ov = params
+            .get("baud")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32);
+        if self.monitoring {
+            let (cur_port, cur_baud) = self.current_port_baud();
+            let port_differs = port_ov
+                .as_ref()
+                .is_some_and(|p| cur_port.as_deref() != Some(p.as_str()));
+            let baud_differs = baud_ov.is_some_and(|b| b != cur_baud);
+            if port_differs || baud_differs {
+                self.api_stop_monitor(lang);
+                self.api_start_monitor(lang, port_ov, baud_ov)?;
+            }
+        } else {
+            self.api_start_monitor(lang, port_ov, baud_ov)?;
+        }
+        let (port, baud) = self.current_port_baud();
+        let port = port.unwrap_or_default();
+        let pack = EvidencePack::create(&evidence_root(), plan.clone(), &port, baud)?;
+        let dir = pack.dir.display().to_string();
+        let run_id = pack.run_id.clone();
+        self.live_test = Some(LiveTest {
+            driver: TestDriver::new(plan),
+            pack,
+            scope_queue: Vec::new(),
+            finished: false,
+        });
+        self.status = format!("test {run_id}");
+        self.tick_test();
+        Ok(serde_json::json!({
+            "run_id": run_id,
+            "dir": dir,
+            "monitoring": self.monitoring,
+            "port": port,
+            "baud": baud,
+        }))
+    }
+
+    pub fn api_test_status(&self) -> serde_json::Value {
+        if let Some(t) = &self.live_test {
+            serde_json::json!({
+                "running": t.driver.is_running(),
+                "verdict": t.driver.verdict,
+                "reason": t.driver.reason,
+                "step": t.driver.current_label(),
+                "elapsed_s": t.driver.elapsed_s(),
+                "run_id": t.pack.run_id,
+                "dir": t.pack.dir.display().to_string(),
+                "steps": t.driver.step_log,
+            })
+        } else {
+            serde_json::json!({
+                "running": false,
+                "verdict": null,
+                "last": self.last_pack,
+            })
+        }
+    }
+
+    pub fn api_test_abort(&mut self, reason: &str) -> Result<serde_json::Value, String> {
+        let (verdict, why, act) = {
+            let t = self.live_test.as_mut().ok_or("no test running")?;
+            let act = t.driver.abort(reason);
+            (t.driver.verdict, t.driver.reason.clone(), act)
+        };
+        self.apply_tick_action(act);
+        self.finish_test(verdict, &why)
+    }
+
+    pub fn api_test_pack(&mut self) -> Result<serde_json::Value, String> {
+        if self.live_test.is_none() {
+            return self
+                .last_pack
+                .clone()
+                .ok_or_else(|| "no test pack (run test.start first)".into());
+        }
+        let now = self.live_brief.elapsed_s();
+        let due = self
+            .live_test
+            .as_mut()
+            .map(|t| t.pack.take_due_events(now))
+            .unwrap_or_default();
+        let rows: Vec<wiparse_core::evidence::CorrelateRow> = due
+            .into_iter()
+            .map(|ev| wiparse_core::evidence::CorrelateRow {
+                t: ev.t,
+                ev: ev.k,
+                reason: ev.x,
+                m: self.live_brief.metrics_window(ev.t - 0.05, ev.t + 0.10),
+                s: None,
+            })
+            .collect();
+        if let Some(t) = self.live_test.as_mut() {
+            for row in rows {
+                t.pack.push_correlate(row);
+            }
+        }
+        let finished = self
+            .live_test
+            .as_ref()
+            .is_some_and(|t| !t.driver.is_running() && !t.finished);
+        if finished {
+            let t = self.live_test.as_ref().unwrap();
+            let v = t.driver.verdict;
+            let r = t.driver.reason.clone();
+            return self.finish_test(v, &r);
+        }
+        let brief = self.live_brief.snapshot_json(0, None);
+        let t = self.live_test.as_ref().unwrap();
+        Ok(t.pack.pack_summary(
+            t.driver.verdict,
+            &t.driver.reason,
+            &t.driver.step_log,
+            &brief,
+        ))
+    }
+
+    fn ingest_live_batch(&mut self, start_row: u64, lines: &[String]) {
+        for (i, line) in lines.iter().enumerate() {
+            let row = start_row + i as u64;
+            let result = self.live_brief.ingest_line(row, line);
+            if let Some(t) = self.live_test.as_mut() {
+                let _ = t.pack.append_serial_line(line);
+                match &result {
+                    IngestResult::Event(ev) => {
+                        let _ = t.pack.on_event(ev);
+                    }
+                    IngestResult::Metric { t: ts, sample } => {
+                        let _ = t.pack.on_metric(*ts, sample);
+                    }
+                    IngestResult::None => {}
+                }
+            }
+        }
+    }
+
+    fn tick_test(&mut self) {
+        if !self.live_test.as_ref().is_some_and(|t| !t.finished) {
+            return;
+        }
+        let now = self.live_brief.elapsed_s();
+        let due = self
+            .live_test
+            .as_mut()
+            .map(|t| t.pack.take_due_events(now))
+            .unwrap_or_default();
+        let rows: Vec<wiparse_core::evidence::CorrelateRow> = due
+            .into_iter()
+            .map(|ev| wiparse_core::evidence::CorrelateRow {
+                t: ev.t,
+                ev: ev.k,
+                reason: ev.x,
+                m: self.live_brief.metrics_window(ev.t - 0.05, ev.t + 0.10),
+                s: None,
+            })
+            .collect();
+        let act = {
+            let SerialToolPanel {
+                live_brief,
+                live_test,
+                ..
+            } = self;
+            if let Some(t) = live_test.as_mut() {
+                for row in rows {
+                    t.pack.push_correlate(row);
+                }
+                t.driver.tick(live_brief)
+            } else {
+                TickAction::None
+            }
+        };
+        self.apply_tick_action(act);
+        if let Some(t) = self.live_test.as_ref() {
+            if !t.driver.is_running() && !t.finished {
+                let v = t.driver.verdict;
+                let r = t.driver.reason.clone();
+                let _ = self.finish_test(v, &r);
+            }
+        }
+    }
+
+    fn apply_tick_action(&mut self, act: TickAction) {
+        match act {
+            TickAction::None => {}
+            TickAction::Send { name, hex } => {
+                self.live_brief.note_send(&hex);
+                let send_err = match decode_hex(&hex) {
+                    Err(e) => Some(e),
+                    Ok(bytes) => match self.write_tx.as_ref() {
+                        None => Some("no serial write channel".into()),
+                        Some(tx) => tx
+                            .send(bytes)
+                            .err()
+                            .map(|_| "serial write channel closed".to_string()),
+                    },
+                };
+                if let Some(e) = send_err {
+                    if let Some(t) = self.live_test.as_mut() {
+                        let fail_act = t.driver.fail(&e);
+                        if let TickAction::Capture { tag } = fail_act {
+                            self.pending_scope.push(tag);
+                        }
+                    }
+                    return;
+                }
+                self.status = format!("test send {name}");
+            }
+            TickAction::Capture { tag } => {
+                self.pending_scope.push(tag.clone());
+                if let Some(t) = self.live_test.as_mut() {
+                    t.scope_queue.push(tag);
+                }
+            }
+            TickAction::Done => {}
+        }
+    }
+
+    fn finish_test(&mut self, verdict: RunVerdict, reason: &str) -> Result<serde_json::Value, String> {
+        let Some(mut t) = self.live_test.take() else {
+            return Err("no test".into());
+        };
+        t.finished = true;
+        let live = self.live_file.clone();
+        let summary = t.pack.finalize(
+            &self.live_brief,
+            verdict,
+            reason,
+            &t.driver.step_log,
+            live.as_deref(),
+        )?;
+        self.status = format!("test {:?} ({reason})", verdict);
+        self.last_pack = Some(summary.clone());
+        Ok(summary)
+    }
+
+    pub fn take_scope_captures(&mut self) -> Vec<String> {
+        let mut out = std::mem::take(&mut self.pending_scope);
+        if let Some(t) = self.live_test.as_mut() {
+            out.extend(std::mem::take(&mut t.scope_queue));
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    pub fn note_scope_capture(&mut self, tag: &str, device_id: Option<u64>, ok: bool) {
+        let t_s = self.live_brief.elapsed_s();
+        if let Some(t) = self.live_test.as_mut() {
+            t.pack.note_scope(tag, device_id, ok, t_s);
+        }
     }
 
     fn stop_monitor(&mut self, lang: Lang) {
@@ -996,7 +1351,13 @@ impl SerialToolPanel {
             }
         }
 
+        if stop_seen && self.live_test.is_some() {
+            let _ = self.finish_test(RunVerdict::Aborted, "monitor stopped");
+        }
+
         if !batch.is_empty() {
+            let start_row = self.tabs.first().map(|t| t.line_count() as u64).unwrap_or(0);
+            self.ingest_live_batch(start_row, &batch);
             if self.save_live_to_disk {
                 for line in &batch {
                     self.append_to_live_file(line);
@@ -1015,6 +1376,7 @@ impl SerialToolPanel {
                 live.append_lines(batch, update_live_filters);
             }
         }
+        self.tick_test();
         if self.save_live_to_disk
             && self.live_writer.is_some()
             && self.last_live_flush.elapsed() >= LIVE_FLUSH_INTERVAL
@@ -1029,6 +1391,7 @@ impl SerialToolPanel {
             || !self.pending_loads.is_empty()
             || !self.pending_lines.is_empty()
             || self.tabs.iter().any(LogTabPage::has_background_filter)
+            || self.is_test_running()
     }
 
     /// Background file load / RX backlog — repaint even when another main tab is visible.
@@ -1036,6 +1399,13 @@ impl SerialToolPanel {
         !self.pending_loads.is_empty()
             || !self.pending_lines.is_empty()
             || self.tabs.iter().any(LogTabPage::has_background_filter)
+            || self.is_test_running()
+    }
+
+    pub fn is_test_running(&self) -> bool {
+        self.live_test
+            .as_ref()
+            .is_some_and(|t| t.driver.is_running() && !t.finished)
     }
 
     pub fn is_monitoring(&self) -> bool {
@@ -1438,16 +1808,17 @@ impl SerialToolPanel {
                                         );
                                     } else {
                                         let list_h = ui.available_height().max(72.0);
-                                        let list_w = ctrl_w;
                                         let mut open_path: Option<PathBuf> = None;
-                                        egui::ScrollArea::new([false, true]) // vertical only
+                                        // Solid bar: floating overlay is easy to miss on this
+                                        // narrow card, so overflow looked like clipped names.
+                                        ui.spacing_mut().scroll.floating = false;
+                                        egui::ScrollArea::vertical()
                                             .id_salt("log_browser_tree")
                                             .max_height(list_h)
-                                            .max_width(list_w)
                                             .auto_shrink([false, false])
                                             .show(ui, |ui| {
-                                                ui.set_width(list_w);
-                                                ui.set_max_width(list_w);
+                                                let list_w = ui.available_width().max(1.0);
+                                                ui.set_min_width(list_w);
                                                 ui.spacing_mut().item_spacing.y = 2.0;
                                                 for folder in &self.browser_folders {
                                                     let header = format!(
@@ -1466,14 +1837,9 @@ impl SerialToolPanel {
                                                     ))
                                                     .default_open(false)
                                                     .show(ui, |ui| {
-                                                        // Indent leaves less width — use available.
                                                         let row_w =
                                                             ui.available_width().min(list_w).max(1.0);
-                                                        ui.set_width(row_w);
-                                                        ui.set_max_width(row_w);
-                                                        ui.set_clip_rect(
-                                                            ui.max_rect().intersect(ui.clip_rect()),
-                                                        );
+                                                        ui.set_min_width(row_w);
                                                         ui.spacing_mut().item_spacing.y = 1.0;
                                                         for (name, path) in &folder.files {
                                                             let resp = log_browser_file_row(
@@ -1488,6 +1854,8 @@ impl SerialToolPanel {
                                                         }
                                                     });
                                                 }
+                                                // Keep the last row above the card clip edge.
+                                                ui.add_space(8.0);
                                             });
                                         if let Some(path) = open_path {
                                             self.open_browser_file(path);
@@ -1888,6 +2256,19 @@ impl SerialToolPanel {
 
     pub fn status_text(&self) -> &str {
         &self.status
+    }
+
+    /// Monitor-only status for API (not file-open / indexing UI strings).
+    pub fn monitor_status_text(&self) -> String {
+        if self.monitoring {
+            let (port, baud) = self.current_port_baud();
+            match port {
+                Some(p) => format!("open {p} @ {baud}"),
+                None => format!("open @ {baud}"),
+            }
+        } else {
+            "stopped".into()
+        }
     }
 }
 

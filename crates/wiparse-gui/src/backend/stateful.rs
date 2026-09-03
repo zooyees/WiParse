@@ -19,6 +19,8 @@ pub fn drain_api_requests(
         let reply = handle(bridge, serial, instruments, lang, active_tab, req);
         let _ = reply; // reply already sent inside handle via req.reply
     }
+    let (port, baud) = serial.current_port_baud();
+    bridge.set_monitoring(serial.is_monitoring(), port, Some(baud));
 }
 
 fn handle(
@@ -53,21 +55,51 @@ fn handle(
             ok(&method, json!({ "stopped": true }))
         }
         "serial.monitor.status" => {
-            let st = bridge.status.lock().ok();
+            let (port, baud) = serial.current_port_baud();
             ok(
                 &method,
                 json!({
                     "monitoring": serial.is_monitoring(),
-                    "port": st.as_ref().and_then(|s| s.port.clone()),
-                    "baud": st.as_ref().and_then(|s| s.baud),
-                    "status": serial.status_text(),
+                    "port": port,
+                    "baud": baud,
+                    "status": serial.monitor_status_text(),
                 }),
             )
         }
+        "serial.select" => serial_select(serial, lang, &params),
         "serial.send" => serial_send(bridge, serial, &params),
         "serial.read" => serial_read(serial, &params),
         "log.tabs.list" => ok(&method, serial.api_tabs_list()),
         "log.lines.get" => serial.api_lines_get(&params),
+        "log.brief" => serial.api_brief(&params),
+        "test.start" => match serial.api_test_start(lang, &params) {
+            Ok(data) => {
+                if let Some(tx) = serial.take_write_sender() {
+                    *bridge.serial_write.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
+                }
+                let (port, baud) = serial.current_port_baud();
+                if serial.is_monitoring() {
+                    bridge.set_monitoring(true, port, Some(baud));
+                }
+                ok(&method, data)
+            }
+            Err(e) => err(&method, &e),
+        },
+        "test.status" => ok(&method, serial.api_test_status()),
+        "test.abort" => {
+            let reason = params
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("aborted");
+            match serial.api_test_abort(reason) {
+                Ok(data) => ok(&method, data),
+                Err(e) => err(&method, &e),
+            }
+        }
+        "test.pack" => match serial.api_test_pack() {
+            Ok(data) => ok(&method, data),
+            Err(e) => err(&method, &e),
+        },
         "instrument.scan" => instruments.api_scan(&params),
         "instrument.list" => ok(&method, instruments.api_list()),
         "instrument.connect" => instruments.api_connect(&params, lang),
@@ -109,6 +141,28 @@ fn serial_start(
             )
         }
         Err(e) => err("serial.monitor.start", &e),
+    }
+}
+
+fn serial_select(serial: &mut SerialToolPanel, lang: Lang, params: &Value) -> InvokeReply {
+    let port = params
+        .get("port")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let baud = params
+        .get("baud")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u32);
+    if port.is_none() && baud.is_none() {
+        return err("serial.select", "missing port or baud");
+    }
+    match serial.api_select_port(lang, port, baud) {
+        Ok((p, b)) => ok(
+            "serial.select",
+            json!({ "port": p, "baud": b, "monitoring": false }),
+        ),
+        Err(e) => err("serial.select", &e),
     }
 }
 
@@ -154,6 +208,12 @@ fn serial_send(bridge: &ApiBridge, serial: &SerialToolPanel, params: &Value) -> 
 }
 
 fn serial_read(serial: &SerialToolPanel, params: &Value) -> InvokeReply {
+    if !serial.is_monitoring() {
+        return err(
+            "serial.read",
+            "serial monitor is not running; call serial.monitor.start first",
+        );
+    }
     let limit = params
         .get("max_logs")
         .and_then(|v| v.as_u64())
@@ -162,7 +222,7 @@ fn serial_read(serial: &SerialToolPanel, params: &Value) -> InvokeReply {
     ok(
         "serial.read",
         json!({
-            "monitoring": serial.is_monitoring(),
+            "monitoring": true,
             "logs": lines.iter().map(|line| json!({ "line": line })).collect::<Vec<_>>(),
             "count": lines.len(),
         }),

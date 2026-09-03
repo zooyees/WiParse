@@ -2757,17 +2757,15 @@ impl WaveformAnalysisPanel {
                     }
                 };
                 let min_label_dt = x_span * (64.0 / plot_width_px as f64);
-                let mut last_label_t = f64::NEG_INFINITY;
                 let x_lo = bounds.min()[0];
                 let x_hi = bounds.max()[0];
+                let is_ctrl_event = |summary: &str| {
+                    matches!(summary, "START" | "Sr" | "STOP" | "CS" | "CS#")
+                };
                 for (_i, t0, t1, selected, summary) in &bus_markers {
                     if *t1 < x_lo || *t0 > x_hi {
                         continue;
                     }
-                    let is_event = matches!(
-                        summary.as_str(),
-                        "START" | "Sr" | "STOP" | "CS" | "CS#" | "BREAK"
-                    );
                     let color = if *selected {
                         Color32::from_rgb(0xFF, 0x6B, 0x6B)
                     } else if summary == "START" || summary == "Sr" || summary == "CS" {
@@ -2783,20 +2781,63 @@ impl WaveformAnalysisPanel {
                             .width(if *selected { 3.25_f32 } else { 2.15_f32 })
                             .name(""),
                     );
-                    let t_label = if is_event {
-                        *t0
+                }
+                // Data first so BREAK / control events cannot crowd 0xNN labels off the plot.
+                let mut shown_t: Vec<f64> = Vec::new();
+                let far_enough = |t: f64, shown: &[f64]| {
+                    shown.iter().all(|u| (t - *u).abs() >= min_label_dt)
+                };
+                let paint_label = |plot_ui: &mut egui_plot::PlotUi,
+                                       t_label: f64,
+                                       summary: &str,
+                                       selected: bool,
+                                       color: Color32| {
+                    plot_ui.add(
+                        PlotTextLabel::new(t_label, label_y, summary, color, 15.0)
+                            .highlight(selected),
+                    );
+                };
+                let marker_color = |selected: bool, summary: &str| {
+                    if selected {
+                        Color32::from_rgb(0xFF, 0x6B, 0x6B)
+                    } else if summary == "START" || summary == "Sr" || summary == "CS" {
+                        Color32::from_rgb(0x22, 0xC5, 0x5E)
+                    } else if summary == "STOP" || summary == "CS#" || summary == "BREAK" {
+                        Color32::from_rgb(0xF9, 0x73, 0x16)
                     } else {
-                        (*t0 + *t1) * 0.5
-                    };
-                    let show_text = *selected
-                        || is_event
-                        || (t_label - last_label_t).abs() >= min_label_dt;
-                    if show_text {
-                        last_label_t = t_label;
-                        plot_ui.add(
-                            PlotTextLabel::new(t_label, label_y, summary.as_str(), color, 15.0)
-                                .highlight(*selected),
-                        );
+                        Color32::from_rgb(0xA7, 0x8B, 0xFA)
+                    }
+                };
+                for (_i, t0, t1, selected, summary) in &bus_markers {
+                    if *t1 < x_lo || *t0 > x_hi {
+                        continue;
+                    }
+                    if is_ctrl_event(summary) || summary == "BREAK" {
+                        continue;
+                    }
+                    let t_label = (*t0 + *t1) * 0.5;
+                    if *selected || far_enough(t_label, &shown_t) {
+                        paint_label(plot_ui, t_label, summary, *selected, marker_color(*selected, summary));
+                        shown_t.push(t_label);
+                    }
+                }
+                for (_i, t0, t1, selected, summary) in &bus_markers {
+                    if *t1 < x_lo || *t0 > x_hi {
+                        continue;
+                    }
+                    if !is_ctrl_event(summary) {
+                        continue;
+                    }
+                    paint_label(plot_ui, *t0, summary, *selected, marker_color(*selected, summary));
+                    shown_t.push(*t0);
+                }
+                for (_i, t0, t1, selected, summary) in &bus_markers {
+                    if *t1 < x_lo || *t0 > x_hi || summary != "BREAK" {
+                        continue;
+                    }
+                    if *selected || far_enough(*t0, &shown_t) {
+                        paint_label(plot_ui, *t0, summary, *selected, marker_color(*selected, summary));
+                        shown_t.push(*t0);
                     }
                 }
 

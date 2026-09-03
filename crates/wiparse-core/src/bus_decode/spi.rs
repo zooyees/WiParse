@@ -1,6 +1,6 @@
 //! SPI decode: 2-wire / 4-wire / Dual / Quad, modes 0–3.
 
-use super::digital::{analog_to_edges, default_threshold, level_before, EdgeKind};
+use super::digital::{EdgeKind, LogicWave};
 use super::{try_push_frame, BusDecodeResult, BusFrame, MAX_DECODE_BYTES};
 use crate::instrument::WaveformTrace;
 
@@ -98,8 +98,7 @@ impl SpiConfig {
 }
 
 struct Lane<'a> {
-    trace: &'a WaveformTrace,
-    thr: f64,
+    wave: LogicWave<'a>,
 }
 
 enum Evt {
@@ -142,27 +141,23 @@ pub fn decode_spi(
         };
     }
 
-    let thr_clk = threshold.unwrap_or_else(|| default_threshold(clk));
+    let clk_w = LogicWave::new(clk, threshold);
     let lane0 = Lane {
-        trace: io0,
-        thr: threshold.unwrap_or_else(|| default_threshold(io0)),
+        wave: LogicWave::new(io0, threshold),
     };
     let lane1 = io1.map(|t| Lane {
-        trace: t,
-        thr: threshold.unwrap_or_else(|| default_threshold(t)),
+        wave: LogicWave::new(t, threshold),
     });
     let lane2 = io2.map(|t| Lane {
-        trace: t,
-        thr: threshold.unwrap_or_else(|| default_threshold(t)),
+        wave: LogicWave::new(t, threshold),
     });
     let lane3 = io3.map(|t| Lane {
-        trace: t,
-        thr: threshold.unwrap_or_else(|| default_threshold(t)),
+        wave: LogicWave::new(t, threshold),
     });
-    let thr_cs = cs.map(|t| threshold.unwrap_or_else(|| default_threshold(t)));
+    let cs_w = cs.map(|t| LogicWave::new(t, threshold));
 
     let want_rise = cfg.mode.sample_rising();
-    let clk_edges = analog_to_edges(clk, thr_clk, 0.08);
+    let clk_edges = clk_w.edges();
     let mut events = Vec::new();
     for e in &clk_edges {
         let is_sample = if want_rise {
@@ -174,8 +169,8 @@ pub fn decode_spi(
             events.push(Evt::Clk(e.time));
         }
     }
-    if let (Some(cs_trace), Some(thr)) = (cs, thr_cs) {
-        for e in analog_to_edges(cs_trace, thr, 0.08) {
+    if let Some(cs_wave) = cs_w.as_ref() {
+        for e in cs_wave.edges() {
             let on = if cfg.cs_active_low {
                 e.kind == EdgeKind::Falling
             } else {
@@ -195,9 +190,9 @@ pub fn decode_spi(
     let mut frames = Vec::new();
     let mut used = 0usize;
     let mut truncated = false;
-    let mut cs_on = if let (Some(cs_trace), Some(thr)) = (cs, thr_cs) {
+    let mut cs_on = if let Some(cs_wave) = cs_w.as_ref() {
         let t0 = clk.x.first().copied().unwrap_or(0.0);
-        let high = level_before(cs_trace, thr, t0 + 1e-30).unwrap_or(!cfg.cs_active_low);
+        let high = cs_wave.before(t0 + 1e-30).unwrap_or(!cfg.cs_active_low);
         if cfg.cs_active_low {
             !high
         } else {
@@ -434,8 +429,7 @@ fn evt_pri(e: &Evt) -> u8 {
 }
 
 fn sample_lane(lane: Option<&Lane<'_>>, t: f64) -> bool {
-    lane.and_then(|l| level_before(l.trace, l.thr, t))
-        .unwrap_or(false)
+    lane.and_then(|l| l.wave.before(t)).unwrap_or(false)
 }
 
 fn sample_packed(

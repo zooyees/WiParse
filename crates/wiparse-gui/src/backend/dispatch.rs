@@ -17,7 +17,15 @@ use wiparse_core::wave::{
 };
 use wiparse_core::VERSION;
 
+fn canonical_method(method: &str) -> &str {
+    match method {
+        "serial.status" => "serial.monitor.status",
+        _ => method,
+    }
+}
+
 pub fn invoke(bridge: &ApiBridge, method: &str, params: Value) -> InvokeReply {
+    let method = canonical_method(method);
     if is_stateful(method) {
         return invoke_stateful(bridge, method, params);
     }
@@ -79,7 +87,8 @@ fn invoke_stateful(bridge: &ApiBridge, method: &str, params: Value) -> InvokeRep
     if bridge.request_tx.send(pending).is_err() {
         return err(method, "GUI API bridge closed");
     }
-    match rx.recv_timeout(Duration::from_secs(60)) {
+    bridge.wake_ui();
+    match rx.recv_timeout(Duration::from_secs(15)) {
         Ok(reply) => reply,
         Err(_) => err(method, "timeout waiting for GUI (is WiParse running?)"),
     }
@@ -176,6 +185,14 @@ fn parse_channels(spec: &str) -> Vec<&str> {
     }
 }
 
+fn require_session(conn: &rusqlite::Connection, session_id: i64) -> Result<(), String> {
+    match get_session(conn, session_id) {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(format!("session {session_id} not found")),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 fn wave_session(method: &str, params: &Value) -> InvokeReply {
     let session_id = match params.get("session_id").and_then(|v| v.as_i64()) {
         Some(id) => id,
@@ -190,6 +207,7 @@ fn wave_session(method: &str, params: &Value) -> InvokeReply {
     let from = params.get("from").and_then(|v| v.as_f64());
     let to = params.get("to").and_then(|v| v.as_f64());
     match db_conn().and_then(|c| {
+        require_session(&c, session_id)?;
         fetch_session_metrics(&c, session_id, from, to).map_err(|e| e.to_string())
     }) {
         Ok(rows) => {
@@ -216,6 +234,7 @@ fn wave_export(method: &str, params: &Value) -> InvokeReply {
     let from = params.get("from").and_then(|v| v.as_f64());
     let to = params.get("to").and_then(|v| v.as_f64());
     match db_conn().and_then(|c| {
+        require_session(&c, session_id)?;
         fetch_session_metrics(&c, session_id, from, to).map_err(|e| e.to_string())
     }) {
         Ok(rows) => {

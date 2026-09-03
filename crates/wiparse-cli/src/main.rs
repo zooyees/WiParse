@@ -26,20 +26,30 @@ use wiparse_core::wave::{
 use wiparse_core::VERSION;
 
 #[derive(Parser, Debug)]
-#[command(name = "wiparse", version = VERSION, about = "WiParse headless CLI")]
+#[command(
+    name = "wiparse",
+    version = VERSION,
+    about = "WiParse JSON CLI. Prefers a running WiParse.exe; use --local for headless.",
+    after_help = "Docs: docs/CLI_REFERENCE.md  |  API: docs/DEPLOY_API.md",
+    arg_required_else_help = true
+)]
 struct Cli {
-    #[arg(long, default_value_t = true, global = true)]
+    /// Accepted for compatibility; output is always JSON.
+    #[arg(long, default_value_t = true, global = true, hide = true)]
     json: bool,
+    /// Pretty-print JSON.
     #[arg(long, global = true)]
     pretty: bool,
+    /// Print only the data / error body (no envelope).
     #[arg(short, long, global = true)]
     quiet: bool,
+    /// Config file (sets WCM_CONFIG).
     #[arg(long, global = true)]
     config: Option<PathBuf>,
-    /// Attach to running WiParse.exe API (default http://127.0.0.1:7878 via WIPARSE_URL).
+    /// GUI API URL (default WIPARSE_URL or http://127.0.0.1:7878).
     #[arg(long, global = true)]
     url: Option<String>,
-    /// Force local mode even if WIPARSE_URL is set.
+    /// Do not attach to WiParse.exe; open devices in this process.
     #[arg(long, global = true)]
     local: bool,
     #[command(subcommand)]
@@ -48,33 +58,53 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Print version.
     Version,
+    /// List serial ports.
     Ports,
-    /// GUI embedded API helpers (requires WiParse.exe running).
-    #[command(subcommand)]
+    /// Call the GUI embedded API (requires WiParse.exe).
+    #[command(subcommand, arg_required_else_help = true)]
     Api(ApiCmd),
-    #[command(subcommand)]
+    /// Serial capture / send (attaches to GUI monitor when available).
+    #[command(subcommand, arg_required_else_help = true)]
     Serial(SerialCmd),
-    #[command(subcommand)]
+    /// Compact live-log brief (requires WiParse.exe).
+    #[command(subcommand, arg_required_else_help = true)]
+    Log(LogCmd),
+    /// Closed-loop test runner (requires WiParse.exe).
+    #[command(subcommand, arg_required_else_help = true)]
+    Test(TestCmd),
+    /// Parse Qi ASK/FSK lines or AA55 metric frames.
+    #[command(subcommand, arg_required_else_help = true)]
     Parse(ParseCmd),
-    #[command(subcommand)]
+    /// SQLite capture sessions.
+    #[command(subcommand, arg_required_else_help = true)]
     Session(SessionCmd),
-    #[command(subcommand)]
+    /// Metrics waveform JSON / CSV.
+    #[command(subcommand, arg_required_else_help = true)]
     Wave(WaveCmd),
-    #[command(subcommand)]
+    /// VISA oscilloscope shortcuts (local). GUI instruments: api invoke instrument.*.
+    #[command(subcommand, arg_required_else_help = true)]
     Scope(ScopeCmd),
 }
 
 #[derive(Subcommand, Debug)]
 enum ApiCmd {
+    /// GET /v1/health
     Health,
+    /// GET /v1/capabilities
     Capabilities,
+    /// POST /v1/invoke — `wiparse api invoke serial.ports`
     Invoke {
+        /// Method name (or pass --method).
+        #[arg(value_name = "METHOD")]
+        method_pos: Option<String>,
         #[arg(long)]
-        method: String,
-        #[arg(long, default_value = "{}")]
+        method: Option<String>,
+        #[arg(short, long, default_value = "{}")]
         params: String,
     },
+    /// GET /v1/events NDJSON stream
     Events {
         #[arg(long, default_value_t = 0)]
         since_seq: u64,
@@ -83,6 +113,25 @@ enum ApiCmd {
 
 #[derive(Subcommand, Debug)]
 enum SerialCmd {
+    /// Start GUI serial monitor (requires WiParse.exe).
+    Start {
+        #[arg(long)]
+        port: String,
+        #[arg(long, default_value_t = 2_000_000)]
+        baud: u32,
+    },
+    /// Stop GUI serial monitor.
+    Stop,
+    /// GUI serial monitor status.
+    Status,
+    /// Set port/baud on the GUI without opening (requires WiParse.exe).
+    Select {
+        #[arg(long)]
+        port: Option<String>,
+        #[arg(long)]
+        baud: Option<u32>,
+    },
+    /// Capture metrics/logs. Local mode needs --duration, --max-metrics, or --max-logs.
     Read {
         #[arg(long)]
         port: String,
@@ -99,6 +148,7 @@ enum SerialCmd {
         #[arg(long)]
         save_db: bool,
     },
+    /// Endless NDJSON stream (Ctrl+C to stop). Local only.
     Stream {
         #[arg(long)]
         port: String,
@@ -109,6 +159,7 @@ enum SerialCmd {
         #[arg(long)]
         demo: bool,
     },
+    /// Send hex bytes. Attached: GUI monitor (port/baud ignored). `--local`: opens --port.
     Send {
         #[arg(long)]
         port: String,
@@ -120,21 +171,60 @@ enum SerialCmd {
 }
 
 #[derive(Subcommand, Debug)]
+enum LogCmd {
+    /// List log tabs.
+    Tabs,
+    /// Compact session brief for Agent (no raw lines).
+    Brief {
+        #[arg(long, default_value_t = 0)]
+        since: u64,
+        #[arg(long)]
+        detail: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TestCmd {
+    /// Start a plan (JSON file). Starts the GUI monitor if needed.
+    Run {
+        #[arg(long)]
+        plan: PathBuf,
+        #[arg(long)]
+        port: Option<String>,
+        #[arg(long)]
+        baud: Option<u32>,
+    },
+    /// Running / last test status.
+    Status,
+    /// Abort the running test.
+    Abort {
+        #[arg(long, default_value = "user")]
+        reason: String,
+    },
+    /// Evidence pack summary (writes skeleton if the run just finished).
+    Pack,
+}
+
+#[derive(Subcommand, Debug)]
 enum ParseCmd {
+    /// Parse one Qi ASK/FSK log line.
     Line {
         #[arg(long)]
         text: String,
     },
+    /// Parse one AA55 metric frame.
     Metrics {
         #[arg(long)]
         text: String,
     },
+    /// Parse Qi / metrics lines from a file.
     File {
         #[arg(long)]
         path: PathBuf,
         #[arg(long)]
         limit: Option<usize>,
     },
+    /// Parse Qi / metrics lines from stdin.
     Stdin {
         #[arg(long)]
         limit: Option<usize>,
@@ -143,10 +233,12 @@ enum ParseCmd {
 
 #[derive(Subcommand, Debug)]
 enum SessionCmd {
+    /// List recent SQLite sessions.
     List {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
+    /// Show one session by id.
     Show {
         #[arg(long)]
         id: i64,
@@ -155,6 +247,7 @@ enum SessionCmd {
 
 #[derive(Subcommand, Debug)]
 enum WaveCmd {
+    /// Capture live metrics into waveform JSON (local serial; use --local if GUI holds the port).
     Live {
         #[arg(long)]
         port: String,
@@ -167,6 +260,7 @@ enum WaveCmd {
         #[arg(long)]
         demo: bool,
     },
+    /// Waveform JSON (or CSV) from a saved session.
     Session {
         #[arg(long)]
         session_id: i64,
@@ -179,6 +273,7 @@ enum WaveCmd {
         #[arg(long, default_value = "json")]
         format: String,
     },
+    /// Write session metrics to a file.
     Export {
         #[arg(long)]
         session_id: i64,
@@ -195,13 +290,16 @@ enum WaveCmd {
 
 #[derive(Subcommand, Debug)]
 enum ScopeCmd {
+    /// List VISA oscilloscopes.
     List,
+    /// Capture a screenshot.
     Shot {
         #[arg(long, default_value_t = 0)]
         index: usize,
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Read a channel waveform.
     Wave {
         #[arg(long, default_value_t = 0)]
         index: usize,
@@ -232,6 +330,7 @@ fn db_conn() -> Result<rusqlite::Connection, String> {
 
 fn main() {
     let cli = Cli::parse();
+    let _ = &cli.json;
     apply_config(&cli);
     let o = opts(&cli);
 
@@ -270,16 +369,35 @@ fn attach_url(cli: &Cli) -> Option<String> {
     if let Ok(url) = std::env::var("WIPARSE_URL") {
         return Some(url);
     }
-    let url = attach::default_url();
-    attach::health(&url).ok().map(|_| url)
+    Some(attach::default_url())
 }
 
 fn map_to_invoke(cli: &Cli) -> Option<(String, serde_json::Value)> {
     match &cli.command {
         Commands::Ports => Some(("serial.ports".into(), json!({}))),
+        Commands::Serial(SerialCmd::Start { port, baud }) => Some((
+            "serial.monitor.start".into(),
+            json!({ "port": port, "baud": baud }),
+        )),
+        Commands::Serial(SerialCmd::Stop) => Some(("serial.monitor.stop".into(), json!({}))),
+        Commands::Serial(SerialCmd::Status) => Some(("serial.monitor.status".into(), json!({}))),
+        Commands::Serial(SerialCmd::Select { port, baud }) => Some((
+            "serial.select".into(),
+            json!({ "port": port, "baud": baud }),
+        )),
         Commands::Serial(SerialCmd::Send { hex_data, .. }) => {
             Some(("serial.send".into(), json!({ "hex": hex_data })))
         }
+        Commands::Log(LogCmd::Tabs) => Some(("log.tabs.list".into(), json!({}))),
+        Commands::Log(LogCmd::Brief { since, detail }) => Some((
+            "log.brief".into(),
+            json!({ "since_row": since, "detail": detail }),
+        )),
+        Commands::Test(TestCmd::Status) => Some(("test.status".into(), json!({}))),
+        Commands::Test(TestCmd::Abort { reason }) => {
+            Some(("test.abort".into(), json!({ "reason": reason })))
+        }
+        Commands::Test(TestCmd::Pack) => Some(("test.pack".into(), json!({}))),
         Commands::Serial(SerialCmd::Read {
             port,
             baud,
@@ -407,32 +525,35 @@ fn run(cli: &Cli, _o: &OutputOptions) -> Result<(String, serde_json::Value), (St
         let url = cli.url.clone().unwrap_or_else(attach::default_url);
         return match cmd {
             ApiCmd::Health => attach::health(&url)
+                .and_then(attach::data_or_error)
                 .map(|data| ("api.health".into(), data))
                 .map_err(|e| ("api.health".into(), e)),
             ApiCmd::Capabilities => attach::capabilities(&url)
+                .and_then(attach::data_or_error)
                 .map(|data| ("api.capabilities".into(), data))
                 .map_err(|e| ("api.capabilities".into(), e)),
-            ApiCmd::Invoke { method, params } => {
-                let params: serde_json::Value =
-                    serde_json::from_str(params).unwrap_or_else(|_| json!({}));
-                match attach::invoke(&url, method, params) {
-                    Ok(envelope) => {
-                        if envelope.get("ok").and_then(|v| v.as_bool()) == Some(true) {
-                            Ok((
-                                method.clone(),
-                                envelope.get("data").cloned().unwrap_or(json!({})),
-                            ))
-                        } else {
-                            Err((
-                                method.clone(),
-                                envelope
-                                    .pointer("/error/message")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("invoke failed")
-                                    .to_string(),
-                            ))
-                        }
-                    }
+            ApiCmd::Invoke {
+                method,
+                method_pos,
+                params,
+            } => {
+                let method = method
+                    .clone()
+                    .or_else(|| method_pos.clone())
+                    .ok_or_else(|| {
+                        (
+                            "api.invoke".into(),
+                            "missing method (usage: api invoke <method> [--params JSON])".into(),
+                        )
+                    })?;
+                let params: serde_json::Value = serde_json::from_str(params).map_err(|e| {
+                    (
+                        "api.invoke".into(),
+                        format!("invalid --params JSON: {e}"),
+                    )
+                })?;
+                match attach::invoke_data(&url, &method, params) {
+                    Ok(data) => Ok((method.clone(), data)),
                     Err(e) => Err((method.clone(), e)),
                 }
             }
@@ -440,25 +561,31 @@ fn run(cli: &Cli, _o: &OutputOptions) -> Result<(String, serde_json::Value), (St
         };
     }
 
+    if let Commands::Test(TestCmd::Run { plan, port, baud }) = &cli.command {
+        let text = fs::read_to_string(plan).map_err(|e| ("test.start".into(), e.to_string()))?;
+        let plan_json: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+            (
+                "test.start".into(),
+                format!("invalid plan JSON: {e}"),
+            )
+        })?;
+        let url = attach_url(cli).ok_or_else(|| {
+            (
+                "test.start".into(),
+                "test run needs a running WiParse.exe (drop --local)".into(),
+            )
+        })?;
+        let params = json!({ "plan": plan_json, "port": port, "baud": baud });
+        return match attach::invoke_data(&url, "test.start", params) {
+            Ok(data) => Ok(("test.start".into(), data)),
+            Err(e) => Err(("test.start".into(), e)),
+        };
+    }
+
     if let Some(url) = attach_url(cli) {
         if let Some((method, params)) = map_to_invoke(cli) {
-            match attach::invoke(&url, &method, params) {
-                Ok(envelope) => {
-                    if envelope.get("ok").and_then(|v| v.as_bool()) == Some(true) {
-                        return Ok((
-                            method,
-                            envelope.get("data").cloned().unwrap_or(json!({})),
-                        ));
-                    }
-                    return Err((
-                        method,
-                        envelope
-                            .pointer("/error/message")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("invoke failed")
-                            .to_string(),
-                    ));
-                }
+            match attach::invoke_data(&url, &method, params) {
+                Ok(data) => return Ok((method, data)),
                 Err(e) => return Err((method, e)),
             }
         }
@@ -494,6 +621,17 @@ fn run(cli: &Cli, _o: &OutputOptions) -> Result<(String, serde_json::Value), (St
             ))
         }
         Commands::Serial(SerialCmd::Stream { .. }) => unreachable!("handled in main"),
+        Commands::Serial(SerialCmd::Start { .. })
+        | Commands::Serial(SerialCmd::Stop)
+        | Commands::Serial(SerialCmd::Status)
+        | Commands::Serial(SerialCmd::Select { .. }) => Err((
+            "serial.monitor".into(),
+            "serial start/stop/status/select need a running WiParse.exe (drop --local)".into(),
+        )),
+        Commands::Log(_) | Commands::Test(_) => Err((
+            "test".into(),
+            "log/test commands need a running WiParse.exe (drop --local)".into(),
+        )),
         Commands::Serial(SerialCmd::Read {
             port,
             baud,
@@ -503,6 +641,16 @@ fn run(cli: &Cli, _o: &OutputOptions) -> Result<(String, serde_json::Value), (St
             demo,
             save_db,
         }) => {
+            if !*demo
+                && duration.is_none()
+                && max_metrics.is_none()
+                && max_logs.is_none()
+            {
+                return Err((
+                    "serial.read".into(),
+                    "specify --duration, --max-metrics, or --max-logs (or --demo)".into(),
+                ));
+            }
             if *demo {
                 let m = parse_metric_frame("AA55:9000:1500:8500:1400:4000:3000:45:80:EDED")
                     .ok_or_else(|| ("serial.read".into(), "demo parse failed".into()))?;
@@ -744,6 +892,14 @@ fn run(cli: &Cli, _o: &OutputOptions) -> Result<(String, serde_json::Value), (St
             out,
         }) => {
             let conn = db_conn().map_err(|e| ("wave.export".into(), e))?;
+            let _ = get_session(&conn, *session_id)
+                .map_err(|e| ("wave.export".into(), e.to_string()))?
+                .ok_or_else(|| {
+                    (
+                        "wave.export".into(),
+                        format!("session {session_id} not found"),
+                    )
+                })?;
             let rows = fetch_session_metrics(&conn, *session_id, *rel_from, *rel_to)
                 .map_err(|e| ("wave.export".into(), e.to_string()))?;
             if let Some(parent) = out.parent() {

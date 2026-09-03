@@ -527,6 +527,22 @@ impl InstrumentControlPanel {
         let _ = pending.id;
     }
 
+    pub fn first_oscilloscope_id(&self) -> Option<u64> {
+        if let Some(id) = self.selected_id {
+            if self
+                .devices
+                .iter()
+                .any(|d| d.id == id && d.kind == InstrumentKind::Oscilloscope)
+            {
+                return Some(id);
+            }
+        }
+        self.devices
+            .iter()
+            .find(|d| d.kind == InstrumentKind::Oscilloscope)
+            .map(|d| d.id)
+    }
+
     pub fn device_count(&self) -> usize {
         self.devices.len()
     }

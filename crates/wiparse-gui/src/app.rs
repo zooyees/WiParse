@@ -653,6 +653,7 @@ impl WiParseApp {
 
 impl eframe::App for WiParseApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.api.attach_egui_ctx(ctx);
         if !self.update_startup_checked {
             self.update_startup_checked = true;
             self.updater.maybe_check_on_startup();
@@ -686,6 +687,17 @@ impl eframe::App for WiParseApp {
         );
         // Live filters only need refresh when serial UI shows the live tab.
         self.serial.drain_events_with_bus(live_filters, Some(&self.api));
+        for tag in self.serial.take_scope_captures() {
+            let id = self.instruments.first_oscilloscope_id();
+            let ok = if let Some(device_id) = id {
+                self.instruments
+                    .api_capture(&serde_json::json!({ "device_id": device_id }))
+                    .ok
+            } else {
+                false
+            };
+            self.serial.note_scope_capture(&tag, id, ok);
+        }
         // Instrument workers can deliver large waveform/image payloads. Do not
         // deserialize, rebuild plots, or schedule its live repaint loop while
         // the user is working in another tool.
@@ -708,6 +720,10 @@ impl eframe::App for WiParseApp {
                 500
             };
             ctx.request_repaint_after(std::time::Duration::from_millis(ms));
+        } else {
+            // Keep draining Agent/MCP invoke while idle; otherwise stateful
+            // methods wait 15s and time out.
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
         }
 
         let light = self.cfg.ui.theme == "light";

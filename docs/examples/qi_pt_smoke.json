@@ -1,0 +1,19 @@
+{
+  "id": "qi_pt_smoke",
+  "macros": {
+    "PING": "AA55"
+  },
+  "abort": {
+    "on_ept": false,
+    "csum_gt": 8,
+    "timeout_s": 30,
+    "vin_gt": 20,
+    "capture_scope": true
+  },
+  "steps": [
+    { "wait": { "phase": "pt", "timeout_s": 12 } },
+    { "action": "NOP" },
+    { "expect": { "ept": false, "timeout_s": 3 } },
+    { "capture_scope": { "tag": "pt" } }
+  ]
+}

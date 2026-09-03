@@ -9,3 +9,7 @@ monitor.log
 log/
 logs/
 scope_captures/
+node_modules/
+/WiParse-Deploy/
+/WiParse-Deploy.zip
+.cursor/

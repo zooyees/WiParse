@@ -4,8 +4,8 @@
 
 - **长驻进程**：`WiParse.exe` 独占串口 / 仪器，画面走进程内通道（不经网络）。
 - **嵌入式 API**：默认 `http://127.0.0.1:7878`
-- **CLI**：自动探测或通过 `--url` / `WIPARSE_URL` attach；`--local` 强制独立模式。
-- **MCP**：优先 `WIPARSE_URL` + `wiparse_invoke`；也可走 CLI attach。
+- **CLI**：默认 attach `WIPARSE_URL` / `--url` / `http://127.0.0.1:7878`；GUI 未运行则报连接错误，不会悄悄打开本机串口。`--local` 才在本进程独占设备。
+- **MCP**：`WIPARSE_URL` + `wiparse_brief` / `wiparse_select` / `wiparse_test` / `wiparse_send` / `wiparse_report_pack`（HTTP，紧凑 JSON）。
 
 不单独部署 daemon。
 
@@ -63,8 +63,6 @@ Copy-Item target\release\wiparse.exe     dist\WiParse-CLI.exe -Force
 |------|------|------|
 | `WIPARSE_API_BIND` | GUI 内嵌 API 监听地址（仅 GUI） | `127.0.0.1:7878` |
 | `WIPARSE_URL` | CLI / MCP 连接的 API 根 URL | `http://127.0.0.1:7878` |
-| `WIPARSE_LOCAL` | MCP 侧设为任意值时强制 CLI 本地模式 | （未设） |
-| `WIPARSE_CLI_PATH` | MCP 解析 CLI 路径 | 自动探测 `dist/WiParse-CLI.exe` |
 
 ---
 
@@ -95,11 +93,15 @@ Copy-Item target\release\wiparse.exe     dist\WiParse-CLI.exe -Force
 }
 ```
 
+失败的 invoke 返回 **HTTP 400** 与同一信封（`ok: false` + `error.message`）。CLI 会展开该字段；只有 TCP 连不上才提示 GUI 未运行。
+
 **有状态方法**（需 GUI 主线程，共享会话）示例：
 
-- `serial.monitor.start` / `stop` / `status`
-- `serial.send`（需先 `monitor.start`）
-- `instrument.*`、`log.tabs.list`、`log.lines.get`、`system.ui.state`
+- `serial.monitor.start` / `stop` / `status`（`serial.status` 为 status 别名）
+- `serial.select`（只改口/波特率，不打开；监控已开时需先 stop）
+- `serial.send` / `serial.read`（需先 `monitor.start`；停着时读缓冲用 `log.lines.get`）
+- `instrument.*`、`log.tabs.list`、`log.lines.get`、`log.brief`、`system.ui.state`
+- `test.start` / `status` / `abort` / `pack`（闭环执行器 + 证据包）
 
 无状态方法（parse / session / scope / wave 等）可在 API 线程直接执行。
 
@@ -117,18 +119,21 @@ CLI：
 
 ## 5. CLI 用法（attach）
 
-GUI 已启动时，CLI 会自动探测默认 API；也可显式指定：
+缺省 attach 默认 API（不先做 health 探测）。GUI 未开时会连接失败，而不是改走 `--local`。也可显式指定：
 
 ```powershell
 $env:WIPARSE_URL = "http://127.0.0.1:7878"
 
 .\dist\WiParse-CLI.exe api health
 .\dist\WiParse-CLI.exe api capabilities
-.\dist\WiParse-CLI.exe api invoke --method serial.ports --params "{}"
-
-.\dist\WiParse-CLI.exe ports
+.\dist\WiParse-CLI.exe serial select --port COM4 --baud 200000
+.\dist\WiParse-CLI.exe serial start --port COM3 --baud 2000000
 .\dist\WiParse-CLI.exe serial send --port COM3 --hex AA55
-.\dist\WiParse-CLI.exe --url http://127.0.0.1:7878 parse line --text "..."
+.\dist\WiParse-CLI.exe serial read --port COM3 --max-logs 50
+.\dist\WiParse-CLI.exe serial stop
+
+.\dist\WiParse-CLI.exe api invoke serial.ports
+.\dist\WiParse-CLI.exe api invoke --method serial.ports --params "{}"
 ```
 
 强制本地（不 attach、自己开串口）：
@@ -140,39 +145,23 @@ $env:WIPARSE_URL = "http://127.0.0.1:7878"
 典型 Agent 串口流程：
 
 ```powershell
-.\dist\WiParse-CLI.exe api invoke --method serial.monitor.start --params "{\"port\":\"COM3\",\"baud\":2000000}"
-.\dist\WiParse-CLI.exe api invoke --method serial.send --params "{\"hex\":\"AA55\"}"
-.\dist\WiParse-CLI.exe api invoke --method serial.read --params "{\"max_logs\":50}"
-.\dist\WiParse-CLI.exe api invoke --method serial.monitor.stop --params "{}"
+.\dist\WiParse-CLI.exe serial start --port COM3 --baud 2000000
+.\dist\WiParse-CLI.exe serial send --port COM3 --hex AA55
+.\dist\WiParse-CLI.exe serial read --port COM3 --max-logs 50
+.\dist\WiParse-CLI.exe serial stop
 ```
 
 ---
 
 ## 6. MCP（E：直连 HTTP）
 
-`mcp/wiparse` 新增工具：
+`mcp/wiparse` 五个工具（紧凑 JSON，HTTP）：`wiparse_brief`、`wiparse_select`、`wiparse_test`、`wiparse_send`、`wiparse_report_pack`。不要把 `serial.txt` 读进模型。
 
-- `wiparse_health` / `wiparse_capabilities` / `wiparse_invoke`（直连 GUI API）
-- 原有 `wiparse_ports` 等仍走 CLI；若设置了 `WIPARSE_URL`，CLI 会带 `--url` attach
+对机部署（含安装脚本）：见 [`DEPLOY_MCP.md`](DEPLOY_MCP.md)。不要把本仓库开发路径写进对机的 Cursor 配置。
 
-Cursor / MCP 配置示例：
+Cursor / MCP 配置由 `mcp/wiparse/setup-mcp.ps1 -RegisterUser` 按对机真实路径生成；示例见 `mcp/wiparse/cursor.mcp.example.json`。
 
-```json
-{
-  "mcpServers": {
-    "wiparse": {
-      "command": "node",
-      "args": ["D:/windlink/windlink/WiParse-R/mcp/wiparse/dist/index.js"],
-      "env": {
-        "WIPARSE_URL": "http://127.0.0.1:7878",
-        "WIPARSE_CLI_PATH": "D:/windlink/windlink/WiParse-R/dist/WiParse-CLI.exe"
-      }
-    }
-  }
-}
-```
-
-构建 MCP：
+开发机重新编译 MCP：
 
 ```powershell
 cd mcp\wiparse
@@ -180,7 +169,7 @@ npm install
 npm run build
 ```
 
-Agent 推荐：先 `wiparse_health`，再 `wiparse_capabilities`，之后一律 `wiparse_invoke`。
+Agent 推荐：`wiparse_select` 选口（不打开）→ `wiparse_test start` → 轮询 `wiparse_brief` → `wiparse_report_pack` 写报告。
 
 ---
 
@@ -198,7 +187,7 @@ Agent 推荐：先 `wiparse_health`，再 `wiparse_capabilities`，之后一律 
 
 - [ ] 启动 `WiParse.exe`
 - [ ] `WiParse-CLI.exe api health` → `ok: true`
-- [ ] `api capabilities` 含 `serial.*` / `instrument.*`
+- [ ] `api capabilities` 含 `serial.select` / `serial.*` / `instrument.*`
 - [ ] `api invoke --method serial.ports`
-- [ ] MCP `wiparse_invoke` 调用 `system.ui.state` 有返回
+- [ ] MCP `wiparse_brief` / `wiparse_select` 有返回
 - [ ] `dist` 中两个 exe 为本次 release 构建

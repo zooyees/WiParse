@@ -2,6 +2,8 @@
 
 Rust rewrite of [WiParse](../WiParse) — Qi wireless charging test utility (GUI + headless CLI).
 
+当前版本 **1.1.3**。详细变更见 [`docs/CHANGELOG.md`](docs/CHANGELOG.md)。
+
 ## Layout
 
 ```

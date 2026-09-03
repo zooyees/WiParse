@@ -4,7 +4,7 @@
 //! Left-justified: MSB aligned with the WS edge (no 1-bit delay).
 //! Sample SD on BCLK rising (data launched on falling, per NXP I2S spec).
 
-use super::digital::{analog_to_edges, default_threshold, level_before, EdgeKind};
+use super::digital::{EdgeKind, LogicWave};
 use super::{try_push_frame, BusDecodeResult, BusFrame, MAX_DECODE_BYTES};
 use crate::instrument::WaveformTrace;
 
@@ -86,18 +86,18 @@ pub fn decode_i2s(
     }
 
     let bits = cfg.normalized_bits();
-    let thr_bclk = threshold.unwrap_or_else(|| default_threshold(bclk));
-    let thr_ws = threshold.unwrap_or_else(|| default_threshold(ws));
-    let thr_data = threshold.unwrap_or_else(|| default_threshold(data));
+    let bclk_w = LogicWave::new(bclk, threshold);
+    let ws_w = LogicWave::new(ws, threshold);
+    let data_w = LogicWave::new(data, threshold);
     let delay = cfg.format.msb_delay_clocks();
 
     let mut events = Vec::new();
-    for e in analog_to_edges(bclk, thr_bclk, 0.08) {
+    for e in bclk_w.edges() {
         if e.kind == EdgeKind::Rising {
             events.push(Evt::Bclk(e.time));
         }
     }
-    for e in analog_to_edges(ws, thr_ws, 0.08) {
+    for e in ws_w.edges() {
         events.push(Evt::Ws {
             t: e.time,
             high: e.kind == EdgeKind::Rising,
@@ -164,7 +164,7 @@ pub fn decode_i2s(
                 // Finish the previous word first. In Philips, the first clock after
                 // WS is the old LSB (the 1-bit delay) when the slot is only N clocks.
                 if collecting && bit_count > 0 && bit_count < bits {
-                    let data_bit = level_before(data, thr_data, t).unwrap_or(false);
+                    let data_bit = data_w.before(t).unwrap_or(false);
                     word = (word << 1) | u32::from(data_bit);
                     bit_count += 1;
                     if pending_new && skip > 0 {
@@ -208,7 +208,7 @@ pub fn decode_i2s(
                 if bit_count == 0 {
                     t_word_start = t;
                 }
-                let data_bit = level_before(data, thr_data, t).unwrap_or(false);
+                let data_bit = data_w.before(t).unwrap_or(false);
                 word = (word << 1) | u32::from(data_bit);
                 bit_count += 1;
                 if bit_count >= bits {

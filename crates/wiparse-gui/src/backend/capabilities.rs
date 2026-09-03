@@ -19,6 +19,8 @@ pub fn capabilities_json() -> Value {
             {"method": "serial.monitor.start", "params": {"port": "COM3", "baud": 2000000}, "stateful": true},
             {"method": "serial.monitor.stop", "params": {}, "stateful": true},
             {"method": "serial.monitor.status", "params": {}, "stateful": true},
+            {"method": "serial.status", "params": {}, "stateful": true, "alias_of": "serial.monitor.status"},
+            {"method": "serial.select", "params": {"port": "COM4", "baud": 200000}, "stateful": true},
             {"method": "serial.send", "params": {"hex": "AA55"}, "stateful": true},
             {"method": "serial.read", "params": {"duration": 2.0, "max_logs": 100}, "stateful": true},
             {"method": "parse.line", "params": {"text": "..."}},
@@ -41,6 +43,11 @@ pub fn capabilities_json() -> Value {
             {"method": "instrument.waveform", "params": {"device_id": 1, "channel": 1, "points": 1000}, "stateful": true},
             {"method": "log.tabs.list", "params": {}, "stateful": true},
             {"method": "log.lines.get", "params": {"tab_id": 0, "from_row": 0, "limit": 100}, "stateful": true},
+            {"method": "log.brief", "params": {"since_row": 0}, "stateful": true},
+            {"method": "test.start", "params": {"plan": {"id": "qi_pt_smoke", "steps": [{"wait": {"phase": "pt", "timeout_s": 8}}]}}, "stateful": true},
+            {"method": "test.status", "params": {}, "stateful": true},
+            {"method": "test.abort", "params": {"reason": "user"}, "stateful": true},
+            {"method": "test.pack", "params": {}, "stateful": true},
             {"method": "convert.expr", "params": {"expression": "0xFF+1", "angle_mode": "radians"}},
             {"method": "convert.radix", "params": {"input": "255", "source_base": 10, "target_base": 16}}
         ],
@@ -65,6 +72,7 @@ pub fn is_stateful(method: &str) -> bool {
             | "serial.monitor.start"
             | "serial.monitor.stop"
             | "serial.monitor.status"
+            | "serial.select"
             | "serial.send"
             | "serial.read"
             | "instrument.scan"
@@ -77,5 +85,10 @@ pub fn is_stateful(method: &str) -> bool {
             | "instrument.waveform"
             | "log.tabs.list"
             | "log.lines.get"
+            | "log.brief"
+            | "test.start"
+            | "test.status"
+            | "test.abort"
+            | "test.pack"
     )
 }

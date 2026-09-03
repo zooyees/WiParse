@@ -1,6 +1,6 @@
 //! UART (async NRZ) decode from a single analog trace.
 
-use super::digital::{analog_to_edges, default_threshold, edge_intervals, level_at_time, EdgeKind};
+use super::digital::{edge_intervals, EdgeKind, LogicWave};
 use super::{try_push_frame, BusDecodeResult, BusFrame, MAX_DECODE_BYTES};
 use crate::instrument::WaveformTrace;
 
@@ -71,8 +71,8 @@ pub fn decode_uart(
         };
     }
 
-    let thr = threshold.unwrap_or_else(|| default_threshold(trace));
-    let edges = analog_to_edges(trace, thr, 0.08);
+    let wave = LogicWave::new(trace, threshold);
+    let edges = wave.edges();
     // A 0x00 / 0xFF frame has only two edges (start + stop). Require a start edge.
     if edges.len() < 2 {
         return BusDecodeResult {
@@ -85,7 +85,7 @@ pub fn decode_uart(
 
     let bit_time = match cfg.baud.filter(|&b| b > 0.0) {
         Some(b) => 1.0 / b,
-        None => estimate_bit_time(&edges).unwrap_or_else(|| {
+        None => estimate_bit_time(trace, &edges).unwrap_or_else(|| {
             let tspan = (trace.x[n - 1] - trace.x[0]).abs().max(1e-12);
             tspan / (n as f64 * 0.1)
         }),
@@ -122,9 +122,19 @@ pub fn decode_uart(
             truncated = true;
             break;
         }
-        match decode_frame_at(trace, thr, e.time, bit_time, idle, cfg, bits_total) {
+        match decode_frame_at(&wave, e.time, bit_time, idle, cfg, bits_total) {
             FrameKind::Skip => {}
-            FrameKind::Break(frame) | FrameKind::Data(frame) => {
+            FrameKind::Break(frame) => {
+                // Stay in the break until the line returns to idle, otherwise a
+                // long low pulse emits a chain of BREAK markers and hides data.
+                next_t = next_idle_time(&edges, e.time, idle)
+                    .unwrap_or(e.time + bits_total * bit_time);
+                if !try_push_frame(&mut frames, &mut used, frame) {
+                    truncated = true;
+                    break;
+                }
+            }
+            FrameKind::Data(frame) => {
                 // Allow the next start at the end of the first stop bit, even if
                 // the user selected 2 stop bits but the link uses 1.
                 next_t = e.time + (1.0 + f64::from(db) + parity_bits(cfg.parity) + 0.80) * bit_time;
@@ -185,9 +195,36 @@ fn parity_bits(p: UartParity) -> f64 {
     }
 }
 
-fn estimate_bit_time(edges: &[super::digital::DigitalEdge]) -> Option<f64> {
+fn next_idle_time(
+    edges: &[super::digital::DigitalEdge],
+    t_start: f64,
+    idle_high: bool,
+) -> Option<f64> {
+    let idle_edge = if idle_high {
+        EdgeKind::Rising
+    } else {
+        EdgeKind::Falling
+    };
+    edges
+        .iter()
+        .find(|e| e.time > t_start && e.kind == idle_edge)
+        .map(|e| e.time)
+}
+
+fn estimate_bit_time(
+    trace: &WaveformTrace,
+    edges: &[super::digital::DigitalEdge],
+) -> Option<f64> {
     let mut widths = edge_intervals(edges);
-    widths.retain(|w| w.is_finite() && *w > 0.0);
+    let n = trace.x.len().min(trace.y.len());
+    let sample_dt = if n >= 2 {
+        (trace.x[n - 1] - trace.x[0]).abs() / (n as f64 - 1.0)
+    } else {
+        0.0
+    };
+    // Ignore 1-sample ringing; those would inflate baud and turn every start into BREAK.
+    let min_width = (sample_dt * 1.8).max(1e-12);
+    widths.retain(|w| w.is_finite() && *w >= min_width);
     if widths.is_empty() {
         return None;
     }
@@ -232,8 +269,7 @@ fn logic_one(level: bool, idle_high: bool) -> bool {
 }
 
 fn decode_frame_at(
-    trace: &WaveformTrace,
-    threshold: f64,
+    wave: &LogicWave<'_>,
     t_start: f64,
     bit_time: f64,
     idle_high: bool,
@@ -241,7 +277,7 @@ fn decode_frame_at(
     bits_total: f64,
 ) -> FrameKind {
     let start_mid = t_start + 0.5 * bit_time;
-    let Some(lvl) = level_at_time(trace, threshold, start_mid) else {
+    let Some(lvl) = wave.at(start_mid) else {
         return FrameKind::Skip;
     };
     if logic_one(lvl, idle_high) {
@@ -255,7 +291,7 @@ fn decode_frame_at(
     let mut data: u16 = 0;
     for bit in 0..db {
         let t = t_start + (1.5 + f64::from(bit)) * bit_time;
-        let Some(lvl) = level_at_time(trace, threshold, t) else {
+        let Some(lvl) = wave.at(t) else {
             return FrameKind::Skip;
         };
         let one = logic_one(lvl, idle_high);
@@ -269,7 +305,7 @@ fn decode_frame_at(
     let mut parity_bit = false;
     if cfg.parity != UartParity::None {
         let t = t_start + (1.5 + f64::from(db)) * bit_time;
-        if let Some(lvl) = level_at_time(trace, threshold, t) {
+        if let Some(lvl) = wave.at(t) {
             parity_bit = logic_one(lvl, idle_high);
             if parity_bit {
                 all_zero = false;
@@ -290,17 +326,27 @@ fn decode_frame_at(
 
     let stop_offset = 1.5 + f64::from(db) + parity_bits(cfg.parity);
     let t_stop = t_start + stop_offset * bit_time;
-    let stop_ok = level_at_time(trace, threshold, t_stop)
+    let stop_ok = wave
+        .at(t_stop)
         .map(|lvl| logic_one(lvl, idle_high))
         .unwrap_or(false);
 
+    // A real BREAK holds the line low through the stop bit and at least one extra
+    // bit-time. `all_zero && !stop_ok` alone matches 0x00 when baud is slightly high.
     if all_zero && !stop_ok {
-        return FrameKind::Break(BusFrame {
-            t_start,
-            t_end,
-            summary: "BREAK".into(),
-            bytes: Vec::new(),
-        });
+        let t_confirm = t_stop + bit_time;
+        let still_low = wave
+            .at(t_confirm)
+            .map(|lvl| !logic_one(lvl, idle_high))
+            .unwrap_or(true);
+        if still_low {
+            return FrameKind::Break(BusFrame {
+                t_start,
+                t_end: t_end.max(t_confirm),
+                summary: "BREAK".into(),
+                bytes: Vec::new(),
+            });
+        }
     }
 
     let ascii = if db <= 8 && data >= 0x20 && data < 0x7f {
@@ -462,5 +508,117 @@ mod tests {
             .map(|f| f.bytes[0])
             .collect();
         assert_eq!(data, vec![0x11, 0x22], "{:?}", r.frames.iter().map(|f| &f.summary).collect::<Vec<_>>());
+    }
+
+    fn synth_uart_break_then_bytes(
+        break_bits: usize,
+        bytes: &[u8],
+        baud: f64,
+        samples_per_bit: usize,
+    ) -> WaveformTrace {
+        let bit_t = 1.0 / baud;
+        let mut x = Vec::new();
+        let mut y = Vec::new();
+        let mut t = 0.0;
+        let dt = bit_t / samples_per_bit as f64;
+        let push = |x: &mut Vec<f64>, y: &mut Vec<f64>, t: &mut f64, dt: f64, level: f64| {
+            x.push(*t);
+            y.push(level);
+            *t += dt;
+        };
+        let hold = |x: &mut Vec<f64>, y: &mut Vec<f64>, t: &mut f64, bits: usize, level: f64| {
+            for _ in 0..(bits * samples_per_bit) {
+                push(x, y, t, dt, level);
+            }
+        };
+        hold(&mut x, &mut y, &mut t, 2, 3.3);
+        hold(&mut x, &mut y, &mut t, break_bits, 0.0);
+        hold(&mut x, &mut y, &mut t, 3, 3.3);
+        for &byte in bytes {
+            hold(&mut x, &mut y, &mut t, 1, 0.0);
+            for bit in 0..8 {
+                let high = (byte >> bit) & 1 == 1;
+                hold(&mut x, &mut y, &mut t, 1, if high { 3.3 } else { 0.0 });
+            }
+            hold(&mut x, &mut y, &mut t, 1, 3.3);
+        }
+        hold(&mut x, &mut y, &mut t, 2, 3.3);
+        WaveformTrace {
+            channel: "CH1".into(),
+            x: x.into(),
+            y: y.into(),
+            x_unit: "s".into(),
+            y_unit: "V".into(),
+        }
+    }
+
+    #[test]
+    fn nul_byte_is_not_a_break() {
+        let mut cfg = UartConfig::default();
+        cfg.baud = Some(115_200.0);
+        let trace = synth_uart_byte(0x00, 115_200.0, 8);
+        let r = decode_uart(&trace, None, true, &cfg);
+        assert_eq!(
+            r.frames.iter().map(|f| f.summary.as_str()).collect::<Vec<_>>(),
+            vec!["0x00"],
+            "{:?}",
+            r.frames
+        );
+    }
+
+    #[test]
+    fn break_does_not_hide_following_data() {
+        let mut cfg = UartConfig::default();
+        cfg.baud = Some(115_200.0);
+        let trace = synth_uart_break_then_bytes(13, &[0x55, 0xAA], 115_200.0, 8);
+        let r = decode_uart(&trace, None, true, &cfg);
+        let texts: Vec<&str> = r.frames.iter().map(|f| f.summary.as_str()).collect();
+        assert!(texts.iter().any(|s| *s == "BREAK"), "{texts:?}");
+        let data: Vec<u8> = r
+            .frames
+            .iter()
+            .filter(|f| !f.bytes.is_empty())
+            .map(|f| f.bytes[0])
+            .collect();
+        assert_eq!(data, vec![0x55, 0xAA], "{texts:?}");
+    }
+
+    #[test]
+    fn midband_ringing_does_not_create_start_bits() {
+        let clean = synth_uart_byte(0x55, 115_200.0, 8);
+        let dt = if clean.x.len() >= 2 {
+            clean.x[1] - clean.x[0]
+        } else {
+            1e-6
+        };
+        let n = 32usize;
+        let mut x = Vec::with_capacity(n + clean.x.len());
+        let mut y = Vec::with_capacity(n + clean.y.len());
+        let mut t = clean.x.first().copied().unwrap_or(0.0) - dt * n as f64;
+        let ring = [1.2, 1.9, 1.3, 2.0, 1.4, 1.8];
+        for i in 0..n {
+            x.push(t);
+            y.push(ring[i % ring.len()]);
+            t += dt;
+        }
+        x.extend(clean.x.iter().copied());
+        y.extend(clean.y.iter().copied());
+        let trace = WaveformTrace {
+            channel: "CH1".into(),
+            x: x.into(),
+            y: y.into(),
+            x_unit: "s".into(),
+            y_unit: "V".into(),
+        };
+        let mut cfg = UartConfig::default();
+        cfg.baud = Some(115_200.0);
+        let r = decode_uart(&trace, None, true, &cfg);
+        let data: Vec<u8> = r
+            .frames
+            .iter()
+            .filter(|f| !f.bytes.is_empty())
+            .map(|f| f.bytes[0])
+            .collect();
+        assert_eq!(data, vec![0x55], "{:?}", r.frames.iter().map(|f| &f.summary).collect::<Vec<_>>());
     }
 }
