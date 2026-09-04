@@ -2,7 +2,7 @@
 
 Rust rewrite of [WiParse](../WiParse) — Qi wireless charging test utility (GUI + headless CLI).
 
-当前版本 **1.1.5**。详细变更见 [`docs/CHANGELOG.md`](docs/CHANGELOG.md)。工位闭环（wait / 示波器停采 / 波形源）见 [`docs/WORKSTATION_CLOSED_LOOP.md`](docs/WORKSTATION_CLOSED_LOOP.md)。
+当前版本 **1.1.6**。详细变更见 [`docs/CHANGELOG.md`](docs/CHANGELOG.md)。工位闭环见 [`docs/WORKSTATION_CLOSED_LOOP.md`](docs/WORKSTATION_CLOSED_LOOP.md)。波形页离线 **DDSSS** 解调见同文档第 7 节。
 
 ## Layout
 

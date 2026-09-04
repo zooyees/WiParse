@@ -1,6 +1,9 @@
 //! Offline waveform analysis — folder browser, open scope sources, zoom/pan, measure.
 
-use crate::plot::{PlotTextLabel, ScopeEnvelopePlotItem, ScopeVectorPlotItem};
+use crate::plot::{
+    bus_lane_from_screen_y, bus_stack_packet_screen_y, PlotTextLabel, ScopeEnvelopePlotItem,
+    ScopeVectorPlotItem, LANE_BIT, LANE_BYTE, LANE_CHIP, LANE_PACKET,
+};
 use crate::theme::Tokens;
 use egui::{Color32, CornerRadius, Frame, Margin, RichText, Stroke, Vec2b};
 use egui_plot::{
@@ -15,9 +18,10 @@ use std::thread;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use rayon::prelude::*;
 use wiparse_core::bus_decode::{
-    compact_bus_decode_indices, decode_bus, BusDecodeResult, BusDecodeSettings, BusKind, I2sFormat,
-    SpiMode, SpiWire, UartParity,
+    compact_bus_decode_indices, decode_bus, BusDecodeResult, BusDecodeSettings, BusKind,
+    DdsssExtension, DdsssSequence, I2sFormat, SpiMode, SpiWire, UartParity,
 };
+use wiparse_core::protocol::describe_ask_bytes;
 use wiparse_core::config::{load_config, save_config, AppConfig};
 use wiparse_core::i18n::{tr, Lang};
 use wiparse_core::instrument::WaveformTrace;
@@ -200,6 +204,8 @@ pub struct WaveformAnalysisPanel {
     bus_decode_dirty: bool,
     /// Optional manual UART baud entry (empty = auto).
     uart_baud_text: String,
+    /// Optional manual DDSSS FOP in Hz (empty = auto).
+    ddsss_fop_text: String,
 }
 
 impl WaveformAnalysisPanel {
@@ -251,6 +257,7 @@ impl WaveformAnalysisPanel {
             selected_bus_frame: None,
             bus_decode_dirty: false,
             uart_baud_text: String::new(),
+            ddsss_fop_text: String::new(),
         };
         panel.refresh_wave_browser();
         panel
@@ -1382,6 +1389,7 @@ impl WaveformAnalysisPanel {
             BusKind::I2c => ch.i2c_sda.or(ch.i2c_scl),
             BusKind::Spi => ch.spi_mosi.or(ch.spi_clk),
             BusKind::I2s => ch.i2s_data.or(ch.i2s_ws).or(ch.i2s_bclk),
+            BusKind::Ddsss => ch.ddsss_signal,
         }
     }
 
@@ -1414,6 +1422,7 @@ impl WaveformAnalysisPanel {
                     && self.bus_settings.channels.i2s_ws.is_some()
                     && self.bus_settings.channels.i2s_data.is_some()
             }
+            BusKind::Ddsss => self.bus_settings.channels.ddsss_signal.is_some(),
         }
     }
 
@@ -1426,12 +1435,19 @@ impl WaveformAnalysisPanel {
             .ok()
             .filter(|&b| b > 0.0)
             .or(settings.uart.baud);
-        if let (Some(a), Some(b)) = (self.x1, self.x2) {
-            settings.time_gate = Some((a, b));
-        } else {
-            settings.time_gate = None;
-        }
+        settings.ddsss.fop_hz = self
+            .ddsss_fop_text
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|&f| f > 0.0)
+            .or(settings.ddsss.fop_hz);
+        settings.time_gate = cursor_measure_time_gate(settings.kind, self.x1, self.x2);
         settings
+    }
+
+    fn x_cursors_should_redecode(&self) -> bool {
+        !matches!(self.bus_settings.kind, BusKind::Off | BusKind::Ddsss)
     }
 
     fn schedule_bus_decode(&mut self) -> bool {
@@ -1765,6 +1781,64 @@ impl WaveformAnalysisPanel {
                             &mut self.bus_settings.i2s.format,
                         );
                     }
+                    BusKind::Ddsss => {
+                        changed |= bus_grid_channel_combo(
+                            ui,
+                            layout,
+                            "ddsss_sig",
+                            &t(lang, "信号", "Signal"),
+                            &self.waves,
+                            &mut self.bus_settings.channels.ddsss_signal,
+                        );
+                        bus_grid_label(ui, layout, &t(lang, "序列", "Sequence"));
+                        egui::ComboBox::from_id_salt("ddsss_seq")
+                            .selected_text(self.bus_settings.ddsss.sequence.label())
+                            .width(layout.field_w)
+                            .show_ui(ui, |ui| {
+                                for seq in DdsssSequence::all_selectable() {
+                                    if ui
+                                        .selectable_label(
+                                            self.bus_settings.ddsss.sequence == *seq,
+                                            seq.label(),
+                                        )
+                                        .clicked()
+                                    {
+                                        self.bus_settings.ddsss.sequence = *seq;
+                                        changed = true;
+                                    }
+                                }
+                            });
+                        ui.end_row();
+                        changed |= bus_grid_ddsss_extension(
+                            ui,
+                            layout,
+                            &t(lang, "扩展码", "Extension"),
+                            &mut self.bus_settings.ddsss.extension,
+                        );
+                        bus_grid_label(ui, layout, &t(lang, "FOP Hz", "FOP Hz"));
+                        let fop_hint = t(lang, "自动 85k–1.78M", "auto 85k–1.78M");
+                        let resp = ui.add_sized(
+                            [layout.field_w, layout.row_h],
+                            egui::TextEdit::singleline(&mut self.ddsss_fop_text)
+                                .hint_text(fop_hint),
+                        );
+                        let enter = ui.input(|i| {
+                            i.events.iter().any(|e| {
+                                matches!(
+                                    e,
+                                    egui::Event::Key {
+                                        key: egui::Key::Enter,
+                                        pressed: true,
+                                        ..
+                                    }
+                                )
+                            })
+                        });
+                        if resp.lost_focus() || (resp.has_focus() && enter) {
+                            changed = true;
+                        }
+                        ui.end_row();
+                    }
                 }
             });
 
@@ -1806,27 +1880,80 @@ impl WaveformAnalysisPanel {
             if !result.info.is_empty() {
                 ui.label(RichText::new(&result.info).small().color(tokens.text_muted));
             }
+            if let Some(i) = self.selected_bus_frame {
+                if let Some(frame) = result.frames.get(i) {
+                    let hex = frame
+                        .bytes
+                        .iter()
+                        .map(|b| format!("{b:02X}"))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if let Some(desc) = describe_ask_bytes(&frame.bytes) {
+                        ui.label(
+                            RichText::new(format!("{desc}  [{hex}]"))
+                                .small()
+                                .color(if frame.has_error() {
+                                    tokens.stop_bg
+                                } else {
+                                    tokens.text_primary
+                                }),
+                        );
+                    } else if !hex.is_empty() {
+                        ui.label(
+                            RichText::new(format!("{}  [{hex}]", frame.plot_label()))
+                                .small()
+                                .color(if frame.has_error() {
+                                    tokens.stop_bg
+                                } else {
+                                    tokens.text_primary
+                                }),
+                        );
+                    }
+                }
+            }
             if result.frames.is_empty() && result.error.is_none() {
                 ui.label(
                     RichText::new(t(lang, "无解码帧", "No decoded frames"))
                         .small()
                         .color(tokens.text_muted),
                 );
-            } else if !result.frames.is_empty() {
+            } else if !result.frames.is_empty() || !result.byte_spans.is_empty() {
+                let nerr = result.frames.iter().filter(|f| f.has_error()).count();
+                let nchip_err = result.chips.iter().filter(|c| c.error).count();
+                let err_zh = match (nerr, nchip_err) {
+                    (0, 0) => String::new(),
+                    (n, 0) => format!(" · 误码 {n}"),
+                    (0, c) => format!(" · chip误 {c}"),
+                    (n, c) => format!(" · 误码 {n} · chip误 {c}"),
+                };
+                let err_en = match (nerr, nchip_err) {
+                    (0, 0) => String::new(),
+                    (n, 0) => format!(" · {n} errors"),
+                    (0, c) => format!(" · {c} chip errors"),
+                    (n, c) => format!(" · {n} errors · {c} chip errors"),
+                };
                 ui.label(
                     RichText::new(t(
                         lang,
                         &format!(
-                            "已在波形上标注 {} 条（点击标注可定位）",
-                            result.frames.len()
+                            "包 {}{err_zh} · 字节 {} · chip {}（点击标注可定位）",
+                            result.frames.len(),
+                            result.byte_spans.len(),
+                            result.chips.len()
                         ),
                         &format!(
-                            "{} annotations on the waveform (click a label to zoom)",
-                            result.frames.len()
+                            "{} packets{err_en} · {} bytes · {} chips (click a label to zoom)",
+                            result.frames.len(),
+                            result.byte_spans.len(),
+                            result.chips.len()
                         ),
                     ))
                     .small()
-                    .color(tokens.text_muted),
+                    .color(if nerr + nchip_err == 0 {
+                        tokens.text_muted
+                    } else {
+                        tokens.stop_bg
+                    }),
                 );
             }
         }
@@ -2451,6 +2578,7 @@ impl WaveformAnalysisPanel {
         let mut next_y_range = None;
         let mut click_val = None;
         let mut click_bus_frame: Option<usize> = None;
+        let mut click_bus_span: Option<(f64, f64)> = None;
         let mut drag_cursor: Option<(u8, f64)> = None;
         let mut end_drag = false;
         let mut needs_clamp = false;
@@ -2520,11 +2648,10 @@ impl WaveformAnalysisPanel {
         let y1 = self.y1;
         let y2 = self.y2;
         let dragging = self.dragging_cursor;
-        let bus_overlay_y = self.bus_overlay_channel().and_then(|i| {
-            self.waves
-                .get(i)
-                .map(|w| (w.y_offset, w.y_scale, w.y_min, w.y_max))
-        });
+        let overlay_top_plot = self
+            .bus_overlay_channel()
+            .and_then(|i| self.waves.get(i))
+            .map(wave_display_y_top);
         let bus_markers: Vec<(usize, f64, f64, bool, String)> = self
             .bus_result
             .as_ref()
@@ -2538,9 +2665,46 @@ impl WaveformAnalysisPanel {
                             f.t_start,
                             f.t_end,
                             self.selected_bus_frame == Some(i),
-                            f.summary.clone(),
+                            f.plot_label(),
                         )
                     })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let bus_bytes: Vec<(f64, f64, String, bool)> = self
+            .bus_result
+            .as_ref()
+            .map(|r| {
+                r.byte_spans
+                    .iter()
+                    .map(|b| {
+                        (
+                            b.t_start,
+                            b.t_end,
+                            b.label(),
+                            b.error != wiparse_core::bus_decode::BusByteError::None,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let bus_bits: Vec<(f64, f64, String, bool, bool)> = self
+            .bus_result
+            .as_ref()
+            .map(|r| {
+                r.bits
+                    .iter()
+                    .map(|b| (b.t_start, b.t_end, b.label(), b.one, b.error))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let bus_chips: Vec<(f64, f64, Option<bool>, bool)> = self
+            .bus_result
+            .as_ref()
+            .map(|r| {
+                r.chips
+                    .iter()
+                    .map(|c| (c.t_start, c.t_end, c.one, c.error))
                     .collect()
             })
             .unwrap_or_default();
@@ -2742,21 +2906,8 @@ impl WaveformAnalysisPanel {
                     );
                 }
 
-                let label_y = {
-                    let pad = y_span * 0.02;
-                    if let Some((off, sc, ymin, ymax)) = bus_overlay_y {
-                        let top = off + sc * ymax;
-                        let bot = off + sc * ymin;
-                        let ch_span = (top - bot).abs().max(y_span * 0.02);
-                        (top + ch_span * 0.18).clamp(
-                            bounds.min()[1] + pad,
-                            bounds.max()[1] - pad,
-                        )
-                    } else {
-                        bounds.max()[1] - y_span * 0.06
-                    }
-                };
                 let min_label_dt = x_span * (64.0 / plot_width_px as f64);
+                let min_byte_dt = x_span * (36.0 / plot_width_px as f64);
                 let x_lo = bounds.min()[0];
                 let x_hi = bounds.max()[0];
                 let is_ctrl_event = |summary: &str| {
@@ -2766,15 +2917,7 @@ impl WaveformAnalysisPanel {
                     if *t1 < x_lo || *t0 > x_hi {
                         continue;
                     }
-                    let color = if *selected {
-                        Color32::from_rgb(0xFF, 0x6B, 0x6B)
-                    } else if summary == "START" || summary == "Sr" || summary == "CS" {
-                        Color32::from_rgb(0x22, 0xC5, 0x5E)
-                    } else if summary == "STOP" || summary == "CS#" || summary == "BREAK" {
-                        Color32::from_rgb(0xF9, 0x73, 0x16)
-                    } else {
-                        Color32::from_rgb(0xA7, 0x8B, 0xFA)
-                    };
+                    let color = bus_packet_color(*selected, summary);
                     plot_ui.vline(
                         VLine::new(*t0)
                             .color(color)
@@ -2782,32 +2925,24 @@ impl WaveformAnalysisPanel {
                             .name(""),
                     );
                 }
-                // Data first so BREAK / control events cannot crowd 0xNN labels off the plot.
-                let mut shown_t: Vec<f64> = Vec::new();
-                let far_enough = |t: f64, shown: &[f64]| {
-                    shown.iter().all(|u| (t - *u).abs() >= min_label_dt)
+                let wave_top = overlay_top_plot.unwrap_or_else(|| bounds.max()[1]);
+                let far_enough = |t: f64, shown: &[f64], min_dt: f64| {
+                    shown.iter().all(|u| (t - *u).abs() >= min_dt)
                 };
                 let paint_label = |plot_ui: &mut egui_plot::PlotUi,
                                        t_label: f64,
+                                       lane: u8,
                                        summary: &str,
                                        selected: bool,
-                                       color: Color32| {
+                                       color: Color32,
+                                       font: f32| {
                     plot_ui.add(
-                        PlotTextLabel::new(t_label, label_y, summary, color, 15.0)
+                        PlotTextLabel::lane(t_label, lane, summary, color, font, wave_top)
                             .highlight(selected),
                     );
                 };
-                let marker_color = |selected: bool, summary: &str| {
-                    if selected {
-                        Color32::from_rgb(0xFF, 0x6B, 0x6B)
-                    } else if summary == "START" || summary == "Sr" || summary == "CS" {
-                        Color32::from_rgb(0x22, 0xC5, 0x5E)
-                    } else if summary == "STOP" || summary == "CS#" || summary == "BREAK" {
-                        Color32::from_rgb(0xF9, 0x73, 0x16)
-                    } else {
-                        Color32::from_rgb(0xA7, 0x8B, 0xFA)
-                    }
-                };
+                let marker_color = |selected: bool, summary: &str| bus_packet_color(selected, summary);
+                let mut shown_pkt: Vec<f64> = Vec::new();
                 for (_i, t0, t1, selected, summary) in &bus_markers {
                     if *t1 < x_lo || *t0 > x_hi {
                         continue;
@@ -2816,9 +2951,17 @@ impl WaveformAnalysisPanel {
                         continue;
                     }
                     let t_label = (*t0 + *t1) * 0.5;
-                    if *selected || far_enough(t_label, &shown_t) {
-                        paint_label(plot_ui, t_label, summary, *selected, marker_color(*selected, summary));
-                        shown_t.push(t_label);
+                    if *selected || far_enough(t_label, &shown_pkt, min_label_dt) {
+                        paint_label(
+                            plot_ui,
+                            t_label,
+                            LANE_PACKET,
+                            summary,
+                            *selected,
+                            marker_color(*selected, summary),
+                            15.0,
+                        );
+                        shown_pkt.push(t_label);
                     }
                 }
                 for (_i, t0, t1, selected, summary) in &bus_markers {
@@ -2828,16 +2971,176 @@ impl WaveformAnalysisPanel {
                     if !is_ctrl_event(summary) {
                         continue;
                     }
-                    paint_label(plot_ui, *t0, summary, *selected, marker_color(*selected, summary));
-                    shown_t.push(*t0);
+                    paint_label(
+                        plot_ui,
+                        *t0,
+                        LANE_PACKET,
+                        summary,
+                        *selected,
+                        marker_color(*selected, summary),
+                        15.0,
+                    );
+                    shown_pkt.push(*t0);
                 }
                 for (_i, t0, t1, selected, summary) in &bus_markers {
                     if *t1 < x_lo || *t0 > x_hi || summary != "BREAK" {
                         continue;
                     }
-                    if *selected || far_enough(*t0, &shown_t) {
-                        paint_label(plot_ui, *t0, summary, *selected, marker_color(*selected, summary));
-                        shown_t.push(*t0);
+                    if *selected || far_enough(*t0, &shown_pkt, min_label_dt) {
+                        paint_label(
+                            plot_ui,
+                            *t0,
+                            LANE_PACKET,
+                            summary,
+                            *selected,
+                            marker_color(*selected, summary),
+                            15.0,
+                        );
+                        shown_pkt.push(*t0);
+                    }
+                }
+
+                let byte_ok = Color32::from_rgb(0x38, 0xBD, 0xF8);
+                let byte_bad = Color32::from_rgb(0xF9, 0x73, 0x16);
+                let mut shown_byte: Vec<f64> = Vec::new();
+                for (t0, t1, hex, bad) in &bus_bytes {
+                    if *t1 < x_lo || *t0 > x_hi {
+                        continue;
+                    }
+                    let byte_color = if *bad { byte_bad } else { byte_ok };
+                    plot_ui.vline(VLine::new(*t0).color(byte_color).width(1.35_f32).name(""));
+                    plot_ui.vline(
+                        VLine::new(*t1)
+                            .color(byte_color.gamma_multiply(0.55))
+                            .width(1.0_f32)
+                            .name(""),
+                    );
+                    let t_mid = (*t0 + *t1) * 0.5;
+                    if far_enough(t_mid, &shown_byte, min_byte_dt) {
+                        paint_label(plot_ui, t_mid, LANE_BYTE, hex, false, byte_color, 13.0);
+                        shown_byte.push(t_mid);
+                    }
+                }
+
+                let chip_px = if !bus_chips.is_empty() {
+                    let n = bus_chips.len().min(16);
+                    let w = bus_chips
+                        .iter()
+                        .take(n)
+                        .map(|(t0, t1, _, _)| (*t1 - *t0).abs())
+                        .sum::<f64>()
+                        / n as f64;
+                    (w / x_span) * plot_width_px as f64
+                } else {
+                    0.0
+                };
+                let bit_px = if !bus_bits.is_empty() {
+                    let n = bus_bits.len().min(8);
+                    let w = bus_bits
+                        .iter()
+                        .take(n)
+                        .map(|(t0, t1, _, _, _)| (*t1 - *t0).abs())
+                        .sum::<f64>()
+                        / n as f64;
+                    (w / x_span) * plot_width_px as f64
+                } else {
+                    0.0
+                };
+                let min_bit_dt = x_span * (28.0 / plot_width_px as f64);
+                // Chip→bit: one correlator bit is Nseq chips. Show the bit name (St/b0–b7/P/Sp)
+                // whenever the group is readable, and always if the chip lane is on.
+                let show_bit_lane = !bus_bits.is_empty() && (bit_px >= 6.0 || chip_px >= 5.0);
+                if show_bit_lane {
+                    let mut shown_bit: Vec<f64> = Vec::new();
+                    for (t0, t1, kind, one, bit_err) in &bus_bits {
+                        if *t1 < x_lo || *t0 > x_hi {
+                            continue;
+                        }
+                        let color = if *bit_err {
+                            Color32::from_rgb(0xF9, 0x73, 0x16)
+                        } else {
+                            ddsss_bit_color(kind.trim_end_matches('!'))
+                        };
+                        let ctrl = kind.starts_with("St") || kind.starts_with("Sp") || kind.starts_with("P");
+                        plot_ui.vline(
+                            VLine::new(*t0)
+                                .color(color)
+                                .width(if ctrl { 1.6_f32 } else { 1.15_f32 })
+                                .name(""),
+                        );
+                        let t_mid = (*t0 + *t1) * 0.5;
+                        let force = chip_px >= 8.0 || bit_px >= 20.0;
+                        if !force && !far_enough(t_mid, &shown_bit, min_bit_dt) {
+                            continue;
+                        }
+                        let label = if bit_px >= 26.0 {
+                            format!("{}={}", kind, if *one { 1 } else { 0 })
+                        } else {
+                            kind.clone()
+                        };
+                        plot_ui.add(PlotTextLabel::lane(t_mid, LANE_BIT, label, color, 11.0, wave_top));
+                        shown_bit.push(t_mid);
+                    }
+                }
+
+                // SEQA: 31 chips/bit, so chip_px is ~bit_px/31. Draw the chip lane
+                // whenever bits are visible; Table 4 mismatches get an orange `x`
+                // even before 0/1 glyphs fit.
+                if show_bit_lane {
+                    let err_col = Color32::from_rgb(0xF9, 0x73, 0x16);
+                    let mut chip_shown = 0usize;
+                    let mut bit_i = 0usize;
+                    for (t0, t1, one, err) in &bus_chips {
+                        if *t1 < x_lo || *t0 > x_hi {
+                            continue;
+                        }
+                        let mid = (*t0 + *t1) * 0.5;
+                        while bit_i < bus_bits.len() && bus_bits[bit_i].1 < mid {
+                            bit_i += 1;
+                        }
+                        let kind = bus_bits.get(bit_i).and_then(|(a, b, k, _, _)| {
+                            if mid >= *a && mid <= *b {
+                                Some(k.trim_end_matches('!'))
+                            } else {
+                                None
+                            }
+                        });
+                        let color = if *err {
+                            err_col
+                        } else {
+                            ddsss_chip_color(kind, *one)
+                        };
+                        let text = if *err {
+                            "x"
+                        } else {
+                            match one {
+                                Some(true) => "1",
+                                Some(false) => "0",
+                                None => "?",
+                            }
+                        };
+                        plot_ui.vline(
+                            VLine::new(*t0)
+                                .color(color.gamma_multiply(if *err { 1.0 } else { 0.75 }))
+                                .width(if *err { 1.6_f32 } else { 0.9_f32 })
+                                .name(""),
+                        );
+                        let show_text = if *err {
+                            chip_px >= 3.0 || bit_px >= 16.0
+                        } else {
+                            chip_px >= 8.0
+                        };
+                        if show_text && chip_shown < 480 {
+                            plot_ui.add(PlotTextLabel::lane(
+                                mid,
+                                LANE_CHIP,
+                                text,
+                                color,
+                                if *err { 12.0 } else { 11.0 },
+                                wave_top,
+                            ));
+                            chip_shown += 1;
+                        }
                     }
                 }
 
@@ -2850,8 +3153,16 @@ impl WaveformAnalysisPanel {
                             .color(Color32::TRANSPARENT),
                     );
 
+                    let hover_lane = resp.hover_pos().and_then(|p| {
+                        let tf = plot_ui.transform();
+                        let packet_sy = bus_stack_packet_screen_y(
+                            tf.position_from_point_y(wave_top),
+                            *tf.frame(),
+                        );
+                        bus_lane_from_screen_y(packet_sy, p.y)
+                    });
                     let pick_bus = || {
-                        if (ptr.y - label_y).abs() > y_span * 0.14 {
+                        if hover_lane != Some(LANE_PACKET) {
                             return None;
                         }
                         let mut best: Option<(f64, usize)> = None;
@@ -2869,6 +3180,26 @@ impl WaveformAnalysisPanel {
                             }
                         }
                         best.map(|(_, i)| i)
+                    };
+                    let pick_byte = || {
+                        if hover_lane != Some(LANE_BYTE) {
+                            return None;
+                        }
+                        let mut best: Option<(f64, f64, f64)> = None;
+                        let hit = grab_x * 4.0;
+                        for (t0, t1, _, _) in &bus_bytes {
+                            let lo = t0.min(*t1);
+                            let hi = t0.max(*t1);
+                            let dist = if ptr.x >= lo && ptr.x <= hi {
+                                0.0
+                            } else {
+                                (ptr.x - *t0).abs().min((ptr.x - *t1).abs())
+                            };
+                            if dist <= hit && best.map(|(d, _, _)| dist < d).unwrap_or(true) {
+                                best = Some((dist, *t0, *t1));
+                            }
+                        }
+                        best.map(|(_, a, b)| (a, b))
                     };
 
                     if mode == InteractMode::Cursor {
@@ -2918,6 +3249,8 @@ impl WaveformAnalysisPanel {
                         if resp.clicked() && dragging.is_none() && drag_cursor.is_none() {
                             if let Some(i) = pick_bus() {
                                 click_bus_frame = Some(i);
+                            } else if let Some(span) = pick_byte() {
+                                click_bus_span = Some(span);
                             } else {
                                 click_val = Some(match axis {
                                     CursorAxis::X => ptr.x,
@@ -2928,6 +3261,8 @@ impl WaveformAnalysisPanel {
                     } else if resp.clicked() {
                         if let Some(i) = pick_bus() {
                             click_bus_frame = Some(i);
+                        } else if let Some(span) = pick_byte() {
+                            click_bus_span = Some(span);
                         }
                     }
                 } else if dragging.is_some() && !primary_down {
@@ -2993,7 +3328,7 @@ impl WaveformAnalysisPanel {
                 (CursorAxis::Y, 2) => self.y2 = Some(v),
                 _ => {}
             }
-            if self.cursor_axis == CursorAxis::X {
+            if self.cursor_axis == CursorAxis::X && self.x_cursors_should_redecode() {
                 self.bus_decode_dirty = true;
             }
         }
@@ -3019,7 +3354,7 @@ impl WaveformAnalysisPanel {
                     }
                 },
             }
-            if self.cursor_axis == CursorAxis::X {
+            if self.cursor_axis == CursorAxis::X && self.x_cursors_should_redecode() {
                 self.bus_decode_dirty = true;
             }
         }
@@ -3033,6 +3368,14 @@ impl WaveformAnalysisPanel {
             {
                 self.zoom_to_bus_frame(&frame);
             }
+        } else if let Some((t0, t1)) = click_bus_span {
+            self.zoom_to_bus_frame(&wiparse_core::bus_decode::BusFrame {
+                t_start: t0,
+                t_end: t1,
+                summary: String::new(),
+                bytes: Vec::new(),
+            ..Default::default()
+        });
         }
 
         // On-plot measurement overlay (X1/X2 or Y1/Y2 + delta).
@@ -3183,6 +3526,12 @@ impl WaveformAnalysisPanel {
             "files": files,
             "browser_dir": self.browser_dir,
             "bus": self.bus_settings.kind.label(),
+            "bus_ddsss": {
+                "signal": self.bus_settings.channels.ddsss_signal,
+                "sequence": self.bus_settings.ddsss.sequence.label(),
+                "extension": self.bus_settings.ddsss.extension.label(),
+                "fop": self.bus_settings.ddsss.fop_hz,
+            },
             "cursors": {
                 "x1": self.x1, "x2": self.x2, "y1": self.y1, "y2": self.y2
             }
@@ -3250,7 +3599,8 @@ impl WaveformAnalysisPanel {
                 "i2c" => BusKind::I2c,
                 "spi" => BusKind::Spi,
                 "i2s" => BusKind::I2s,
-                _ => return err("ui.wave.bus", "kind must be off|uart|i2c|spi|i2s"),
+                "ddsss" | "dsss" => BusKind::Ddsss,
+                _ => return err("ui.wave.bus", "kind must be off|uart|i2c|spi|i2s|ddsss"),
             };
         }
         let ch = &mut self.bus_settings.channels;
@@ -3259,6 +3609,9 @@ impl WaveformAnalysisPanel {
         }
         if let Some(n) = idx(params, "uart") {
             ch.uart_signal = Some(n);
+        }
+        if let Some(n) = idx(params, "signal") {
+            ch.ddsss_signal = Some(n);
         }
         if let Some(n) = idx(params, "scl") {
             ch.i2c_scl = Some(n);
@@ -3293,6 +3646,24 @@ impl WaveformAnalysisPanel {
         if let Some(v) = params.get("baud").and_then(|x| x.as_f64()) {
             self.bus_settings.uart.baud = Some(v);
             self.uart_baud_text = format!("{v}");
+        }
+        if let Some(s) = params.get("sequence").and_then(|x| x.as_str()) {
+            let Some(seq) = DdsssSequence::parse_label(s) else {
+                return err("ui.wave.bus", "sequence must be auto|seqa|seqb|seqc|seqd");
+            };
+            self.bus_settings.ddsss.sequence = seq;
+        }
+        if let Some(s) = params.get("extension").and_then(|x| x.as_str()) {
+            let Some(ext) = DdsssExtension::parse_label(s) else {
+                return err("ui.wave.bus", "extension must be auto|off|on");
+            };
+            self.bus_settings.ddsss.extension = ext;
+        }
+        if let Some(v) = params.get("fop").and_then(|x| x.as_f64()) {
+            if v > 0.0 {
+                self.bus_settings.ddsss.fop_hz = Some(v);
+                self.ddsss_fop_text = format!("{v}");
+            }
         }
         self.bus_decode_dirty = true;
         ok("ui.wave.bus", self.api_snapshot())
@@ -3451,6 +3822,35 @@ pub fn tek_channel_color(channel: &str) -> Option<Color32> {
     color_for_channel(channel)
 }
 
+/// Distinct hue per Qi serial bit so chip glyphs under that bit match the bit label.
+fn ddsss_bit_color(kind: &str) -> Color32 {
+    match kind {
+        "St" => Color32::from_rgb(0xFB, 0xBF, 0x24),
+        "b0" => Color32::from_rgb(0x38, 0xBD, 0xF8),
+        "b1" => Color32::from_rgb(0xA7, 0x8B, 0xFA),
+        "b2" => Color32::from_rgb(0xF4, 0x72, 0xB6),
+        "b3" => Color32::from_rgb(0x34, 0xD3, 0x99),
+        "b4" => Color32::from_rgb(0xFB, 0x92, 0x3C),
+        "b5" => Color32::from_rgb(0x22, 0xD3, 0xEE),
+        "b6" => Color32::from_rgb(0xE8, 0x79, 0xF9),
+        "b7" => Color32::from_rgb(0xA3, 0xE6, 0x35),
+        "P" => Color32::from_rgb(0xFB, 0x71, 0x85),
+        "Sp" => Color32::from_rgb(0xE2, 0xE8, 0xF0),
+        _ => Color32::from_rgb(0x94, 0xA3, 0xB8),
+    }
+}
+
+fn ddsss_chip_color(kind: Option<&str>, one: Option<bool>) -> Color32 {
+    let Some(kind) = kind else {
+        return Color32::from_rgb(0x94, 0xA3, 0xB8);
+    };
+    let color = ddsss_bit_color(kind);
+    match one {
+        Some(true) | None => color,
+        Some(false) => color.gamma_multiply(0.58),
+    }
+}
+
 /// Short label for per-channel offset axis (e.g. CH1).
 fn short_channel_label(channel: &str) -> String {
     let s = channel.trim();
@@ -3565,12 +3965,48 @@ fn ordered(a: f64, b: f64) -> (f64, f64) {
     }
 }
 
+/// X1/X2 measurement cursors can gate UART/I2C/SPI/I2S decode to a window.
+/// DDSSS correlator lock needs the full ASK burst; using the same pair as a
+/// time gate would replace a good overlay with an empty gated result.
+fn cursor_measure_time_gate(kind: BusKind, x1: Option<f64>, x2: Option<f64>) -> Option<(f64, f64)> {
+    if kind == BusKind::Ddsss {
+        return None;
+    }
+    match (x1, x2) {
+        (Some(a), Some(b)) => Some((a, b)),
+        _ => None,
+    }
+}
+
+fn bus_packet_color(selected: bool, summary: &str) -> Color32 {
+    if selected {
+        Color32::from_rgb(0xFF, 0x6B, 0x6B)
+    } else if summary == "START" || summary == "Sr" || summary == "CS" {
+        Color32::from_rgb(0x22, 0xC5, 0x5E)
+    } else if summary == "STOP"
+        || summary == "CS#"
+        || summary == "BREAK"
+        || summary.ends_with('!')
+    {
+        Color32::from_rgb(0xF9, 0x73, 0x16)
+    } else {
+        Color32::from_rgb(0xA7, 0x8B, 0xFA)
+    }
+}
+
 /// Plot-Y of channel ground (native 0 V after scale/offset).
 ///
 /// Display mapping is `y_plot = y_raw * y_scale + y_offset`, so ground is `y_offset`.
 /// Scale zoom must not move this value — the marker stays locked to 0 V.
 fn wave_display_y_zero(w: &LoadedWave) -> f64 {
     w.y_offset
+}
+
+/// Plot-Y of the analog trace's upper edge (follows `y_offset` / `y_scale`).
+fn wave_display_y_top(w: &LoadedWave) -> f64 {
+    let a = w.y_min * w.y_scale + w.y_offset;
+    let b = w.y_max * w.y_scale + w.y_offset;
+    a.max(b)
 }
 
 /// Screen Y of a channel ground marker, plus whether ground is inside the current Y view.
@@ -4097,6 +4533,39 @@ fn bus_grid_parity(
     changed
 }
 
+fn bus_grid_ddsss_extension(
+    ui: &mut egui::Ui,
+    layout: BusFormLayout,
+    label: &str,
+    current: &mut DdsssExtension,
+) -> bool {
+    let mut changed = false;
+    bus_grid_label(ui, layout, label);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let cur = *current;
+        for (text, value) in [
+            ("Auto", DdsssExtension::Auto),
+            ("Off", DdsssExtension::Off),
+            ("On", DdsssExtension::On),
+        ] {
+            if ui
+                .add_sized(
+                    [36.0, layout.row_h],
+                    egui::Button::new(text).selected(cur == value),
+                )
+                .clicked()
+                && cur != value
+            {
+                *current = value;
+                changed = true;
+            }
+        }
+    });
+    ui.end_row();
+    changed
+}
+
 fn bus_grid_spi_wire(
     ui: &mut egui::Ui,
     layout: BusFormLayout,
@@ -4239,6 +4708,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ddsss_bit_colors_are_unique() {
+        let kinds = [
+            "St", "b0", "b1", "b2", "b3", "b4", "b5", "b6", "b7", "P", "Sp",
+        ];
+        let cols: Vec<Color32> = kinds.iter().map(|k| ddsss_bit_color(k)).collect();
+        for i in 0..cols.len() {
+            for j in 0..i {
+                assert_ne!(
+                    cols[i], cols[j],
+                    "{} vs {}",
+                    kinds[i], kinds[j]
+                );
+            }
+        }
+        assert_eq!(
+            ddsss_chip_color(Some("b0"), Some(true)),
+            ddsss_bit_color("b0")
+        );
+        assert_ne!(
+            ddsss_chip_color(Some("b0"), Some(false)),
+            ddsss_chip_color(Some("b1"), Some(false))
+        );
+    }
+
+    #[test]
     fn channel_ground_stays_at_offset_when_scale_changes() {
         let y_offset = 1.25;
         for scale in [0.25_f64, 1.0, 4.0, 16.0] {
@@ -4285,6 +4779,22 @@ mod tests {
         assert!((plot_y_to_native(y_offset, y_scale, y_offset)).abs() < 1e-12);
         assert!((plot_y_to_native(y_offset + 4.0, y_scale, y_offset) - 2.0).abs() < 1e-12);
         assert!((plot_y_to_native(y_offset - 1.0, y_scale, y_offset) + 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn cursor_measure_does_not_gate_ddsss() {
+        assert_eq!(
+            cursor_measure_time_gate(BusKind::Ddsss, Some(1e-3), Some(2e-3)),
+            None
+        );
+        assert_eq!(
+            cursor_measure_time_gate(BusKind::Uart, Some(1e-3), Some(2e-3)),
+            Some((1e-3, 2e-3))
+        );
+        assert_eq!(
+            cursor_measure_time_gate(BusKind::Uart, Some(1e-3), None),
+            None
+        );
     }
 
     #[test]

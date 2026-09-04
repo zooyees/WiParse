@@ -146,6 +146,42 @@ fn hex_bytes(data: &[u8]) -> String {
         .join(" ")
 }
 
+/// Compact engineer-facing decode of a Qi ASK frame (`header [payload…] checksum`).
+pub fn describe_ask_bytes(bytes: &[u8]) -> Option<String> {
+    let header = *bytes.first()?;
+    let meta = ask_packet(header);
+    let name = meta.map(|m| m.name).unwrap_or("UNK");
+    let desc = meta.map(|m| m.desc).unwrap_or("Unknown ASK packet");
+    let (payload, cs, cs_ok) = split_payload_checksum(header, &bytes[1..]);
+    let fields = decode_ask_fields(header, &payload);
+    let mut parts = vec![format!("{name}  {desc}")];
+    for f in fields.iter().take(8) {
+        if f.name.ends_with("_desc") || f.name.ends_with("_valid") {
+            continue;
+        }
+        let val = match &f.value {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let unit = f.unit.as_deref().unwrap_or("");
+        let unit = if unit.is_empty() {
+            String::new()
+        } else {
+            format!(" {unit}")
+        };
+        parts.push(format!("{}={val}{unit}", f.name));
+    }
+    if let Some(c) = cs {
+        let mark = match cs_ok {
+            Some(true) => "OK",
+            Some(false) => "ERR",
+            None => "?",
+        };
+        parts.push(format!("cs=0x{c:02X} {mark}"));
+    }
+    Some(parts.join("  "))
+}
+
 /// Split body into payload + optional XOR checksum (same rules as Python).
 pub fn split_payload_checksum(header: u8, body: &[u8]) -> (Vec<u8>, Option<u8>, Option<bool>) {
     if body.is_empty() {
@@ -422,6 +458,18 @@ fn decode_ask_fields(header: u8, p: &[u8]) -> Vec<QiField> {
                 field("request", req, "", None),
             ]
         }
+        0x09 if !p.is_empty() => vec![field(
+            "renegotiate",
+            p[0],
+            "",
+            Some(format!("0x{:02X}", p[0])),
+        )],
+        0x18 if !p.is_empty() => vec![field(
+            "cloak_request",
+            p[0],
+            "",
+            Some(format!("0x{:02X}", p[0])),
+        )],
         0x13 if !p.is_empty() => {
             let pref = (p[0] >> 6) & 0x03;
             let main_mode = (p[0] >> 3) & 0x03;
@@ -1417,6 +1465,10 @@ mod tests {
         assert_eq!(d.name, "CE");
         let ce = d.fields.iter().find(|f| f.name == "control_error").unwrap();
         assert_eq!(ce.value, serde_json::json!(-2));
+        let desc = describe_ask_bytes(&[0x03, 0x00, 0x03]).unwrap();
+        assert!(desc.contains("CE"), "{desc}");
+        assert!(desc.contains("control_error=0"), "{desc}");
+        assert!(desc.contains("cs=0x03 OK"), "{desc}");
     }
 
     #[test]

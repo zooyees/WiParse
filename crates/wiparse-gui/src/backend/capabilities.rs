@@ -49,7 +49,7 @@ fn method_catalog() -> Vec<Value> {
         json!({"method": "ui.wave.close", "params": {}, "stateful": true}),
         json!({"method": "ui.wave.select", "params": {"index": 0}, "stateful": true}),
         json!({"method": "ui.wave.browser", "params": {"dir": "D:/waves"}, "stateful": true}),
-        json!({"method": "ui.wave.bus", "params": {"kind": "i2c", "scl": 0, "sda": 1}, "stateful": true}),
+        json!({"method": "ui.wave.bus", "params": {"kind": "ddsss", "signal": 0, "sequence": "seqa"}, "stateful": true}),
         json!({"method": "ui.wave.cursor", "params": {"x1": 0.0, "x2": 0.001}, "stateful": true}),
         json!({"method": "ui.wave.fit", "params": {}, "stateful": true}),
         json!({"method": "ui.calc.get", "params": {}, "stateful": true}),

@@ -1,6 +1,6 @@
 # 在另一台电脑部署 WiParse MCP
 
-MCP **不能单独工作**：它只通过 HTTP 连本机已启动的 `WiParse.exe`（默认 `http://127.0.0.1:7878`）。对机需要 **GUI 1.1.5+ + Node.js 18+ + Cursor**。闭环工位步骤见 [`WORKSTATION_CLOSED_LOOP.md`](WORKSTATION_CLOSED_LOOP.md)。
+MCP **不能单独工作**：它只通过 HTTP 连本机已启动的 `WiParse.exe`（默认 `http://127.0.0.1:7878`）。对机需要 **GUI 1.1.6+ + Node.js 18+ + Cursor**。闭环工位步骤见 [`WORKSTATION_CLOSED_LOOP.md`](WORKSTATION_CLOSED_LOOP.md)。
 
 推荐安装目录（可改）：`D:\software\WiParse`
 
@@ -23,6 +23,10 @@ DEPLOY_API.md
   WORKSTATION_CLOSED_LOOP.md
   examples\qi_pt_smoke.json
   examples\ask71_waveform_source.json
+  examples\ddsss_vctx.isf
+  examples\ddsss_vctx.json
+  examples\ddsss_vctx_errors.isf
+  examples\ddsss_vctx_errors.json
 mcp\wiparse\
   dist\index.js        ← 已编译，不必再 tsc
   package.json
@@ -144,7 +148,7 @@ cd D:\software\WiParse
 
 把 zip 里的 `mcp\wiparse` **整个覆盖**到现有安装目录（与 `WiParse.exe` 相对路径为 `mcp\wiparse`），然后执行第 2 步的 `setup-mcp.cmd`，并**完全退出 Cursor**。
 
-GUI 必须是 **1.1.5+**（含 `instrument.waveform_source` 与阻塞式闭环仪表步骤）。旧 GUI 配新 MCP 会缺方法；只换 MCP 不换 GUI 时，`wiparse_ui` 的 `instrument.waveform_source` 会报 unknown method。
+GUI 必须是 **1.1.6+**（含 DDSSS、`instrument.waveform_source` 与阻塞式闭环仪表步骤）。旧 GUI 配新 MCP 会缺方法；只换 MCP 不换 GUI 时，`wiparse_ui` 的 `wave.bus` / `instrument.waveform_source` 会报 unknown method。
 
 若 Cursor 仍只显示 4～5 个工具：配置已写入但进程没重载，请杀掉所有 Cursor 进程再开。
 
@@ -155,9 +159,9 @@ GUI 必须是 **1.1.5+**（含 `instrument.waveform_source` 与阻塞式闭环�
 | 现象 | 处理 |
 |------|------|
 | Cursor 里没有 wiparse | 确认 mcp.json 已写、路径存在；完全退出 Cursor |
-| 只有旧工具、没有 `wiparse_ui` | 覆盖了旧 `mcp\wiparse` 后必须完全重启 Cursor；确认 `dist\index.js` 来自 1.1.5 zip |
+| 只有旧工具、没有 `wiparse_ui` | 覆盖了旧 `mcp\wiparse` 后必须完全重启 Cursor；确认 `dist\index.js` 来自 1.1.6 zip |
 | `GUI API down` / connect failed | 先开 `WiParse.exe`；或检查 `WIPARSE_URL` 是否与 `WIPARSE_API_BIND` 一致 |
-| `unknown method: ui.show` / `instrument.waveform_source` | GUI 太旧，换成 zip 里的 `WiParse.exe`（1.1.5+） |
+| `unknown method: ui.show` / `instrument.waveform_source` / `ui.wave.bus` | GUI 太旧，换成 zip 里的 `WiParse.exe`（1.1.6+） |
 | `Cannot find module @modelcontextprotocol/sdk` | 在 `mcp\wiparse` 跑 `npm install --omit=dev`，或改用带 `node_modules` 的 zip |
 | `node` 不是内部命令 / Cursor 起不来 MCP | `command` 改成 `C:/Program Files/nodejs/node.exe`（或 `where.exe node` 的路径） |
 | 选口失败、监控已开 | 先在 GUI 停监控，或让 Agent 调 stop 再 `wiparse_select` |

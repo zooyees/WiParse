@@ -249,6 +249,7 @@ pub fn decode_i2s(
             None
         },
         truncated,
+        ..Default::default()
     }
 }
 
@@ -281,6 +282,7 @@ fn push_sample(
             t_end: t1,
             summary,
             bytes: sample_to_bytes(word, bits),
+            ..Default::default()
         },
     )
 }

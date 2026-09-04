@@ -242,7 +242,7 @@ pub fn decode_spi(
                         t_start: t,
                         t_end: t,
                         summary: "CS".into(),
-                        bytes: Vec::new(),
+                        bytes: Vec::new(), ..Default::default()
                     },
                 ) {
                     truncated = true;
@@ -274,7 +274,7 @@ pub fn decode_spi(
                         t_start: t,
                         t_end: t,
                         summary: "CS#".into(),
-                        bytes: Vec::new(),
+                        bytes: Vec::new(), ..Default::default()
                     },
                 ) {
                     truncated = true;
@@ -301,7 +301,8 @@ pub fn decode_spi(
                                 t_end: t,
                                 summary,
                                 bytes,
-                            },
+            ..Default::default()
+        },
                         ) {
                             truncated = true;
                             break;
@@ -351,7 +352,8 @@ pub fn decode_spi(
                                 t_end: t,
                                 summary,
                                 bytes,
-                            },
+            ..Default::default()
+        },
                         ) {
                             truncated = true;
                             break;
@@ -402,6 +404,7 @@ pub fn decode_spi(
             None
         },
         truncated,
+        ..Default::default()
     }
 }
 
@@ -505,7 +508,8 @@ fn flush_partial(
                 t_end: t1,
                 summary: format!("DATA 0x{packed_word:X} (partial {bit_count}b)"),
                 bytes: vec![(packed_word & 0xFF) as u8],
-            },
+            ..Default::default()
+        },
         )
     } else {
         let mut summary = format!("MOSI 0x{mosi_word:X} (partial {bit_count}b)");
@@ -523,7 +527,8 @@ fn flush_partial(
                 t_end: t1,
                 summary,
                 bytes,
-            },
+            ..Default::default()
+        },
         )
     }
 }

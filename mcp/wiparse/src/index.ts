@@ -6,7 +6,7 @@ import { apiHealth, apiInvoke, defaultApiUrl } from "./http.js";
 
 const server = new McpServer({
   name: "wiparse",
-  version: "1.1.5",
+  version: "1.1.6",
 });
 
 function compact(body: unknown) {
@@ -138,7 +138,7 @@ const UI_METHODS = {
 
 server.tool(
   "wiparse_ui",
-  "Drive the running WiParse.exe UI: switch tabs, panels, prefs, serial log, waveform, calculator, instruments. GUI 1.1.5+.",
+  "Drive the running WiParse.exe UI: switch tabs, panels, prefs, serial log, waveform (including DDSSS bus decode), calculator, instruments. GUI 1.1.6+.",
   {
     op: z.enum([
       "state",

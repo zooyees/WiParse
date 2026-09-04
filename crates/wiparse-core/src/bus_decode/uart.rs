@@ -174,6 +174,7 @@ pub fn decode_uart(
             None
         },
         truncated,
+        ..Default::default()
     }
 }
 
@@ -345,7 +346,8 @@ fn decode_frame_at(
                 t_end: t_end.max(t_confirm),
                 summary: "BREAK".into(),
                 bytes: Vec::new(),
-            });
+            ..Default::default()
+        });
         }
     }
 
@@ -374,7 +376,8 @@ fn decode_frame_at(
         t_end,
         summary,
         bytes,
-    })
+            ..Default::default()
+        })
 }
 
 #[cfg(test)]

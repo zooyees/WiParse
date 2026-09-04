@@ -309,14 +309,15 @@ pub fn export_waveform_isf(
     let (ymin, ymax) = trace.y[..n].iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &v| {
         (lo.min(v), hi.max(v))
     });
-    let yrange = (ymax - ymin).max(1e-12);
-    let ymult = yrange / 250.0;
-    let yoff = 128.0;
-    let yzero = ymin;
+    // Signed RI: y = YZERO + YMULT * (code - YOFF) with YOFF=0.
+    let peak = ymin.abs().max(ymax.abs()).max(1e-12);
+    let ymult = peak / 127.0;
+    let yoff = 0.0;
+    let yzero = 0.0;
 
     let mut curve = Vec::with_capacity(n);
     for &yv in &trace.y[..n] {
-        let code = ((yv - yzero) / ymult + yoff).round().clamp(-128.0, 127.0) as i8;
+        let code = ((yv - yzero) / ymult).round().clamp(-128.0, 127.0) as i8;
         curve.push(code as u8);
     }
 
@@ -329,7 +330,6 @@ pub fn export_waveform_isf(
     let len = curve.len();
     let mut out = preamble.into_bytes();
     out.extend_from_slice(format!(":CURVE #{}{len}", len.to_string().len()).as_bytes());
-    out.extend_from_slice(len.to_string().as_bytes());
     out.extend_from_slice(&curve);
     std::fs::write(path, out)?;
     Ok(())

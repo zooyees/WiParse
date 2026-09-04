@@ -1,11 +1,16 @@
 //! Software bus decode from analog scope traces (offline waveform analysis).
 
+mod ddsss;
 mod digital;
 mod i2c;
 mod i2s;
 mod spi;
 mod uart;
 
+pub use ddsss::{
+    decode_ddsss, qi_ask_frame, synthesize_ddsss, DdsssConfig, DdsssExtension, DdsssSequence,
+    DdsssSynthRequest,
+};
 pub use digital::{analog_to_edges, default_threshold, DigitalEdge, EdgeKind};
 pub use i2c::{decode_i2c, I2cConfig};
 pub use i2s::{decode_i2s, I2sConfig, I2sFormat};
@@ -23,6 +28,7 @@ pub enum BusKind {
     I2c,
     Spi,
     I2s,
+    Ddsss,
 }
 
 impl BusKind {
@@ -33,21 +39,132 @@ impl BusKind {
             Self::I2c => "I2C",
             Self::Spi => "SPI",
             Self::I2s => "I2S",
+            Self::Ddsss => "DDSSS",
         }
     }
 
     pub fn all_selectable() -> &'static [BusKind] {
-        &[Self::Off, Self::Uart, Self::I2c, Self::Spi, Self::I2s]
+        &[
+            Self::Off,
+            Self::Uart,
+            Self::I2c,
+            Self::Spi,
+            Self::I2s,
+            Self::Ddsss,
+        ]
     }
 }
 
 /// One decoded frame / transaction on the time axis.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BusFrame {
     pub t_start: f64,
     pub t_end: f64,
+    /// Compact plot label (packet name). Keep short — hex lives on the byte row.
     pub summary: String,
     pub bytes: Vec<u8>,
+    /// DDSSS ASK integrity. Other buses leave this as `None`.
+    pub error: BusFrameError,
+}
+
+impl BusFrame {
+    pub fn plot_label(&self) -> String {
+        match self.error {
+            BusFrameError::None => self.summary.clone(),
+            BusFrameError::Checksum => format!("{}!", self.summary),
+            BusFrameError::Parity => format!("{} P!", self.summary),
+            BusFrameError::Framing => format!("{} F!", self.summary),
+        }
+    }
+
+    pub fn has_error(&self) -> bool {
+        self.error != BusFrameError::None
+    }
+}
+
+/// ASK packet integrity (DDSSS).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BusFrameError {
+    #[default]
+    None,
+    Checksum,
+    Parity,
+    Framing,
+}
+
+/// Byte-lane integrity mark.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BusByteError {
+    #[default]
+    None,
+    Checksum,
+    Parity,
+    Framing,
+}
+
+/// One recognized DDSSS chip on the time axis (`None` = uncertain).
+/// `one` is polarity-corrected to match decoded data bits (Table 2 ONE/ZERO).
+/// `error` is a mismatch vs the spreading sequence for the decided bit
+/// (Table 4 still allows several chip errors per bit).
+#[derive(Debug, Clone, Copy)]
+pub struct BusChipMark {
+    pub t_start: f64,
+    pub t_end: f64,
+    pub one: Option<bool>,
+    pub error: bool,
+}
+
+/// One correlator data bit (11 bits per Qi serial byte: start, b0..b7, parity, stop).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BusBitKind {
+    Start,
+    Data { index: u8 },
+    Parity,
+    Stop,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BusBitMark {
+    pub t_start: f64,
+    pub t_end: f64,
+    pub one: bool,
+    pub kind: BusBitKind,
+    pub error: bool,
+}
+
+impl BusBitMark {
+    pub fn label(&self) -> String {
+        let base = match self.kind {
+            BusBitKind::Start => "St".into(),
+            BusBitKind::Data { index } => format!("b{index}"),
+            BusBitKind::Parity => "P".into(),
+            BusBitKind::Stop => "Sp".into(),
+        };
+        if self.error {
+            format!("{base}!")
+        } else {
+            base
+        }
+    }
+}
+
+/// One assembled Qi byte and the waveform interval that produced it.
+#[derive(Debug, Clone)]
+pub struct BusByteSpan {
+    pub t_start: f64,
+    pub t_end: f64,
+    pub byte: u8,
+    pub error: BusByteError,
+}
+
+impl BusByteSpan {
+    pub fn label(&self) -> String {
+        if self.error == BusByteError::None {
+            format!("{:02X}", self.byte)
+        } else {
+            format!("{:02X}!", self.byte)
+        }
+    }
 }
 
 /// Hard cap on decoded payload bytes (all bus protocols). Further data is skipped.
@@ -77,6 +194,12 @@ pub struct BusDecodeResult {
     pub info: String,
     pub error: Option<String>,
     pub truncated: bool,
+    /// DDSSS chip decisions (empty for other buses).
+    pub chips: Vec<BusChipMark>,
+    /// DDSSS correlator bits (empty for other buses).
+    pub bits: Vec<BusBitMark>,
+    /// DDSSS / framed bytes with waveform intervals (empty for other buses).
+    pub byte_spans: Vec<BusByteSpan>,
 }
 
 /// Channel indices into the loaded `waves` vector.
@@ -94,6 +217,7 @@ pub struct BusChannelMap {
     pub i2s_bclk: Option<usize>,
     pub i2s_ws: Option<usize>,
     pub i2s_data: Option<usize>,
+    pub ddsss_signal: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +228,7 @@ pub struct BusDecodeSettings {
     pub i2c: I2cConfig,
     pub spi: SpiConfig,
     pub i2s: I2sConfig,
+    pub ddsss: DdsssConfig,
     pub threshold: Option<f64>,
     pub idle_high: bool,
     /// Optional time gate `[t0, t1]` (seconds, trace time base).
@@ -119,6 +244,7 @@ impl Default for BusDecodeSettings {
             i2c: I2cConfig::default(),
             spi: SpiConfig::default(),
             i2s: I2sConfig::default(),
+            ddsss: DdsssConfig::default(),
             threshold: None,
             idle_high: true,
             time_gate: None,
@@ -240,6 +366,15 @@ pub fn decode_bus(waves: &[WaveformTrace], settings: &BusDecodeSettings) -> BusD
                 &settings.i2s,
             )
         }
+        BusKind::Ddsss => {
+            let Some(idx) = settings.channels.ddsss_signal else {
+                return need_channel("DDSSS signal");
+            };
+            let Some(trace) = waves.get(idx) else {
+                return invalid_channel();
+            };
+            decode_ddsss(&slice_trace(trace), &settings.ddsss)
+        }
     }
 }
 
@@ -276,6 +411,7 @@ pub fn compact_bus_decode_indices(
     ch.i2s_bclk = remap(ch.i2s_bclk);
     ch.i2s_ws = remap(ch.i2s_ws);
     ch.i2s_data = remap(ch.i2s_data);
+    ch.ddsss_signal = remap(ch.ddsss_signal);
 
     (unique, compact)
 }
@@ -348,5 +484,32 @@ mod tests {
         let gated = gate_trace(&trace, Some((20e-6, 50e-6)));
         assert!(gated.x.len() < trace.x.len());
         assert!(gated.x.first().unwrap() >= &20e-6);
+    }
+
+    #[test]
+    fn decode_bus_ddsss_ce() {
+        // Tiny carrier: reuse the public decoder via BusKind.
+        let fop = 128_000.0;
+        let spc = 8usize;
+        let dt = 1.0 / (fop * spc as f64);
+        // Not a valid packet — just ensure the kind dispatches without panic.
+        let n = 256;
+        let x: Vec<f64> = (0..n).map(|i| i as f64 * dt).collect();
+        let y: Vec<f64> = (0..n)
+            .map(|i| (2.0 * std::f64::consts::PI * (i % spc) as f64 / spc as f64).sin())
+            .collect();
+        let trace = WaveformTrace {
+            channel: "CH1".into(),
+            x: x.into(),
+            y: y.into(),
+            x_unit: "s".into(),
+            y_unit: "V".into(),
+        };
+        let mut settings = BusDecodeSettings::default();
+        settings.kind = BusKind::Ddsss;
+        settings.channels.ddsss_signal = Some(0);
+        settings.ddsss.fop_hz = Some(fop);
+        let r = decode_bus(&[trace], &settings);
+        assert!(r.error.is_none(), "{r:?}");
     }
 }

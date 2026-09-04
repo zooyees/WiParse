@@ -157,6 +157,7 @@ fn decode_i2c_oriented(
             None
         },
         truncated,
+        ..Default::default()
     }
 }
 
@@ -252,7 +253,7 @@ fn read_transaction(
             t_start,
             t_end: t_start,
             summary: start_label.into(),
-            bytes: Vec::new(),
+            bytes: Vec::new(), ..Default::default()
         },
     ) {
         return Some((start_i + 1, true));
@@ -286,7 +287,7 @@ fn read_transaction(
                         t_start: ev.t,
                         t_end: ev.t,
                         summary: "STOP".into(),
-                        bytes: Vec::new(),
+                        bytes: Vec::new(), ..Default::default()
                     },
                 );
                 return Some((i + 1, truncated));
@@ -363,7 +364,7 @@ fn read_transaction(
                                             t_start: ev.t,
                                             t_end: ev.t,
                                             summary: "STOP".into(),
-                                            bytes: Vec::new(),
+                                            bytes: Vec::new(), ..Default::default()
                                         },
                                     );
                                     return Some((i + 1, truncated));
@@ -422,7 +423,7 @@ fn emit_i2c_byte(
                         if *is_write { "W" } else { "R" },
                         (value >> 1) & 0x03
                     ),
-                    bytes: vec![value],
+                    bytes: vec![value], ..Default::default()
                 },
             );
         }
@@ -445,7 +446,7 @@ fn emit_i2c_byte(
                 t_start: t0,
                 t_end: t1,
                 summary,
-                bytes: vec![value],
+                bytes: vec![value], ..Default::default()
             },
         );
     }
@@ -471,7 +472,7 @@ fn emit_i2c_byte(
                 t_start: t0,
                 t_end: t1,
                 summary: format!("Dev 10b 0x{addr10:03X} {rw} {ack_s}"),
-                bytes: vec![value],
+                bytes: vec![value], ..Default::default()
             },
         );
     }
@@ -501,7 +502,8 @@ fn emit_i2c_byte(
                     t_end: t1,
                     summary,
                     bytes,
-                },
+            ..Default::default()
+        },
             );
         }
         return true;
@@ -515,6 +517,7 @@ fn emit_i2c_byte(
             t_end: t1,
             summary: format!("Data 0x{value:02X} {ack_s}"),
             bytes: vec![value],
+            ..Default::default()
         },
     )
 }
@@ -539,7 +542,7 @@ fn flush_partial_reg(
             t_start: t0,
             t_end: t1,
             summary: format!("Reg 0x{reg_value:02X} (incomplete)"),
-            bytes: vec![reg_value as u8],
+            bytes: vec![reg_value as u8], ..Default::default()
         },
     );
     *reg_needed = 0;

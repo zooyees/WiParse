@@ -411,12 +411,14 @@ enum UiWaveCmd {
         #[arg(long)]
         dir: PathBuf,
     },
-    /// Configure bus decode (UART / I2C / SPI / I2S).
+    /// Configure bus decode (UART / I2C / SPI / I2S / DDSSS).
     Bus {
         #[arg(long)]
         kind: Option<String>,
         #[arg(long)]
         uart: Option<u64>,
+        #[arg(long)]
+        signal: Option<u64>,
         #[arg(long)]
         scl: Option<u64>,
         #[arg(long)]
@@ -439,6 +441,12 @@ enum UiWaveCmd {
         threshold: Option<f64>,
         #[arg(long)]
         baud: Option<f64>,
+        #[arg(long)]
+        sequence: Option<String>,
+        #[arg(long)]
+        extension: Option<String>,
+        #[arg(long)]
+        fop: Option<f64>,
     },
     Cursor {
         #[arg(long)]
@@ -764,6 +772,7 @@ fn map_to_invoke(cli: &Cli) -> Option<(String, serde_json::Value)> {
         Commands::Ui(UiCmd::Wave(UiWaveCmd::Bus {
             kind,
             uart,
+            signal,
             scl,
             sda,
             clk,
@@ -775,6 +784,9 @@ fn map_to_invoke(cli: &Cli) -> Option<(String, serde_json::Value)> {
             data,
             threshold,
             baud,
+            sequence,
+            extension,
+            fop,
         })) => {
             let mut p = json!({});
             if let Some(v) = kind {
@@ -782,6 +794,9 @@ fn map_to_invoke(cli: &Cli) -> Option<(String, serde_json::Value)> {
             }
             if let Some(v) = uart {
                 p["uart"] = json!(v);
+            }
+            if let Some(v) = signal {
+                p["signal"] = json!(v);
             }
             if let Some(v) = scl {
                 p["scl"] = json!(v);
@@ -815,6 +830,15 @@ fn map_to_invoke(cli: &Cli) -> Option<(String, serde_json::Value)> {
             }
             if let Some(v) = baud {
                 p["baud"] = json!(v);
+            }
+            if let Some(v) = sequence {
+                p["sequence"] = json!(v);
+            }
+            if let Some(v) = extension {
+                p["extension"] = json!(v);
+            }
+            if let Some(v) = fop {
+                p["fop"] = json!(v);
             }
             Some(("ui.wave.bus".into(), p))
         }

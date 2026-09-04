@@ -6,6 +6,34 @@
 
 ---
 
+## 1.1.6 — 2026-09-04
+
+波形页离线 **DDSSS** 协议分析：对 VCTX / ILTX（或线圈电压电流）做差分解调 + 相关，再复用现有 Qi 包解码。
+
+### 新增
+
+- 协议下拉 `DDSSS`：通道、序列 Auto/SEQA–D、扩展码、可选手动 FOP。
+- `ui.wave.bus --kind ddsss --signal 0`（可选 `--sequence` / `--extension` / `--fop`）。MCP `wiparse_ui` 的 `wave.bus` 透传同样参数。
+- 合成检验波形 [`docs/examples/ddsss_vctx.isf`](examples/ddsss_vctx.isf)：SEQA，5 个 Qi 包（SS / CE / RP8 / CHS / ID）。
+- 带误码扩展源 [`docs/examples/ddsss_vctx_errors.isf`](examples/ddsss_vctx_errors.isf)：15 个 ASK 包，24 个 chip 翻转，CE 奇偶错误（`CE P!`），CHS 校验错误（`CHS!`）。
+
+### 行为
+
+- 默认合同 SEQA、无 extension；Auto 在解出校验正确的包后停止穷举。
+- FOP 范围 **85 kHz–1.78 MHz**；过零对齐分窗；浅调制自适应死区，搜不到包时再零死区重试。
+- 波形标注分四行，贴在解码通道波形上沿（随 Y 轴拖动跟随，不挡模拟迹线）：包名、字节 hex、**chip→bit**（`St` / `b0`–`b7` / `P` / `Sp`）、chip 0/1。同一 bit 的 chip 与 bit 标签同色。chip 时间窗对齐两周 FOP。
+- 点选数据包后侧栏显示字段解码（如 `control_error`、校验和）。误码分层标注：扩频 chip 与 Table 4 相关不一致标橙色 `x`（bit 仍可过门限解出）；校验失败 `NAME!`；奇偶失败 `NAME P!`；帧错误 `NAME F!`。不因此丢锁。侧栏统计「误码 N」，`info` 含 `cs_err` / `P_err` / `F_err` / `chip_err`。 bit 行可见时即画 chip 竖线（SEQA 每 bit 31 chip，不必再放大到单 chip 才显示）。
+- X1/X2 测量光标不再作为 DDSSS 时间窗：打开光标测量或拖动光标不会清掉已有解码叠加层。 UART/I2C/SPI/I2S 仍可按光标窗口重解码。
+- `info` 含 FOP、fchip、kbps、Nseq、ext、phase、invert、depth、DQM。
+- 已设手动 FOP 时不再扫整条波形估频；包络对均匀采样走索引快路径。
+- 一期不做串口 ASK 并行检出，也不跑 Ping/SRQ/DQM 状态机。
+
+### 文档 / 部署
+
+- README、`UPDATE.md`、`CLI_REFERENCE`、`WORKSTATION_CLOSED_LOOP`、`DEPLOY_MCP` 与 1.1.6 对齐（含 DDSSS 四行标注）。
+
+---
+
 ## 1.1.5 — 2026-09-03
 
 通用闭环：等待任意包/头/行（上升沿），阻塞式示波器停采 / 截图落盘 / 读取波形源文件。ASK 71 只是示例计划，引擎不写死 0x71。

@@ -1,6 +1,6 @@
 # 测试工位落地：通用闭环（wait + 示波器停采 / 截图 / 波形源）
 
-适用版本 **WiParse 1.1.5**。工位机通常只有安装目录（exe + config + 计划 JSON），**没有** `.rs` 源码。落地 = 换本 zip 里的 GUI/CLI/MCP，改 `config.json`，用计划 JSON 跑测试。
+适用版本 **WiParse 1.1.6**。工位机通常只有安装目录（exe + config + 计划 JSON），**没有** `.rs` 源码。落地 = 换本 zip 里的 GUI/CLI/MCP，改 `config.json`，用计划 JSON 跑测试。
 
 本文说明 **改了什么**、**怎么用**、**ASK 71 只是示例**。引擎不写死 `0x71`。
 
@@ -73,7 +73,7 @@
 5. 覆盖 `mcp\wiparse` 后跑 `setup-mcp.cmd`，然后 **完全退出 Cursor 再打开**（半重启会仍是旧 MCP）。
 6. 先双击新 `WiParse.exe`，仪表页确认示波器已连接，串口页选好口。
 
-GUI 与 MCP 必须同为 **1.1.5+**。
+GUI 与 MCP 必须同为 **1.1.6+**。
 
 ---
 
@@ -163,9 +163,24 @@ MCP：`wiparse_ui` `op=instrument.command` / `instrument.waveform_source`，参�
 
 ## 6. 工位验收清单
 
-1. 关于页 / `wiparse version` 为 **1.1.5**
+1. 关于页 / `wiparse version` 为 **1.1.6**
 2. `config.json` 已设 `waveform_source_dir`，且与 `waveform_browser_dir` 不是同一个需求混用
 3. 示波器已连接；点一次 GUI「读取波形源文件」仍会弹另存为（按钮行为未改）
 4. 跑 `ask71_waveform_source.json`：新出现 ID/ASK71 后示波器停止，PNG 在 evidence，ISF 在配置目录
 5. 旧 `qi_pt_smoke.json` 仍能 Pass
 6. Cursor 里 `wiparse_ui` 的 `op` 能选到 `instrument.waveform_source`；改 MCP 后必须全退 Cursor
+
+---
+
+## 7. 离线 DDSSS（波形页）
+
+示波器采 **VCTX** 或 **ILTX**（线圈电压/电流也可以），把 ISF 加载进波形分析页，协议分析选 **DDSSS**，通道指到该曲线。默认合同是 SEQA、无 extension bit。CLI：`wiparse ui wave bus --kind ddsss --signal 0`。
+
+波形标注贴在解码通道上沿（随 Y 轴拖动跟随，四行不叠）：
+
+1. **包** — Qi 名（`CE`、`SS`…），点选后侧栏给出字段解码
+2. **字节** — hex（`03` `00` `03`）
+3. **chip→bit** — 每组 Nseq 个 chip 对应一位：`St` / `b0`–`b7` / `P` / `Sp`（够宽时带 `=0/1`）；每位一种颜色
+4. **chip** — 极性校正后的 `0`/`1`（与 Table 4 扩频序列不一致标橙色 `x`），颜色与所属 bit 一致（`0` 略暗），时间窗对齐两周 FOP。SEQA 每 bit 31 chip，bit 行可见时即画 chip 竖线。
+
+没有实采时，用仓库里的合成源 [`docs/examples/ddsss_vctx.isf`](examples/ddsss_vctx.isf)（5 个包：SS / CE / RP8 / CHS / ID），或带误码的 [`docs/examples/ddsss_vctx_errors.isf`](examples/ddsss_vctx_errors.isf)（更多 ASK 包；chip 翻转标 `x`，`CE P!` 奇偶错、`CHS!` 校验错）。一期不做串口 ASK 并行检出，也不跑 Ping/SRQ/DQM 状态机。

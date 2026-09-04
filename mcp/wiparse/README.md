@@ -40,9 +40,9 @@ npm run build
 | `wiparse_test` | `start` / `status` / `abort` / `pack`。`start` 需要计划 JSON。 |
 | `wiparse_send` | 向 GUI 监控口排队 hex（优先用计划里的 macros）。 |
 | `wiparse_report_pack` | 证据包摘要（路径 + brief + correlate）。据此写报告，不要读 `serial.txt`。 |
-| `wiparse_ui` | 切页 / 面板 / 语言主题 / 各页参数。`op`（如 `show`、`calc.set`、`instrument.waveform_source`）+ 可选 `tab` / `params`。GUI 1.1.5+。 |
+| `wiparse_ui` | 切页 / 面板 / 语言主题 / 各页参数。`op`（如 `show`、`wave.bus` `kind=ddsss`、`instrument.waveform_source`）+ 可选 `tab` / `params`。GUI 1.1.6+。 |
 
-示例计划：[`docs/examples/qi_pt_smoke.json`](../../docs/examples/qi_pt_smoke.json)、[`docs/examples/ask71_waveform_source.json`](../../docs/examples/ask71_waveform_source.json)。工位说明：[`docs/WORKSTATION_CLOSED_LOOP.md`](../../docs/WORKSTATION_CLOSED_LOOP.md)。
+示例计划：[`docs/examples/qi_pt_smoke.json`](../../docs/examples/qi_pt_smoke.json)、[`docs/examples/ask71_waveform_source.json`](../../docs/examples/ask71_waveform_source.json)、[`docs/examples/ddsss_vctx.isf`](../../docs/examples/ddsss_vctx.isf)。工位说明：[`docs/WORKSTATION_CLOSED_LOOP.md`](../../docs/WORKSTATION_CLOSED_LOOP.md)（含离线 DDSSS 四行标注）。
 
 Agent 约定：不要 `Read` 日志文件；不要订阅 `/v1/events`。
 

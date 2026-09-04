@@ -135,6 +135,8 @@ wiparse ui serial browser --dir D:\logs
 wiparse ui wave open --path scope.csv
 wiparse ui wave select --index 0
 wiparse ui wave bus --kind i2c --scl 0 --sda 1
+wiparse ui wave bus --kind ddsss --signal 0 --sequence seqa
+
 wiparse ui wave cursor --x1 0 --x2 0.001
 wiparse ui wave fit
 wiparse ui wave close
@@ -153,6 +155,8 @@ wiparse ui instrument command --id 1 --query "*IDN?"
 ```
 
 串口监控仍用 `serial start/stop/select/send`。仪表读写也可用 `api invoke instrument.*`。
+
+波形页 **DDSSS**：示波器采 VCTX 或 ILTX（线圈电压/电流亦可），加载 ISF 后协议分析选 `DDSSS`，通道指到该曲线。默认 SEQA、无 extension；`--sequence auto` 会试 A–D。可选 `--fop`（Hz，**85 kHz–1.78 MHz**）。波形顶部分四行标注（贴在解码通道上沿，随 Y 轴拖动跟随）：**包名**（如 `CE`）→ **字节** hex → **chip→bit**（`St` / `b0`–`b7` / `P` / `Sp`）→ **chip** 0/1（与扩频序列不一致的 chip 标橙色 `x`；Table 4 门限内 bit 仍解出）。点选数据包可看字段解码。合成检验文件：`docs/examples/ddsss_vctx.isf`（SS / CE / RP8 / CHS / ID）；带误码与更多消息：`docs/examples/ddsss_vctx_errors.isf`（chip `x`、`CHS!` 校验错，`CE P!` 奇偶错）。
 
 ## 闭环测试（GUI）
 
