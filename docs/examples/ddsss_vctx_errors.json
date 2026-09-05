@@ -1,0 +1,26 @@
+{
+  "description": "Synthetic VCTX DDSSS capture with extra ASK messages plus light errors (SEQA, no extension, FOP 128 kHz). Open ddsss_vctx_errors.isf, protocol DDSSS, Signal = VCTX. Up to 2 chip flips per bit stay under Table 4 demod threshold (bits still decode; chips marked x). CE header parity is flipped (CE P!); CHS checksum is XOR'd with 1 (CHS!).",
+  "file": "ddsss_vctx_errors.isf",
+  "sequence": "SEQA",
+  "fop_hz": 128000,
+  "chip_errors": 24,
+  "checksum_errors": [10],
+  "parity_errors": [7],
+  "packets": [
+    { "name": "SS", "bytes": "01 80 81" },
+    { "name": "ID", "bytes": "71 13 00 5A 80 12 34 56 C8", "note": "Qi 1.3, PRMC Apple 0x005A, has XID" },
+    { "name": "XID", "bytes": "81 AA BB CC DD 11 22 33 44 C5" },
+    { "name": "CFG", "bytes": "51 0A 00 00 20 00 7B", "note": "5 W reference" },
+    { "name": "PCH", "bytes": "06 05 03" },
+    { "name": "GRQ", "bytes": "07 31 36", "note": "request PTx CAP" },
+    { "name": "SRQ", "bytes": "20 00 00 20", "note": "SRQ/en" },
+    { "name": "CE P!", "bytes": "03 00 03", "note": "header parity bit flipped; checksum still OK" },
+    { "name": "RP8", "bytes": "04 40 44" },
+    { "name": "RP", "bytes": "31 00 01 F4 C4", "note": "500 mW" },
+    { "name": "CHS!", "bytes": "05 64 60", "note": "clean was 05 64 61; checksum bit flipped" },
+    { "name": "FOD", "bytes": "22 00 10 32" },
+    { "name": "DSR", "bytes": "15 00 15" },
+    { "name": "NEGO", "bytes": "09 00 09" },
+    { "name": "EPT", "bytes": "02 01 03", "note": "charge complete" }
+  ]
+}

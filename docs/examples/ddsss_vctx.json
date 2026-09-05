@@ -1,0 +1,13 @@
+{
+  "description": "Synthetic VCTX DDSSS capture (SEQA, no extension, FOP 128 kHz). Open ddsss_vctx.isf in the waveform page, set protocol to DDSSS, map Signal to VCTX.",
+  "file": "ddsss_vctx.isf",
+  "sequence": "SEQA",
+  "fop_hz": 128000,
+  "packets": [
+    { "name": "SS", "bytes": "01 80 81" },
+    { "name": "CE", "bytes": "03 00 03" },
+    { "name": "RP8", "bytes": "04 40 44" },
+    { "name": "CHS", "bytes": "05 64 61" },
+    { "name": "ID", "bytes": "71 01 02 03 04 05 06 07 71" }
+  ]
+}
