@@ -4,8 +4,11 @@ use super::dispatch::{err, ok};
 use super::InvokeReply;
 use crate::app::MainTab;
 use crate::calculator::CalculatorPanel;
+use crate::data_analysis::DataAnalysisPanel;
 use crate::instrument_control::InstrumentControlPanel;
 use crate::serial_tool::SerialToolPanel;
+use crate::test_report::TestReportPanel;
+use crate::test_tool::TestToolPanel;
 use crate::waveform_analysis::WaveformAnalysisPanel;
 use serde_json::{json, Value};
 use wiparse_core::config::AppConfig;
@@ -19,10 +22,16 @@ pub struct UiHost<'a> {
     pub show_calculator: &'a mut bool,
     pub show_instruments: &'a mut bool,
     pub show_waveform: &'a mut bool,
+    pub show_data_analysis: &'a mut bool,
+    pub show_test_report: &'a mut bool,
+    pub show_test_tool: &'a mut bool,
     pub serial: &'a mut SerialToolPanel,
     pub instruments: &'a mut InstrumentControlPanel,
     pub calculator: &'a mut CalculatorPanel,
     pub waveform: &'a mut WaveformAnalysisPanel,
+    pub data_analysis: &'a mut DataAnalysisPanel,
+    pub test_report: &'a mut TestReportPanel,
+    pub test_tool: &'a mut TestToolPanel,
 }
 
 pub fn handle(host: &mut UiHost<'_>, method: &str, params: &Value) -> Option<(InvokeReply, bool)> {
@@ -48,6 +57,10 @@ pub fn handle(host: &mut UiHost<'_>, method: &str, params: &Value) -> Option<(In
         "ui.calc.get" => Some((ok(method, host.calculator.api_get()), false)),
         "ui.calc.set" => Some((host.calculator.api_set(params), false)),
         "ui.instrument.select" => Some((host.instruments.api_select(params), false)),
+        "ui.report.browser" => Some((host.test_report.api_set_browser_dir(params), true)),
+        "ui.test_tool.browser" => Some((host.test_tool.api_set_plugins_dir(params), true)),
+        "ui.test_tool.run" => Some((host.test_tool.api_run(params), false)),
+        "ui.test_tool.stop" => Some((host.test_tool.api_stop(), false)),
         _ => None,
     }
 }
@@ -64,6 +77,9 @@ fn snapshot(host: &UiHost<'_>) -> Value {
             "calculator": *host.show_calculator,
             "instruments": *host.show_instruments,
             "waveform": *host.show_waveform,
+            "data_analysis": *host.show_data_analysis,
+            "test_report": *host.show_test_report,
+            "test_tool": *host.show_test_tool,
         },
         "serial": {
             "monitoring": host.serial.is_monitoring(),
@@ -76,6 +92,9 @@ fn snapshot(host: &UiHost<'_>) -> Value {
             "selected_id": host.instruments.selected_device_id(),
         },
         "waveform": host.waveform.api_snapshot(),
+        "data_analysis": host.data_analysis.api_snapshot(),
+        "test_report": host.test_report.api_snapshot(),
+        "test_tool": host.test_tool.api_snapshot(),
         "calculator": host.calculator.api_get(),
     })
 }
@@ -90,7 +109,13 @@ fn ui_show(host: &mut UiHost<'_>, params: &Value) -> (InvokeReply, bool) {
         .and_then(|v| v.as_str())
         .or_else(|| params.get("page").and_then(|v| v.as_str()));
     let Some(id) = tab else {
-        return (err("ui.show", "missing tab (serial|calculator|instruments|waveform)"), false);
+        return (
+            err(
+                "ui.show",
+                "missing tab (serial|calculator|instruments|waveform|data_analysis|test_report|test_tool)",
+            ),
+            false,
+        );
     };
     let Some(next) = MainTab::from_id(id) else {
         return (err("ui.show", &format!("unknown tab '{id}'")), false);
@@ -100,6 +125,9 @@ fn ui_show(host: &mut UiHost<'_>, params: &Value) -> (InvokeReply, bool) {
         MainTab::Calculator => *host.show_calculator = true,
         MainTab::Instruments => *host.show_instruments = true,
         MainTab::Waveform => *host.show_waveform = true,
+        MainTab::DataAnalysis => *host.show_data_analysis = true,
+        MainTab::TestReport => *host.show_test_report = true,
+        MainTab::TestTool => *host.show_test_tool = true,
     }
     *host.active = next;
     (ok("ui.show", snapshot(host)), true)
@@ -123,10 +151,46 @@ fn ui_panels(host: &mut UiHost<'_>, params: &Value) -> (InvokeReply, bool) {
         *host.show_waveform = v;
         any = true;
     }
-    if !any {
-        return (err("ui.panels", "set at least one of serial/calculator/instruments/waveform"), false);
+    if let Some(v) = params
+        .get("data_analysis")
+        .or_else(|| params.get("data"))
+        .and_then(|x| x.as_bool())
+    {
+        *host.show_data_analysis = v;
+        any = true;
     }
-    if !*host.show_serial && !*host.show_calculator && !*host.show_instruments && !*host.show_waveform
+    if let Some(v) = params
+        .get("test_report")
+        .or_else(|| params.get("report"))
+        .and_then(|x| x.as_bool())
+    {
+        *host.show_test_report = v;
+        any = true;
+    }
+    if let Some(v) = params
+        .get("test_tool")
+        .or_else(|| params.get("tools"))
+        .and_then(|x| x.as_bool())
+    {
+        *host.show_test_tool = v;
+        any = true;
+    }
+    if !any {
+        return (
+            err(
+                "ui.panels",
+                "set at least one of serial/calculator/instruments/waveform/data_analysis/test_report/test_tool",
+            ),
+            false,
+        );
+    }
+    if !*host.show_serial
+        && !*host.show_calculator
+        && !*host.show_instruments
+        && !*host.show_waveform
+        && !*host.show_data_analysis
+        && !*host.show_test_report
+        && !*host.show_test_tool
     {
         *host.show_serial = true;
     }

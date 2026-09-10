@@ -1486,8 +1486,8 @@ impl InstrumentControlPanel {
     fn discovered_resources_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
         Frame::NONE
             .fill(tokens.surface_bg)
-            .stroke(Stroke::new(1.0_f32, tokens.border))
-            .corner_radius(CornerRadius::same(7))
+            .stroke(Stroke::new(1.0_f32, tokens.divider))
+            .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
             .inner_margin(Margin::symmetric(10, 8))
             .show(ui, |ui| {
                 ui.set_width(CARD_PANEL_WIDTH);
@@ -1595,8 +1595,8 @@ impl InstrumentControlPanel {
         ui.set_min_height(ui.available_height());
         Frame::NONE
             .fill(tokens.panel_bg)
-            .stroke(Stroke::new(1.0_f32, tokens.border))
-            .corner_radius(CornerRadius::same(6))
+            .stroke(Stroke::new(1.0_f32, tokens.divider))
+            .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
             .inner_margin(Margin::same(10))
             .show(ui, |ui| {
                 ui.set_min_height(ui.available_height());
@@ -1974,9 +1974,9 @@ impl InstrumentControlPanel {
         ui.add_space(6.0);
         let preview_h = ui.available_height().max(80.0);
         if defer_heavy {
-            media_slot_empty(ui, preview_h);
+            media_slot_empty(ui, preview_h, tokens);
         } else if let Some(texture) = self.screenshots.get(&id) {
-            paint_screenshot(ui, texture, preview_h);
+            paint_screenshot(ui, texture, preview_h, tokens);
         } else {
             placeholder_panel(
                 ui,
@@ -1986,7 +1986,8 @@ impl InstrumentControlPanel {
                     "点击「屏幕截图」抓取仪器画面",
                     "Click Screenshot for the scope display",
                 ),
-                tokens.text_muted,
+                tokens.plot_fg,
+                tokens,
             );
         }
     }
@@ -2127,9 +2128,9 @@ impl InstrumentControlPanel {
         ui.add_space(6.0);
         let preview_h = ui.available_height().max(80.0);
         if defer_heavy {
-            media_slot_empty(ui, preview_h);
+            media_slot_empty(ui, preview_h, tokens);
         } else if let Some(cached) = self.wave_plots.get(&id) {
-            paint_waveform(ui, &cached.columns, cached.bounds, preview_h, tokens.accent);
+            paint_waveform(ui, &cached.columns, cached.bounds, preview_h, tokens.accent, tokens);
         } else {
             placeholder_panel(
                 ui,
@@ -2139,7 +2140,8 @@ impl InstrumentControlPanel {
                     "读取后可看曲线、统计并导出 CSV",
                     "Read to plot, stats, and export CSV",
                 ),
-                tokens.text_muted,
+                tokens.plot_fg,
+                tokens,
             );
         }
     }
@@ -2568,7 +2570,8 @@ impl InstrumentControlPanel {
                 ui,
                 ui.available_height().max(80.0),
                 text(lang, "点击「单次测量」或开始连续采样", "Measure once or start sampling"),
-                tokens.text_muted,
+                tokens.plot_fg,
+                tokens,
             );
         }
     }
@@ -3772,8 +3775,8 @@ fn scope_panel(
     let width = ui.available_width();
     Frame::NONE
         .fill(tokens.surface_bg)
-        .stroke(Stroke::new(1.0_f32, tokens.border))
-        .corner_radius(CornerRadius::same(6))
+        .stroke(Stroke::new(1.0_f32, tokens.divider))
+        .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
         .inner_margin(Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.set_min_width(width);
@@ -3860,7 +3863,7 @@ fn scope_card_fill(
     painter.rect_stroke(
         rect,
         radius,
-        Stroke::new(STROKE_W, tokens.border),
+        Stroke::new(STROKE_W, tokens.divider),
         egui::StrokeKind::Inside,
     );
 
@@ -3893,15 +3896,15 @@ fn scope_card_fill(
     );
 }
 
-fn media_slot_empty(ui: &mut egui::Ui, height: f32) {
+fn media_slot_empty(ui: &mut egui::Ui, height: f32, tokens: &Tokens) {
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, CornerRadius::same(4), Color32::from_rgb(0x0B, 0x12, 0x20));
+    painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_CTRL), tokens.plot_bg);
     painter.rect_stroke(
         rect,
-        CornerRadius::same(4),
-        Stroke::new(1.0_f32, Color32::from_rgb(0x2A, 0x36, 0x4A)),
+        CornerRadius::same(theme::RADIUS_CTRL),
+        Stroke::new(1.0_f32, tokens.plot_border),
         egui::StrokeKind::Inside,
     );
 }
@@ -3913,15 +3916,16 @@ fn paint_waveform(
     bounds: (f64, f64, f64, f64),
     height: f32,
     color: Color32,
+    tokens: &Tokens,
 ) {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, CornerRadius::same(4), Color32::from_rgb(0x0B, 0x12, 0x20));
+    painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_CTRL), tokens.plot_bg);
     painter.rect_stroke(
         rect,
-        CornerRadius::same(4),
-        Stroke::new(1.0_f32, Color32::from_rgb(0x2A, 0x36, 0x4A)),
+        CornerRadius::same(theme::RADIUS_CTRL),
+        Stroke::new(1.0_f32, tokens.plot_border),
         egui::StrokeKind::Inside,
     );
     if columns.is_empty() {
@@ -3941,16 +3945,16 @@ fn paint_waveform(
     paint_envelope_columns(&painter, columns, map, inner, stroke);
 }
 
-fn paint_screenshot(ui: &mut egui::Ui, texture: &egui::TextureHandle, height: f32) {
+fn paint_screenshot(ui: &mut egui::Ui, texture: &egui::TextureHandle, height: f32, tokens: &Tokens) {
     let width = ui.available_width().max(1.0);
     let height = height.max(1.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, CornerRadius::same(4), Color32::from_rgb(0x0B, 0x12, 0x20));
+    painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_CTRL), tokens.plot_bg);
     painter.rect_stroke(
         rect,
-        CornerRadius::same(4),
-        Stroke::new(1.0_f32, Color32::from_rgb(0x2A, 0x36, 0x4A)),
+        CornerRadius::same(theme::RADIUS_CTRL),
+        Stroke::new(1.0_f32, tokens.plot_border),
         egui::StrokeKind::Inside,
     );
     let source = texture.size_vec2();
@@ -3970,15 +3974,15 @@ fn paint_screenshot(ui: &mut egui::Ui, texture: &egui::TextureHandle, height: f3
         .paint_at(ui, image_rect);
 }
 
-fn placeholder_panel(ui: &mut egui::Ui, height: f32, message: &str, color: Color32) {
+fn placeholder_panel(ui: &mut egui::Ui, height: f32, message: &str, color: Color32, tokens: &Tokens) {
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, CornerRadius::same(4), Color32::from_rgb(0x0B, 0x12, 0x20));
+    painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_CTRL), tokens.plot_bg);
     painter.rect_stroke(
         rect,
-        CornerRadius::same(4),
-        Stroke::new(1.0_f32, Color32::from_rgb(0x2A, 0x36, 0x4A)),
+        CornerRadius::same(theme::RADIUS_CTRL),
+        Stroke::new(1.0_f32, tokens.plot_border),
         egui::StrokeKind::Inside,
     );
     painter.text(

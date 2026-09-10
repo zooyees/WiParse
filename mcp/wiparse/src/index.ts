@@ -6,7 +6,7 @@ import { apiHealth, apiInvoke, defaultApiUrl } from "./http.js";
 
 const server = new McpServer({
   name: "wiparse",
-  version: "1.1.6",
+  version: "1.1.7",
 });
 
 function compact(body: unknown) {
@@ -138,7 +138,7 @@ const UI_METHODS = {
 
 server.tool(
   "wiparse_ui",
-  "Drive the running WiParse.exe UI: switch tabs, panels, prefs, serial log, waveform (including DDSSS bus decode), calculator, instruments. GUI 1.1.6+.",
+  "Drive the running WiParse.exe UI: switch tabs, panels, prefs, serial log, waveform (including DDSSS bus decode), data analysis, test report, test tool plugins, calculator, instruments. GUI 1.1.7+.",
   {
     op: z.enum([
       "state",
@@ -173,7 +173,15 @@ server.tool(
       "instrument.command",
     ]),
     tab: z
-      .enum(["serial", "calculator", "instruments", "waveform"])
+      .enum([
+        "serial",
+        "calculator",
+        "instruments",
+        "waveform",
+        "data_analysis",
+        "test_report",
+        "test_tool",
+      ])
       .optional()
       .describe("For op=show; also accepted inside params.tab"),
     params: z.record(z.unknown()).optional(),

@@ -26,10 +26,8 @@ rfd = { workspace = true }
 chrono = { workspace = true }
 tiny_http = "0.12"
 rusqlite = { workspace = true }
-# The GUI only decodes its ICO application icon and PNG scope captures.
-# Keeping image's default formats pulls AVIF/EXR/GIF/JPEG/TIFF/WebP decoders
-# into the executable even though no code path can use them.
-image = { version = "0.25", default-features = false, features = ["ico", "png"] }
+# ICO app icon + PNG/JPEG report/scope captures. Avoid default-features (AVIF/EXR/…).
+image = { version = "0.25", default-features = false, features = ["ico", "png", "jpeg"] }
 
 [build-dependencies]
 winresource = "0.1"

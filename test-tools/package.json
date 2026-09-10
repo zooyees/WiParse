@@ -1,0 +1,18 @@
+{
+  "name": "wiparse-test-tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Plugin-style Node.js test scripts driven by WiParse CLI",
+  "type": "module",
+  "bin": {
+    "wiparse-test-runner": "./runner.mjs"
+  },
+  "scripts": {
+    "list": "node runner.mjs --list",
+    "run": "node runner.mjs",
+    "example": "node runner.mjs --plugin example-smoke"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

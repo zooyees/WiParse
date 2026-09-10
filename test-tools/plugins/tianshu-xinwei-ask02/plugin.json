@@ -1,0 +1,86 @@
+{
+  "id": "tianshu-xinwei-ask02",
+  "name": "Scope & Serial Monitor",
+  "name_zh": "示波器/串口监控",
+  "type": "capture_loop",
+  "version": "0.2.0",
+  "entry": "index.mjs",
+  "config": "station.json",
+  "description": "Serial rising-edge → scope stop → shot/ISF/PDF → resume. Overridable prefix, paths, and port.",
+  "capabilities": ["preflight", "run", "stop"],
+  "engines": {
+    "node": ">=18",
+    "wiparse": ">=1.1.7"
+  },
+  "params": [
+    {
+      "name": "file_prefix",
+      "type": "string",
+      "path": "paths.file_prefix",
+      "default": "天枢信维压测",
+      "label": "File prefix",
+      "label_zh": "测试数据名称/前缀",
+      "help": "ISF / PDF / MD record id prefix"
+    },
+    {
+      "name": "isf_dir",
+      "type": "path",
+      "path": "paths.isf_dir",
+      "default": "{data_root}/instrument_data/{product}",
+      "label": "ISF directory",
+      "label_zh": "波形源文件目录",
+      "help": "Where .isf waveform sources are saved"
+    },
+    {
+      "name": "report_dir",
+      "type": "path",
+      "path": "paths.report_dir",
+      "default": "{data_root}/test report/{product}",
+      "label": "Report directory",
+      "label_zh": "报告保存目录",
+      "help": "PDF / HTML / summary MD directory"
+    },
+    {
+      "name": "product",
+      "type": "string",
+      "path": "station.product",
+      "default": "天枢-信维",
+      "label": "Product",
+      "label_zh": "产品名",
+      "help": "Used in path templates as {product}"
+    },
+    {
+      "name": "port",
+      "type": "string",
+      "path": "serial.port",
+      "default": "COM7",
+      "label": "Serial port",
+      "label_zh": "串口",
+      "help": "COM port for live monitor"
+    },
+    {
+      "name": "baud",
+      "type": "number",
+      "path": "serial.baud",
+      "default": "2000000",
+      "label": "Baud",
+      "label_zh": "波特率"
+    },
+    {
+      "name": "api",
+      "type": "string",
+      "path": "gui.api",
+      "default": "http://127.0.0.1:7878",
+      "label": "GUI API",
+      "label_zh": "GUI API 地址"
+    },
+    {
+      "name": "preflight_only",
+      "type": "boolean",
+      "default": "false",
+      "label": "Preflight only",
+      "label_zh": "仅预检",
+      "help": "Run checks and exit without starting the loop"
+    }
+  ]
+}

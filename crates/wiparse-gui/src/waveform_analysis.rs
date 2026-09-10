@@ -4,7 +4,7 @@ use crate::plot::{
     bus_lane_from_screen_y, bus_stack_packet_screen_y, PlotTextLabel, ScopeEnvelopePlotItem,
     ScopeVectorPlotItem, LANE_BIT, LANE_BYTE, LANE_CHIP, LANE_PACKET,
 };
-use crate::theme::Tokens;
+use crate::theme::{self as ui_theme, Tokens};
 use egui::{Color32, CornerRadius, Frame, Margin, RichText, Stroke, Vec2b};
 use egui_plot::{
     CoordinatesFormatter, Corner, GridMark, HLine, Legend, Plot, PlotBounds, PlotPoints, Points,
@@ -104,6 +104,9 @@ struct LoadedWave {
 /// Viewport envelope cache: one entry per visible wave when zoomed.
 struct ViewLineCache {
     view_key: u64,
+    /// X window this cache was built for (used to reuse during zoom-in).
+    x0: f64,
+    x1: f64,
     per_wave: HashMap<usize, WaveViewportSeries>,
 }
 
@@ -141,6 +144,8 @@ enum WaveLoadEvent {
 
 struct PendingViewportBuild {
     view_key: u64,
+    x0: f64,
+    x1: f64,
     rx: Receiver<(u64, HashMap<usize, WaveViewportSeries>)>,
 }
 
@@ -148,6 +153,17 @@ struct PendingBusDecode {
     generation: u64,
     rx: Receiver<(u64, BusDecodeResult)>,
 }
+
+/// Finished viewport LOD waiting for zoom/pan to settle (avoids flash while wheeling).
+struct DeferredViewportCache {
+    view_key: u64,
+    x0: f64,
+    x1: f64,
+    per_wave: HashMap<usize, WaveViewportSeries>,
+}
+
+/// After the last viewport rebuild request, wait this long before swapping paint LOD.
+const VIEWPORT_SETTLE_SECS: f64 = 0.08;
 
 pub struct WaveformAnalysisPanel {
     waves: Vec<LoadedWave>,
@@ -191,6 +207,12 @@ pub struct WaveformAnalysisPanel {
     pending_viewport: Option<PendingViewportBuild>,
     /// Latest pan/zoom request while a viewport job is already running.
     queued_viewport: Option<(u64, f64, f64, f32)>,
+    /// Completed LOD pending settle (do not paint-swap mid-wheel).
+    deferred_viewport: Option<DeferredViewportCache>,
+    /// `ctx.input(|i| i.time)` when the *target* view key last changed.
+    last_viewport_request_at: f64,
+    /// Last view key we asked the worker to build (settle is keyed off this).
+    last_viewport_request_key: Option<u64>,
     /// Dragging a channel position handle on the right axis strip.
     dragging_channel_offset: Option<usize>,
     /// Ctrl+drag on channel strip adjusts vertical scale.
@@ -248,6 +270,9 @@ impl WaveformAnalysisPanel {
             pending_load: None,
             pending_viewport: None,
             queued_viewport: None,
+            deferred_viewport: None,
+            last_viewport_request_at: 0.0,
+            last_viewport_request_key: None,
             dragging_channel_offset: None,
             dragging_channel_scale: None,
             bus_settings: BusDecodeSettings::default(),
@@ -349,34 +374,35 @@ impl WaveformAnalysisPanel {
     fn toolbar(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
         Frame::NONE
             .fill(tokens.surface_bg)
-            .stroke(Stroke::new(1.0_f32, tokens.border))
-            .corner_radius(CornerRadius::same(6))
+            .stroke(Stroke::new(1.0_f32, tokens.divider))
+            .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
             .inner_margin(Margin::symmetric(10, 6))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.set_max_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    if ui
-                        .add(
-                            egui::Button::new(t(lang, "打开波形…", "Open Waveform…"))
-                                .fill(tokens.accent)
-                                .min_size(BTN),
-                        )
-                        .clicked()
+                    ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
+                    if ui_theme::primary_btn_sized(
+                        ui,
+                        tokens,
+                        t(lang, "打开波形…", "Open Waveform…"),
+                        BTN,
+                    )
+                    .clicked()
                     {
                         self.open_files(lang);
                     }
                     let has = self.selected.is_some();
-                    if ui
-                        .add_enabled(
-                            has,
-                            egui::Button::new(t(lang, "关闭", "Close")).min_size(BTN_SM),
-                        )
-                        .clicked()
+                    if ui_theme::secondary_btn_sized_enabled(
+                        ui,
+                        tokens,
+                        t(lang, "关闭", "Close"),
+                        BTN_SM,
+                        has,
+                    )
+                    .clicked()
                     {
                         if let Some(i) = self.selected {
-                            // Multi-channel WFM shares one path — close the whole document.
                             let path = self.waves.get(i).map(|w| w.path.clone());
                             if let Some(path) = path {
                                 self.waves.retain(|w| !same_wave_path(&w.path, &path));
@@ -399,81 +425,69 @@ impl WaveformAnalysisPanel {
                             self.mark_extent_dirty();
                         }
                     }
-                    if ui
-                        .add_enabled(
-                            has,
-                            egui::Button::new(t(lang, "导出…", "Export…")).min_size(BTN_SM),
-                        )
-                        .clicked()
+                    if ui_theme::secondary_btn_sized_enabled(
+                        ui,
+                        tokens,
+                        t(lang, "导出…", "Export…"),
+                        BTN_SM,
+                        has,
+                    )
+                    .clicked()
                     {
                         self.export_selected(lang);
                     }
 
                     ui.separator();
 
-                    // Interact mode: Pan vs Cursor (avoids click/drag conflict).
                     let pan_on = self.mode == InteractMode::Pan;
-                    if ui
-                        .add(
-                            egui::Button::new(t(lang, "平移", "Pan"))
-                                .selected(pan_on)
-                                .min_size(egui::vec2(56.0, 28.0)),
-                        )
-                        .on_hover_text(t(
-                            lang,
-                            "滚轮平移 · 左键拖拽 · 右键框选 · Ctrl+滚轮缩 X · Ctrl+Shift+滚轮缩 Y",
-                            "Scroll pan · drag · box zoom · Ctrl+wheel X · Ctrl+Shift+wheel Y",
-                        ))
-                        .clicked()
-                    {
-                        self.mode = InteractMode::Pan;
-                        self.dragging_cursor = None;
-                    }
-                    let cur_on = self.mode == InteractMode::Cursor;
-                    if ui
-                        .add(
-                            egui::Button::new(t(lang, "光标", "Cursor"))
-                                .selected(cur_on)
-                                .min_size(egui::vec2(56.0, 28.0)),
-                        )
-                        .on_hover_text(t(
-                            lang,
-                            "点击设光标 · 空格切换 X/Y · 拖近光标微调",
-                            "Click set cursor · Space toggle X/Y · drag to fine-tune",
-                        ))
-                        .clicked()
-                    {
-                        self.mode = InteractMode::Cursor;
+                    if let Some(want_pan) = ui_theme::segmented_two(
+                        ui,
+                        tokens,
+                        &t(lang, "平移", "Pan"),
+                        &t(lang, "光标", "Cursor"),
+                        pan_on,
+                        egui::vec2(112.0, ui_theme::CTRL_H),
+                    ) {
+                        if want_pan {
+                            self.mode = InteractMode::Pan;
+                            self.dragging_cursor = None;
+                        } else {
+                            self.mode = InteractMode::Cursor;
+                        }
                     }
 
                     let axis_label = match self.cursor_axis {
                         CursorAxis::X => t(lang, "光标:X", "Cursors:X"),
                         CursorAxis::Y => t(lang, "光标:Y", "Cursors:Y"),
                     };
-                    if ui
-                        .add(
-                            egui::Button::new(axis_label)
-                                .selected(true)
-                                .min_size(egui::vec2(72.0, 28.0)),
-                        )
-                        .on_hover_text(t(
-                            lang,
-                            "空格键切换 X1/X2 与 Y1/Y2 测量",
-                            "Space toggles X1/X2 vs Y1/Y2 measure",
-                        ))
-                        .clicked()
+                    if ui_theme::ghost_btn_sized(
+                        ui,
+                        tokens,
+                        axis_label,
+                        egui::vec2(72.0, ui_theme::CTRL_H),
+                        false,
+                    )
+                    .on_hover_text(t(
+                        lang,
+                        "空格键切换 X1/X2 与 Y1/Y2 测量",
+                        "Space toggles X1/X2 vs Y1/Y2 measure",
+                    ))
+                    .clicked()
                     {
                         self.toggle_cursor_axis();
                     }
 
                     ui.separator();
 
-                    if ui
-                        .add(egui::Button::new(t(lang, "适应", "Fit")).min_size(egui::vec2(52.0, 28.0)))
-                        .on_hover_text(t(lang, "显示全部波形", "Show full waveform"))
-                        .clicked()
+                    if ui_theme::secondary_btn_sized(
+                        ui,
+                        tokens,
+                        t(lang, "适应", "Fit"),
+                        egui::vec2(52.0, ui_theme::CTRL_H),
+                    )
+                    .on_hover_text(t(lang, "显示全部波形", "Show full waveform"))
+                    .clicked()
                     {
-                        // Fit all channels in the current document (same source path).
                         self.fit_request = true;
                         self.pending_bounds =
                             self.document_extent().or_else(|| self.selected_extent());
@@ -486,104 +500,79 @@ impl WaveformAnalysisPanel {
                         CursorAxis::X => self.x1.is_some() && self.x2.is_some(),
                         CursorAxis::Y => self.y1.is_some() && self.y2.is_some(),
                     };
-                    if ui
-                        .add_enabled(
-                            has_pair,
-                            egui::Button::new(t(lang, "缩放到光标", "Zoom Cursors"))
-                                .min_size(egui::vec2(96.0, 28.0)),
-                        )
-                        .clicked()
-                    {
+                    let zoom_cursors = ui_theme::secondary_btn_sized_enabled(
+                        ui,
+                        tokens,
+                        t(lang, "缩放到光标", "Zoom Cursors"),
+                        egui::vec2(96.0, ui_theme::CTRL_H),
+                        has_pair,
+                    );
+                    if zoom_cursors.clicked() {
                         self.request_zoom_to_cursors();
                     }
-                    if ui
-                        .add(egui::Button::new("X+").min_size(egui::vec2(36.0, 28.0)))
-                        .on_hover_text(t(lang, "横向放大", "Zoom in X"))
-                        .clicked()
-                    {
-                        self.request_zoom_axis(true, 0.5);
-                    }
-                    if ui
-                        .add(egui::Button::new("X−").min_size(egui::vec2(36.0, 28.0)))
-                        .on_hover_text(t(lang, "横向缩小", "Zoom out X"))
-                        .clicked()
-                    {
-                        self.request_zoom_axis(true, 2.0);
-                    }
-                    if ui
-                        .add(egui::Button::new("Y+").min_size(egui::vec2(36.0, 28.0)))
-                        .on_hover_text(t(
-                            lang,
-                            if self.selected.is_some() {
-                                "纵向放大选中通道"
-                            } else {
-                                "纵向放大"
-                            },
-                            if self.selected.is_some() {
-                                "Zoom in Y (selected channel scale)"
-                            } else {
-                                "Zoom in Y"
-                            },
-                        ))
-                        .clicked()
-                    {
-                        self.apply_y_zoom_factor(2.0);
-                    }
-                    if ui
-                        .add(egui::Button::new("Y−").min_size(egui::vec2(36.0, 28.0)))
-                        .on_hover_text(t(
-                            lang,
-                            if self.selected.is_some() {
-                                "纵向缩小选中通道"
-                            } else {
-                                "纵向缩小"
-                            },
-                            if self.selected.is_some() {
-                                "Zoom out Y (selected channel scale)"
-                            } else {
-                                "Zoom out Y"
-                            },
-                        ))
-                        .clicked()
-                    {
-                        self.apply_y_zoom_factor(0.5);
-                    }
-                    if ui
-                        .add_enabled(self.selected.is_some(), {
-                            egui::Button::new(t(lang, "复位通道", "Reset CH"))
-                                .min_size(egui::vec2(72.0, 28.0))
-                        })
-                        .on_hover_text(t(
-                            lang,
-                            "复位选中通道的位移与比例",
-                            "Reset offset & scale for selected channel",
-                        ))
-                        .clicked()
+
+                    // Compact zoom icon group
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        let z = egui::vec2(32.0, ui_theme::CTRL_H);
+                        if ui_theme::ghost_btn_sized(ui, tokens, "X+", z, false)
+                            .on_hover_text(t(lang, "横向放大", "Zoom in X"))
+                            .clicked()
+                        {
+                            self.request_zoom_axis(true, 0.5);
+                        }
+                        if ui_theme::ghost_btn_sized(ui, tokens, "X−", z, false)
+                            .on_hover_text(t(lang, "横向缩小", "Zoom out X"))
+                            .clicked()
+                        {
+                            self.request_zoom_axis(true, 2.0);
+                        }
+                        if ui_theme::ghost_btn_sized(ui, tokens, "Y+", z, false)
+                            .on_hover_text(t(lang, "纵向放大", "Zoom in Y"))
+                            .clicked()
+                        {
+                            self.apply_y_zoom_factor(2.0);
+                        }
+                        if ui_theme::ghost_btn_sized(ui, tokens, "Y−", z, false)
+                            .on_hover_text(t(lang, "纵向缩小", "Zoom out Y"))
+                            .clicked()
+                        {
+                            self.apply_y_zoom_factor(0.5);
+                        }
+                    });
+
+                    if ui_theme::ghost_btn_sized_enabled(
+                        ui,
+                        tokens,
+                        t(lang, "复位通道", "Reset CH"),
+                        egui::vec2(72.0, ui_theme::CTRL_H),
+                        self.selected.is_some(),
+                    )
+                    .clicked()
                     {
                         if let Some(i) = self.selected {
                             self.reset_channel_display(i);
                         }
                     }
-                    if ui
-                        .add_enabled(!self.waves.is_empty(), {
-                            egui::Button::new(t(lang, "复位全部", "Reset All"))
-                                .min_size(egui::vec2(72.0, 28.0))
-                        })
-                        .on_hover_text(t(
-                            lang,
-                            "复位所有通道的位移与比例",
-                            "Reset offset & scale for all channels",
-                        ))
-                        .clicked()
+                    if ui_theme::ghost_btn_sized_enabled(
+                        ui,
+                        tokens,
+                        t(lang, "复位全部", "Reset All"),
+                        egui::vec2(72.0, ui_theme::CTRL_H),
+                        !self.waves.is_empty(),
+                    )
+                    .clicked()
                     {
                         self.reset_all_channel_display();
                     }
-                    if ui
-                        .add(
-                            egui::Button::new(t(lang, "清除光标", "Clear"))
-                                .min_size(egui::vec2(72.0, 28.0)),
-                        )
-                        .clicked()
+                    if ui_theme::ghost_btn_sized(
+                        ui,
+                        tokens,
+                        t(lang, "清除光标", "Clear"),
+                        egui::vec2(72.0, ui_theme::CTRL_H),
+                        false,
+                    )
+                    .clicked()
                     {
                         self.clear_active_cursors();
                     }
@@ -592,10 +581,10 @@ impl WaveformAnalysisPanel {
                         ui.label(
                             RichText::new(t(
                                 lang,
-                                "Ctrl+滚轮=X · Ctrl+Shift+滚轮=Y · 轴滚轮=比例 · Shift+滚轮=位移",
-                                "Ctrl+wheel=X · Ctrl+Shift+wheel=Y · strip wheel=scale · Shift+wheel=offset",
+                                "Ctrl+滚轮=X · Ctrl+Shift+滚轮=Y",
+                                "Ctrl+wheel=X · Ctrl+Shift+wheel=Y",
                             ))
-                            .small()
+                            .size(ui_theme::FONT_CAPTION)
                             .color(tokens.text_muted),
                         );
                     });
@@ -898,7 +887,7 @@ impl WaveformAnalysisPanel {
             .fill(tokens.surface_bg)
             .inner_margin(Margin::symmetric(CARD_MARGIN_X, 6))
             .corner_radius(CornerRadius::same(6))
-            .stroke(Stroke::new(1.0_f32, tokens.border))
+            .stroke(Stroke::new(1.0_f32, tokens.divider))
             .show(ui, |ui| {
                 ui.set_min_width(inner_w);
                 ui.set_max_width(inner_w);
@@ -980,7 +969,10 @@ impl WaveformAnalysisPanel {
                                 let header =
                                     format!("{}  ({})", folder.name, folder.files.len());
                                 egui::CollapsingHeader::new(
-                                    RichText::new(header).size(12.0).strong(),
+                                    RichText::new(header)
+                                        .size(12.0)
+                                        .strong()
+                                        .color(tokens.text_primary),
                                 )
                                 .id_salt(("wave-browser-folder", folder.name.as_str()))
                                 .default_open(false)
@@ -1133,7 +1125,7 @@ impl WaveformAnalysisPanel {
         self.last_x_range = None;
         self.last_y_range = None;
         self.pending_bounds = None;
-        self.view_line_cache = None;
+        self.clear_viewport_lod_state();
         self.gated_measure_cache = None;
         self.start_load_path(path.to_path_buf(), lang);
     }
@@ -1195,9 +1187,7 @@ impl WaveformAnalysisPanel {
         if nch > 1 {
             auto_stagger_channel_offsets(&mut self.waves, first_idx..end);
         }
-        self.view_line_cache = None;
-        self.pending_viewport = None;
-        self.queued_viewport = None;
+        self.clear_viewport_lod_state();
         self.gated_measure_cache = None;
         self.mark_extent_dirty();
         self.activate_wave(first_idx);
@@ -1288,14 +1278,24 @@ impl WaveformAnalysisPanel {
             return;
         };
         let expected_key = pending.view_key;
+        let (bx0, bx1) = (pending.x0, pending.x1);
         self.pending_viewport = None;
         let queued = self.queued_viewport.take();
         let latest = queued.as_ref().map(|q| q.0).unwrap_or(expected_key);
         if key == expected_key && key == latest {
-            self.view_line_cache = Some(ViewLineCache {
+            // Hold until zoom/pan settles — applying mid-gesture flashes overview↔LOD.
+            self.deferred_viewport = Some(DeferredViewportCache {
                 view_key: key,
+                x0: bx0,
+                x1: bx1,
                 per_wave,
             });
+        } else if self
+            .deferred_viewport
+            .as_ref()
+            .is_some_and(|d| d.view_key != latest)
+        {
+            self.deferred_viewport = None;
         }
         if let Some((qk, x0, x1, plot_width_px)) = queued {
             if qk != key {
@@ -1304,7 +1304,49 @@ impl WaveformAnalysisPanel {
         }
     }
 
+    /// Drop paint cache and in-flight / deferred viewport work (file switch, close).
+    fn clear_viewport_lod_state(&mut self) {
+        self.view_line_cache = None;
+        self.deferred_viewport = None;
+        self.pending_viewport = None;
+        self.queued_viewport = None;
+        self.last_viewport_request_key = None;
+    }
+
+    /// True while a viewport LOD rebuild is in flight or settle has not elapsed.
+    /// During this window we must not paint full-trace overview into a zoomed view
+    /// (that looks like a flash of blocky / chaotic envelopes).
+    fn viewport_lod_transient(&self, now: f64) -> bool {
+        self.pending_viewport.is_some()
+            || self.queued_viewport.is_some()
+            || self.deferred_viewport.is_some()
+            || (self.last_viewport_request_key.is_some()
+                && now - self.last_viewport_request_at < VIEWPORT_SETTLE_SECS)
+    }
+
+    /// Promote deferred LOD after the view stops changing (cheap; no rebuild).
+    fn promote_deferred_viewport(&mut self, now: f64, current_key: Option<u64>) {
+        let settled = now - self.last_viewport_request_at >= VIEWPORT_SETTLE_SECS;
+        let idle = self.pending_viewport.is_none() && self.queued_viewport.is_none();
+        if !settled || !idle {
+            return;
+        }
+        let Some(ready) = self.deferred_viewport.take() else {
+            return;
+        };
+        if current_key == Some(ready.view_key) {
+            self.view_line_cache = Some(ViewLineCache {
+                view_key: ready.view_key,
+                x0: ready.x0,
+                x1: ready.x1,
+                per_wave: ready.per_wave,
+            });
+        }
+        // Else discarded — a newer window already superseded this result.
+    }
+
     fn schedule_viewport_build(&mut self, key: u64, x0: f64, x1: f64, plot_width_px: f32) {
+        // Caller should bump `last_viewport_request_at` when requesting a new window.
         if self
             .pending_viewport
             .as_ref()
@@ -1350,14 +1392,22 @@ impl WaveformAnalysisPanel {
             })
             .collect();
         if jobs.is_empty() {
+            self.deferred_viewport = None;
             self.view_line_cache = Some(ViewLineCache {
                 view_key: key,
+                x0,
+                x1,
                 per_wave: HashMap::new(),
             });
             return;
         }
         let (tx, rx) = unbounded();
-        self.pending_viewport = Some(PendingViewportBuild { view_key: key, rx });
+        self.pending_viewport = Some(PendingViewportBuild {
+            view_key: key,
+            x0,
+            x1,
+            rx,
+        });
         thread::spawn(move || {
             let per_wave: HashMap<usize, WaveViewportSeries> = jobs
                 .into_par_iter()
@@ -2018,7 +2068,7 @@ impl WaveformAnalysisPanel {
         if let Ok(WaveLoadEvent::Final { measures, extents }) = rx.recv() {
             self.apply_final_measures((first, end), measures, extents);
         }
-        self.view_line_cache = None;
+        self.clear_viewport_lod_state();
         self.gated_measure_cache = None;
         self.mark_extent_dirty();
         self.activate_wave(first);
@@ -2038,7 +2088,7 @@ impl WaveformAnalysisPanel {
         self.selected = Some(index);
         self.fit_request = true;
         self.pending_bounds = None;
-        self.view_line_cache = None;
+        self.clear_viewport_lod_state();
         self.gated_measure_cache = None;
         // Pre-seed viewport from all channels of this file. egui_plot's plot_bounds()
         // returns *last frame* until draw finishes, so we must not read it for Fit.
@@ -2623,25 +2673,84 @@ impl WaveformAnalysisPanel {
                         ui.set_max_width(plot_w);
 
         // Rebuild viewport envelope cache when pan/zoom moves by ≥1 display column.
+        let now = ui.ctx().input(|i| i.time);
+        let (data_xmin, data_xmax) = self
+            .cached_extent
+            .map(|(a, b, _, _)| (a, b))
+            .unwrap_or((0.0, 1.0));
+        let zoom_cols = viewport_column_count(plot_width_px);
+        let current_view_key = x_view.map(|(x0, x1)| {
+            quantize_view_cache_key(x0, x1, data_xmin, data_xmax, zoom_cols)
+        });
         if let Some((x0, x1)) = x_view {
-            let zoom_cols = viewport_column_count(plot_width_px);
-            let (data_xmin, data_xmax) = self
-                .cached_extent
-                .map(|(a, b, _, _)| (a, b))
-                .unwrap_or((0.0, 1.0));
-            let key = quantize_view_cache_key(x0, x1, data_xmin, data_xmax, zoom_cols);
-            let need = self
+            let key = current_view_key.expect("x_view present");
+            let cache_hit = self
                 .view_line_cache
                 .as_ref()
-                .map(|c| c.view_key != key)
-                .unwrap_or(true);
-            if need {
+                .is_some_and(|c| c.view_key == key);
+            let deferred_hit = self
+                .deferred_viewport
+                .as_ref()
+                .is_some_and(|d| d.view_key == key);
+            let in_flight = self
+                .pending_viewport
+                .as_ref()
+                .is_some_and(|p| p.view_key == key)
+                || self
+                    .queued_viewport
+                    .as_ref()
+                    .is_some_and(|q| q.0 == key);
+            // Do not reschedule while deferred already holds this key — that reset the
+            // settle clock every frame and blocked promote (rebuild storm).
+            if !cache_hit && !deferred_hit && !in_flight {
+                if self.last_viewport_request_key != Some(key) {
+                    self.last_viewport_request_at = now;
+                    self.last_viewport_request_key = Some(key);
+                }
+                if self
+                    .deferred_viewport
+                    .as_ref()
+                    .is_some_and(|d| d.view_key != key)
+                {
+                    self.deferred_viewport = None;
+                }
                 self.schedule_viewport_build(key, x0, x1, plot_width_px);
             }
         } else {
-            self.view_line_cache = None;
+            self.clear_viewport_lod_state();
         }
-        let view_cache = self.view_line_cache.as_ref();
+        self.promote_deferred_viewport(now, current_view_key);
+        let lod_transient = self.viewport_lod_transient(now);
+        // Paint LOD selection:
+        // 1) promoted cache that matches or still covers the window
+        // 2) deferred result for the live key (correct LOD as soon as ready)
+        // 3) while gesturing: hold last promoted map (may not cover — better than overview)
+        // Never use full-trace overview as an interim when zoomed — it flashes as
+        // a few fat envelope columns ("混乱波形").
+        let paint_per_wave: Option<&HashMap<usize, WaveViewportSeries>> = {
+            let covering = self.view_line_cache.as_ref().filter(|c| {
+                if current_view_key == Some(c.view_key) {
+                    return true;
+                }
+                match x_view {
+                    Some((vx0, vx1)) => viewport_cache_covers_view(c.x0, c.x1, vx0, vx1),
+                    None => false,
+                }
+            });
+            if let Some(c) = covering {
+                Some(&c.per_wave)
+            } else if let Some(d) = self
+                .deferred_viewport
+                .as_ref()
+                .filter(|d| current_view_key == Some(d.view_key))
+            {
+                Some(&d.per_wave)
+            } else if lod_transient {
+                self.view_line_cache.as_ref().map(|c| &c.per_wave)
+            } else {
+                None
+            }
+        };
 
         let x1 = self.x1;
         let x2 = self.x2;
@@ -2709,6 +2818,7 @@ impl WaveformAnalysisPanel {
             })
             .unwrap_or_default();
 
+        ui_theme::with_plot_well_visuals(ui, tokens, |ui| {
         Plot::new("waveform-analysis-plot")
             .height(height)
             .allow_zoom(allow_zoom)
@@ -2822,7 +2932,7 @@ impl WaveformAnalysisPanel {
                                 w.y_offset,
                             ));
                         }
-                    } else if let Some(series) = view_cache.and_then(|c| c.per_wave.get(&i)) {
+                    } else if let Some(series) = paint_per_wave.and_then(|m| m.get(&i)) {
                         match series {
                             WaveViewportSeries::Envelope(cols) if !cols.is_empty() => {
                                 plot_ui.add(ScopeEnvelopePlotItem::new(
@@ -2847,7 +2957,8 @@ impl WaveformAnalysisPanel {
                                 ));
                             }
                             _ => {
-                                if !w.overview.is_empty() {
+                                // Empty series during gesture: leave blank (no overview flash).
+                                if !lod_transient && !w.overview.is_empty() {
                                     plot_ui.add(ScopeEnvelopePlotItem::new(
                                         Arc::clone(&w.overview),
                                         w.color,
@@ -2860,6 +2971,9 @@ impl WaveformAnalysisPanel {
                                 }
                             }
                         }
+                    } else if lod_transient {
+                        // Zoom/pan in progress and no usable viewport LOD yet: skip waves
+                        // (grid / cursors / bus overlays still draw). Avoids blocky overview.
                     } else if !w.overview.is_empty() {
                         plot_ui.add(ScopeEnvelopePlotItem::new(
                             Arc::clone(&w.overview),
@@ -3083,13 +3197,29 @@ impl WaveformAnalysisPanel {
                     }
                 }
 
-                // SEQA: 31 chips/bit, so chip_px is ~bit_px/31. Draw the chip lane
-                // whenever bits are visible; Table 4 mismatches get an orange `x`
-                // even before 0/1 glyphs fit.
+                // SEQA: 31 chips/bit. Chip fence lines are useful when each chip is
+                // wide enough; when denser they wash out bit labels — draw faintly
+                // or skip, and keep orange mismatch marks only when readable.
                 if show_bit_lane {
                     let err_col = Color32::from_rgb(0xF9, 0x73, 0x16);
                     let mut chip_shown = 0usize;
                     let mut bit_i = 0usize;
+                    // Soften / gate chip separators by on-screen chip width.
+                    let draw_chip_vlines = chip_px >= 3.5;
+                    let chip_line_mul = if chip_px >= 14.0 {
+                        0.45
+                    } else if chip_px >= 8.0 {
+                        0.28
+                    } else {
+                        0.16
+                    };
+                    let chip_line_w = if chip_px >= 14.0 {
+                        0.55_f32
+                    } else if chip_px >= 8.0 {
+                        0.4_f32
+                    } else {
+                        0.3_f32
+                    };
                     for (t0, t1, one, err) in &bus_chips {
                         if *t1 < x_lo || *t0 > x_hi {
                             continue;
@@ -3119,12 +3249,24 @@ impl WaveformAnalysisPanel {
                                 None => "?",
                             }
                         };
-                        plot_ui.vline(
-                            VLine::new(*t0)
-                                .color(color.gamma_multiply(if *err { 1.0 } else { 0.75 }))
-                                .width(if *err { 1.6_f32 } else { 0.9_f32 })
-                                .name(""),
-                        );
+                        if *err {
+                            // Mismatch: thin orange tick only when not a solid fence.
+                            if chip_px >= 2.5 {
+                                plot_ui.vline(
+                                    VLine::new(*t0)
+                                        .color(err_col.gamma_multiply(0.85))
+                                        .width(0.85_f32)
+                                        .name(""),
+                                );
+                            }
+                        } else if draw_chip_vlines {
+                            plot_ui.vline(
+                                VLine::new(*t0)
+                                    .color(color.gamma_multiply(chip_line_mul))
+                                    .width(chip_line_w)
+                                    .name(""),
+                            );
+                        }
                         let show_text = if *err {
                             chip_px >= 3.0 || bit_px >= 16.0
                         } else {
@@ -3280,6 +3422,7 @@ impl WaveformAnalysisPanel {
                     }
                 }
             })
+        })
                     })
                 .inner,
             );
@@ -3554,7 +3697,7 @@ impl WaveformAnalysisPanel {
         self.waves.clear();
         self.selected = None;
         self.next_color = 0;
-        self.view_line_cache = None;
+        self.clear_viewport_lod_state();
         self.gated_measure_cache = None;
         self.bus_result = None;
         self.status = t(lang, "已关闭", "Closed").into();
@@ -4230,13 +4373,18 @@ fn measure_row(ui: &mut egui::Ui, tokens: &Tokens, key: &str, value: &str) {
         ui.set_max_width(row_w);
         ui.label(
             RichText::new(key)
-                .small()
+                .size(ui_theme::FONT_CAPTION)
                 .monospace()
                 .color(tokens.text_muted),
         );
-        ui.add_space(6.0);
+        ui.add_space(ui_theme::SPACE_XS + 2.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(RichText::new(value).small().monospace());
+            ui.label(
+                RichText::new(value)
+                    .size(ui_theme::FONT_BODY)
+                    .monospace()
+                    .color(tokens.text_primary),
+            );
         });
     });
 }
@@ -4352,6 +4500,17 @@ fn f64_pair_key(a: f64, b: f64) -> u64 {
     a.to_bits().wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ b.to_bits()
 }
 
+/// True when `view` lies inside the cached X window (zoom-in / slight pan).
+/// Zoom-out past the cache fails this check so we fall back to overview instead
+/// of painting a partial strip with empty gutters.
+fn viewport_cache_covers_view(cx0: f64, cx1: f64, vx0: f64, vx1: f64) -> bool {
+    let (clo, chi) = if cx0 <= cx1 { (cx0, cx1) } else { (cx1, cx0) };
+    let (vlo, vhi) = if vx0 <= vx1 { (vx0, vx1) } else { (vx1, vx0) };
+    let cspan = (chi - clo).abs().max(1e-30);
+    let slack = cspan * 0.03;
+    vlo >= clo - slack && vhi <= chi + slack
+}
+
 /// True when the plot window spans (almost) the entire trace — use overview envelope.
 fn view_covers_overview(x0: f64, x1: f64, data_xmin: f64, data_xmax: f64) -> bool {
     let (lo, hi) = if x0 <= x1 { (x0, x1) } else { (x1, x0) };
@@ -4388,16 +4547,11 @@ fn card_in_rect(
     add: impl FnOnce(&mut egui::Ui),
 ) {
     panel_in_rect(ui, rect, |ui| {
-        Frame::NONE
-            .fill(tokens.surface_bg)
-            .stroke(Stroke::new(1.0_f32, tokens.border))
-            .corner_radius(CornerRadius::same(6))
-            .inner_margin(Margin::symmetric(10, 8))
+        ui_theme::section_frame(tokens)
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
                 ui.set_max_size(ui.available_size());
-                ui.label(RichText::new(title).strong().size(13.0));
-                ui.add_space(6.0);
+                ui_theme::section_title(ui, tokens, title);
                 let body = ui.available_size();
                 ui.allocate_ui_with_layout(body, egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_min_size(body);
@@ -4427,9 +4581,10 @@ struct BusFormLayout {
 }
 
 fn bus_grid_label(ui: &mut egui::Ui, layout: BusFormLayout, text: &str) {
+    // Tokens passed via ambient style text; keep muted via small+default.
     ui.add_sized(
         [layout.label_w, layout.row_h],
-        egui::Label::new(RichText::new(text).small()),
+        egui::Label::new(RichText::new(text).size(ui_theme::FONT_BODY)),
     );
 }
 

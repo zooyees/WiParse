@@ -1,0 +1,24 @@
+{
+  "id": "example-smoke",
+  "name": "Example Smoke",
+  "name_zh": "示例冒烟",
+  "type": "smoke",
+  "version": "0.2.0",
+  "entry": "index.mjs",
+  "description": "Framework demo: CLI version + optional API health (preflight/run/stop).",
+  "capabilities": ["preflight", "run", "stop"],
+  "engines": {
+    "node": ">=18",
+    "wiparse": ">=1.1.7"
+  },
+  "params": [
+    {
+      "name": "check_api",
+      "type": "boolean",
+      "default": "true",
+      "label": "Check API health",
+      "label_zh": "检查 GUI API",
+      "help": "Also call HTTP /v1/health (GUI must be running)"
+    }
+  ]
+}

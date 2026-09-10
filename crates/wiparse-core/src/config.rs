@@ -73,6 +73,12 @@ pub struct PanelFlags {
     pub instrument_control: bool,
     #[serde(default = "default_true")]
     pub waveform_analysis: bool,
+    #[serde(default = "default_true")]
+    pub data_analysis: bool,
+    #[serde(default = "default_true")]
+    pub test_report: bool,
+    #[serde(default = "default_true")]
+    pub test_tool: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,6 +133,116 @@ pub struct AppsConfig {
     pub tektronix_scope: TektronixScopeConfig,
     #[serde(default)]
     pub instruments: InstrumentControlConfig,
+    #[serde(default)]
+    pub data_analysis: DataAnalysisConfig,
+    #[serde(default)]
+    pub test_report: TestReportConfig,
+    #[serde(default)]
+    pub test_tool: TestToolConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestReportConfig {
+    /// Root directory for the test-report sidebar browser.
+    #[serde(default)]
+    pub browser_dir: String,
+}
+
+impl Default for TestReportConfig {
+    fn default() -> Self {
+        Self {
+            browser_dir: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestToolConfig {
+    /// Directory containing plugin folders (`*/plugin.json`).
+    #[serde(default)]
+    pub plugins_dir: String,
+    /// Path to WiParse CLI executable used by Node plugins.
+    #[serde(default)]
+    pub cli_path: String,
+    /// Node.js executable (default `node`).
+    #[serde(default)]
+    pub node_path: String,
+    /// Data root for plugin path templates (`{data_root}`). Empty → project root.
+    #[serde(default)]
+    pub data_root: String,
+}
+
+impl Default for TestToolConfig {
+    fn default() -> Self {
+        Self {
+            plugins_dir: String::new(),
+            cli_path: String::new(),
+            node_path: String::new(),
+            data_root: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataAnalysisConfig {
+    /// Root directory for the data-analysis sidebar file browser.
+    #[serde(default)]
+    pub browser_dir: String,
+    /// Frame header used to split the file into frames.
+    #[serde(default)]
+    pub frame_header: String,
+    /// Number of data series (1..=8).
+    #[serde(default = "default_data_series_count")]
+    pub series_count: u8,
+    /// Per-series filter strings (length may exceed series_count; UI uses the prefix).
+    #[serde(default)]
+    pub filters: Vec<String>,
+    /// Per-series kinds: `voltage` | `current` | `temperature`.
+    #[serde(default)]
+    pub kinds: Vec<String>,
+    /// Data source: `file` (default) or `serial`.
+    #[serde(default = "default_data_source")]
+    pub source: String,
+    /// Native threshold values / enables per physical kind.
+    #[serde(default)]
+    pub threshold_voltage: f64,
+    #[serde(default)]
+    pub threshold_voltage_on: bool,
+    #[serde(default)]
+    pub threshold_current: f64,
+    #[serde(default)]
+    pub threshold_current_on: bool,
+    #[serde(default)]
+    pub threshold_temperature: f64,
+    #[serde(default)]
+    pub threshold_temperature_on: bool,
+}
+
+fn default_data_series_count() -> u8 {
+    1
+}
+
+fn default_data_source() -> String {
+    "file".into()
+}
+
+impl Default for DataAnalysisConfig {
+    fn default() -> Self {
+        Self {
+            browser_dir: String::new(),
+            frame_header: String::new(),
+            series_count: 1,
+            filters: vec![String::new()],
+            kinds: vec!["voltage".into()],
+            source: default_data_source(),
+            threshold_voltage: 0.0,
+            threshold_voltage_on: false,
+            threshold_current: 0.0,
+            threshold_current_on: false,
+            threshold_temperature: 0.0,
+            threshold_temperature_on: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -288,6 +404,9 @@ impl Default for PanelFlags {
             calculator: true,
             instrument_control: true,
             waveform_analysis: true,
+            data_analysis: true,
+            test_report: true,
+            test_tool: true,
         }
     }
 }
@@ -368,6 +487,9 @@ impl Default for AppsConfig {
         Self {
             tektronix_scope: TektronixScopeConfig::default(),
             instruments: InstrumentControlConfig::default(),
+            data_analysis: DataAnalysisConfig::default(),
+            test_report: TestReportConfig::default(),
+            test_tool: TestToolConfig::default(),
         }
     }
 }

@@ -5,8 +5,11 @@
 
 use crate::backend::{self, ApiBridge};
 use crate::calculator::CalculatorPanel;
+use crate::data_analysis::DataAnalysisPanel;
 use crate::instrument_control::InstrumentControlPanel;
 use crate::serial_tool::SerialToolPanel;
+use crate::test_report::TestReportPanel;
+use crate::test_tool::TestToolPanel;
 use crate::theme::{self as ui_theme, Tokens};
 use crate::update::UpdateController;
 use crate::waveform_analysis::WaveformAnalysisPanel;
@@ -22,6 +25,9 @@ pub(crate) enum MainTab {
     Calculator,
     Instruments,
     Waveform,
+    DataAnalysis,
+    TestReport,
+    TestTool,
 }
 
 impl MainTab {
@@ -31,6 +37,9 @@ impl MainTab {
             Self::Calculator => "calculator",
             Self::Instruments => "instruments",
             Self::Waveform => "waveform",
+            Self::DataAnalysis => "data_analysis",
+            Self::TestReport => "test_report",
+            Self::TestTool => "test_tool",
         }
     }
 
@@ -42,6 +51,11 @@ impl MainTab {
                 Some(Self::Instruments)
             }
             "waveform" | "wave" | "waveform_analysis" => Some(Self::Waveform),
+            "data" | "data_analysis" | "analysis" => Some(Self::DataAnalysis),
+            "report" | "test_report" | "reports" => Some(Self::TestReport),
+            "test_tool" | "testtool" | "tools" | "plugins" | "testing_hub" | "hub" => {
+                Some(Self::TestTool)
+            }
             _ => None,
         }
     }
@@ -51,6 +65,9 @@ fn initial_tab(
     show_serial: bool,
     show_instruments: bool,
     show_waveform: bool,
+    show_data_analysis: bool,
+    show_test_report: bool,
+    show_test_tool: bool,
 ) -> MainTab {
     if show_serial {
         MainTab::Serial
@@ -58,6 +75,12 @@ fn initial_tab(
         MainTab::Instruments
     } else if show_waveform {
         MainTab::Waveform
+    } else if show_data_analysis {
+        MainTab::DataAnalysis
+    } else if show_test_report {
+        MainTab::TestReport
+    } else if show_test_tool {
+        MainTab::TestTool
     } else {
         MainTab::Calculator
     }
@@ -80,10 +103,16 @@ pub struct WiParseApp {
     show_calculator: bool,
     show_instruments: bool,
     show_waveform: bool,
+    show_data_analysis: bool,
+    show_test_report: bool,
+    show_test_tool: bool,
     calculator: CalculatorPanel,
     serial: SerialToolPanel,
     instruments: InstrumentControlPanel,
     waveform: WaveformAnalysisPanel,
+    data_analysis: DataAnalysisPanel,
+    test_report: TestReportPanel,
+    test_tool: TestToolPanel,
     api: ApiBridge,
     settings_open: bool,
     settings_sub: SettingsSub,
@@ -109,7 +138,17 @@ impl WiParseApp {
         let show_calculator = cfg.ui.panels.calculator;
         let show_instruments = cfg.ui.panels.instrument_control;
         let show_waveform = cfg.ui.panels.waveform_analysis;
-        let active = initial_tab(show_serial, show_instruments, show_waveform);
+        let show_data_analysis = cfg.ui.panels.data_analysis;
+        let show_test_report = cfg.ui.panels.test_report;
+        let show_test_tool = cfg.ui.panels.test_tool;
+        let active = initial_tab(
+            show_serial,
+            show_instruments,
+            show_waveform,
+            show_data_analysis,
+            show_test_report,
+            show_test_tool,
+        );
         let light = cfg.ui.theme == "light";
         let api = ApiBridge::new();
         if let Err(e) = backend::start(api.clone()) {
@@ -126,6 +165,9 @@ impl WiParseApp {
                 panel
             },
             waveform: WaveformAnalysisPanel::new(&cfg),
+            data_analysis: DataAnalysisPanel::new(&cfg),
+            test_report: TestReportPanel::new(&cfg),
+            test_tool: TestToolPanel::new(&cfg),
             cfg,
             lang,
             active,
@@ -133,6 +175,9 @@ impl WiParseApp {
             show_calculator,
             show_instruments,
             show_waveform,
+            show_data_analysis,
+            show_test_report,
+            show_test_tool,
             calculator: CalculatorPanel::new(),
             api,
             settings_open: false,
@@ -162,6 +207,9 @@ impl WiParseApp {
             MainTab::Calculator => self.show_calculator,
             MainTab::Instruments => self.show_instruments,
             MainTab::Waveform => self.show_waveform,
+            MainTab::DataAnalysis => self.show_data_analysis,
+            MainTab::TestReport => self.show_test_report,
+            MainTab::TestTool => self.show_test_tool,
         };
         if visible {
             return;
@@ -172,6 +220,12 @@ impl WiParseApp {
             self.active = MainTab::Instruments;
         } else if self.show_waveform {
             self.active = MainTab::Waveform;
+        } else if self.show_data_analysis {
+            self.active = MainTab::DataAnalysis;
+        } else if self.show_test_report {
+            self.active = MainTab::TestReport;
+        } else if self.show_test_tool {
+            self.active = MainTab::TestTool;
         } else if self.show_calculator {
             self.active = MainTab::Calculator;
         } else {
@@ -185,6 +239,9 @@ impl WiParseApp {
         self.cfg.ui.panels.calculator = self.show_calculator;
         self.cfg.ui.panels.instrument_control = self.show_instruments;
         self.cfg.ui.panels.waveform_analysis = self.show_waveform;
+        self.cfg.ui.panels.data_analysis = self.show_data_analysis;
+        self.cfg.ui.panels.test_report = self.show_test_report;
+        self.cfg.ui.panels.test_tool = self.show_test_tool;
         self.cfg.ui.language = match self.lang {
             Lang::Zh => "zh".into(),
             Lang::En => "en".into(),
@@ -290,8 +347,8 @@ impl WiParseApp {
     }
 
     fn settings_sub_ui(&mut self, ui: &mut egui::Ui, t: &Tokens) {
-        // Fit longest panel label ("Waveform Analysis" / "波形分析") + checkbox.
-        const SUB_W: f32 = 186.0;
+        // Fit longest panel label ("Waveform Analysis" / "数据分析") + checkbox.
+        const SUB_W: f32 = 196.0;
         ui.set_width(SUB_W);
         ui.set_max_width(SUB_W);
         ui.set_min_width(SUB_W);
@@ -302,21 +359,17 @@ impl WiParseApp {
         match self.settings_sub {
             SettingsSub::Panels => {
                 let serial_name = tr(self.lang, "tool.serial_tool.name");
-                let calculator_name = tr(self.lang, "tool.calculator.name");
                 let instrument_name = tr(self.lang, "tool.instrument_control.name");
                 let waveform_name = tr(self.lang, "tool.waveform_analysis.name");
+                let data_name = tr(self.lang, "tool.data_analysis.name");
+                let report_name = tr(self.lang, "tool.test_report.name");
+                let test_tool_name = tr(self.lang, "tool.test_tool.name");
+                let calculator_name = tr(self.lang, "tool.calculator.name");
 
                 if menu_check_row(ui, t, &serial_name, self.show_serial, SUB_W).clicked() {
                     self.show_serial = !self.show_serial;
                     if self.show_serial {
                         self.active = MainTab::Serial;
-                    }
-                    dirty = true;
-                }
-                if menu_check_row(ui, t, &calculator_name, self.show_calculator, SUB_W).clicked() {
-                    self.show_calculator = !self.show_calculator;
-                    if self.show_calculator {
-                        self.active = MainTab::Calculator;
                     }
                     dirty = true;
                 }
@@ -334,10 +387,41 @@ impl WiParseApp {
                     }
                     dirty = true;
                 }
+                if menu_check_row(ui, t, &data_name, self.show_data_analysis, SUB_W).clicked() {
+                    self.show_data_analysis = !self.show_data_analysis;
+                    if self.show_data_analysis {
+                        self.active = MainTab::DataAnalysis;
+                    }
+                    dirty = true;
+                }
+                if menu_check_row(ui, t, &report_name, self.show_test_report, SUB_W).clicked() {
+                    self.show_test_report = !self.show_test_report;
+                    if self.show_test_report {
+                        self.active = MainTab::TestReport;
+                    }
+                    dirty = true;
+                }
+                if menu_check_row(ui, t, &test_tool_name, self.show_test_tool, SUB_W).clicked() {
+                    self.show_test_tool = !self.show_test_tool;
+                    if self.show_test_tool {
+                        self.active = MainTab::TestTool;
+                    }
+                    dirty = true;
+                }
+                if menu_check_row(ui, t, &calculator_name, self.show_calculator, SUB_W).clicked() {
+                    self.show_calculator = !self.show_calculator;
+                    if self.show_calculator {
+                        self.active = MainTab::Calculator;
+                    }
+                    dirty = true;
+                }
                 if !self.show_serial
                     && !self.show_calculator
                     && !self.show_instruments
                     && !self.show_waveform
+                    && !self.show_data_analysis
+                    && !self.show_test_report
+                    && !self.show_test_tool
                 {
                     self.show_serial = true;
                     self.active = MainTab::Serial;
@@ -474,7 +558,7 @@ impl WiParseApp {
         self.updater.poll();
         let mut open = self.about_open;
         let mut close_requested = false;
-        const DIALOG_W: f32 = 400.0;
+        const DIALOG_W: f32 = 420.0;
         const BTN: Vec2 = Vec2::new(88.0, 28.0);
 
         egui::Window::new(tr(self.lang, "about.title"))
@@ -488,7 +572,7 @@ impl WiParseApp {
                 Frame::window(&ctx.style())
                     .fill(t.panel_bg)
                     .stroke(Stroke::new(1.0_f32, t.border))
-                    .corner_radius(CornerRadius::same(8))
+                    .corner_radius(CornerRadius::same(ui_theme::RADIUS_DIALOG))
                     .inner_margin(Margin::symmetric(18, 16)),
             )
             .show(ctx, |ui| {
@@ -500,13 +584,13 @@ impl WiParseApp {
                     ui.vertical(|ui| {
                         ui.label(
                             egui::RichText::new("WiParse")
-                                .size(24.0)
+                                .size(ui_theme::FONT_SECTION + 2.0)
                                 .strong()
                                 .color(t.text_primary),
                         );
                         ui.label(
                             egui::RichText::new(tr(self.lang, "about.subtitle"))
-                                .size(12.0)
+                                .size(ui_theme::FONT_BODY)
                                 .color(t.text_muted),
                         );
                     });
@@ -515,14 +599,14 @@ impl WiParseApp {
                         |ui| {
                             Frame::NONE
                                 .fill(t.surface_bg)
-                                .stroke(Stroke::new(1.0_f32, t.border))
-                                .corner_radius(CornerRadius::same(4))
+                                .stroke(Stroke::new(1.0_f32, t.divider))
+                                .corner_radius(CornerRadius::same(ui_theme::RADIUS_CTRL))
                                 .inner_margin(Margin::symmetric(8, 4))
                                 .show(ui, |ui| {
                                     ui.label(
                                         egui::RichText::new(format!("v{APP_VERSION}"))
                                             .monospace()
-                                            .size(12.0)
+                                            .size(ui_theme::FONT_BODY)
                                             .color(t.accent),
                                     );
                                 });
@@ -530,21 +614,49 @@ impl WiParseApp {
                     );
                 });
 
-                ui.add_space(14.0);
+                ui.add_space(12.0);
                 ui.separator();
+                ui.add_space(8.0);
+
+                // Simplified release notes for this build
+                Frame::NONE
+                    .fill(t.surface_bg)
+                    .stroke(Stroke::new(1.0_f32, t.divider))
+                    .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
+                    .inner_margin(Margin::symmetric(12, 10))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(
+                            egui::RichText::new(tr(self.lang, "about.notes_section"))
+                                .size(ui_theme::FONT_TITLE)
+                                .strong()
+                                .color(t.text_primary),
+                        );
+                        ui.add_space(6.0);
+                        egui::ScrollArea::vertical()
+                            .max_height(148.0)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new(tr(self.lang, "about.notes"))
+                                        .size(ui_theme::FONT_BODY)
+                                        .color(t.text_muted),
+                                );
+                            });
+                    });
+
                 ui.add_space(10.0);
 
                 // Update section card
                 Frame::NONE
                     .fill(t.surface_bg)
-                    .stroke(Stroke::new(1.0_f32, t.border))
-                    .corner_radius(CornerRadius::same(6))
+                    .stroke(Stroke::new(1.0_f32, t.divider))
+                    .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
                     .inner_margin(Margin::symmetric(12, 10))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.label(
                             egui::RichText::new(tr(self.lang, "about.update_section"))
-                                .size(13.0)
+                                .size(ui_theme::FONT_TITLE)
                                 .strong()
                                 .color(t.text_primary),
                         );
@@ -570,10 +682,14 @@ impl WiParseApp {
                                         });
                                     }
                                     UpdatePhase::UpToDate => {
-                                        ui.label(
-                                            egui::RichText::new(tr(self.lang, "update.up_to_date"))
-                                                .color(t.text_primary),
-                                        );
+                                        ui.horizontal(|ui| {
+                                            ui_theme::status_line(
+                                                ui,
+                                                t,
+                                                ui_theme::StatusTone::Ok,
+                                                &tr(self.lang, "update.up_to_date"),
+                                            );
+                                        });
                                     }
                                     UpdatePhase::Available { manifest, .. } => {
                                         ui.label(format!(
@@ -825,10 +941,16 @@ impl eframe::App for WiParseApp {
                 show_calculator: &mut self.show_calculator,
                 show_instruments: &mut self.show_instruments,
                 show_waveform: &mut self.show_waveform,
+                show_data_analysis: &mut self.show_data_analysis,
+                show_test_report: &mut self.show_test_report,
+                show_test_tool: &mut self.show_test_tool,
                 serial: &mut self.serial,
                 instruments: &mut self.instruments,
                 calculator: &mut self.calculator,
                 waveform: &mut self.waveform,
+                data_analysis: &mut self.data_analysis,
+                test_report: &mut self.test_report,
+                test_tool: &mut self.test_tool,
             },
         );
         if persist {
@@ -837,6 +959,17 @@ impl eframe::App for WiParseApp {
         }
         // Live filters only need refresh when serial UI shows the live tab.
         self.serial.drain_events_with_bus(live_filters, Some(&self.api));
+        // Data Analysis serial-live: pull new live lines after serial drain.
+        if self.data_analysis.wants_live_serial() {
+            let total = self.serial.live_line_count();
+            self.data_analysis.prepare_live_poll(total);
+            let from = self.data_analysis.live_line_cursor();
+            if total > from {
+                let lines = self.serial.live_lines_since(from, total - from);
+                self.data_analysis
+                    .ingest_live_lines(&lines, total, self.lang);
+            }
+        }
         for tag in self.serial.take_scope_captures() {
             let id = self.instruments.first_oscilloscope_id();
             let ok = if let Some(device_id) = id {
@@ -866,12 +999,21 @@ impl eframe::App for WiParseApp {
         let pump_instruments = self.active == MainTab::Instruments
             && self.show_instruments
             && self.instruments.live_active();
-        if pump_serial || pump_instruments {
+        let pump_data = self.active == MainTab::DataAnalysis
+            && self.show_data_analysis
+            && self.data_analysis.needs_repaint();
+        if pump_serial || pump_instruments || pump_data {
             let ms = if serial_visible {
                 33
             } else if self.active == MainTab::Instruments && self.show_instruments && pump_instruments
             {
                 33
+            } else if pump_data {
+                if self.data_analysis.is_loading() {
+                    8
+                } else {
+                    16
+                }
             } else {
                 500
             };
@@ -884,7 +1026,8 @@ impl eframe::App for WiParseApp {
 
         let light = self.cfg.ui.theme == "light";
         if self.theme_applied_light != Some(light) {
-            self.tokens = ui_theme::apply_theme(ctx, light);
+            let tokens = ui_theme::tokens_for_preference(light);
+            self.tokens = ui_theme::apply_tokens(ctx, tokens);
             self.theme_applied_light = Some(light);
         }
         let t = self.tokens;
@@ -895,7 +1038,7 @@ impl eframe::App for WiParseApp {
                 Frame::NONE
                     .fill(t.header_bg)
                     .inner_margin(Margin::symmetric(10, 0))
-                    .stroke(Stroke::new(1.0_f32, t.border)),
+                    .stroke(Stroke::new(1.0_f32, t.divider)),
             )
             .exact_height(40.0)
             .show(ctx, |ui| {
@@ -914,14 +1057,6 @@ impl eframe::App for WiParseApp {
                         ui,
                         &t,
                         &mut self.active,
-                        MainTab::Calculator,
-                        self.show_calculator,
-                        &tr(self.lang, "tool.calculator.name"),
-                    );
-                    main_tab(
-                        ui,
-                        &t,
-                        &mut self.active,
                         MainTab::Instruments,
                         self.show_instruments,
                         &tr(self.lang, "tool.instrument_control.name"),
@@ -934,42 +1069,59 @@ impl eframe::App for WiParseApp {
                         self.show_waveform,
                         &tr(self.lang, "tool.waveform_analysis.name"),
                     );
+                    main_tab(
+                        ui,
+                        &t,
+                        &mut self.active,
+                        MainTab::DataAnalysis,
+                        self.show_data_analysis,
+                        &tr(self.lang, "tool.data_analysis.name"),
+                    );
+                    main_tab(
+                        ui,
+                        &t,
+                        &mut self.active,
+                        MainTab::TestReport,
+                        self.show_test_report,
+                        &tr(self.lang, "tool.test_report.name"),
+                    );
+                    main_tab(
+                        ui,
+                        &t,
+                        &mut self.active,
+                        MainTab::TestTool,
+                        self.show_test_tool,
+                        &tr(self.lang, "tool.test_tool.name"),
+                    );
+                    main_tab(
+                        ui,
+                        &t,
+                        &mut self.active,
+                        MainTab::Calculator,
+                        self.show_calculator,
+                        &tr(self.lang, "tool.calculator.name"),
+                    );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Python QToolButton#settings_menu_btn: transparent, hover tint.
-                        let settings_label = tr(self.lang, "menu.settings");
-                        let hovered_fill = Color32::from_rgba_unmultiplied(2, 132, 199, 36);
-                        let open_fill = Color32::from_rgba_unmultiplied(2, 132, 199, 55);
-                        let (rect, resp) = ui.allocate_exact_size(
-                            Vec2::new(
-                                ui.fonts(|f| {
-                                    f.layout_no_wrap(
-                                        settings_label.clone(),
-                                        FontId::proportional(13.0),
-                                        t.text_muted,
-                                    )
-                                    .size()
-                                    .x
-                                }) + 24.0,
-                                28.0,
-                            ),
-                            Sense::click(),
-                        );
+                        // Gear icon settings — quieter than text label.
+                        let (rect, resp) = ui.allocate_exact_size(Vec2::new(32.0, 28.0), Sense::click());
                         let fill = if self.settings_open {
-                            open_fill
+                            t.accent_soft
                         } else if resp.hovered() {
-                            hovered_fill
+                            t.accent_soft
                         } else {
                             Color32::TRANSPARENT
                         };
-                        ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
+                        ui.painter()
+                            .rect_filled(rect, CornerRadius::same(ui_theme::RADIUS_CTRL), fill);
                         let fg = if resp.hovered() || self.settings_open {
                             t.text_primary
                         } else {
                             t.text_muted
                         };
+                        let gear = "⚙";
                         let galley = ui.fonts(|f| {
-                            f.layout_no_wrap(settings_label, FontId::proportional(13.0), fg)
+                            f.layout_no_wrap(gear.to_string(), FontId::proportional(16.0), fg)
                         });
                         let text_pos = Pos2::new(
                             rect.center().x - galley.size().x * 0.5,
@@ -977,6 +1129,7 @@ impl eframe::App for WiParseApp {
                         );
                         ui.painter().galley(text_pos, galley, fg);
                         self.settings_btn_rect = Some(rect.expand(2.0));
+                        let resp = resp.on_hover_text(tr(self.lang, "menu.settings"));
                         if resp.clicked() {
                             if self.settings_open {
                                 self.close_settings();
@@ -1003,35 +1156,47 @@ impl eframe::App for WiParseApp {
                 Frame::NONE
                     .fill(t.header_bg)
                     .inner_margin(Margin::symmetric(10, 4))
-                    .stroke(Stroke::new(1.0_f32, t.border)),
+                    .stroke(Stroke::new(1.0_f32, t.divider)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if self.active == MainTab::Serial {
-                        ui.label(
-                            egui::RichText::new(self.serial.status_text())
-                                .size(12.0)
-                                .color(t.text_muted),
-                        );
+                    let (status, tone) = if self.active == MainTab::Serial {
+                        (
+                            self.serial.status_text().to_string(),
+                            ui_theme::tone_from_status(self.serial.status_text()),
+                        )
                     } else if self.active == MainTab::Instruments {
-                        ui.label(
-                            egui::RichText::new(self.instruments.status_text())
-                                .size(12.0)
-                                .color(t.text_muted),
-                        );
+                        (
+                            self.instruments.status_text().to_string(),
+                            ui_theme::tone_from_status(self.instruments.status_text()),
+                        )
                     } else if self.active == MainTab::Waveform {
-                        ui.label(
-                            egui::RichText::new(self.waveform.status_text())
-                                .size(12.0)
-                                .color(t.text_muted),
-                        );
+                        (
+                            self.waveform.status_text().to_string(),
+                            ui_theme::tone_from_status(self.waveform.status_text()),
+                        )
+                    } else if self.active == MainTab::DataAnalysis {
+                        (
+                            self.data_analysis.status_text().to_string(),
+                            ui_theme::tone_from_status(self.data_analysis.status_text()),
+                        )
+                    } else if self.active == MainTab::TestReport {
+                        (
+                            self.test_report.status_text().to_string(),
+                            ui_theme::tone_from_status(self.test_report.status_text()),
+                        )
+                    } else if self.active == MainTab::TestTool {
+                        (
+                            self.test_tool.status_text().to_string(),
+                            ui_theme::tone_from_status(self.test_tool.status_text()),
+                        )
                     } else {
-                        ui.label(
-                            egui::RichText::new(tr(self.lang, "status.ready"))
-                                .size(12.0)
-                                .color(t.text_muted),
-                        );
-                    }
+                        (
+                            tr(self.lang, "status.ready").to_string(),
+                            ui_theme::StatusTone::Ok,
+                        )
+                    };
+                    ui_theme::status_line(ui, &t, tone, &status);
                 });
             });
 
@@ -1049,6 +1214,16 @@ impl eframe::App for WiParseApp {
                 }
                 MainTab::Waveform if self.show_waveform => {
                     self.waveform.ui(ui, self.lang, &t);
+                }
+                MainTab::DataAnalysis if self.show_data_analysis => {
+                    self.data_analysis.ui(ui, self.lang, &t);
+                    self.data_analysis.clear_live_plot_dirty();
+                }
+                MainTab::TestReport if self.show_test_report => {
+                    self.test_report.ui(ui, self.lang, &t);
+                }
+                MainTab::TestTool if self.show_test_tool => {
+                    self.test_tool.ui(ui, self.lang, &t);
                 }
                 _ => {
                     ui.centered_and_justified(|ui| {
@@ -1072,7 +1247,7 @@ fn menu_frame(t: &Tokens) -> Frame {
     Frame::NONE
         .fill(t.panel_bg)
         .stroke(Stroke::new(1.0_f32, t.border))
-        .corner_radius(CornerRadius::same(4))
+        .corner_radius(CornerRadius::same(ui_theme::RADIUS_CTRL))
         .inner_margin(Margin::symmetric(0, 4))
         .shadow(egui::Shadow {
             offset: [0, 4],
@@ -1219,45 +1394,43 @@ fn main_tab(
         return;
     }
     let selected = *active == tab;
-    let (fill, fg, top_accent) = if selected {
-        (t.panel_bg, t.text_primary, t.accent)
+    let fg = if selected {
+        t.text_primary
     } else {
-        (t.tab_inactive_bg, t.tab_inactive_text, Color32::TRANSPARENT)
+        t.tab_inactive_text
     };
 
-    let galley = ui.fonts(|f| f.layout_no_wrap(label.to_string(), FontId::proportional(13.5), fg));
-    let pad_x = 16.0;
+    let galley = ui.fonts(|f| {
+        f.layout_no_wrap(
+            label.to_string(),
+            FontId::proportional(ui_theme::FONT_TITLE),
+            fg,
+        )
+    });
+    let pad_x = 14.0;
     let size = Vec2::new(galley.size().x + pad_x * 2.0, 36.0);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
 
     if ui.is_rect_visible(rect) {
-        ui.painter().rect_filled(rect, CornerRadius::ZERO, fill);
-        if selected {
-            let accent_rect =
-                Rect::from_min_max(rect.left_top(), Pos2::new(rect.right(), rect.top() + 3.0));
-            ui.painter()
-                .rect_filled(accent_rect, CornerRadius::ZERO, top_accent);
+        if resp.hovered() && !selected {
+            ui.painter().rect_filled(rect, CornerRadius::ZERO, t.accent_soft);
         }
         let text_pos = Pos2::new(
             rect.center().x - galley.size().x * 0.5,
-            rect.center().y - galley.size().y * 0.5,
+            rect.center().y - galley.size().y * 0.5 - 1.0,
         );
         ui.painter().galley(text_pos, galley, fg);
-        if !selected {
-            ui.painter().line_segment(
-                [rect.left_bottom(), rect.right_bottom()],
-                Stroke::new(1.0_f32, t.border),
+        // Bottom indicator bar (Apple-style text tabs).
+        let bar_y = rect.bottom() - 2.0;
+        if selected {
+            ui.painter().hline(
+                (rect.left() + 10.0)..=(rect.right() - 10.0),
+                bar_y,
+                Stroke::new(2.0_f32, t.accent),
             );
         }
     }
 
-    if resp.hovered() && !selected {
-        ui.painter().rect_filled(
-            rect,
-            CornerRadius::ZERO,
-            Color32::from_rgba_unmultiplied(2, 132, 199, 18),
-        );
-    }
     if resp.clicked() {
         *active = tab;
     }
@@ -1269,9 +1442,33 @@ mod tests {
 
     #[test]
     fn calculator_visibility_does_not_force_startup_tab() {
-        assert_eq!(initial_tab(true, true, true), MainTab::Serial);
-        assert_eq!(initial_tab(false, true, true), MainTab::Instruments);
-        assert_eq!(initial_tab(false, false, true), MainTab::Waveform);
-        assert_eq!(initial_tab(false, false, false), MainTab::Calculator);
+        assert_eq!(
+            initial_tab(true, true, true, true, true, true),
+            MainTab::Serial
+        );
+        assert_eq!(
+            initial_tab(false, true, true, true, true, true),
+            MainTab::Instruments
+        );
+        assert_eq!(
+            initial_tab(false, false, true, true, true, true),
+            MainTab::Waveform
+        );
+        assert_eq!(
+            initial_tab(false, false, false, true, true, true),
+            MainTab::DataAnalysis
+        );
+        assert_eq!(
+            initial_tab(false, false, false, false, true, true),
+            MainTab::TestReport
+        );
+        assert_eq!(
+            initial_tab(false, false, false, false, false, true),
+            MainTab::TestTool
+        );
+        assert_eq!(
+            initial_tab(false, false, false, false, false, false),
+            MainTab::Calculator
+        );
     }
 }

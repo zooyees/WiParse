@@ -810,9 +810,14 @@ fn scientific_keypad(ui: &mut egui::Ui, expression: &mut String, lang: Lang, t: 
 fn keypad_button(ui: &mut egui::Ui, t: &Tokens, label: &str, width: f32, height: f32) -> bool {
     ui.add_sized(
         [width, height],
-        egui::Button::new(egui::RichText::new(label).size(12.0).color(t.text_primary))
-            .fill(t.surface_bg)
-            .stroke(Stroke::new(1.0_f32, t.border.gamma_multiply(0.65))),
+        egui::Button::new(
+            egui::RichText::new(label)
+                .size(ui_theme::FONT_BODY)
+                .color(t.text_primary),
+        )
+        .fill(t.surface_bg)
+        .stroke(Stroke::new(1.0_f32, t.divider))
+        .corner_radius(CornerRadius::same(ui_theme::RADIUS_CTRL)),
     )
     .clicked()
 }
@@ -835,7 +840,7 @@ fn result_box(ui: &mut egui::Ui, t: &Tokens, result: &str) {
     Frame::NONE
         .fill(t.surface_bg)
         .stroke(Stroke::new(1.0_f32, t.border.gamma_multiply(0.5)))
-        .corner_radius(CornerRadius::same(4))
+        .corner_radius(CornerRadius::same(ui_theme::RADIUS_CTRL))
         .inner_margin(Margin::same(8))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());

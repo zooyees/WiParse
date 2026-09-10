@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wiparse.local/schemas/plugin.schema.json",
+  "title": "WiParse Test Plugin Manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["id", "name", "type"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$" },
+    "name": { "type": "string", "minLength": 1 },
+    "name_zh": { "type": "string" },
+    "type": {
+      "type": "string",
+      "enum": ["smoke", "serial", "instrument", "capture_loop", "custom"]
+    },
+    "version": { "type": "string" },
+    "entry": { "type": "string" },
+    "config": { "type": "string" },
+    "description": { "type": "string" },
+    "capabilities": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["preflight", "run", "stop"] }
+    },
+    "engines": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "node": { "type": "string" },
+        "wiparse": { "type": "string" }
+      }
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": true,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "type": { "type": "string", "enum": ["string", "number", "boolean", "path"] },
+          "default": {},
+          "path": { "type": "string" },
+          "label": { "type": "string" },
+          "label_zh": { "type": "string" },
+          "help": { "type": "string" }
+        }
+      }
+    }
+  }
+}

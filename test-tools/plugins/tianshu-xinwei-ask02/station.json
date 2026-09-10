@@ -1,0 +1,118 @@
+{
+  "sop": {
+    "id": "WI-TSXW-ASK02-001",
+    "rev": "A",
+    "title": "天枢-信维 ASK2/timeout 异常波形抓取",
+    "effective": "2026-09-09",
+    "process_owner": "测试工程"
+  },
+  "station": {
+    "id": "TSXW-01",
+    "name": "天枢-信维压测工位",
+    "product": "天枢-信维",
+    "location": ""
+  },
+  "gui": {
+    "api": "http://127.0.0.1:7878",
+    "min_version": "1.1.7"
+  },
+  "serial": {
+    "port": "COM7",
+    "baud": 2000000
+  },
+  "scope": {
+    "kind": "oscilloscope",
+    "resource": "USB0::0x0699::0x0408::C047283::INSTR",
+    "prefer_device_id": 2,
+    "model": "MDO3014"
+  },
+  "timing": {
+    "post_trigger_delay_s": 0.3,
+    "scope_settle_s": 1.5,
+    "poll_ms": 400,
+    "serial_stop_timeout_ms": 4000,
+    "isf_timeout_ms": 600000,
+    "shot_timeout_ms": 90000
+  },
+  "paths": {
+    "isf_dir": "{data_root}/instrument_data/{product}",
+    "report_dir": "{data_root}/test report/{product}",
+    "file_prefix": "天枢信维压测",
+    "lock_file": "{plugin_dir}/run.lock",
+    "stop_file": "{plugin_dir}/run.stop",
+    "status_file": "{data_root}/instrument_data/{product}/_loop_status.json",
+    "summary_md": "{data_root}/test report/{product}/天枢信维压测_总报告_{stamp}.md"
+  },
+  "serial_triggers": {
+    "mode": "first_match",
+    "rising_edge": true,
+    "reload_s": 2,
+    "items": [
+      {
+        "id": "ASK2",
+        "label": "ASK 2 非C/b",
+        "enabled": true,
+        "type": "regex",
+        "pattern": "ASK\\s+0?2\\b",
+        "flags": "",
+        "unless": [
+          {
+            "id": "ASK2_C",
+            "label": "ASK 2 C",
+            "type": "regex",
+            "pattern": "ASK\\s+0?2\\s+[cC]\\b",
+            "note": "正常 header C，不抓波"
+          },
+          {
+            "id": "ASK2_b",
+            "label": "ASK 2 b",
+            "type": "regex",
+            "pattern": "ASK\\s+0?2\\s+[bB]\\b",
+            "note": "正常 header b，不抓波"
+          },
+          {
+            "id": "Idx2",
+            "label": "Idx[2]",
+            "type": "regex",
+            "pattern": "Idx\\[0?2\\]"
+          }
+        ],
+        "note": "所有 header=2 的 ASK 均触发，反向排除 ASK 2 C 与 ASK 2 b，并排除 Idx[2]。"
+      },
+      {
+        "id": "timeout",
+        "label": "timeout",
+        "enabled": true,
+        "type": "regex",
+        "pattern": "\\btimeout\\b",
+        "flags": "i",
+        "exclude": "",
+        "note": "串口原文出现 timeout。"
+      },
+      {
+        "id": "ASK71",
+        "label": "ASK 71",
+        "enabled": false,
+        "type": "regex",
+        "pattern": "ASK\\s+0?71\\b",
+        "flags": "",
+        "exclude": "Idx\\[0?71\\]",
+        "exclude_flags": "",
+        "note": "示例。enabled=true 即加入监控。"
+      }
+    ]
+  },
+  "pdf": {
+    "browsers": [
+      "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+      "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+    ]
+  },
+  "interlocks": {
+    "single_instance": true,
+    "hold_serial_off_during_capture": true,
+    "never_test_start_during_capture": true,
+    "never_change_waveform_browser_dir": true,
+    "never_use_wait_line_for_long_poll": true
+  }
+}

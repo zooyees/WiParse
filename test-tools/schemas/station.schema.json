@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wiparse.local/schemas/station.schema.json",
+  "title": "WiParse Station Config",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["gui", "paths"],
+  "properties": {
+    "sop": { "type": "object" },
+    "station": { "type": "object" },
+    "gui": {
+      "type": "object",
+      "required": ["api"],
+      "properties": {
+        "api": { "type": "string", "minLength": 1 },
+        "min_version": { "type": "string" }
+      }
+    },
+    "serial": {
+      "type": "object",
+      "properties": {
+        "port": { "type": "string" },
+        "baud": { "type": ["number", "string"] }
+      }
+    },
+    "scope": { "type": "object" },
+    "timing": { "type": "object" },
+    "paths": {
+      "type": "object",
+      "required": ["file_prefix", "isf_dir", "report_dir"],
+      "properties": {
+        "file_prefix": { "type": "string", "minLength": 1 },
+        "isf_dir": { "type": "string", "minLength": 1 },
+        "report_dir": { "type": "string", "minLength": 1 },
+        "lock_file": { "type": "string" },
+        "stop_file": { "type": "string" },
+        "status_file": { "type": "string" },
+        "summary_md": { "type": "string" }
+      }
+    },
+    "serial_triggers": { "type": "object" },
+    "triggers": { "type": "object" },
+    "pdf": { "type": "object" },
+    "interlocks": { "type": "object" }
+  }
+}

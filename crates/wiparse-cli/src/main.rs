@@ -315,7 +315,7 @@ enum ScopeCmd {
 
 #[derive(Subcommand, Debug)]
 enum UiCmd {
-    /// Snapshot active tab, panels, serial, instruments, waveform, calculator.
+    /// Snapshot active tab, panels, serial, instruments, waveform, data analysis, calculator.
     State,
     /// Switch the main tab (also unhides it).
     Show {
@@ -332,6 +332,12 @@ enum UiCmd {
         instruments: Option<bool>,
         #[arg(long, num_args = 1, value_parser = clap::builder::BoolishValueParser::new())]
         waveform: Option<bool>,
+        #[arg(long, num_args = 1, value_parser = clap::builder::BoolishValueParser::new())]
+        data_analysis: Option<bool>,
+        #[arg(long, num_args = 1, value_parser = clap::builder::BoolishValueParser::new())]
+        test_report: Option<bool>,
+        #[arg(long, num_args = 1, value_parser = clap::builder::BoolishValueParser::new())]
+        test_tool: Option<bool>,
     },
     /// Language, theme, debug mode.
     Prefs {
@@ -702,6 +708,9 @@ fn map_to_invoke(cli: &Cli) -> Option<(String, serde_json::Value)> {
             calculator,
             instruments,
             waveform,
+            data_analysis,
+            test_report,
+            test_tool,
         }) => {
             let mut p = json!({});
             if let Some(v) = serial {
@@ -715,6 +724,15 @@ fn map_to_invoke(cli: &Cli) -> Option<(String, serde_json::Value)> {
             }
             if let Some(v) = waveform {
                 p["waveform"] = json!(v);
+            }
+            if let Some(v) = data_analysis {
+                p["data_analysis"] = json!(v);
+            }
+            if let Some(v) = test_report {
+                p["test_report"] = json!(v);
+            }
+            if let Some(v) = test_tool {
+                p["test_tool"] = json!(v);
             }
             Some(("ui.panels".into(), p))
         }

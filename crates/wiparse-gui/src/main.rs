@@ -16,6 +16,10 @@ mod serial_tool;
 mod plot;
 mod theme;
 mod update;
+mod data_analysis;
+mod data_extract_cache;
+mod test_report;
+mod test_tool;
 mod waveform_analysis;
 mod windows_icon;
 

@@ -648,13 +648,16 @@ impl SerialToolPanel {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let tab_id = params.get("tab_id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
         let from = params.get("from_row").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        // Cap page size to avoid accidental DoS / huge JSON payloads.
         let limit = params
             .get("limit")
             .and_then(|v| v.as_u64())
-            .unwrap_or(100) as usize;
+            .unwrap_or(100)
+            .min(2000) as usize;
         let Some(tab) = self.tabs.get(tab_id) else {
             return err("log.lines.get", "tab not found");
         };
+        let total = tab.line_count();
         let lines = tab.lines_slice(from, limit);
         ok(
             "log.lines.get",
@@ -663,6 +666,7 @@ impl SerialToolPanel {
                 "from_row": from,
                 "lines": lines,
                 "count": lines.len(),
+                "total": total,
             }),
         )
     }
@@ -671,6 +675,19 @@ impl SerialToolPanel {
         self.tabs
             .first()
             .map(|t| t.recent_lines(limit))
+            .unwrap_or_default()
+    }
+
+    /// Total lines in the live tab (tab 0).
+    pub fn live_line_count(&self) -> usize {
+        self.tabs.first().map(|t| t.line_count()).unwrap_or(0)
+    }
+
+    /// Live tab lines in `[from, from+limit)`.
+    pub fn live_lines_since(&self, from: usize, limit: usize) -> Vec<String> {
+        self.tabs
+            .first()
+            .map(|t| t.lines_slice(from, limit))
             .unwrap_or_default()
     }
 
@@ -1965,7 +1982,8 @@ impl SerialToolPanel {
                                                     egui::CollapsingHeader::new(
                                                         egui::RichText::new(header)
                                                             .size(12.0)
-                                                            .strong(),
+                                                            .strong()
+                                                            .color(t.text_primary),
                                                     )
                                                     .id_salt((
                                                         "log-browser-folder",

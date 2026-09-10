@@ -1,8 +1,8 @@
 //! Minimal Tektronix scope page: connection and screen capture only.
 
-use crate::theme::Tokens;
+use crate::theme::{self, Tokens};
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use egui::{self, Color32, CornerRadius, Frame, Margin, RichText, Stroke};
+use egui::{self, CornerRadius, Frame, Margin, RichText, Stroke};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use wiparse_core::i18n::{tr, Lang};
@@ -157,9 +157,9 @@ impl TektronixPanel {
 
                 let preview_size = ui.available_size();
                 Frame::NONE
-                    .fill(Color32::from_rgb(0x0B, 0x12, 0x20))
-                    .stroke(Stroke::new(1.0, t.border))
-                    .corner_radius(CornerRadius::same(4))
+                    .fill(t.plot_bg)
+                    .stroke(Stroke::new(1.0, t.plot_border))
+                    .corner_radius(CornerRadius::same(theme::RADIUS_CTRL))
                     .show(ui, |ui| {
                         ui.set_min_size(preview_size);
                         if let Some(screen) = &self.screen_capture {
@@ -177,7 +177,7 @@ impl TektronixPanel {
                             ui.centered_and_justified(|ui| {
                                 ui.label(
                                     RichText::new("Connect the scope, then capture its screen.")
-                                        .color(t.text_muted),
+                                        .color(t.plot_fg),
                                 );
                             });
                         }

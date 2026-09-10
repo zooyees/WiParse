@@ -2,7 +2,47 @@
 
 产品版本以工作区 `Cargo.toml` 的 `workspace.package.version` 为准（GUI / CLI / `wiparse-core` 共用）。MCP 包 `mcp/wiparse/package.json` 与之对齐。
 
-发布流程：改版本号 → 更新本文 → `cargo build --release` 同步 `dist/` → 提交并推送。对机 MCP 安装见 [`DEPLOY_MCP.md`](DEPLOY_MCP.md)。工位闭环落地见 [`WORKSTATION_CLOSED_LOOP.md`](WORKSTATION_CLOSED_LOOP.md)。
+发布流程：改版本号 → 更新本文 → `cargo build --release` 同步 `dist/` → 提交并推送。对机 MCP 安装见 [`DEPLOY_MCP.md`](DEPLOY_MCP.md)。工位闭环落地见 [`WORKSTATION_CLOSED_LOOP.md`](WORKSTATION_CLOSED_LOOP.md)。关于页仅展示简化要点；完整备份以本文为准。
+
+---
+
+## 1.1.7 — 2026-09-10
+
+产线「配方式」测试插件宿主 + 报告 / 数据分析面板，并完成契约硬化与资源/停止路径加固。关于页展示本版简化要点。
+
+### 新增
+
+- **集成测试（Testing Hub）**面板（原「测试工具」显示名）：发现并运行 `test-tools/plugins/*`（Node）。标准生命周期仅 `preflight` / `run` / `stop`；参数表单覆盖 station 字段（前缀、路径、串口、API 等）；轮询 `_loop_status.json` 提示。UI 为左列表 + 右三区（顶栏操作 / 参数与高级 / 日志）。配置键仍为 `test_tool`；切页别名含 `testing_hub` / `hub`。
+- **插件契约**：`PLUGIN_SPEC.md`、`schemas/plugin.schema.json`、`schemas/station.schema.json`；`plugin-contract.mjs` 校验 manifest/station、`engines`、`normalizeResult`、`requestStop`、路径模板 `{data_root}` / `{product}` / `{plugin_dir}`。
+- **Runner**：`node runner.mjs --lifecycle preflight|run|stop`；能力门控；engines 探测（Node 硬失败，WiParse 版本未知时 warning）。
+- **插件**：
+  - `example-smoke`：CLI version + 可选 API health。
+  - `tianshu-xinwei-ask02`（显示名 **示波器/串口监控** / **Scope & Serial Monitor**；id 不变）：串口上升沿 → ScopeStop + 串口停 → 截图/ISF/PDF/MD 总报告 → 恢复；参数可覆盖；保留 `hud.ps1` / `start.ps1` / `stop.ps1` 可选辅助。
+- **测试报告**面板：目录浏览、轻量 Markdown IR 预览（标题/列表/表格/围栏代码/`![alt](path)` 图片）；不依赖 `egui_commonmark`。
+- **数据分析**面板：串口 Live / 文件抽取多通道曲线；WIDA 磁盘缓存 + 视口 min/max LOD。
+- 配置 / i18n / CLI `--panels` / MCP `wiparse_ui`：`test_tool`、`test_report`、`data_analysis` 等面板开关与切页。
+- 关于页「本版更新」简要列表（中英）。
+
+### 行为 / 加固
+
+- Stop：主机优先写 `stop_file`（路径与 Node `loadStationConfig` 一致，相对路径相对 plugin 目录）→ 后台短暂等待 → kill；UI 线程不再 `sleep`。
+- 结果契约：`{ ok, lifecycle, step?, checks?, artifacts?, error? }`；runner 打印 `[runner] result …`。
+- `log.lines.get` 增加 `total`，单页 `limit` 上限 2000；ASK02 触发等待改为增量 `from_row`，避免长日志只看到前 5000 行。
+- CLI / HTTP SDK：进程超时、stdout/stderr 截断；ASK02 PDF / health 超时；`resolveScope` 有限重试；ISF 等待不再每轮 `serialStop`；串口保持间隔放宽。
+- 报告缺图一次失败即哨兵，避免每帧重解码；相对图片路径限制在报告目录下；Windows 外部打开路径作独立 argv。
+- Live 抽取：`live_tail` 与点数有上限；WIDA 头长度与批量点读取防护。
+- 运行中状态文件按 mtime 节流读取；日志 trim 按 UTF-8 边界。
+
+### 文档 / 部署
+
+- `test-tools/README.md`、`PLUGIN_SPEC.md`；README / `UPDATE.md` 版本对齐 **1.1.7**。
+- MCP `wiparse` 包版本 **1.1.7**；`wiparse_ui` 说明含集成测试 / 报告 / 数据分析。
+- 插件 `engines.wiparse` / station `min_version` 建议 **>=1.1.7**（仍兼容声明 `>=1.1.6` 的旧站配置，但新面板需本版 GUI）。
+
+### 兼容性
+
+- 旧闭环计划 / DDSSS / `instrument.waveform_source` 行为不变。
+- 不做插件商店、签名校验或进程内动态加载；插件仍为外挂 Node 子进程。
 
 ---
 
