@@ -1,5 +1,5 @@
 /**
- * Standard entry for tianshu-xinwei-ask02 capture loop plugin.
+ * Scope & Serial Monitor — capture-loop plugin (id: scope-serial-monitor).
  * Lifecycles: preflight | run | stop
  */
 import {
@@ -13,10 +13,10 @@ import { runLoop } from "./loop.mjs";
 function logBanner(ctx, config) {
   ctx.log?.(
     "info",
-    `[ask02] product=${config.station?.product} prefix=${config.paths?.file_prefix}\n` +
-      `[ask02] isf_dir=${config.paths?.isf_dir}\n` +
-      `[ask02] report_dir=${config.paths?.report_dir}\n` +
-      `[ask02] port=${config.serial?.port}@${config.serial?.baud} api=${config.gui?.api}\n`
+    `[scope-serial] product=${config.station?.product} prefix=${config.paths?.file_prefix}\n` +
+      `[scope-serial] isf_dir=${config.paths?.isf_dir}\n` +
+      `[scope-serial] report_dir=${config.paths?.report_dir}\n` +
+      `[scope-serial] port=${config.serial?.port}@${config.serial?.baud} api=${config.gui?.api}\n`
   );
 }
 
@@ -34,7 +34,7 @@ export async function preflight(ctx) {
 export async function stop(ctx) {
   const { config } = loadStationConfig(ctx);
   const r = requestStop(config, { reason: "plugin stop()" });
-  ctx.log?.("info", `[ask02] stop → ${r.stop_file || r.error}\n`);
+  ctx.log?.("info", `[scope-serial] stop → ${r.stop_file || r.error}\n`);
   return normalizeResult(
     { ok: r.ok, step: "stop", artifacts: r.stop_file ? { stop_file: r.stop_file } : undefined, error: r.error },
     "stop"

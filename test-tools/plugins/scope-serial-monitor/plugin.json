@@ -1,23 +1,23 @@
 {
-  "id": "tianshu-xinwei-ask02",
+  "id": "scope-serial-monitor",
   "name": "Scope & Serial Monitor",
   "name_zh": "示波器/串口监控",
   "type": "capture_loop",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "entry": "index.mjs",
   "config": "station.json",
   "description": "Serial rising-edge → scope stop → shot/ISF/PDF → resume. Overridable prefix, paths, and port.",
   "capabilities": ["preflight", "run", "stop"],
   "engines": {
     "node": ">=18",
-    "wiparse": ">=1.1.7"
+    "wiparse": ">=1.1.8"
   },
   "params": [
     {
       "name": "file_prefix",
       "type": "string",
       "path": "paths.file_prefix",
-      "default": "天枢信维压测",
+      "default": "ScopeSerial",
       "label": "File prefix",
       "label_zh": "测试数据名称/前缀",
       "help": "ISF / PDF / MD record id prefix"
@@ -44,7 +44,7 @@
       "name": "product",
       "type": "string",
       "path": "station.product",
-      "default": "天枢-信维",
+      "default": "ScopeSerial",
       "label": "Product",
       "label_zh": "产品名",
       "help": "Used in path templates as {product}"

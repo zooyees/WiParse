@@ -6,6 +6,48 @@
 
 ---
 
+## 1.1.8 — 2026-09-10
+
+Testing Hub 与示波器/串口监控插件的工业级加固：布局与交互、停止语义、路径共置、触发上升沿、遗留清理。关于页展示本版简化要点。
+
+### 新增 / UI
+
+- Testing Hub **左右分栏**：左侧插件参数 / Advanced 已移除后的配置区，右侧 Output 占满高度；顶栏跨列（标题、状态胶囊、PreFlight/Run/Stop）。
+- 插件列表 **整行可点**（修复点在标题文字无法选中）。
+- 参数表单 **单列对齐**（固定标签宽 + 输入框 + 路径 `…`）。
+- 主工具栏顺序：**集成测试 → 测试报告**（设置菜单同序）。
+- 面板内状态胶囊替代巨幅浅色 Idle 条；运行中显示紧凑 HUD。
+
+### 行为 / 加固
+
+- **Stop 语义**：写 `stop_file` 后保留 `job` 最多约 30s（仍占用 Run、继续抽日志），到期再 force-kill；避免 800ms 硬杀导致锁/串口/示波器半截状态，也避免停完立刻再开第二实例。
+- PreFlight 成功不再误标为 **captured**（空/`armed` → `idle`）。
+- 切换插件：先填 `plugin.json` 默认值，下一帧合并 `station.json`（mtime 缓存），减轻点击卡顿。
+- Windows 子进程 `CREATE_NO_WINDOW`，控制台输出进 Output。
+- **`status_file` 与 `isf_dir` 共置**：`{isf_dir}/_loop_status.json`（`plugin-contract.colocateStatusWithIsf` + GUI `resolve_runtime_paths`）。
+- 插件 `scope-serial-monitor` **v0.2.1**：
+  - 真正实现 `rising_edge`（inactive→active）
+  - HTTP invoke/`health` 失败闭环；走 `wiparse-sdk` HTTP 客户端
+  - `ctx.log` 贯通；主循环 `try/finally` 释锁并尽量恢复示波器/串口
+  - 预检：单实例锁、串口 API、状态路径
+  - 跨 chunk 触发上下文（滚动约 80 行）
+  - `start.ps1`/`stop.ps1` 改走 `runner.mjs`；去掉 tianshu/绝对路径遗留；浮动 HUD 仅 `-Hud`
+- 移除遗留插件目录 `tianshu-xinwei-ask02`；`plugins/README` 约定仅保留 `example-smoke` + `scope-serial-monitor`。
+- gitignore：`run.stop` / `run.lock` / 插件 logs / `_loop_status.json` 等运行时文件。
+
+### 文档 / 部署
+
+- README / `UPDATE.md` / MCP / 插件 engines 与 station `min_version` 对齐 **1.1.8**。
+- 插件 README 明确 Testing Hub 为正式路径。
+
+### 兼容性
+
+- 配置键仍为 `test_tool`；MCP `wiparse_ui` 切页别名不变。
+- 旧闭环计划 / DDSSS / 仪表 API 行为不变。
+- 仍不支持进程内多 Session 并行（一 Run 一 Node 子进程）。
+
+---
+
 ## 1.1.7 — 2026-09-10
 
 产线「配方式」测试插件宿主 + 报告 / 数据分析面板，并完成契约硬化与资源/停止路径加固。关于页展示本版简化要点。
@@ -17,7 +59,7 @@
 - **Runner**：`node runner.mjs --lifecycle preflight|run|stop`；能力门控；engines 探测（Node 硬失败，WiParse 版本未知时 warning）。
 - **插件**：
   - `example-smoke`：CLI version + 可选 API health。
-  - `tianshu-xinwei-ask02`（显示名 **示波器/串口监控** / **Scope & Serial Monitor**；id 不变）：串口上升沿 → ScopeStop + 串口停 → 截图/ISF/PDF/MD 总报告 → 恢复；参数可覆盖；保留 `hud.ps1` / `start.ps1` / `stop.ps1` 可选辅助。
+  - `scope-serial-monitor`（显示名 **示波器/串口监控** / **Scope & Serial Monitor**；原 `tianshu-xinwei-ask02`）：串口上升沿 → ScopeStop + 串口停 → 截图/ISF/PDF/MD 总报告 → 恢复；参数可覆盖；保留 `hud.ps1` / `start.ps1` / `stop.ps1` 可选辅助。
 - **测试报告**面板：目录浏览、轻量 Markdown IR 预览（标题/列表/表格/围栏代码/`![alt](path)` 图片）；不依赖 `egui_commonmark`。
 - **数据分析**面板：串口 Live / 文件抽取多通道曲线；WIDA 磁盘缓存 + 视口 min/max LOD。
 - 配置 / i18n / CLI `--panels` / MCP `wiparse_ui`：`test_tool`、`test_report`、`data_analysis` 等面板开关与切页。

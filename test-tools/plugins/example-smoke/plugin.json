@@ -9,7 +9,7 @@
   "capabilities": ["preflight", "run", "stop"],
   "engines": {
     "node": ">=18",
-    "wiparse": ">=1.1.7"
+    "wiparse": ">=1.1.8"
   },
   "params": [
     {

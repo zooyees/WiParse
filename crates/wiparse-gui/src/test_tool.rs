@@ -14,12 +14,19 @@ use wiparse_core::config::AppConfig;
 use wiparse_core::i18n::{tr, Lang};
 use wiparse_core::paths::project_path;
 
-const SIDE_W: f32 = 268.0;
+const SIDE_W: f32 = 220.0;
 const PANEL_GAP: f32 = 8.0;
-const CARD_MARGIN_X: i8 = 12;
+const CARD_MARGIN_X: i8 = 8;
 const MAX_LOG_CHARS: usize = 200_000;
-const LABEL_COL_W: f32 = 108.0;
-const BTN_W: f32 = 76.0;
+const LABEL_COL_W: f32 = 112.0;
+const BTN_W: f32 = 72.0;
+const PATH_BROWSE_W: f32 = 36.0;
+const HUD_H: f32 = 26.0;
+/// Config / Output horizontal split inside the runner card.
+const RUNNER_SPLIT_GAP: f32 = 8.0;
+const CONFIG_FRAC: f32 = 0.42;
+const CONFIG_MIN_W: f32 = 300.0;
+const OUTPUT_MIN_W: f32 = 260.0;
 
 #[derive(Debug, Clone)]
 struct PluginParam {
@@ -66,6 +73,25 @@ struct RunningJob {
     status_file: Option<PathBuf>,
     last_status_read: Instant,
     last_status_mtime: Option<std::time::SystemTime>,
+    /// After Stop: force-kill child once this instant is reached (graceful window).
+    kill_after: Option<Instant>,
+}
+
+/// Compact HUD state (mirrors scope-serial-monitor hud.ps1).
+#[derive(Debug, Clone, Default)]
+struct LoopHud {
+    step: String,
+    hint: String,
+    cycle: Option<u64>,
+    trigger: String,
+    elapsed_s: Option<u64>,
+    filename: String,
+}
+
+#[derive(Debug, Clone)]
+enum PathPickTarget {
+    PluginsDir,
+    Param(String),
 }
 
 pub struct TestToolPanel {
@@ -78,14 +104,19 @@ pub struct TestToolPanel {
     type_filter: String,
     status: String,
     loop_hint: String,
+    loop_hud: LoopHud,
     log: String,
-    pending_pick_dir: bool,
+    pending_pick: Option<PathPickTarget>,
     job: Option<RunningJob>,
     /// Extra free-form args after form params.
     extra_args: String,
     /// Values for selected plugin params (name → value).
     param_values: HashMap<String, String>,
     preflight_only: bool,
+    /// Defer station.json merge to the next frame so plugin clicks stay snappy.
+    pending_station_merge: bool,
+    /// Cached station.json per plugin id (mtime + value).
+    station_cache: HashMap<String, (Option<std::time::SystemTime>, serde_json::Value)>,
 }
 
 impl TestToolPanel {
@@ -113,23 +144,22 @@ impl TestToolPanel {
             type_filter: String::new(),
             status: String::new(),
             loop_hint: String::new(),
+            loop_hud: LoopHud::default(),
             log: String::new(),
-            pending_pick_dir: false,
+            pending_pick: None,
             job: None,
             extra_args: String::new(),
             param_values: HashMap::new(),
             preflight_only: false,
+            pending_station_merge: false,
+            station_cache: HashMap::new(),
         };
         panel.refresh_plugins();
         panel
     }
 
     pub fn status_text(&self) -> &str {
-        if !self.loop_hint.is_empty() {
-            &self.loop_hint
-        } else {
-            &self.status
-        }
+        &self.status
     }
 
     pub fn api_snapshot(&self) -> serde_json::Value {
@@ -182,8 +212,9 @@ impl TestToolPanel {
         if id.is_empty() {
             return err("ui.test_tool.run", "missing plugin id");
         }
-        self.selected = Some(id.to_owned());
-        self.load_param_defaults_for_selection();
+        self.select_plugin(id.to_owned());
+        // API run needs station values immediately (no UI frame to defer into).
+        self.merge_station_into_params();
         if let Some(obj) = params.get("params").and_then(|v| v.as_object()) {
             for (k, v) in obj {
                 if let Some(s) = v.as_str() {
@@ -212,6 +243,10 @@ impl TestToolPanel {
         use crate::backend::invoke_ok as ok;
         self.stop_job();
         self.status = "stopped".into();
+        self.loop_hud = LoopHud {
+            step: "stopped".into(),
+            ..LoopHud::default()
+        };
         ok("ui.test_tool.stop", self.api_snapshot())
     }
 
@@ -219,15 +254,19 @@ impl TestToolPanel {
         if self.status.is_empty() {
             self.status = tr(lang, "test_tool.status_ready");
         }
+        // Apply deferred station.json AFTER the click frame, so selection feels instant.
+        if self.pending_station_merge {
+            self.pending_station_merge = false;
+            self.merge_station_into_params();
+        }
         self.poll_job(lang);
         if self.job.is_some() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(250));
         }
 
-        if self.pending_pick_dir {
-            self.pending_pick_dir = false;
-            self.run_pick_plugins_dir();
+        if let Some(target) = self.pending_pick.take() {
+            self.run_path_pick(target);
         }
 
         let avail = ui.available_size();
@@ -237,10 +276,10 @@ impl TestToolPanel {
         }
 
         let side_w = SIDE_W
-            .min(full.width() * 0.34)
-            .max(232.0)
-            .min((full.width() - 220.0).max(200.0));
-        let view_w = (full.width() - side_w - PANEL_GAP).max(200.0);
+            .min(full.width() * 0.30)
+            .max(200.0)
+            .min((full.width() - 280.0).max(180.0));
+        let view_w = (full.width() - side_w - PANEL_GAP).max(220.0);
         let side_rect = egui::Rect::from_min_size(full.min, egui::vec2(side_w, full.height()));
         let view_rect = egui::Rect::from_min_size(
             egui::pos2(full.min.x + side_w + PANEL_GAP, full.min.y),
@@ -258,7 +297,7 @@ impl TestToolPanel {
             .fill(tokens.surface_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-            .inner_margin(Margin::symmetric(CARD_MARGIN_X, 12))
+            .inner_margin(Margin::symmetric(CARD_MARGIN_X, 10))
             .show(ui, |ui| {
                 ui.set_min_width(inner_w);
                 ui.set_max_width(inner_w);
@@ -266,56 +305,52 @@ impl TestToolPanel {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
                 let ctrl_w = inner_w;
 
-                ui.label(
-                    RichText::new(tr(lang, "test_tool.plugins"))
-                        .size(ui_theme::FONT_TITLE)
-                        .strong()
-                        .color(tokens.text_primary),
-                );
-
-                let gap = 6.0;
-                let browse_w = if matches!(lang, Lang::Zh) { 72.0 } else { 72.0 };
-                let refresh_w = if matches!(lang, Lang::Zh) { 48.0 } else { 64.0 };
-                let path_w = (ctrl_w - gap * 2.0 - browse_w - refresh_w).max(48.0);
                 ui.horizontal(|ui| {
                     ui.set_max_width(ctrl_w);
-                    ui.spacing_mut().item_spacing.x = gap;
-                    let edit = ui.add(
-                        egui::TextEdit::singleline(&mut self.plugins_dir)
-                            .desired_width(path_w)
-                            .hint_text(tr(lang, "test_tool.plugins_hint"))
-                            .margin(egui::vec2(6.0, 4.0)),
+                    ui.label(
+                        RichText::new(tr(lang, "test_tool.plugins"))
+                            .size(ui_theme::FONT_TITLE)
+                            .strong()
+                            .color(tokens.text_primary),
                     );
-                    if edit.lost_focus() {
-                        self.refresh_plugins();
-                        self.persist_config();
-                    }
-                    if ui_theme::secondary_btn_sized(
-                        ui,
-                        tokens,
-                        if matches!(lang, Lang::Zh) {
-                            "浏览"
-                        } else {
-                            "Browse"
-                        },
-                        egui::vec2(browse_w, ui_theme::CTRL_H),
-                    )
-                    .clicked()
-                    {
-                        self.pending_pick_dir = true;
-                        ui.ctx().request_repaint();
-                    }
-                    if ui_theme::secondary_btn_sized(
-                        ui,
-                        tokens,
-                        tr(lang, "btn.refresh_browser"),
-                        egui::vec2(refresh_w, ui_theme::CTRL_H),
-                    )
-                    .clicked()
-                    {
-                        self.refresh_plugins();
-                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        let refresh_w = if matches!(lang, Lang::Zh) { 48.0 } else { 64.0 };
+                        let browse_w = if matches!(lang, Lang::Zh) { 48.0 } else { 64.0 };
+                        if ui_theme::secondary_btn_sized(
+                            ui,
+                            tokens,
+                            tr(lang, "btn.refresh_browser"),
+                            egui::vec2(refresh_w, ui_theme::CTRL_H),
+                        )
+                        .clicked()
+                        {
+                            self.refresh_plugins();
+                        }
+                        if ui_theme::secondary_btn_sized(
+                            ui,
+                            tokens,
+                            tr(lang, "test_tool.browse"),
+                            egui::vec2(browse_w, ui_theme::CTRL_H),
+                        )
+                        .clicked()
+                        {
+                            self.pending_pick = Some(PathPickTarget::PluginsDir);
+                            ui.ctx().request_repaint();
+                        }
+                    });
                 });
+
+                let path_edit = ui.add(
+                    egui::TextEdit::singleline(&mut self.plugins_dir)
+                        .desired_width(ctrl_w)
+                        .hint_text(tr(lang, "test_tool.plugins_hint"))
+                        .margin(egui::vec2(6.0, 4.0)),
+                );
+                if path_edit.lost_focus() {
+                    self.refresh_plugins();
+                    self.persist_config();
+                }
 
                 ui.horizontal(|ui| {
                     ui.label(
@@ -332,18 +367,20 @@ impl TestToolPanel {
                 });
 
                 let filter = self.type_filter.trim().to_ascii_lowercase();
-                let visible: Vec<&PluginInfo> = self
+                let visible_idxs: Vec<usize> = self
                     .plugins
                     .iter()
-                    .filter(|p| {
+                    .enumerate()
+                    .filter(|(_, p)| {
                         filter.is_empty() || p.type_name.to_ascii_lowercase().contains(&filter)
                     })
+                    .map(|(i, _)| i)
                     .collect();
 
                 let count_label = if matches!(lang, Lang::Zh) {
-                    format!("{} {}", tr(lang, "test_tool.count"), visible.len())
+                    format!("{} {}", tr(lang, "test_tool.count"), visible_idxs.len())
                 } else {
-                    format!("{} plugins", visible.len())
+                    format!("{} plugins", visible_idxs.len())
                 };
                 ui.label(
                     RichText::new(count_label)
@@ -359,7 +396,7 @@ impl TestToolPanel {
                 );
                 ui.add_space(6.0);
 
-                if visible.is_empty() {
+                if visible_idxs.is_empty() {
                     ui.label(
                         RichText::new(tr(lang, "test_tool.empty"))
                             .size(ui_theme::FONT_CAPTION)
@@ -367,7 +404,7 @@ impl TestToolPanel {
                     );
                 } else {
                     let list_h = ui.available_height().max(72.0);
-                    let selected = self.selected.clone();
+                    let selected_id = self.selected.as_deref();
                     let mut pick: Option<String> = None;
                     egui::ScrollArea::vertical()
                         .id_salt("test_tool_plugins")
@@ -376,29 +413,45 @@ impl TestToolPanel {
                         .show(ui, |ui| {
                             ui.set_width(ctrl_w);
                             ui.spacing_mut().item_spacing.y = 2.0;
-                            for p in visible {
+                            for &idx in &visible_idxs {
+                                let Some(p) = self.plugins.get(idx) else {
+                                    continue;
+                                };
                                 let title = if matches!(lang, Lang::Zh) && !p.name_zh.is_empty() {
                                     p.name_zh.as_str()
                                 } else {
                                     p.name.as_str()
                                 };
-                                let is_sel = selected.as_deref() == Some(p.id.as_str());
-                                let resp = ui.allocate_ui_with_layout(
+                                let type_ver = format!("{} · v{}", p.type_name, p.version);
+                                let id = p.id.as_str();
+                                let is_sel = selected_id == Some(id);
+                                // Allocate the whole row for clicks first so labels cannot steal them.
+                                let (rect, resp) = ui.allocate_exact_size(
                                     egui::vec2(ctrl_w, 40.0),
-                                    egui::Layout::top_down(egui::Align::Min),
-                                    |ui| {
-                                        let fill = if is_sel {
-                                            tokens.accent.linear_multiply(0.18)
-                                        } else {
-                                            egui::Color32::TRANSPARENT
-                                        };
-                                        Frame::NONE
-                                            .fill(fill)
-                                            .corner_radius(CornerRadius::same(6))
-                                            .inner_margin(Margin::symmetric(8, 6))
-                                            .show(ui, |ui| {
-                                                ui.set_min_width((ctrl_w - 8.0).max(40.0));
-                                                ui.label(
+                                    egui::Sense::click(),
+                                );
+                                if ui.is_rect_visible(rect) {
+                                    let fill = if is_sel {
+                                        tokens.accent.linear_multiply(0.18)
+                                    } else if resp.hovered() {
+                                        tokens.accent.linear_multiply(0.08)
+                                    } else {
+                                        egui::Color32::TRANSPARENT
+                                    };
+                                    ui.painter().rect_filled(
+                                        rect,
+                                        CornerRadius::same(6),
+                                        fill,
+                                    );
+                                    let inner = rect.shrink2(egui::vec2(8.0, 5.0));
+                                    ui.scope_builder(
+                                        egui::UiBuilder::new()
+                                            .max_rect(inner)
+                                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                                        |ui| {
+                                            ui.set_clip_rect(inner.intersect(ui.clip_rect()));
+                                            ui.add(
+                                                egui::Label::new(
                                                     RichText::new(title)
                                                         .size(ui_theme::FONT_BODY)
                                                         .strong()
@@ -407,34 +460,34 @@ impl TestToolPanel {
                                                         } else {
                                                             tokens.text_primary
                                                         }),
-                                                );
-                                                ui.label(
-                                                    RichText::new(format!(
-                                                        "{} · v{}",
-                                                        p.type_name, p.version
-                                                    ))
-                                                    .size(ui_theme::FONT_CAPTION)
-                                                    .color(tokens.text_muted),
-                                                );
-                                            })
-                                            .response
-                                    },
-                                );
-                                let click = resp.response.interact(egui::Sense::click());
-                                if click.clicked() {
-                                    pick = Some(p.id.clone());
+                                                )
+                                                .truncate()
+                                                .sense(egui::Sense::hover()),
+                                            );
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(type_ver)
+                                                        .size(ui_theme::FONT_CAPTION)
+                                                        .color(tokens.text_muted),
+                                                )
+                                                .truncate()
+                                                .sense(egui::Sense::hover()),
+                                            );
+                                        },
+                                    );
                                 }
-                                click.on_hover_text(format!(
+                                if resp.clicked() {
+                                    pick = Some(id.to_owned());
+                                }
+                                resp.on_hover_text(format!(
                                     "{}\nv{}\n{}",
                                     p.id, p.version, p.description
                                 ));
                             }
                         });
                     if let Some(id) = pick {
-                        if self.selected.as_deref() != Some(id.as_str()) {
-                            self.selected = Some(id);
-                            self.load_param_defaults_for_selection();
-                        }
+                        self.select_plugin(id);
+                        ui.ctx().request_repaint();
                     }
                 }
             });
@@ -445,303 +498,569 @@ impl TestToolPanel {
             .fill(tokens.surface_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-            .inner_margin(Margin::symmetric(14, 12))
+            .inner_margin(Margin::symmetric(10, 8))
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
-                ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, 4.0);
 
-                // --- Header: title + actions ---
-                ui.horizontal(|ui| {
-                    let title = if let Some(p) = self.selected_plugin() {
-                        if matches!(lang, Lang::Zh) && !p.name_zh.is_empty() {
-                            p.name_zh.clone()
-                        } else {
-                            p.name.clone()
-                        }
-                    } else {
-                        tr(lang, "test_tool.runner_title")
-                    };
-                    ui.label(
-                        RichText::new(title)
-                            .size(ui_theme::FONT_TITLE)
-                            .strong()
-                            .color(tokens.text_primary),
-                    );
-                    if let Some(p) = self.selected_plugin() {
-                        ui.add_space(8.0);
-                        ui.label(
-                            RichText::new(format!("{} · v{}", p.type_name, p.version))
-                                .size(ui_theme::FONT_CAPTION)
-                                .color(tokens.text_muted),
-                        );
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 6.0;
-                        let running = self.job.is_some();
-                        if running {
-                            if ui_theme::secondary_btn_sized(
-                                ui,
-                                tokens,
-                                tr(lang, "test_tool.stop"),
-                                egui::vec2(BTN_W, ui_theme::CTRL_H),
-                            )
-                            .clicked()
-                            {
-                                self.stop_job();
-                                self.status = tr(lang, "test_tool.status_stopped");
-                                self.loop_hint.clear();
-                            }
-                        } else {
-                            if ui_theme::primary_btn_sized(
-                                ui,
-                                tokens,
-                                tr(lang, "test_tool.run"),
-                                egui::vec2(BTN_W, ui_theme::CTRL_H),
-                            )
-                            .clicked()
-                            {
-                                self.preflight_only = false;
-                                if let Err(e) = self.start_selected(lang) {
-                                    self.append_log(LogKind::System, &format!("ERROR: {e}\n"));
-                                    self.status = e;
-                                }
-                            }
-                            if ui_theme::secondary_btn_sized(
-                                ui,
-                                tokens,
-                                tr(lang, "test_tool.preflight"),
-                                egui::vec2(BTN_W, ui_theme::CTRL_H),
-                            )
-                            .clicked()
-                            {
-                                self.preflight_only = true;
-                                if let Err(e) = self.start_selected(lang) {
-                                    self.append_log(LogKind::System, &format!("ERROR: {e}\n"));
-                                    self.status = e;
-                                }
-                            }
-                        }
-                    });
-                });
+                let sel_idx = self
+                    .selected
+                    .as_ref()
+                    .and_then(|id| self.plugins.iter().position(|p| p.id == *id));
 
-                // Status line
-                let status_line = if !self.loop_hint.is_empty() {
-                    self.loop_hint.as_str()
-                } else if self.selected.is_none() {
-                    ""
+                self.paint_runner_header(ui, lang, tokens, sel_idx);
+
+                // Left: config  |  Right: output
+                let body_h = ui.available_height().max(120.0);
+                let body_w = ui.available_width();
+                let gap = RUNNER_SPLIT_GAP * 2.0; // space around divider
+                let cfg_w = if body_w < CONFIG_MIN_W + OUTPUT_MIN_W + gap {
+                    (body_w * 0.45).max(160.0)
                 } else {
-                    self.status.as_str()
+                    (body_w * CONFIG_FRAC).clamp(CONFIG_MIN_W, body_w - OUTPUT_MIN_W - gap)
                 };
-                if !status_line.is_empty() {
-                    ui.label(
-                        RichText::new(status_line)
-                            .size(ui_theme::FONT_CAPTION)
-                            .color(tokens.text_muted),
-                    );
-                }
 
-                if self.selected_plugin().is_none() {
-                    ui.add_space(8.0);
-                    ui.label(
-                        RichText::new(tr(lang, "test_tool.select_hint"))
-                            .size(ui_theme::FONT_BODY)
-                            .color(tokens.text_muted),
-                    );
-                } else {
-                    // --- Params (two-column rows) ---
-                    let params = self
-                        .selected_plugin()
-                        .map(|p| p.params.clone())
-                        .unwrap_or_default();
-                    let visible_params: Vec<&PluginParam> = params
-                        .iter()
-                        .filter(|p| p.name != "preflight_only")
-                        .collect();
-                    if !visible_params.is_empty() {
-                        ui.add_space(2.0);
-                        ui.label(
-                            RichText::new(tr(lang, "test_tool.params"))
-                                .size(ui_theme::FONT_CAPTION)
-                                .strong()
-                                .color(tokens.text_muted),
-                        );
-                        let param_h = ((visible_params.len() as f32) * (ui_theme::CTRL_H + 8.0))
-                            .min(168.0)
-                            .max(48.0);
-                        egui::ScrollArea::vertical()
-                            .id_salt("test_tool_params")
-                            .max_height(param_h)
-                            .auto_shrink([false, true])
-                            .show(ui, |ui| {
-                                ui.spacing_mut().item_spacing.y = 4.0;
-                                for p in &visible_params {
-                                    let label =
-                                        if matches!(lang, Lang::Zh) && !p.label_zh.is_empty() {
-                                            p.label_zh.as_str()
-                                        } else if !p.label.is_empty() {
-                                            p.label.as_str()
-                                        } else {
-                                            p.name.as_str()
-                                        };
-                                    ui.horizontal(|ui| {
-                                        ui.set_min_height(ui_theme::CTRL_H);
-                                        ui.add_sized(
-                                            egui::vec2(LABEL_COL_W, ui_theme::CTRL_H),
-                                            egui::Label::new(
-                                                RichText::new(label)
-                                                    .size(ui_theme::FONT_CAPTION)
-                                                    .color(tokens.text_muted),
-                                            )
-                                            .truncate(),
-                                        );
-                                        let entry =
-                                            self.param_values.entry(p.name.clone()).or_default();
-                                        let field_w =
-                                            (ui.available_width() - 4.0).max(80.0);
-                                        let resp = ui.add(
-                                            egui::TextEdit::singleline(entry)
-                                                .desired_width(field_w)
-                                                .hint_text(if p.help.is_empty() {
-                                                    p.default.as_str()
-                                                } else {
-                                                    p.help.as_str()
-                                                })
-                                                .margin(egui::vec2(6.0, 3.0)),
-                                        );
-                                        if !p.help.is_empty() {
-                                            resp.on_hover_text(&p.help);
-                                        }
-                                    });
-                                }
-                            });
-                    }
-
-                    // --- Advanced (collapsed; egui remembers open state by id) ---
-                    ui.add_space(2.0);
-                    let mut persist = false;
-                    egui::CollapsingHeader::new(
-                        RichText::new(tr(lang, "test_tool.advanced"))
-                            .size(ui_theme::FONT_CAPTION)
-                            .color(tokens.text_muted),
-                    )
-                    .id_salt("test_tool_advanced")
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = 4.0;
-                        let data_hint = project_path("").display().to_string();
-                        if labeled_path_row(
-                            ui,
-                            tokens,
-                            &tr(lang, "test_tool.data_root"),
-                            &mut self.data_root,
-                            &data_hint,
-                        ) {
-                            persist = true;
-                        }
-                        if labeled_path_row(
-                            ui,
-                            tokens,
-                            &tr(lang, "test_tool.cli_path"),
-                            &mut self.cli_path,
-                            "",
-                        ) {
-                            persist = true;
-                        }
-                        if labeled_path_row(
-                            ui,
-                            tokens,
-                            &tr(lang, "test_tool.node_path"),
-                            &mut self.node_path,
-                            "node",
-                        ) {
-                            persist = true;
-                        }
-                        ui.horizontal(|ui| {
-                            ui.add_sized(
-                                egui::vec2(LABEL_COL_W, ui_theme::CTRL_H),
-                                egui::Label::new(
-                                    RichText::new(tr(lang, "test_tool.extra_args"))
-                                        .size(ui_theme::FONT_CAPTION)
-                                        .color(tokens.text_muted),
-                                )
-                                .truncate(),
-                            );
-                            let field_w = (ui.available_width() - 4.0).max(80.0);
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.extra_args)
-                                    .desired_width(field_w)
-                                    .hint_text("--custom flag")
-                                    .margin(egui::vec2(6.0, 3.0)),
-                            );
-                        });
-                    });
-                    if persist {
-                        self.persist_config();
-                    }
-                }
-
-                ui.add_space(4.0);
-                ui.painter().hline(
-                    ui.max_rect().x_range(),
-                    ui.cursor().top(),
-                    Stroke::new(1.0_f32, tokens.divider),
-                );
-                ui.add_space(6.0);
-
-                // --- Log fills rest ---
                 ui.horizontal(|ui| {
+                    ui.set_min_height(body_h);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(cfg_w, body_h),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_min_height(body_h);
+                            ui.set_max_width(cfg_w);
+                            self.paint_runner_config(ui, lang, tokens, sel_idx);
+                        },
+                    );
+                    ui.add_space(RUNNER_SPLIT_GAP);
+                    let div_x = ui.cursor().left();
+                    let div_y = ui.max_rect().y_range();
+                    ui.painter()
+                        .vline(div_x, div_y, Stroke::new(1.0_f32, tokens.divider));
+                    ui.add_space(RUNNER_SPLIT_GAP + 1.0);
+                    let out_avail = ui.available_width().max(120.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(out_avail, body_h),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_min_height(body_h);
+                            ui.set_min_width(out_avail);
+                            self.paint_runner_output(ui, lang, tokens);
+                        },
+                    );
+                });
+            });
+    }
+
+    fn paint_runner_header(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        sel_idx: Option<usize>,
+    ) {
+        ui.horizontal(|ui| {
+            ui.set_min_height(ui_theme::CTRL_H);
+            let title = if let Some(i) = sel_idx {
+                let p = &self.plugins[i];
+                if matches!(lang, Lang::Zh) && !p.name_zh.is_empty() {
+                    p.name_zh.as_str()
+                } else {
+                    p.name.as_str()
+                }
+            } else {
+                ""
+            };
+            if title.is_empty() {
+                ui.label(
+                    RichText::new(tr(lang, "test_tool.runner_title"))
+                        .size(ui_theme::FONT_TITLE)
+                        .strong()
+                        .color(tokens.text_primary),
+                );
+            } else {
+                ui.label(
+                    RichText::new(title)
+                        .size(ui_theme::FONT_TITLE)
+                        .strong()
+                        .color(tokens.text_primary),
+                );
+                if let Some(i) = sel_idx {
+                    let p = &self.plugins[i];
+                    ui.add_space(6.0);
                     ui.label(
-                        RichText::new(tr(lang, "test_tool.log"))
+                        RichText::new(format!("v{}", p.version))
                             .size(ui_theme::FONT_CAPTION)
-                            .strong()
                             .color(tokens.text_muted),
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui_theme::secondary_btn_sized(
-                            ui,
-                            tokens,
-                            tr(lang, "test_tool.clear_log"),
-                            egui::vec2(64.0, ui_theme::CTRL_H),
-                        )
-                        .clicked()
-                        {
-                            self.log.clear();
-                        }
-                    });
-                });
+                }
+            }
 
-                let log_h = ui.available_height().max(96.0);
-                Frame::NONE
-                    .fill(tokens.canvas_bg)
-                    .stroke(Stroke::new(1.0_f32, tokens.divider))
-                    .corner_radius(CornerRadius::same(6))
-                    .inner_margin(Margin::symmetric(10, 8))
+            ui.add_space(8.0);
+            self.paint_status_chip(ui, lang, tokens);
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let running = self.job.is_some();
+                if running {
+                    if ui_theme::secondary_btn_sized(
+                        ui,
+                        tokens,
+                        tr(lang, "test_tool.stop"),
+                        egui::vec2(BTN_W, ui_theme::CTRL_H),
+                    )
+                    .clicked()
+                    {
+                        self.stop_job();
+                        self.status = tr(lang, "test_tool.status_stopped");
+                        self.loop_hint.clear();
+                        self.loop_hud = LoopHud {
+                            step: "stopped".into(),
+                            ..LoopHud::default()
+                        };
+                    }
+                } else {
+                    if ui_theme::primary_btn_sized(
+                        ui,
+                        tokens,
+                        tr(lang, "test_tool.run"),
+                        egui::vec2(BTN_W, ui_theme::CTRL_H),
+                    )
+                    .clicked()
+                    {
+                        self.preflight_only = false;
+                        if let Err(e) = self.start_selected(lang) {
+                            self.append_log(LogKind::System, &format!("ERROR: {e}\n"));
+                            self.status = e;
+                        }
+                    }
+                    if ui_theme::secondary_btn_sized(
+                        ui,
+                        tokens,
+                        tr(lang, "test_tool.preflight"),
+                        egui::vec2(BTN_W, ui_theme::CTRL_H),
+                    )
+                    .clicked()
+                    {
+                        self.preflight_only = true;
+                        if let Err(e) = self.start_selected(lang) {
+                            self.append_log(LogKind::System, &format!("ERROR: {e}\n"));
+                            self.status = e;
+                        }
+                    }
+                }
+            });
+        });
+    }
+
+    fn paint_runner_config(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        sel_idx: Option<usize>,
+    ) {
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, 4.0);
+
+        if self.job.is_some() || !self.loop_hud.step.is_empty() {
+            self.paint_loop_hud(ui, lang, tokens);
+        }
+
+        let Some(sel_idx) = sel_idx else {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(tr(lang, "test_tool.select_hint"))
+                    .size(ui_theme::FONT_BODY)
+                    .color(tokens.text_muted),
+            );
+            return;
+        };
+
+        let param_idxs: Vec<usize> = self.plugins[sel_idx]
+            .params
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.name != "preflight_only")
+            .map(|(i, _)| i)
+            .collect();
+
+        if param_idxs.is_empty() {
+            return;
+        }
+
+        ui.label(
+            RichText::new(tr(lang, "test_tool.params"))
+                .size(ui_theme::FONT_CAPTION)
+                .strong()
+                .color(tokens.text_muted),
+        );
+
+        let param_h = ui.available_height().max(72.0);
+        let mut pending_param: Option<String> = None;
+        egui::ScrollArea::vertical()
+            .id_salt("test_tool_params")
+            .max_height(param_h)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 4.0;
+                // Preserve plugin.json order; single column keeps label/field edges aligned.
+                for &pi in &param_idxs {
+                    self.paint_param_field(
+                        ui,
+                        lang,
+                        tokens,
+                        sel_idx,
+                        pi,
+                        &mut pending_param,
+                    );
+                }
+            });
+        if let Some(name) = pending_param {
+            self.pending_pick = Some(PathPickTarget::Param(name));
+            ui.ctx().request_repaint();
+        }
+    }
+
+    fn paint_runner_output(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, 4.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(tr(lang, "test_tool.log"))
+                    .size(ui_theme::FONT_CAPTION)
+                    .strong()
+                    .color(tokens.text_muted),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui_theme::secondary_btn_sized(
+                    ui,
+                    tokens,
+                    tr(lang, "test_tool.clear_log"),
+                    egui::vec2(56.0, ui_theme::CTRL_H),
+                )
+                .clicked()
+                {
+                    self.log.clear();
+                }
+            });
+        });
+
+        let log_h = ui.available_height().max(80.0);
+        Frame::NONE
+            .fill(tokens.canvas_bg)
+            .stroke(Stroke::new(1.0_f32, tokens.divider))
+            .corner_radius(CornerRadius::same(6))
+            .inner_margin(Margin::symmetric(8, 6))
+            .show(ui, |ui| {
+                ui.set_min_height(log_h - 4.0);
+                ui.set_min_width(ui.available_width());
+                egui::ScrollArea::vertical()
+                    .id_salt("test_tool_log")
+                    .stick_to_bottom(true)
+                    .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.set_min_height(log_h - 4.0);
-                        ui.set_min_width(ui.available_width());
-                        egui::ScrollArea::vertical()
-                            .id_salt("test_tool_log")
-                            .stick_to_bottom(true)
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                ui.set_min_width((ui.available_width() - 4.0).max(80.0));
-                                if self.log.is_empty() {
-                                    ui.label(
-                                        RichText::new(tr(lang, "test_tool.log_empty"))
-                                            .size(ui_theme::FONT_CAPTION)
-                                            .color(tokens.text_muted),
-                                    );
-                                } else {
-                                    ui.label(
-                                        RichText::new(self.log.as_str())
-                                            .monospace()
-                                            .size(ui_theme::FONT_CAPTION)
-                                            .color(tokens.text_primary),
-                                    );
-                                }
-                            });
+                        ui.set_min_width((ui.available_width() - 4.0).max(80.0));
+                        if self.log.is_empty() {
+                            ui.label(
+                                RichText::new(tr(lang, "test_tool.log_empty"))
+                                    .size(ui_theme::FONT_CAPTION)
+                                    .color(tokens.text_muted),
+                            );
+                        } else {
+                            ui.label(
+                                RichText::new(self.log.as_str())
+                                    .monospace()
+                                    .size(ui_theme::FONT_CAPTION)
+                                    .color(tokens.text_primary),
+                            );
+                        }
                     });
             });
+    }
+
+    fn paint_param_field(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        sel_idx: usize,
+        param_idx: usize,
+        pending_param: &mut Option<String>,
+    ) {
+        let Some(p) = self.plugins.get(sel_idx).and_then(|pl| pl.params.get(param_idx)) else {
+            return;
+        };
+        let name = p.name.clone();
+        let label = if matches!(lang, Lang::Zh) && !p.label_zh.is_empty() {
+            p.label_zh.clone()
+        } else if !p.label.is_empty() {
+            p.label.clone()
+        } else {
+            p.name.clone()
+        };
+        let hint = if p.help.is_empty() {
+            p.default.clone()
+        } else {
+            p.help.clone()
+        };
+        let help = p.help.clone();
+        let is_path = is_path_param(p);
+
+        ui.horizontal(|ui| {
+            ui.set_min_height(ui_theme::CTRL_H);
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let label_resp = ui.add_sized(
+                egui::vec2(LABEL_COL_W, ui_theme::CTRL_H),
+                egui::Label::new(
+                    RichText::new(&label)
+                        .size(ui_theme::FONT_CAPTION)
+                        .color(tokens.text_muted),
+                )
+                .truncate()
+                .sense(egui::Sense::hover()),
+            );
+            if label_resp.hovered() && label.chars().count() > 12 {
+                label_resp.on_hover_text(&label);
+            }
+
+            let browse_gap = if is_path {
+                PATH_BROWSE_W + 4.0
+            } else {
+                0.0
+            };
+            let field_w = (ui.available_width() - browse_gap).max(48.0);
+            let entry = self.param_values.entry(name.clone()).or_default();
+            let resp = ui.add_sized(
+                egui::vec2(field_w, ui_theme::CTRL_H),
+                egui::TextEdit::singleline(entry)
+                    .desired_width(field_w)
+                    .hint_text(hint)
+                    .margin(egui::vec2(6.0, 3.0)),
+            );
+            if !help.is_empty() {
+                resp.on_hover_text(help);
+            }
+            if is_path
+                && ui_theme::secondary_btn_sized(
+                    ui,
+                    tokens,
+                    "…",
+                    egui::vec2(PATH_BROWSE_W, ui_theme::CTRL_H),
+                )
+                .clicked()
+            {
+                *pending_param = Some(name);
+            }
+        });
+    }
+
+    /// Compact status pill in the header (theme-aware; replaces the giant Idle bar).
+    fn paint_status_chip(&self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        let step = if self.loop_hud.step.is_empty() {
+            if self.job.is_some() {
+                "armed"
+            } else {
+                "idle"
+            }
+        } else {
+            self.loop_hud.step.as_str()
+        };
+        let (dot, label) = match step {
+            "wait" => (tokens.success, tr(lang, "test_tool.hud_wait")),
+            "processing" => (tokens.warning, tr(lang, "test_tool.hud_processing")),
+            "captured" => (tokens.accent, tr(lang, "test_tool.hud_captured")),
+            "stopped" => (tokens.stop_bg, tr(lang, "test_tool.hud_stopped")),
+            "armed" => (tokens.text_muted, tr(lang, "test_tool.hud_armed")),
+            _ => (tokens.text_muted, tr(lang, "test_tool.hud_idle")),
+        };
+        Frame::NONE
+            .fill(tokens.input_bg)
+            .stroke(Stroke::new(1.0_f32, tokens.divider))
+            .corner_radius(CornerRadius::same(4))
+            .inner_margin(Margin::symmetric(8, 3))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(7.0, 7.0), egui::Sense::hover());
+                    ui.painter()
+                        .circle_filled(rect.center(), 3.5, dot);
+                    ui.label(
+                        RichText::new(label)
+                            .size(ui_theme::FONT_CAPTION)
+                            .color(tokens.text_primary),
+                    );
+                });
+            });
+    }
+
+    fn paint_loop_hud(&self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        let avail_w = ui.available_width();
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(avail_w, HUD_H), egui::Sense::hover());
+        if !ui.is_rect_visible(rect) {
+            return;
+        }
+
+        let step = if self.loop_hud.step.is_empty() {
+            if self.job.is_some() {
+                "armed"
+            } else {
+                "idle"
+            }
+        } else {
+            self.loop_hud.step.as_str()
+        };
+
+        let strip_c = match step {
+            "wait" => tokens.success,
+            "processing" => tokens.warning,
+            "captured" => tokens.accent,
+            "stopped" => tokens.stop_bg,
+            "armed" => tokens.text_muted,
+            _ => tokens.divider,
+        };
+        let bg = tokens.input_bg;
+        let fg = tokens.text_primary;
+        let muted = tokens.text_muted;
+
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, CornerRadius::same(5), bg);
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(5),
+            Stroke::new(1.0_f32, tokens.divider),
+            egui::StrokeKind::Inside,
+        );
+        let strip = egui::Rect::from_min_size(rect.min, egui::vec2(4.0, rect.height()));
+        painter.rect_filled(
+            strip,
+            CornerRadius {
+                nw: 5,
+                ne: 0,
+                sw: 5,
+                se: 0,
+            },
+            strip_c,
+        );
+
+        let state = match step {
+            "wait" => tr(lang, "test_tool.hud_wait"),
+            "processing" => tr(lang, "test_tool.hud_processing"),
+            "captured" => tr(lang, "test_tool.hud_captured"),
+            "stopped" => tr(lang, "test_tool.hud_stopped"),
+            "armed" => tr(lang, "test_tool.hud_armed"),
+            _ => tr(lang, "test_tool.hud_idle"),
+        };
+
+        let mut meta = String::new();
+        match step {
+            "wait" => {
+                if let Some(c) = self.loop_hud.cycle {
+                    meta.push_str(&format!("#{c}"));
+                }
+                let trig = self.loop_hud.trigger.trim();
+                if !trig.is_empty() {
+                    if !meta.is_empty() {
+                        meta.push_str("  ");
+                    }
+                    meta.push_str(trig);
+                }
+            }
+            "processing" => {
+                if let Some(c) = self.loop_hud.cycle {
+                    meta.push_str(&format!("#{c}"));
+                }
+                let who = self.loop_hud.trigger.trim();
+                if !who.is_empty() {
+                    if !meta.is_empty() {
+                        meta.push_str("  ");
+                    }
+                    meta.push_str(who);
+                }
+            }
+            "captured" => {
+                if !self.loop_hud.filename.is_empty() {
+                    meta = self.loop_hud.filename.clone();
+                } else if matches!(lang, Lang::Zh) {
+                    meta = "下一轮".into();
+                } else {
+                    meta = "next".into();
+                }
+            }
+            "stopped" => {}
+            _ => {
+                meta = self.loop_hud.hint.clone();
+            }
+        }
+        if meta.chars().count() > 72 {
+            meta = meta.chars().take(69).collect::<String>() + "…";
+        }
+
+        let elapsed = match (step, self.loop_hud.elapsed_s) {
+            ("wait", Some(s)) => {
+                let s = s.min(u64::from(u32::MAX));
+                format!("{:01}:{:02}", s / 60, s % 60)
+            }
+            _ => String::new(),
+        };
+
+        let inner = rect.shrink2(egui::vec2(10.0, 0.0));
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(inner)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            |ui| {
+                ui.set_clip_rect(inner.intersect(ui.clip_rect()));
+                ui.set_min_height(inner.height());
+                ui.set_min_width(inner.width());
+                ui.label(
+                    RichText::new(state)
+                        .size(ui_theme::FONT_CAPTION)
+                        .strong()
+                        .color(fg),
+                );
+                ui.add_space(8.0);
+                let time_w = if elapsed.is_empty() { 0.0 } else { 44.0 };
+                let meta_w = (ui.available_width() - time_w - 4.0).max(40.0);
+                ui.add_sized(
+                    egui::vec2(meta_w, inner.height()),
+                    egui::Label::new(RichText::new(meta).size(ui_theme::FONT_CAPTION).color(muted))
+                        .truncate(),
+                );
+                if !elapsed.is_empty() {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(elapsed)
+                                .monospace()
+                                .size(ui_theme::FONT_CAPTION)
+                                .color(muted),
+                        );
+                    });
+                }
+            },
+        );
+    }
+
+    fn apply_hud_to_status_bar(&mut self, lang: Lang) {
+        let step = if self.loop_hud.step.is_empty() {
+            return;
+        } else {
+            self.loop_hud.step.as_str()
+        };
+        let label = match step {
+            "wait" => tr(lang, "test_tool.hud_wait"),
+            "processing" => tr(lang, "test_tool.hud_processing"),
+            "captured" => tr(lang, "test_tool.hud_captured"),
+            "stopped" => tr(lang, "test_tool.hud_stopped"),
+            "armed" => tr(lang, "test_tool.hud_armed"),
+            "idle" => tr(lang, "test_tool.hud_idle"),
+            other => other.to_owned(),
+        };
+        self.status = if let Some(c) = self.loop_hud.cycle {
+            format!("{label} #{c}")
+        } else {
+            label
+        };
     }
 
     fn selected_plugin(&self) -> Option<&PluginInfo> {
@@ -749,29 +1068,89 @@ impl TestToolPanel {
         self.plugins.iter().find(|p| p.id == id)
     }
 
-    fn load_param_defaults_for_selection(&mut self) {
-        self.param_values.clear();
-        let Some(p) = self.selected_plugin().cloned() else {
+    /// Instant selection: fill param defaults from plugin.json only (no disk I/O).
+    fn select_plugin(&mut self, id: String) {
+        if self.selected.as_deref() == Some(id.as_str()) {
             return;
-        };
-        // Prefer station.json values when path is set; else param default.
-        let station = load_station_json(&p);
-        for param in &p.params {
-            let mut val = param.default.clone();
-            if !param.path.is_empty() {
-                if let Some(v) = station_get(&station, &param.path) {
-                    val = v;
-                }
-            }
-            self.param_values.insert(param.name.clone(), val);
+        }
+        self.selected = Some(id);
+        self.apply_param_defaults_fast();
+        self.pending_station_merge = true;
+    }
+
+    fn apply_param_defaults_fast(&mut self) {
+        self.param_values.clear();
+        let defaults: Vec<(String, String)> = self
+            .selected_plugin()
+            .map(|p| {
+                p.params
+                    .iter()
+                    .map(|param| (param.name.clone(), param.default.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (name, default) in defaults {
+            self.param_values.insert(name, default);
         }
         if let Some(v) = self.param_values.get("preflight_only") {
             self.preflight_only = is_truthy(v);
         }
     }
 
+    /// Overlay station.json values onto param_values (cached by mtime).
+    fn merge_station_into_params(&mut self) {
+        let Some(sel) = self.selected.clone() else {
+            return;
+        };
+        let Some(idx) = self.plugins.iter().position(|p| p.id == sel) else {
+            return;
+        };
+        let station = self.station_value_cached(idx);
+        let overlays: Vec<(String, String)> = self.plugins[idx]
+            .params
+            .iter()
+            .filter(|p| !p.path.is_empty())
+            .filter_map(|p| station_get(&station, &p.path).map(|v| (p.name.clone(), v)))
+            .collect();
+        for (name, val) in overlays {
+            self.param_values.insert(name, val);
+        }
+        if let Some(v) = self.param_values.get("preflight_only") {
+            self.preflight_only = is_truthy(v);
+        }
+    }
+
+    fn station_value_cached(&mut self, idx: usize) -> serde_json::Value {
+        let plugin = &self.plugins[idx];
+        let id = plugin.id.clone();
+        let path = plugin.dir.join(&plugin.config);
+        let mtime = fs::metadata(&path).and_then(|m| m.modified()).ok();
+        let need_reload = match self.station_cache.get(&id) {
+            Some((cached_mt, _)) => *cached_mt != mtime,
+            None => true,
+        };
+        if need_reload {
+            let value = fs::read_to_string(&path)
+                .ok()
+                .and_then(|t| serde_json::from_str(&t).ok())
+                .unwrap_or(serde_json::Value::Null);
+            self.station_cache.insert(id.clone(), (mtime, value));
+        }
+        self.station_cache
+            .get(&id)
+            .map(|(_, v)| v.clone())
+            .unwrap_or(serde_json::Value::Null)
+    }
+
+    fn load_param_defaults_for_selection(&mut self) {
+        self.apply_param_defaults_fast();
+        self.merge_station_into_params();
+    }
+
     fn refresh_plugins(&mut self) {
         self.plugins = scan_plugins(Path::new(self.plugins_dir.trim()));
+        self.station_cache
+            .retain(|id, _| self.plugins.iter().any(|p| p.id == *id));
         if let Some(sel) = &self.selected {
             if !self.plugins.iter().any(|p| p.id == *sel) {
                 self.selected = None;
@@ -781,23 +1160,48 @@ impl TestToolPanel {
             self.selected = self.plugins.first().map(|p| p.id.clone());
         }
         self.load_param_defaults_for_selection();
+        self.pending_station_merge = false;
     }
 
-    fn run_pick_plugins_dir(&mut self) {
-        let start = resolve_dir(self.plugins_dir.trim());
-        let mut dialog = rfd::FileDialog::new().set_title("Select plugins directory");
-        if start.is_dir() {
-            dialog = dialog.set_directory(&start);
+    fn run_path_pick(&mut self, target: PathPickTarget) {
+        match target {
+            PathPickTarget::PluginsDir => {
+                let start = resolve_dir(self.plugins_dir.trim());
+                let mut dialog = rfd::FileDialog::new().set_title("Select plugins directory");
+                if start.is_dir() {
+                    dialog = dialog.set_directory(&start);
+                }
+                let Some(path) = dialog.pick_folder() else {
+                    return;
+                };
+                if !path.is_dir() {
+                    return;
+                }
+                self.plugins_dir = path.display().to_string();
+                self.refresh_plugins();
+                self.persist_config();
+            }
+            PathPickTarget::Param(name) => {
+                let start = self
+                    .param_values
+                    .get(&name)
+                    .map(|s| resolve_dir(s.trim()))
+                    .filter(|p| p.is_dir())
+                    .unwrap_or_else(|| project_path(""));
+                let mut dialog = rfd::FileDialog::new().set_title("Select folder");
+                if start.is_dir() {
+                    dialog = dialog.set_directory(&start);
+                }
+                let Some(path) = dialog.pick_folder() else {
+                    return;
+                };
+                if !path.is_dir() {
+                    return;
+                }
+                self.param_values
+                    .insert(name, path.display().to_string());
+            }
         }
-        let Some(path) = dialog.pick_folder() else {
-            return;
-        };
-        if !path.is_dir() {
-            return;
-        }
-        self.plugins_dir = path.display().to_string();
-        self.refresh_plugins();
-        self.persist_config();
     }
 
     fn persist_config(&self) {
@@ -831,16 +1235,9 @@ impl TestToolPanel {
             return (None, None);
         };
         let station = load_station_json(p);
-        // Apply form overrides onto a lightweight view for stop/status paths.
         let mut stop = station_get(&station, "paths.stop_file").map(PathBuf::from);
         let mut status = station_get(&station, "paths.status_file").map(PathBuf::from);
-        if let Some(v) = self.param_values.get("isf_dir") {
-            if !v.is_empty() {
-                // status often under isf parent — keep station status if absolute
-                let _ = v;
-            }
-        }
-        // Expand simple templates for stop/status when still templated
+
         let data_root = if self.data_root.trim().is_empty() {
             project_path("")
         } else {
@@ -872,6 +1269,20 @@ impl TestToolPanel {
             let raw = s.display().to_string();
             status = Some(expand(&raw));
         }
+
+        // Keep status HUD beside ISF dir when the form overrides isf_dir (or always
+        // prefer isf_dir/_loop_status.json after expansion — matches plugin-contract).
+        let isf_raw = self
+            .param_values
+            .get("isf_dir")
+            .filter(|s| !s.trim().is_empty())
+            .cloned()
+            .or_else(|| station_get(&station, "paths.isf_dir"));
+        if let Some(isf) = isf_raw {
+            let isf_path = expand(&isf);
+            status = Some(isf_path.join("_loop_status.json"));
+        }
+
         (stop, status)
     }
 
@@ -954,13 +1365,17 @@ impl TestToolPanel {
         );
         self.append_log(LogKind::System, &banner);
         self.loop_hint.clear();
+        self.loop_hud = LoopHud::default();
 
-        let mut child = Command::new(&node)
+        let mut child = Command::new(&node);
+        child
             .args(&args)
             .current_dir(project_path("test-tools"))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .stdin(Stdio::null())
+            .stdin(Stdio::null());
+        hide_console_window(&mut child);
+        let mut child = child
             .spawn()
             .map_err(|e| format!("{}: {e}", tr(lang, "test_tool.status_spawn_err")))?;
 
@@ -999,6 +1414,7 @@ impl TestToolPanel {
             status_file,
             last_status_read: Instant::now() - Duration::from_secs(1),
             last_status_mtime: None,
+            kill_after: None,
         });
         self.status = format!("{} · {}", tr(lang, "test_tool.status_running"), plugin.id);
         Ok(())
@@ -1011,6 +1427,13 @@ impl TestToolPanel {
         let mut status_snapshot: Option<String> = None;
 
         if let Some(job) = self.job.as_mut() {
+            // Honor graceful-stop deadline without releasing `job` early (keeps Run busy).
+            if let Some(deadline) = job.kill_after {
+                if Instant::now() >= deadline {
+                    let _ = job.child.kill();
+                    job.kill_after = None;
+                }
+            }
             loop {
                 match job.rx.try_recv() {
                     Ok(line) => pending.push(line),
@@ -1055,10 +1478,56 @@ impl TestToolPanel {
         }
 
         if let Some(text) = status_snapshot {
+            // While graceful-stopping, keep the Stopped chip; still drain logs.
+            let stopping = self
+                .job
+                .as_ref()
+                .and_then(|j| j.kill_after)
+                .is_some();
+            if !stopping {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                let step = v.get("step").and_then(|x| x.as_str()).unwrap_or("");
-                let hint = v.get("hint").and_then(|x| x.as_str()).unwrap_or("");
+                let step = v
+                    .get("step")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_owned();
+                let hint = v
+                    .get("hint")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_owned();
                 let cycle = v.get("cycle").and_then(|x| x.as_u64());
+                let elapsed_s = v
+                    .get("elapsed_s")
+                    .and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)));
+                let filename = v
+                    .get("filename")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_owned();
+                let mut trigger = v
+                    .get("trigger")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_owned();
+                if trigger.is_empty() {
+                    if let Some(arr) = v.get("triggers").and_then(|x| x.as_array()) {
+                        let labels: Vec<String> = arr
+                            .iter()
+                            .filter_map(|t| {
+                                if let Some(s) = t.as_str() {
+                                    Some(s.to_owned())
+                                } else if let Some(l) = t.get("label").and_then(|x| x.as_str()) {
+                                    Some(l.to_owned())
+                                } else {
+                                    t.get("id").and_then(|x| x.as_str()).map(|s| s.to_owned())
+                                }
+                            })
+                            .take(4)
+                            .collect();
+                        trigger = labels.join("  ");
+                    }
+                }
                 if !hint.is_empty() {
                     self.loop_hint = if let Some(c) = cycle {
                         format!("[{step} #{c}] {hint}")
@@ -1066,12 +1535,26 @@ impl TestToolPanel {
                         format!("[{step}] {hint}")
                     };
                 }
+                self.loop_hud = LoopHud {
+                    step,
+                    hint,
+                    cycle,
+                    trigger,
+                    elapsed_s,
+                    filename,
+                };
+                self.apply_hud_to_status_bar(lang);
+            }
             }
         }
 
         if let Some(e) = wait_err {
             self.append_log(LogKind::System, &format!("wait error: {e}\n"));
             self.job = None;
+            self.loop_hud = LoopHud {
+                step: "stopped".into(),
+                ..LoopHud::default()
+            };
             self.status = tr(lang, "test_tool.status_fail");
             return;
         }
@@ -1082,6 +1565,13 @@ impl TestToolPanel {
             if status.success() {
                 self.append_log(LogKind::System, &format!("—— done {id} (exit 0) ——\n"));
                 self.status = format!("{} · {}", tr(lang, "test_tool.status_ok"), id);
+                // Preflight / short runs never enter a capture cycle — do not show "captured".
+                if matches!(self.loop_hud.step.as_str(), "" | "armed") {
+                    self.loop_hud = LoopHud {
+                        step: "idle".into(),
+                        ..LoopHud::default()
+                    };
+                }
             } else {
                 self.append_log(
                     LogKind::System,
@@ -1089,67 +1579,69 @@ impl TestToolPanel {
                 );
                 self.status =
                     format!("{} · {} ({code})", tr(lang, "test_tool.status_fail"), id);
+                if matches!(self.loop_hud.step.as_str(), "" | "armed" | "idle") {
+                    self.loop_hud = LoopHud {
+                        step: "stopped".into(),
+                        ..LoopHud::default()
+                    };
+                }
             }
         }
     }
 
     fn stop_job(&mut self) {
-        if let Some(mut job) = self.job.take() {
-            let wrote_stop = if let Some(ref stop) = job.stop_file {
-                if let Some(parent) = stop.parent() {
-                    let _ = fs::create_dir_all(parent);
-                }
-                fs::write(stop, b"host stop\n").is_ok()
-            } else {
-                false
-            };
-            // Fallback only when host could not write the stop_file itself.
-            if !wrote_stop {
-                let node = self.node_path.trim().to_owned();
-                let runner = project_path("test-tools/runner.mjs");
-                if !node.is_empty() && runner.is_file() {
-                    let data_root = if self.data_root.trim().is_empty() {
-                        project_path("").display().to_string()
-                    } else {
-                        self.data_root.trim().to_owned()
-                    };
-                    let _ = Command::new(&node)
-                        .args([
-                            runner.display().to_string(),
-                            "--plugin".into(),
-                            job.plugin_id.clone(),
-                            "--lifecycle".into(),
-                            "stop".into(),
-                            "--data-root".into(),
-                            data_root,
-                        ])
-                        .current_dir(project_path("test-tools"))
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null())
-                        .stdin(Stdio::null())
-                        .spawn();
-                }
-            }
-            // Never block the UI thread: wait briefly off-thread then kill.
-            thread::spawn(move || {
-                let deadline = Instant::now() + Duration::from_millis(800);
-                loop {
-                    match job.child.try_wait() {
-                        Ok(Some(_)) => return,
-                        Ok(None) if Instant::now() < deadline => {
-                            thread::sleep(Duration::from_millis(40));
-                        }
-                        _ => {
-                            let _ = job.child.kill();
-                            let _ = job.child.wait();
-                            return;
-                        }
-                    }
-                }
-            });
-            self.append_log(LogKind::System, "—— stop requested ——\n");
-            self.loop_hint.clear();
+        let Some(job) = self.job.as_mut() else {
+            return;
+        };
+        if job.kill_after.is_some() {
+            // Stop already requested; keep waiting / force deadline.
+            return;
         }
+        let wrote_stop = if let Some(ref stop) = job.stop_file {
+            if let Some(parent) = stop.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            fs::write(stop, b"host stop\n").is_ok()
+        } else {
+            false
+        };
+        // Fallback only when host could not write the stop_file itself.
+        if !wrote_stop {
+            let node = self.node_path.trim().to_owned();
+            let runner = project_path("test-tools/runner.mjs");
+            if !node.is_empty() && runner.is_file() {
+                let data_root = if self.data_root.trim().is_empty() {
+                    project_path("").display().to_string()
+                } else {
+                    self.data_root.trim().to_owned()
+                };
+                let mut stop_cmd = Command::new(&node);
+                stop_cmd
+                    .args([
+                        runner.display().to_string(),
+                        "--plugin".into(),
+                        job.plugin_id.clone(),
+                        "--lifecycle".into(),
+                        "stop".into(),
+                        "--data-root".into(),
+                        data_root,
+                    ])
+                    .current_dir(project_path("test-tools"))
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .stdin(Stdio::null());
+                hide_console_window(&mut stop_cmd);
+                let _ = stop_cmd.spawn();
+            }
+        }
+        // Keep `self.job` so Run stays busy and Output keeps draining until exit.
+        job.kill_after = Some(Instant::now() + Duration::from_secs(30));
+        self.append_log(LogKind::System, "—— stop requested (grace ≤30s) ——\n");
+        self.loop_hint.clear();
+        self.loop_hud = LoopHud {
+            step: "stopped".into(),
+            ..LoopHud::default()
+        };
     }
 
     fn append_log(&mut self, kind: LogKind, text: &str) {
@@ -1174,38 +1666,22 @@ impl TestToolPanel {
 
 impl Drop for TestToolPanel {
     fn drop(&mut self) {
-        self.stop_job();
+        // Panel teardown: no more poll frames — force-kill immediately.
+        if let Some(mut job) = self.job.take() {
+            if let Some(ref stop) = job.stop_file {
+                let _ = fs::write(stop, b"host exit\n");
+            }
+            let _ = job.child.kill();
+            let _ = job.child.wait();
+        }
     }
 }
 
-fn labeled_path_row(
-    ui: &mut egui::Ui,
-    tokens: &Tokens,
-    label: &str,
-    value: &mut String,
-    hint: &str,
-) -> bool {
-    let mut lost = false;
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            egui::vec2(LABEL_COL_W, ui_theme::CTRL_H),
-            egui::Label::new(
-                RichText::new(label)
-                    .size(ui_theme::FONT_CAPTION)
-                    .color(tokens.text_muted),
-            )
-            .truncate(),
-        );
-        let field_w = (ui.available_width() - 4.0).max(80.0);
-        let resp = ui.add(
-            egui::TextEdit::singleline(value)
-                .desired_width(field_w)
-                .hint_text(hint)
-                .margin(egui::vec2(6.0, 3.0)),
-        );
-        lost = resp.lost_focus();
-    });
-    lost
+fn is_path_param(p: &PluginParam) -> bool {
+    let t = p.type_name.trim().to_ascii_lowercase();
+    matches!(t.as_str(), "path" | "dir" | "directory" | "folder")
+        || p.name.ends_with("_dir")
+        || p.name.ends_with("_path")
 }
 
 fn panel_in_rect(ui: &mut egui::Ui, rect: egui::Rect, add: impl FnOnce(&mut egui::Ui)) {
@@ -1403,6 +1879,18 @@ fn is_truthy(s: &str) -> bool {
         s.trim().to_ascii_lowercase().as_str(),
         "1" | "true" | "yes" | "on"
     )
+}
+
+/// Prevent a console / PowerShell window flash when spawning Node (or other
+/// console-subsystem) children from the GUI. stdout/stderr stay piped to Output.
+fn hide_console_window(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let _ = cmd;
 }
 
 fn split_args(s: &str) -> Vec<String> {

@@ -4,8 +4,8 @@
  *
  *   node runner.mjs --list
  *   node runner.mjs --plugin example-smoke --lifecycle preflight
- *   node runner.mjs --plugin tianshu-xinwei-ask02 --lifecycle run -- --port COM7
- *   node runner.mjs --plugin tianshu-xinwei-ask02 --lifecycle stop
+ *   node runner.mjs --plugin scope-serial-monitor --lifecycle run -- --port COM7
+ *   node runner.mjs --plugin scope-serial-monitor --lifecycle stop
  */
 
 import fs from "node:fs";

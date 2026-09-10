@@ -77,10 +77,10 @@ fn initial_tab(
         MainTab::Waveform
     } else if show_data_analysis {
         MainTab::DataAnalysis
-    } else if show_test_report {
-        MainTab::TestReport
     } else if show_test_tool {
         MainTab::TestTool
+    } else if show_test_report {
+        MainTab::TestReport
     } else {
         MainTab::Calculator
     }
@@ -222,10 +222,10 @@ impl WiParseApp {
             self.active = MainTab::Waveform;
         } else if self.show_data_analysis {
             self.active = MainTab::DataAnalysis;
-        } else if self.show_test_report {
-            self.active = MainTab::TestReport;
         } else if self.show_test_tool {
             self.active = MainTab::TestTool;
+        } else if self.show_test_report {
+            self.active = MainTab::TestReport;
         } else if self.show_calculator {
             self.active = MainTab::Calculator;
         } else {
@@ -394,17 +394,17 @@ impl WiParseApp {
                     }
                     dirty = true;
                 }
-                if menu_check_row(ui, t, &report_name, self.show_test_report, SUB_W).clicked() {
-                    self.show_test_report = !self.show_test_report;
-                    if self.show_test_report {
-                        self.active = MainTab::TestReport;
-                    }
-                    dirty = true;
-                }
                 if menu_check_row(ui, t, &test_tool_name, self.show_test_tool, SUB_W).clicked() {
                     self.show_test_tool = !self.show_test_tool;
                     if self.show_test_tool {
                         self.active = MainTab::TestTool;
+                    }
+                    dirty = true;
+                }
+                if menu_check_row(ui, t, &report_name, self.show_test_report, SUB_W).clicked() {
+                    self.show_test_report = !self.show_test_report;
+                    if self.show_test_report {
+                        self.active = MainTab::TestReport;
                     }
                     dirty = true;
                 }
@@ -1081,17 +1081,17 @@ impl eframe::App for WiParseApp {
                         ui,
                         &t,
                         &mut self.active,
-                        MainTab::TestReport,
-                        self.show_test_report,
-                        &tr(self.lang, "tool.test_report.name"),
+                        MainTab::TestTool,
+                        self.show_test_tool,
+                        &tr(self.lang, "tool.test_tool.name"),
                     );
                     main_tab(
                         ui,
                         &t,
                         &mut self.active,
-                        MainTab::TestTool,
-                        self.show_test_tool,
-                        &tr(self.lang, "tool.test_tool.name"),
+                        MainTab::TestReport,
+                        self.show_test_report,
+                        &tr(self.lang, "tool.test_report.name"),
                     );
                     main_tab(
                         ui,
@@ -1460,11 +1460,15 @@ mod tests {
         );
         assert_eq!(
             initial_tab(false, false, false, false, true, true),
-            MainTab::TestReport
+            MainTab::TestTool
         );
         assert_eq!(
             initial_tab(false, false, false, false, false, true),
             MainTab::TestTool
+        );
+        assert_eq!(
+            initial_tab(false, false, false, false, true, false),
+            MainTab::TestReport
         );
         assert_eq!(
             initial_tab(false, false, false, false, false, false),

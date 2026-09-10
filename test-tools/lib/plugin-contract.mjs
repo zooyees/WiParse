@@ -136,6 +136,18 @@ export function expandTemplates(config, { dataRoot, pluginDir } = {}) {
   return walkExpand(config, vars);
 }
 
+/**
+ * Keep HUD/status next to waveform ISF dir so overrides of isf_dir remain operable.
+ * Call after template expansion / param merge.
+ */
+export function colocateStatusWithIsf(config) {
+  if (!config?.paths || typeof config.paths !== "object") return config;
+  const isf = config.paths.isf_dir;
+  if (typeof isf !== "string" || !isf.trim()) return config;
+  config.paths.status_file = path.join(isf, "_loop_status.json");
+  return config;
+}
+
 export function resolveConfigPath(pluginDir, manifest) {
   const name = manifest?.config || "station.json";
   const p = path.isAbsolute(name) ? name : path.join(pluginDir, name);
@@ -352,6 +364,7 @@ export function loadStationConfig(ctx) {
   let config = applyParamPaths(raw, ctx.plugin?.params, args);
   const dataRoot = resolveDataRoot(ctx.dataRoot || args.data_root);
   config = expandTemplates(config, { dataRoot, pluginDir });
+  colocateStatusWithIsf(config);
 
   if (config.paths) {
     for (const key of ["lock_file", "stop_file", "status_file", "isf_dir", "report_dir"]) {
@@ -396,6 +409,7 @@ export default {
   mergeArgs,
   applyParamPaths,
   expandTemplates,
+  colocateStatusWithIsf,
   resolveConfigPath,
   parseSemver,
   cmpSemver,

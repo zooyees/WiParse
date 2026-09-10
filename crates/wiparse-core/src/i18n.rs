@@ -54,18 +54,16 @@ pub fn tr(lang: Lang, key: &str) -> String {
         (Lang::Zh, "about.notes_section") => "本版更新",
         (Lang::En, "about.notes_section") => "What's New",
         (Lang::Zh, "about.notes") => "\
-• 集成测试：Node 插件框架（preflight / run / stop、engines、结果契约）\n\
-• 示波器/串口监控插件（可覆盖前缀/路径/串口）\n\
-• 测试报告：轻量 Markdown 预览（图片、表格、代码块）\n\
-• 数据分析：串口 Live 抽取 + WIDA 缓存与 LOD\n\
-• 加固：停止路径、CLI/PDF 超时、日志与缓冲上限\n\
+• Testing Hub：左右布局、整行选插件、参数单列对齐\n\
+• 示波器/串口监控：上升沿触发、状态与 ISF 共置、Stop 宽限 30s\n\
+• 隐藏 Node 控制台；预检含锁/串口；跨页触发上下文\n\
+• 移除遗留 tianshu 插件目录；start/stop 走 runner\n\
 详细记录见 docs/CHANGELOG.md",
         (Lang::En, "about.notes") => "\
-• Testing Hub: Node plugin host (preflight / run / stop, engines, result contract)\n\
-• Scope & Serial Monitor plugin (overridable prefix/paths/port)\n\
-• Test Report: lightweight Markdown preview (images, tables, fences)\n\
-• Data Analysis: serial Live extract + WIDA cache / LOD\n\
-• Hardening: stop path, CLI/PDF timeouts, log & buffer caps\n\
+• Testing Hub: L/R layout, full-row plugin select, aligned params\n\
+• Scope/Serial: rising-edge, status beside ISF, Stop grace 30s\n\
+• Hidden Node console; preflight lock/serial; cross-chunk context\n\
+• Removed legacy tianshu plugin; start/stop via runner\n\
 Details: docs/CHANGELOG.md",
         (Lang::Zh, "about.close") => "关闭",
         (Lang::En, "about.close") => "Close",
@@ -194,6 +192,20 @@ Details: docs/CHANGELOG.md",
         (Lang::En, "test_tool.advanced") => "Advanced",
         (Lang::Zh, "test_tool.data_root") => "数据根目录",
         (Lang::En, "test_tool.data_root") => "Data root",
+        (Lang::Zh, "test_tool.browse") => "选择",
+        (Lang::En, "test_tool.browse") => "Browse",
+        (Lang::Zh, "test_tool.hud_wait") => "监控",
+        (Lang::En, "test_tool.hud_wait") => "Watch",
+        (Lang::Zh, "test_tool.hud_processing") => "处理",
+        (Lang::En, "test_tool.hud_processing") => "Busy",
+        (Lang::Zh, "test_tool.hud_captured") => "完成",
+        (Lang::En, "test_tool.hud_captured") => "Done",
+        (Lang::Zh, "test_tool.hud_stopped") => "停止",
+        (Lang::En, "test_tool.hud_stopped") => "Stop",
+        (Lang::Zh, "test_tool.hud_armed") => "准备",
+        (Lang::En, "test_tool.hud_armed") => "Ready",
+        (Lang::Zh, "test_tool.hud_idle") => "空闲",
+        (Lang::En, "test_tool.hud_idle") => "Idle",
         (Lang::Zh, "test_tool.preflight") => "预检",
         (Lang::En, "test_tool.preflight") => "Preflight",
         (Lang::Zh, "test_tool.preflight_only") => "仅预检（不启动循环）",

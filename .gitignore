@@ -13,3 +13,10 @@ node_modules/
 /WiParse-Deploy/
 /WiParse-Deploy.zip
 .cursor/
+
+# Test-tool runtime artifacts
+**/run.stop
+**/run.lock
+test-tools/plugins/**/logs/
+**/_loop_status.json
+**/_loop_hint.txt

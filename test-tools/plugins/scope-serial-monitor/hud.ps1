@@ -36,7 +36,7 @@ function Get-TriggerText($j) {
 }
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "TSXW"
+$form.Text = "ScopeSerial"
 $form.TopMost = $true
 $form.ShowInTaskbar = $false
 $form.FormBorderStyle = "None"

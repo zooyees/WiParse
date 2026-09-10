@@ -72,7 +72,7 @@ Use `normalizeResult(raw, lifecycle)` from `lib/plugin-contract.mjs`.
 | `config` | no | Station config relative to plugin dir |
 | `description` | no | Short summary |
 | `capabilities` | no | Subset of `preflight` / `run` / `stop` |
-| `engines` | no | `{ "node": ">=18", "wiparse": ">=1.1.7" }` |
+| `engines` | no | `{ "node": ">=18", "wiparse": ">=1.1.8" }` |
 | `params` | no | Overridable parameters |
 
 ### `params[]`
@@ -101,10 +101,10 @@ Use `normalizeResult(raw, lifecycle)` from `lib/plugin-contract.mjs`.
 
 ## Path templates
 
-- `{data_root}` â€” workspace / configured data root  
-- `{product}` â€” `station.product`  
-- `{plugin_dir}` â€” absolute plugin directory  
-- `{stamp}` â€” filled at runtime by the plugin  
+- `{data_root}` â€?workspace / configured data root  
+- `{product}` â€?`station.product`  
+- `{plugin_dir}` â€?absolute plugin directory  
+- `{stamp}` â€?filled at runtime by the plugin  
 
 ## Station config
 
@@ -117,8 +117,8 @@ Validated by `validateStationConfig` when `loadStationConfig` runs.
 cd test-tools
 node runner.mjs --list
 node runner.mjs --plugin example-smoke --lifecycle preflight
-node runner.mjs --plugin tianshu-xinwei-ask02 --lifecycle run -- --file_prefix MyTest
-node runner.mjs --plugin tianshu-xinwei-ask02 --lifecycle stop
+node runner.mjs --plugin scope-serial-monitor --lifecycle run -- --file_prefix MyTest
+node runner.mjs --plugin scope-serial-monitor --lifecycle stop
 ```
 
 Env: `WIPARSE_CLI`, `WIPARSE_URL`, `WIPARSE_DATA_ROOT`.

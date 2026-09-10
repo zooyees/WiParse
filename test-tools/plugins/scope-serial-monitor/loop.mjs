@@ -9,6 +9,8 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { createHttpClient } from "../../lib/wiparse-sdk.mjs";
+import { colocateStatusWithIsf } from "../../lib/plugin-contract.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -36,8 +38,31 @@ let browsers = [];
 let preflightOnly = false;
 /** @type {((stream: string, text: string) => void) | undefined} */
 let externalLog;
+/** Rising-edge latch: fire only on false→true per trigger id. */
+let risingEdge = true;
+/** @type {Map<string, boolean>} */
+const edgeHigh = new Map();
+/** Honor station.interlocks.hold_serial_off_during_capture (default true). */
+let holdSerialOffEnabled = true;
+/** @type {{ url: string, health: Function, invoke: Function } | null} */
+let http = null;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const CONTEXT_KEEP = 80;
+
+function log(stream, text) {
+  const raw = typeof text === "string" ? text : JSON.stringify(text);
+  const line = raw.endsWith("\n") ? raw : `${raw}\n`;
+  if (typeof externalLog === "function") {
+    try {
+      externalLog(stream === "err" ? "stderr" : "stdout", line);
+    } catch {
+      /* ignore host log failures */
+    }
+  }
+  if (stream === "err") console.error(raw);
+  else console.log(raw);
+}
 
 
 function sanitizeTriggerId(id) {
@@ -181,10 +206,21 @@ function triggerLabels() {
 }
 
 function classify(line) {
-  for (const t of compiledTriggers) {
-    if (t.match(line)) return t.id;
+  if (!risingEdge) {
+    for (const t of compiledTriggers) {
+      if (t.match(line)) return t.id;
+    }
+    return null;
   }
-  return null;
+  // Industrial rising-edge: fire once when a trigger goes inactive→active.
+  let fired = null;
+  for (const t of compiledTriggers) {
+    const on = t.match(line);
+    const was = edgeHigh.get(t.id) === true;
+    if (on && !was && fired == null) fired = t.id;
+    edgeHigh.set(t.id, on);
+  }
+  return fired;
 }
 
 function stamp(d = new Date()) {
@@ -225,20 +261,11 @@ function pidAlive(pid) {
   }
 }
 
-async function invoke(method, params = {}, ms = 120_000) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), ms);
-  try {
-    const res = await fetch(`${api}/v1/invoke`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ method, params }),
-      signal: ctrl.signal,
-    });
-    return res.json();
-  } finally {
-    clearTimeout(timer);
+async function invoke(method, params = {}, ms = 120_000, opts = {}) {
+  if (!http) {
+    http = createHttpClient({ url: api, log: externalLog });
   }
+  return http.invoke(method, params, ms, opts);
 }
 
 function writeStatus(extra) {
@@ -255,17 +282,17 @@ function writeStatus(extra) {
 
 function setHint(step, hint, extra = {}) {
   writeStatus({ step, hint, ...extra });
-  console.log(JSON.stringify({ step, hint, ...extra }));
+  log("info", JSON.stringify({ step, hint, ...extra }));
 }
 
 async function serialStatus() {
-  const st = await invoke("serial.status", {});
+  const st = await invoke("serial.status", {}, 30_000, { allowFail: true });
   return Boolean(st.data?.monitoring);
 }
 
 async function serialStop() {
-  let r = await invoke("serial.monitor.stop", {});
-  if (r.ok === false) r = await invoke("serial.stop", {});
+  let r = await invoke("serial.monitor.stop", {}, 30_000, { allowFail: true });
+  if (r.ok === false) r = await invoke("serial.stop", {}, 30_000, { allowFail: true });
   return r;
 }
 
@@ -282,8 +309,8 @@ async function serialStopUntilOff(ms = cfg.timing.serial_stop_timeout_ms) {
 }
 
 async function serialStart() {
-  let r = await invoke("serial.monitor.start", { port, baud });
-  if (r.ok === false) r = await invoke("serial.start", { port, baud });
+  let r = await invoke("serial.monitor.start", { port, baud }, 30_000, { allowFail: true });
+  if (r.ok === false) r = await invoke("serial.start", { port, baud }, 30_000, { allowFail: true });
   const t0 = Date.now();
   while (Date.now() - t0 < 4000) {
     if (await serialStatus()) return r;
@@ -293,6 +320,9 @@ async function serialStart() {
 }
 
 function holdSerialOff() {
+  if (!holdSerialOffEnabled) {
+    return async () => {};
+  }
   serialStop().catch(() => {});
   // Keep serial off during capture without hammering the API every 250ms.
   const keeper = setInterval(() => {
@@ -387,6 +417,8 @@ async function waitTrigger(cycle, scopeId) {
   let fromRow = Number(probe.total) || 0;
   const t0 = Date.now();
   let lastBeat = -1;
+  /** @type {string[]} rolling context across chunks */
+  const ring = [];
   while (!fs.existsSync(stopFile)) {
     refreshTriggers();
     const elapsed = Math.floor((Date.now() - t0) / 1000);
@@ -407,17 +439,24 @@ async function waitTrigger(cycle, scopeId) {
     }
     const { lines, total, next } = await liveLinesSince(fromRow, 200);
     if (total < fromRow) {
-      // Log buffer reset
+      // Log buffer reset — keep recent ring for continuity, reset cursor.
       fromRow = total;
       continue;
     }
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
+      ring.push(line);
+      if (ring.length > CONTEXT_KEEP) ring.shift();
       const trigger = classify(line);
       if (trigger) {
-        const from = Math.max(0, i - 25);
-        const to = Math.min(lines.length, i + 26);
-        return { trigger, at: new Date(), line, context: lines.slice(from, to) };
+        const before = ring.slice(0, -1).slice(-25);
+        const after = lines.slice(i + 1, i + 26);
+        return {
+          trigger,
+          at: new Date(),
+          line,
+          context: [...before, line, ...after],
+        };
       }
     }
     fromRow = next > fromRow ? next : total;
@@ -701,7 +740,7 @@ function acquireLock() {
     try {
       const prev = JSON.parse(fs.readFileSync(lockFile, "utf8"));
       if (prev.pid && prev.pid !== process.pid && pidAlive(prev.pid)) {
-        throw new Error(`已有循环在运行 pid=${prev.pid}，先执行 stop.ps1`);
+        throw new Error(`已有循环在运行 pid=${prev.pid}，请先在 Testing Hub 点 Stop 或执行 stop.ps1`);
       }
     } catch (e) {
       if (String(e.message || e).includes("已有循环")) throw e;
@@ -728,13 +767,7 @@ async function preflight() {
   const push = (id, ok, detail) => checks.push({ id, ok, detail });
   let health;
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 15_000);
-    try {
-      health = await (await fetch(`${api}/v1/health`, { signal: ctrl.signal })).json();
-    } finally {
-      clearTimeout(timer);
-    }
+    health = await http.health(15_000);
     push("gui_api", true, health.data?.listening || api);
   } catch (e) {
     push("gui_api", false, String(e.message || e));
@@ -751,10 +784,43 @@ async function preflight() {
     fs.unlinkSync(probe);
     push("isf_dir", true, outDir);
     push("report_dir", true, reportDir);
+    push("status_file", true, statusFile);
   } catch (e) {
     push("dirs", false, String(e.message || e));
   }
-  const list = await invoke("instrument.list");
+
+  // Single-instance lock
+  if (cfg.interlocks?.single_instance !== false) {
+    if (fs.existsSync(lockFile)) {
+      try {
+        const prev = JSON.parse(fs.readFileSync(lockFile, "utf8"));
+        if (prev.pid && prev.pid !== process.pid && pidAlive(prev.pid)) {
+          push("single_instance", false, `lock held by pid=${prev.pid}`);
+        } else {
+          push("single_instance", true, "stale lock (will reclaim)");
+        }
+      } catch {
+        push("single_instance", true, "lock unreadable (will reclaim)");
+      }
+    } else {
+      push("single_instance", true, "free");
+    }
+  }
+
+  // Serial API reachability (does not require monitoring already on)
+  try {
+    const st = await invoke("serial.status", {}, 15_000, { allowFail: true });
+    if (st && st.ok === false) {
+      push("serial_api", false, st.error || "serial.status failed");
+    } else {
+      const mon = Boolean(st?.data?.monitoring);
+      push("serial_api", true, mon ? `monitoring on (${st?.data?.port || port})` : `ready (${port}@${baud})`);
+    }
+  } catch (e) {
+    push("serial_api", false, String(e.message || e));
+  }
+
+  const list = await invoke("instrument.list", {}, 30_000, { allowFail: true });
   const devices = list.data?.devices || [];
   const scope =
     devices.find((d) => d.device_id === cfg.scope.prefer_device_id) ||
@@ -782,6 +848,7 @@ async function preflight() {
 function bindConfig(cfgInput, opts = {}) {
   cfg = cfgInput;
   if (opts.configPath) cfgPath = opts.configPath;
+  colocateStatusWithIsf(cfg);
   api = String(cfg.gui?.api || "http://127.0.0.1:7878").replace(/\/$/, "");
   outDir = cfg.paths.isf_dir;
   reportDir = cfg.paths.report_dir;
@@ -803,6 +870,10 @@ function bindConfig(cfgInput, opts = {}) {
   browsers = cfg.pdf?.browsers || [];
   preflightOnly = Boolean(opts.preflightOnly);
   externalLog = typeof opts.log === "function" ? opts.log : undefined;
+  risingEdge = cfg.serial_triggers?.rising_edge !== false;
+  edgeHigh.clear();
+  holdSerialOffEnabled = cfg.interlocks?.hold_serial_off_during_capture !== false;
+  http = createHttpClient({ url: api, log: externalLog });
 }
 
 /**
@@ -811,187 +882,231 @@ function bindConfig(cfgInput, opts = {}) {
  */
 export async function runLoop(cfgInput, opts = {}) {
   bindConfig(cfgInput, opts);
-const pf = await preflight();
-console.log(JSON.stringify({ step: "preflight", ok: pf.ok, checks: pf.checks }));
-if (!pf.ok) {
-  setHint("stopped", "预检失败，未启动监控", { checks: pf.checks });
-  return { ok: false, step: 'preflight', checks: pf.checks };
-}
-if (preflightOnly) return { ok: true, preflight: true, checks: pf.checks };
-
-acquireLock();
-process.on("exit", releaseLock);
-process.on("SIGINT", () => process.exit(130));
-process.on("SIGTERM", () => process.exit(143));
-
-if (fs.existsSync(stopFile)) fs.unlinkSync(stopFile);
-fs.mkdirSync(outDir, { recursive: true });
-fs.mkdirSync(reportDir, { recursive: true });
-
-await invoke("test.abort", { reason: `${cfg.sop.id} start: do not leave a test plan holding serial` });
-const scope = await resolveScope();
-const guiVersion = pf.health?.data?.version;
-setHint("armed", "准备中：启动示波器与串口", { cycle: 0, scope_id: scope.device_id });
-await startScopeAndSerial(scope.device_id);
-
-setHint("armed", "准备完成：示波器 RUN 已完成，进入监控", {
-  cycle: 0,
-  version: guiVersion,
-  port,
-  baud,
-  monitoring: await serialStatus(),
-  scope_id: scope.device_id,
-  scope_model: scope.identity?.model ?? null,
-  triggers: compiledTriggers.map((t) => t.label),
-  trigger_spec: compiledTriggers.map((t) => ({
-    id: t.id,
-    label: t.label,
-    type: t.type,
-    pattern: t.pattern,
-    unless: t.unless || [],
-  })),
-  delay_s: delayS,
-  dir: outDir,
-  reportDir,
-  summary_md: summaryMd,
-  sop: cfg.sop.id,
-  rev: cfg.sop.rev,
-});
-appendSessionBanner({
-  guiVersion,
-  scopeId: scope.device_id,
-  scopeModel: scope.identity?.model ?? cfg.scope.model,
-});
-
-let cycle = 0;
-while (!fs.existsSync(stopFile)) {
-  cycle += 1;
-  const live = await resolveScope();
-  setHint("wait", `监控中：第 ${cycle} 轮，等待串口 ${triggerLabels()}`, {
-    cycle,
-    scope_id: live.device_id,
-    triggers: compiledTriggers.map((t) => t.label),
-  });
-  const hit = await waitTrigger(cycle, live.device_id);
-  if (hit.trigger === "stop" || fs.existsSync(stopFile)) break;
-
-  const at = hit.at;
-  const trigger = hit.trigger;
-  const ts = stamp(at);
-  const filename = `${prefix}_${trigger}_${ts}.isf`;
-  setHint("processing", `已触发 ${trigger}：数据处理中（延时 ${delayS * 1000}ms / 同时停示波器与串口 / 截图 / 存源文件 / 出报告）`, {
-    cycle,
-    trigger,
-    filename,
-  });
-
-  await sleep(delayS * 1000);
-  setHint("processing", `已触发 ${trigger}：数据处理中（同时暂停示波器与串口）`, { cycle, trigger, filename });
-  const releaseSerial = holdSerialOff();
-  let saved = path.join(outDir, filename);
-  let shot = null;
-  let monitoring = true;
-  try {
-    const stopped = await stopScopeAndSerial(live.device_id);
-    monitoring = stopped.monitoring;
-    setHint("processing", `已触发 ${trigger}：串口已停 monitoring=${monitoring}，截图并读源文件`, {
-      cycle,
-      trigger,
-      filename,
-      serial_monitoring: monitoring,
-    });
-    const shotPath = path.join(reportDir, `${prefix}_${trigger}_${ts}.png`);
-    const cap = await captureShotAndIsf(live.device_id, shotPath, filename);
-    saved = cap.isfPath;
-    shot = cap.shotFile;
-    monitoring = await serialStatus();
-    setHint("processing", `已触发 ${trigger}：数据处理中（生成 PDF 报告；串口 monitoring=${monitoring}）`, {
-      cycle,
-      trigger,
-      filename,
-      serial_monitoring: monitoring,
-    });
-  } finally {
-    await releaseSerial();
-    monitoring = await serialStatus();
+  const pf = await preflight();
+  log("info", JSON.stringify({ step: "preflight", ok: pf.ok, checks: pf.checks }));
+  if (!pf.ok) {
+    setHint("stopped", "预检失败，未启动监控", { checks: pf.checks });
+    return { ok: false, step: "preflight", checks: pf.checks };
   }
-  let pdfPath = null;
-  let mdPath = null;
+  if (preflightOnly) return { ok: true, preflight: true, checks: pf.checks };
+
+  acquireLock();
+  process.on("exit", releaseLock);
+  process.on("SIGINT", () => process.exit(130));
+  process.on("SIGTERM", () => process.exit(143));
+
+  let cycle = 0;
+  let scope = null;
   try {
-    const written = writePdfReport({
-      cycle,
-      trigger,
-      stamp: ts,
-      timeText: stampNice(at),
-      line: hit.line,
-      context: hit.context || [],
-      isfPath: String(saved),
-      screenshotSrc: shot && fs.existsSync(String(shot)) ? String(shot) : null,
-      guiVersion,
-      scopeId: live.device_id,
-      scopeModel: live.identity?.model ?? cfg.scope.model,
-      serialMonitoring: monitoring,
+    if (fs.existsSync(stopFile)) fs.unlinkSync(stopFile);
+    fs.mkdirSync(outDir, { recursive: true });
+    fs.mkdirSync(reportDir, { recursive: true });
+
+    if (cfg.interlocks?.never_test_start_during_capture !== false) {
+      await invoke(
+        "test.abort",
+        { reason: `${cfg.sop.id} start: do not leave a test plan holding serial` },
+        30_000,
+        { allowFail: true },
+      );
+    }
+    scope = await resolveScope();
+    const guiVersion = pf.health?.data?.version;
+    setHint("armed", "准备中：启动示波器与串口", {
+      cycle: 0,
+      scope_id: scope.device_id,
+      rising_edge: risingEdge,
     });
-    await htmlToPdf(written.htmlPath, written.pdfPath);
-    pdfPath = written.pdfPath;
-    mdPath = appendSummaryRecord({
-      cycle,
-      trigger,
-      stamp: ts,
-      timeText: stampNice(at),
-      line: hit.line,
-      context: hit.context || [],
-      isfPath: String(saved),
-      screenshot: written.screenshot,
-      pdfPath,
-      guiVersion,
-      scopeId: live.device_id,
-      scopeModel: live.identity?.model ?? cfg.scope.model,
-      serialMonitoring: monitoring,
+    await startScopeAndSerial(scope.device_id);
+
+    setHint("armed", "准备完成：示波器 RUN 已完成，进入监控", {
+      cycle: 0,
+      version: guiVersion,
+      port,
+      baud,
+      monitoring: await serialStatus(),
+      scope_id: scope.device_id,
+      scope_model: scope.identity?.model ?? null,
+      rising_edge: risingEdge,
+      triggers: compiledTriggers.map((t) => t.label),
+      trigger_spec: compiledTriggers.map((t) => ({
+        id: t.id,
+        label: t.label,
+        type: t.type,
+        pattern: t.pattern,
+        unless: t.unless || [],
+      })),
+      delay_s: delayS,
+      dir: outDir,
+      reportDir,
+      summary_md: summaryMd,
+      sop: cfg.sop.id,
+      rev: cfg.sop.rev,
     });
-  } catch (e) {
-    console.log(JSON.stringify({ step: "pdf_error", error: String(e?.message || e) }));
-    try {
-      mdPath = appendSummaryRecord({
+    appendSessionBanner({
+      guiVersion,
+      scopeId: scope.device_id,
+      scopeModel: scope.identity?.model ?? cfg.scope.model,
+    });
+
+    while (!fs.existsSync(stopFile)) {
+      cycle += 1;
+      const live = await resolveScope();
+      setHint("wait", `监控中：第 ${cycle} 轮，等待串口 ${triggerLabels()}`, {
+        cycle,
+        scope_id: live.device_id,
+        triggers: compiledTriggers.map((t) => t.label),
+      });
+      const hit = await waitTrigger(cycle, live.device_id);
+      if (hit.trigger === "stop" || fs.existsSync(stopFile)) break;
+
+      const at = hit.at;
+      const trigger = hit.trigger;
+      const ts = stamp(at);
+      const filename = `${prefix}_${trigger}_${ts}.isf`;
+      setHint(
+        "processing",
+        `已触发 ${trigger}：数据处理中（延时 ${delayS * 1000}ms / 同时停示波器与串口 / 截图 / 存源文件 / 出报告）`,
+        { cycle, trigger, filename },
+      );
+
+      await sleep(delayS * 1000);
+      if (fs.existsSync(stopFile)) break;
+      setHint("processing", `已触发 ${trigger}：数据处理中（同时暂停示波器与串口）`, {
         cycle,
         trigger,
-        stamp: ts,
-        timeText: stampNice(at),
-        line: hit.line,
-        context: hit.context || [],
-        isfPath: String(saved),
-        screenshot: shot && fs.existsSync(String(shot)) ? String(shot) : null,
-        pdfPath: null,
-        guiVersion,
-        scopeId: live.device_id,
-        scopeModel: live.identity?.model ?? cfg.scope.model,
-        serialMonitoring: monitoring,
+        filename,
       });
-    } catch (e2) {
-      console.log(JSON.stringify({ step: "md_error", error: String(e2?.message || e2) }));
+      const releaseSerial = holdSerialOff();
+      let saved = path.join(outDir, filename);
+      let shot = null;
+      let monitoring = true;
+      try {
+        const stopped = await stopScopeAndSerial(live.device_id);
+        monitoring = stopped.monitoring;
+        setHint("processing", `已触发 ${trigger}：串口已停 monitoring=${monitoring}，截图并读源文件`, {
+          cycle,
+          trigger,
+          filename,
+          serial_monitoring: monitoring,
+        });
+        const shotPath = path.join(reportDir, `${prefix}_${trigger}_${ts}.png`);
+        const cap = await captureShotAndIsf(live.device_id, shotPath, filename);
+        saved = cap.isfPath;
+        shot = cap.shotFile;
+        monitoring = await serialStatus();
+        setHint(
+          "processing",
+          `已触发 ${trigger}：数据处理中（生成 PDF 报告；串口 monitoring=${monitoring}）`,
+          { cycle, trigger, filename, serial_monitoring: monitoring },
+        );
+      } finally {
+        await releaseSerial();
+        monitoring = await serialStatus();
+      }
+      let pdfPath = null;
+      let mdPath = null;
+      try {
+        const written = writePdfReport({
+          cycle,
+          trigger,
+          stamp: ts,
+          timeText: stampNice(at),
+          line: hit.line,
+          context: hit.context || [],
+          isfPath: String(saved),
+          screenshotSrc: shot && fs.existsSync(String(shot)) ? String(shot) : null,
+          guiVersion,
+          scopeId: live.device_id,
+          scopeModel: live.identity?.model ?? cfg.scope.model,
+          serialMonitoring: monitoring,
+        });
+        await htmlToPdf(written.htmlPath, written.pdfPath);
+        pdfPath = written.pdfPath;
+        mdPath = appendSummaryRecord({
+          cycle,
+          trigger,
+          stamp: ts,
+          timeText: stampNice(at),
+          line: hit.line,
+          context: hit.context || [],
+          isfPath: String(saved),
+          screenshot: written.screenshot,
+          pdfPath,
+          guiVersion,
+          scopeId: live.device_id,
+          scopeModel: live.identity?.model ?? cfg.scope.model,
+          serialMonitoring: monitoring,
+        });
+      } catch (e) {
+        log("err", JSON.stringify({ step: "pdf_error", error: String(e?.message || e) }));
+        try {
+          mdPath = appendSummaryRecord({
+            cycle,
+            trigger,
+            stamp: ts,
+            timeText: stampNice(at),
+            line: hit.line,
+            context: hit.context || [],
+            isfPath: String(saved),
+            screenshot: shot && fs.existsSync(String(shot)) ? String(shot) : null,
+            pdfPath: null,
+            guiVersion,
+            scopeId: live.device_id,
+            scopeModel: live.identity?.model ?? cfg.scope.model,
+            serialMonitoring: monitoring,
+          });
+        } catch (e2) {
+          log("err", JSON.stringify({ step: "md_error", error: String(e2?.message || e2) }));
+        }
+      }
+
+      if (fs.existsSync(stopFile)) break;
+      setHint("processing", `已触发 ${trigger}：数据处理中（同时启动示波器与串口）`, {
+        cycle,
+        trigger,
+        filename,
+      });
+      await startScopeAndSerial(live.device_id);
+
+      setHint(
+        "captured",
+        `本轮完成：已保存 ${path.basename(String(saved))}${pdfPath ? " / PDF" : ""}${mdPath ? " / 总报告MD" : ""}，进入下一轮`,
+        {
+          cycle,
+          trigger,
+          filename: path.basename(String(saved)),
+          pdf: pdfPath,
+          summary_md: mdPath,
+          serial_monitoring: await serialStatus(),
+        },
+      );
+    }
+
+    setHint("stopped", "监控已停止", { cycle });
+    return { ok: true, summary_md: summaryMd, session: sessionStamp };
+  } catch (e) {
+    const msg = String(e?.message || e);
+    log("err", JSON.stringify({ step: "fatal", error: msg }));
+    try {
+      setHint("stopped", `异常停止：${msg}`, { cycle, error: msg });
+    } catch {
+      /* ignore */
+    }
+    return { ok: false, step: "fatal", error: msg, summary_md: summaryMd, session: sessionStamp };
+  } finally {
+    releaseLock();
+    if (scope?.device_id != null) {
+      try {
+        await startScopeAndSerial(scope.device_id);
+      } catch {
+        /* best-effort restore */
+      }
     }
   }
-
-  setHint("processing", `已触发 ${trigger}：数据处理中（同时启动示波器与串口）`, { cycle, trigger, filename });
-  await startScopeAndSerial(live.device_id);
-
-  setHint("captured", `本轮完成：已保存 ${path.basename(String(saved))}${pdfPath ? " / PDF" : ""}${mdPath ? " / 总报告MD" : ""}，进入下一轮`, {
-    cycle,
-    trigger,
-    filename: path.basename(String(saved)),
-    pdf: pdfPath,
-    summary_md: mdPath,
-    serial_monitoring: await serialStatus(),
-  });
 }
 
-setHint("stopped", "监控已停止", { cycle });
-releaseLock();
-
-  return { ok: true, summary_md: summaryMd, session: sessionStamp };
-}
-
-// Standalone: node loop.mjs --config=station.json [--preflight]
+// Standalone: prefer runner.mjs; this path still expands templates for parity.
 const isDirect =
   process.argv[1] &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
@@ -999,13 +1114,25 @@ const isDirect =
 if (isDirect) {
   const argConfig = process.argv.find((a) => a.startsWith("--config="))?.slice(9);
   const pth = path.resolve(
-    argConfig || process.env.WIPARSE_STATION_CONFIG || path.join(here, "station.json")
+    argConfig || process.env.WIPARSE_STATION_CONFIG || path.join(here, "station.json"),
   );
-  const loaded = JSON.parse(fs.readFileSync(pth, "utf8"));
-  runLoop(loaded, {
-    configPath: pth,
-    preflightOnly: process.argv.includes("--preflight"),
-  })
+  import("../../lib/plugin-contract.mjs")
+    .then(({ expandTemplates, resolveDataRoot, projectRoot, colocateStatusWithIsf }) => {
+      const loaded = JSON.parse(fs.readFileSync(pth, "utf8"));
+      const dataRoot = resolveDataRoot(process.env.WIPARSE_DATA_ROOT || projectRoot());
+      const config = expandTemplates(loaded, { dataRoot, pluginDir: here });
+      colocateStatusWithIsf(config);
+      for (const key of ["lock_file", "stop_file", "status_file", "isf_dir", "report_dir"]) {
+        const v = config.paths?.[key];
+        if (typeof v === "string" && v && !path.isAbsolute(v)) {
+          config.paths[key] = path.resolve(here, v);
+        }
+      }
+      return runLoop(config, {
+        configPath: pth,
+        preflightOnly: process.argv.includes("--preflight"),
+      });
+    })
     .then((r) => {
       if (r && r.ok === false) process.exit(1);
     })

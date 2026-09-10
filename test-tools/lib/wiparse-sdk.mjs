@@ -112,13 +112,17 @@ export function createHttpClient(opts = {}) {
     const timer = setTimeout(() => ctrl.abort(), ms);
     try {
       const res = await fetch(`${base}/v1/health`, { signal: ctrl.signal });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status} /v1/health`);
+      }
       return res.json();
     } finally {
       clearTimeout(timer);
     }
   }
 
-  async function invoke(method, params = {}, ms = 120_000) {
+  async function invoke(method, params = {}, ms = 120_000, opts = {}) {
+    const allowFail = Boolean(opts.allowFail);
     log?.("info", `HTTP invoke ${method}\n`);
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), ms);
@@ -129,7 +133,18 @@ export function createHttpClient(opts = {}) {
         body: JSON.stringify({ method, params }),
         signal: ctrl.signal,
       });
-      return res.json();
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        const msg = `HTTP ${res.status} ${method}: ${body.slice(0, 240)}`;
+        if (allowFail) return { ok: false, error: msg };
+        throw new Error(msg);
+      }
+      const json = await res.json();
+      if (!allowFail && json && json.ok === false) {
+        const err = json.error || json.message || JSON.stringify(json);
+        throw new Error(`${method} failed: ${err}`);
+      }
+      return json;
     } finally {
       clearTimeout(timer);
     }

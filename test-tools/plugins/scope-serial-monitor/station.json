@@ -1,20 +1,20 @@
 {
   "sop": {
-    "id": "WI-TSXW-ASK02-001",
+    "id": "WI-SCOPE-SERIAL-001",
     "rev": "A",
-    "title": "天枢-信维 ASK2/timeout 异常波形抓取",
-    "effective": "2026-09-09",
+    "title": "示波器/串口监控 · 异常波形抓取",
+    "effective": "2026-09-10",
     "process_owner": "测试工程"
   },
   "station": {
-    "id": "TSXW-01",
-    "name": "天枢-信维压测工位",
-    "product": "天枢-信维",
+    "id": "STATION-01",
+    "name": "示波器/串口监控工位",
+    "product": "ScopeSerial",
     "location": ""
   },
   "gui": {
     "api": "http://127.0.0.1:7878",
-    "min_version": "1.1.7"
+    "min_version": "1.1.8"
   },
   "serial": {
     "port": "COM7",
@@ -37,11 +37,11 @@
   "paths": {
     "isf_dir": "{data_root}/instrument_data/{product}",
     "report_dir": "{data_root}/test report/{product}",
-    "file_prefix": "天枢信维压测",
+    "file_prefix": "ScopeSerial",
     "lock_file": "{plugin_dir}/run.lock",
     "stop_file": "{plugin_dir}/run.stop",
     "status_file": "{data_root}/instrument_data/{product}/_loop_status.json",
-    "summary_md": "{data_root}/test report/{product}/天枢信维压测_总报告_{stamp}.md"
+    "summary_md": "{data_root}/test report/{product}/ScopeSerial_summary_{stamp}.md"
   },
   "serial_triggers": {
     "mode": "first_match",
