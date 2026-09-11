@@ -6,6 +6,7 @@ Machine-readable schemas:
 
 - [`schemas/plugin.schema.json`](./schemas/plugin.schema.json)
 - [`schemas/station.schema.json`](./schemas/station.schema.json)
+- [`schemas/marketplace-package.schema.json`](./schemas/marketplace-package.schema.json)
 
 ## Layout
 
@@ -121,4 +122,21 @@ node runner.mjs --plugin scope-serial-monitor --lifecycle run -- --file_prefix M
 node runner.mjs --plugin scope-serial-monitor --lifecycle stop
 ```
 
-Env: `WIPARSE_CLI`, `WIPARSE_URL`, `WIPARSE_DATA_ROOT`.
+## Marketplace (Phase 1 client)
+
+Local install / verify / pull from the cloud catalog:
+
+```powershell
+cd test-tools
+node marketplace.mjs list --json
+node marketplace.mjs verify --zip plugin.zip --meta meta.json
+node marketplace.mjs install --zip plugin.zip --meta meta.json --data-root <root>
+node marketplace.mjs catalog --url https://marketplace.example --channel stable
+node marketplace.mjs pull --plugin <id> --version <ver> --url https://marketplace.example
+```
+
+Install root defaults to `{data_root}/marketplace`. Runner merges **active** marketplace installs with bundled `plugins/` (marketplace wins on id conflict).
+
+Schemas: `schemas/marketplace-package.schema.json`. Cloud server: `services/testing-hub-marketplace/`.
+
+Env: `WIPARSE_CLI`, `WIPARSE_URL`, `WIPARSE_DATA_ROOT`, `WIPARSE_MARKETPLACE_URL`, `WIPARSE_MARKETPLACE_ALLOW_HTTP`.

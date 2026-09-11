@@ -99,6 +99,7 @@ pub struct TestToolPanel {
     cli_path: String,
     node_path: String,
     data_root: String,
+    marketplace_install_dir: String,
     plugins: Vec<PluginInfo>,
     selected: Option<String>,
     type_filter: String,
@@ -134,11 +135,13 @@ impl TestToolPanel {
             node_path = "node".into();
         }
         let data_root = cfg.apps.test_tool.data_root.clone();
+        let marketplace_install_dir = cfg.apps.test_tool.marketplace.install_dir.clone();
         let mut panel = Self {
             plugins_dir,
             cli_path,
             node_path,
             data_root,
+            marketplace_install_dir,
             plugins: Vec::new(),
             selected: None,
             type_filter: String::new(),
@@ -168,6 +171,7 @@ impl TestToolPanel {
             "cli_path": self.cli_path,
             "node_path": self.node_path,
             "data_root": self.data_root,
+            "marketplace_install_dir": self.marketplace_install_dir,
             "plugin_count": self.plugins.len(),
             "selected": self.selected,
             "running": self.job.is_some(),
@@ -1148,7 +1152,17 @@ impl TestToolPanel {
     }
 
     fn refresh_plugins(&mut self) {
-        self.plugins = scan_plugins(Path::new(self.plugins_dir.trim()));
+        let mut by_id: HashMap<String, PluginInfo> = HashMap::new();
+        for p in scan_plugins(Path::new(self.plugins_dir.trim())) {
+            by_id.insert(p.id.clone(), p);
+        }
+        let mkt_root = self.resolve_marketplace_root();
+        for p in scan_marketplace_active_plugins(&mkt_root) {
+            by_id.insert(p.id.clone(), p);
+        }
+        let mut plugins: Vec<PluginInfo> = by_id.into_values().collect();
+        plugins.sort_by(|a, b| a.id.to_ascii_lowercase().cmp(&b.id.to_ascii_lowercase()));
+        self.plugins = plugins;
         self.station_cache
             .retain(|id, _| self.plugins.iter().any(|p| p.id == *id));
         if let Some(sel) = &self.selected {
@@ -1161,6 +1175,18 @@ impl TestToolPanel {
         }
         self.load_param_defaults_for_selection();
         self.pending_station_merge = false;
+    }
+
+    fn resolve_marketplace_root(&self) -> PathBuf {
+        if !self.marketplace_install_dir.trim().is_empty() {
+            return PathBuf::from(self.marketplace_install_dir.trim());
+        }
+        let data_root = if self.data_root.trim().is_empty() {
+            project_path("")
+        } else {
+            PathBuf::from(self.data_root.trim())
+        };
+        wiparse_core::marketplace::default_marketplace_root(&data_root)
     }
 
     fn run_path_pick(&mut self, target: PathPickTarget) {
@@ -1210,6 +1236,7 @@ impl TestToolPanel {
             cfg.apps.test_tool.cli_path = self.cli_path.clone();
             cfg.apps.test_tool.node_path = self.node_path.clone();
             cfg.apps.test_tool.data_root = self.data_root.clone();
+            cfg.apps.test_tool.marketplace.install_dir = self.marketplace_install_dir.clone();
             let _ = wiparse_core::config::save_config(&cfg);
         }
     }
@@ -1344,6 +1371,10 @@ impl TestToolPanel {
         };
         args.push("--data-root".into());
         args.push(data_root);
+        args.push("--plugins-root".into());
+        args.push(self.plugins_dir.trim().to_owned());
+        args.push("--marketplace-dir".into());
+        args.push(self.resolve_marketplace_root().display().to_string());
 
         let extra = self.build_plugin_args();
         if !extra.is_empty() {
@@ -1736,111 +1767,145 @@ fn scan_plugins(root: &Path) -> Vec<PluginInfo> {
         if !path.is_dir() {
             continue;
         }
-        let manifest = path.join("plugin.json");
-        if !manifest.is_file() {
-            continue;
+        if let Some(info) = read_plugin_info(&path) {
+            out.push(info);
         }
-        let Ok(text) = fs::read_to_string(&manifest) else {
-            continue;
-        };
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
-            continue;
-        };
-        let id = v
-            .get("id")
-            .and_then(|x| x.as_str())
-            .unwrap_or_else(|| {
-                path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("plugin")
-            })
-            .to_owned();
-        if id.trim().is_empty() {
-            continue;
-        }
-        let params = v
-            .get("params")
-            .and_then(|x| x.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|p| {
-                        let name = p.get("name")?.as_str()?.to_owned();
-                        Some(PluginParam {
-                            name,
-                            type_name: p
-                                .get("type")
-                                .and_then(|x| x.as_str())
-                                .unwrap_or("string")
-                                .to_owned(),
-                            default: json_to_string(p.get("default")),
-                            path: p
-                                .get("path")
-                                .and_then(|x| x.as_str())
-                                .unwrap_or("")
-                                .to_owned(),
-                            label: p
-                                .get("label")
-                                .and_then(|x| x.as_str())
-                                .unwrap_or("")
-                                .to_owned(),
-                            label_zh: p
-                                .get("label_zh")
-                                .and_then(|x| x.as_str())
-                                .unwrap_or("")
-                                .to_owned(),
-                            help: p
-                                .get("help")
-                                .and_then(|x| x.as_str())
-                                .unwrap_or("")
-                                .to_owned(),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        out.push(PluginInfo {
-            id: id.clone(),
-            name: v
-                .get("name")
-                .and_then(|x| x.as_str())
-                .unwrap_or(&id)
-                .to_owned(),
-            name_zh: v
-                .get("name_zh")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .to_owned(),
-            type_name: v
-                .get("type")
-                .and_then(|x| x.as_str())
-                .unwrap_or("custom")
-                .to_owned(),
-            version: v
-                .get("version")
-                .and_then(|x| x.as_str())
-                .unwrap_or("0.0.0")
-                .to_owned(),
-            description: v
-                .get("description")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .to_owned(),
-            entry: v
-                .get("entry")
-                .and_then(|x| x.as_str())
-                .unwrap_or("index.mjs")
-                .to_owned(),
-            config: v
-                .get("config")
-                .and_then(|x| x.as_str())
-                .unwrap_or("station.json")
-                .to_owned(),
-            dir: path,
-            params,
-        });
     }
     out.sort_by(|a, b| a.id.to_ascii_lowercase().cmp(&b.id.to_ascii_lowercase()));
     out
+}
+
+fn scan_marketplace_active_plugins(marketplace_root: &Path) -> Vec<PluginInfo> {
+    let mut out = Vec::new();
+    let registry = marketplace_root.join("registry.json");
+    let Ok(text) = fs::read_to_string(&registry) else {
+        return out;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return out;
+    };
+    let Some(plugins) = v.get("plugins").and_then(|x| x.as_object()) else {
+        return out;
+    };
+    for (_id, entry) in plugins {
+        let Some(active) = entry.get("active").and_then(|x| x.as_str()) else {
+            continue;
+        };
+        let dir = entry
+            .get("versions")
+            .and_then(|vers| vers.get(active))
+            .and_then(|ver| ver.get("dir"))
+            .and_then(|d| d.as_str())
+            .map(PathBuf::from);
+        let Some(dir) = dir else {
+            continue;
+        };
+        if let Some(info) = read_plugin_info(&dir) {
+            out.push(info);
+        }
+    }
+    out
+}
+
+fn read_plugin_info(path: &Path) -> Option<PluginInfo> {
+    let manifest = path.join("plugin.json");
+    if !manifest.is_file() {
+        return None;
+    }
+    let text = fs::read_to_string(&manifest).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let id = v
+        .get("id")
+        .and_then(|x| x.as_str())
+        .unwrap_or_else(|| {
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("plugin")
+        })
+        .to_owned();
+    if id.trim().is_empty() {
+        return None;
+    }
+    let params = v
+        .get("params")
+        .and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| {
+                    let name = p.get("name")?.as_str()?.to_owned();
+                    Some(PluginParam {
+                        name,
+                        type_name: p
+                            .get("type")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("string")
+                            .to_owned(),
+                        default: json_to_string(p.get("default")),
+                        path: p
+                            .get("path")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_owned(),
+                        label: p
+                            .get("label")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_owned(),
+                        label_zh: p
+                            .get("label_zh")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_owned(),
+                        help: p
+                            .get("help")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_owned(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(PluginInfo {
+        id: id.clone(),
+        name: v
+            .get("name")
+            .and_then(|x| x.as_str())
+            .unwrap_or(&id)
+            .to_owned(),
+        name_zh: v
+            .get("name_zh")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_owned(),
+        type_name: v
+            .get("type")
+            .and_then(|x| x.as_str())
+            .unwrap_or("custom")
+            .to_owned(),
+        version: v
+            .get("version")
+            .and_then(|x| x.as_str())
+            .unwrap_or("0.0.0")
+            .to_owned(),
+        description: v
+            .get("description")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_owned(),
+        entry: v
+            .get("entry")
+            .and_then(|x| x.as_str())
+            .unwrap_or("index.mjs")
+            .to_owned(),
+        config: v
+            .get("config")
+            .and_then(|x| x.as_str())
+            .unwrap_or("station.json")
+            .to_owned(),
+        dir: path.to_path_buf(),
+        params,
+    })
 }
 
 fn load_station_json(plugin: &PluginInfo) -> serde_json::Value {

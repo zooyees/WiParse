@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wiparse.local/schemas/marketplace-package.schema.json",
+  "title": "WiParse Testing Hub Marketplace Package Metadata",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["id", "version", "sha256", "size"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$" },
+    "version": { "type": "string", "minLength": 1 },
+    "name": { "type": "string" },
+    "name_zh": { "type": "string" },
+    "type": {
+      "type": "string",
+      "enum": ["smoke", "serial", "instrument", "capture_loop", "custom"]
+    },
+    "description": { "type": "string" },
+    "publisher": { "type": "string" },
+    "channel": {
+      "type": "string",
+      "enum": ["stable", "beta", "internal"]
+    },
+    "license": { "type": "string" },
+    "repository": { "type": "string" },
+    "engines": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "node": { "type": "string" },
+        "wiparse": { "type": "string" }
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "size": { "type": "integer", "minimum": 0 },
+    "signature": {
+      "type": ["string", "null"],
+      "description": "Optional detached Ed25519 signature (base64) over sha256 hex"
+    },
+    "published_at": { "type": "string" },
+    "download_url": { "type": "string" },
+    "download_path": { "type": "string" },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "min_wiparse": { "type": "string" }
+      }
+    },
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "gui.api",
+              "cli",
+              "serial",
+              "fs.data_root",
+              "fs.plugin_dir",
+              "network.outbound"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

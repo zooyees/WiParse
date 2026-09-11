@@ -37,7 +37,9 @@ WiParse-R/
 │   ├── wiparse-core/   # 配置、路径、协议、仪表驱动、更新
 │   ├── wiparse-cli/    # JSON CLI（`dist/WiParse-CLI.exe`）
 │   └── wiparse-gui/    # egui 桌面（`dist/WiParse.exe`）
-├── test-tools/         # 集成测试插件（runner + plugins）
+├── test-tools/         # 集成测试插件（runner + marketplace 客户端）
+├── services/
+│   └── testing-hub-marketplace/  # 插件市场云端目录/制品服务
 ├── mcp/wiparse/        # MCP 服务（需已启动的 GUI HTTP）
 ├── docs/               # 变更、CLI、部署、工位闭环
 └── dist/               # 打包产物
@@ -125,7 +127,9 @@ WiParse-R/
 │   ├── wiparse-core/   # config, paths, protocol, instruments, update
 │   ├── wiparse-cli/    # JSON CLI (`dist/WiParse-CLI.exe`)
 │   └── wiparse-gui/    # egui desktop (`dist/WiParse.exe`)
-├── test-tools/         # Testing Hub plugins (runner + plugins)
+├── test-tools/         # Testing Hub plugins (runner + marketplace client)
+├── services/
+│   └── testing-hub-marketplace/  # Plugin marketplace catalog/artifact server
 ├── mcp/wiparse/        # MCP server (requires running GUI HTTP API)
 ├── docs/               # changelog, CLI, deploy, workstation
 └── dist/               # packaged binaries

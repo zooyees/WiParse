@@ -1,0 +1,24 @@
+{
+  "id": "demo-marketplace-plugin",
+  "name": "Demo Marketplace Plugin",
+  "type": "smoke",
+  "version": "1.0.0",
+  "entry": "index.mjs",
+  "capabilities": [
+    "preflight",
+    "run"
+  ],
+  "publisher": "wiparse",
+  "marketplace": {
+    "channel": "stable"
+  },
+  "sandbox": {
+    "permissions": [
+      "gui.api",
+      "cli"
+    ]
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

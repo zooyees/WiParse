@@ -6,6 +6,21 @@
 
 ---
 
+## Unreleased — Testing Hub 插件市场基础设施
+
+### Phase 1（WiParse 内）
+
+- 市场契约与 schema：`test-tools/schemas/marketplace-package.schema.json`；`plugin.json` 可选 `publisher` / `sandbox` / `marketplace.channel`。
+- Node 客户端：`marketplace-trust` / `registry` / `install` / `client` + `marketplace.mjs` CLI（verify / install / list / catalog / pull）。
+- Runner / GUI：合并发现捆绑插件与 `{data_root}/marketplace` 已激活版本；安装路径最小权限、SHA-256、可选 Ed25519 签名钩子。
+- Rust：`wiparse_core::marketplace` + `apps.test_tool.marketplace` 配置；补齐缺失的 `wiparse_core::log`（GUI 日志宿主依赖）。
+
+### Phase 2（云端骨架）
+
+- `services/testing-hub-marketplace`：catalog / 详情 / 下载 / Bearer 发布与删除；文件系统制品库；`node --test` 覆盖。
+
+---
+
 ## 1.1.8 — 2026-09-10
 
 Testing Hub 与示波器/串口监控插件的工业级加固：布局与交互、停止语义、路径共置、触发上升沿、遗留清理。关于页展示本版简化要点。

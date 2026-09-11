@@ -170,6 +170,9 @@ pub struct TestToolConfig {
     /// Data root for plugin path templates (`{data_root}`). Empty → project root.
     #[serde(default)]
     pub data_root: String,
+    /// Testing Hub marketplace client settings.
+    #[serde(default)]
+    pub marketplace: MarketplaceConfig,
 }
 
 impl Default for TestToolConfig {
@@ -179,6 +182,64 @@ impl Default for TestToolConfig {
             cli_path: String::new(),
             node_path: String::new(),
             data_root: String::new(),
+            marketplace: MarketplaceConfig::default(),
+        }
+    }
+}
+
+/// Remote plugin marketplace (catalog / install). Disabled by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketplaceConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// HTTPS base URL of the marketplace server.
+    #[serde(default)]
+    pub base_url: String,
+    /// Install root. Empty → `{data_root}/marketplace`.
+    #[serde(default)]
+    pub install_dir: String,
+    /// Default catalog channel filter.
+    #[serde(default = "default_marketplace_channel")]
+    pub channel: String,
+    #[serde(default)]
+    pub trust: MarketplaceTrustConfig,
+}
+
+fn default_marketplace_channel() -> String {
+    "stable".into()
+}
+
+impl Default for MarketplaceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: String::new(),
+            install_dir: String::new(),
+            channel: default_marketplace_channel(),
+            trust: MarketplaceTrustConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketplaceTrustConfig {
+    #[serde(default)]
+    pub require_signature: bool,
+    #[serde(default)]
+    pub public_keys: Vec<String>,
+    #[serde(default)]
+    pub allowed_publishers: Vec<String>,
+    #[serde(default)]
+    pub denied_publishers: Vec<String>,
+}
+
+impl Default for MarketplaceTrustConfig {
+    fn default() -> Self {
+        Self {
+            require_signature: false,
+            public_keys: Vec::new(),
+            allowed_publishers: Vec::new(),
+            denied_publishers: Vec::new(),
         }
     }
 }

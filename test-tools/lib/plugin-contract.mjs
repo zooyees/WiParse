@@ -18,6 +18,18 @@ export const PLUGIN_TYPES = Object.freeze([
   "custom",
 ]);
 
+/** Declared sandbox / isolation hooks for marketplace plugins. */
+export const SANDBOX_PERMISSIONS = Object.freeze([
+  "gui.api",
+  "cli",
+  "serial",
+  "fs.data_root",
+  "fs.plugin_dir",
+  "network.outbound",
+]);
+
+export const MARKETPLACE_CHANNELS = Object.freeze(["stable", "beta", "internal"]);
+
 export function projectRoot() {
   return path.resolve(__dirname, "..", "..");
 }
@@ -244,6 +256,31 @@ export function validatePluginManifest(raw) {
       });
     }
   }
+  if (raw.marketplace != null) {
+    if (typeof raw.marketplace !== "object" || Array.isArray(raw.marketplace)) {
+      errors.push("marketplace: must be object");
+    } else if (
+      raw.marketplace.channel != null &&
+      !MARKETPLACE_CHANNELS.includes(raw.marketplace.channel)
+    ) {
+      errors.push(`marketplace.channel: must be one of ${MARKETPLACE_CHANNELS.join("|")}`);
+    }
+  }
+  if (raw.sandbox != null) {
+    if (typeof raw.sandbox !== "object" || Array.isArray(raw.sandbox)) {
+      errors.push("sandbox: must be object");
+    } else if (raw.sandbox.permissions != null) {
+      if (!Array.isArray(raw.sandbox.permissions)) {
+        errors.push("sandbox.permissions: must be array");
+      } else {
+        for (const p of raw.sandbox.permissions) {
+          if (!SANDBOX_PERMISSIONS.includes(p)) {
+            errors.push(`sandbox.permissions: unknown '${p}'`);
+          }
+        }
+      }
+    }
+  }
   return { ok: errors.length === 0, errors };
 }
 
@@ -401,6 +438,8 @@ export function resolveLifecycle({ lifecycle, args } = {}) {
 export default {
   LIFECYCLES,
   PLUGIN_TYPES,
+  SANDBOX_PERMISSIONS,
+  MARKETPLACE_CHANNELS,
   projectRoot,
   resolveDataRoot,
   truthy,
