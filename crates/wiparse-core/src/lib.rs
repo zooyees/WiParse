@@ -9,6 +9,7 @@ pub mod evidence;
 pub mod i18n;
 pub mod instrument;
 pub mod log;
+pub mod marketplace;
 pub mod metrics;
 pub mod paths;
 pub mod protocol;

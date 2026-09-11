@@ -20,3 +20,10 @@ node_modules/
 test-tools/plugins/**/logs/
 **/_loop_status.json
 **/_loop_hint.txt
+
+# Marketplace server local data / caches
+services/testing-hub-marketplace/data/
+**/marketplace/cache/
+/marketplace/
+dist/wiparse-linux-marketplace-demo/
+dist/wiparse-linux-marketplace-demo.tar.gz

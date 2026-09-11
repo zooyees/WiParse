@@ -74,6 +74,39 @@
           }
         }
       }
+    },
+    "publisher": { "type": "string" },
+    "license": { "type": "string" },
+    "repository": { "type": "string" },
+    "marketplace": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "channel": {
+          "type": "string",
+          "enum": ["stable", "beta", "internal"]
+        }
+      }
+    },
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "gui.api",
+              "cli",
+              "serial",
+              "fs.data_root",
+              "fs.plugin_dir",
+              "network.outbound"
+            ]
+          }
+        }
+      }
     }
   }
 }

@@ -5,12 +5,15 @@
   "description": "Plugin-style Node.js test scripts driven by WiParse CLI",
   "type": "module",
   "bin": {
-    "wiparse-test-runner": "./runner.mjs"
+    "wiparse-test-runner": "./runner.mjs",
+    "wiparse-marketplace": "./marketplace.mjs"
   },
   "scripts": {
     "list": "node runner.mjs --list",
     "run": "node runner.mjs",
-    "example": "node runner.mjs --plugin example-smoke"
+    "example": "node runner.mjs --plugin example-smoke",
+    "marketplace": "node marketplace.mjs",
+    "test": "node --test test/*.test.mjs"
   },
   "engines": {
     "node": ">=18"

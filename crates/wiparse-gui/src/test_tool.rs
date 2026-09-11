@@ -1,5 +1,9 @@
 //! Testing Hub — discover Node.js plugins and run them via WiParse CLI / HTTP.
 
+use crate::market_jobs::{
+    installed_map_from_registry, marketplace_cli_path, spawn_catalog_refresh, spawn_pull_install,
+    spawn_uninstall, CatalogRow, HubMode, MarketJob, MarketJobEvent,
+};
 use crate::theme::{self as ui_theme, Tokens};
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Align2, CornerRadius, FontId, Frame, Margin, RichText, Stroke};
@@ -14,6 +18,7 @@ use std::time::{Duration, Instant};
 use wiparse_core::config::AppConfig;
 use wiparse_core::i18n::{tr, Lang};
 use wiparse_core::paths::project_path;
+use wiparse_core::marketplace::CHANNELS;
 
 const SIDE_W: f32 = 220.0;
 const PANEL_GAP: f32 = 8.0;
@@ -102,6 +107,8 @@ struct PluginInfo {
     entry: String,
     config: String,
     dir: PathBuf,
+    /// "bundled" | "marketplace"
+    source: String,
     params: Vec<PluginParam>,
 }
 
@@ -151,6 +158,18 @@ pub struct TestToolPanel {
     cli_path: String,
     node_path: String,
     data_root: String,
+    marketplace_install_dir: String,
+    marketplace_enabled: bool,
+    marketplace_base_url: String,
+    marketplace_channel: String,
+    hub_mode: HubMode,
+    catalog: Vec<CatalogRow>,
+    catalog_selected: Option<String>,
+    /// Version chosen in Market detail (defaults to latest).
+    catalog_selected_version: Option<String>,
+    catalog_status: String,
+    catalog_busy: bool,
+    market_job: Option<MarketJob>,
     plugins: Vec<PluginInfo>,
     selected: Option<String>,
     type_filter: String,
@@ -192,11 +211,34 @@ impl TestToolPanel {
             node_path = "node".into();
         }
         let data_root = cfg.apps.test_tool.data_root.clone();
+        let marketplace_install_dir = cfg.apps.test_tool.marketplace.install_dir.clone();
+        let marketplace_enabled = cfg.apps.test_tool.marketplace.enabled;
+        let marketplace_base_url = if cfg.apps.test_tool.marketplace.base_url.trim().is_empty() {
+            "http://127.0.0.1:8787".into()
+        } else {
+            cfg.apps.test_tool.marketplace.base_url.clone()
+        };
+        let marketplace_channel = if cfg.apps.test_tool.marketplace.channel.trim().is_empty() {
+            "stable".into()
+        } else {
+            cfg.apps.test_tool.marketplace.channel.clone()
+        };
         let mut panel = Self {
             plugins_dir,
             cli_path,
             node_path,
             data_root,
+            marketplace_install_dir,
+            marketplace_enabled,
+            marketplace_base_url,
+            marketplace_channel,
+            hub_mode: HubMode::Plugins,
+            catalog: Vec::new(),
+            catalog_selected: None,
+            catalog_selected_version: None,
+            catalog_status: String::new(),
+            catalog_busy: false,
+            market_job: None,
             plugins: Vec::new(),
             selected: None,
             type_filter: String::new(),
@@ -221,7 +263,11 @@ impl TestToolPanel {
     }
 
     pub fn status_text(&self) -> &str {
-        &self.status
+        if self.hub_mode == HubMode::Market && !self.catalog_status.trim().is_empty() {
+            &self.catalog_status
+        } else {
+            &self.status
+        }
     }
 
     pub fn api_snapshot(&self) -> serde_json::Value {
@@ -230,6 +276,7 @@ impl TestToolPanel {
             "cli_path": self.cli_path,
             "node_path": self.node_path,
             "data_root": self.data_root,
+            "marketplace_install_dir": self.marketplace_install_dir,
             "plugin_count": self.plugins.len(),
             "selected": self.selected,
             "running": self.job.is_some(),
@@ -335,7 +382,8 @@ impl TestToolPanel {
             self.merge_station_into_params();
         }
         self.poll_job(lang);
-        if self.job.is_some() {
+        self.poll_market_job(lang);
+        if self.job.is_some() || self.market_job.is_some() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(250));
         }
@@ -343,6 +391,48 @@ impl TestToolPanel {
         if let Some(target) = self.pending_pick.take() {
             self.run_path_pick(target);
         }
+
+        // Plugins | Market mode toggle
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let plugins_sel = self.hub_mode == HubMode::Plugins;
+            let market_sel = self.hub_mode == HubMode::Market;
+            if ui
+                .selectable_label(plugins_sel, tr(lang, "test_tool.plugins"))
+                .clicked()
+            {
+                self.hub_mode = HubMode::Plugins;
+            }
+            if ui
+                .selectable_label(market_sel, tr(lang, "test_tool.market"))
+                .clicked()
+            {
+                self.hub_mode = HubMode::Market;
+                if self.catalog.is_empty() && !self.catalog_busy {
+                    self.refresh_catalog(lang);
+                }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if self.hub_mode == HubMode::Market {
+                    let mut enabled = self.marketplace_enabled;
+                    if ui
+                        .checkbox(
+                            &mut enabled,
+                            RichText::new(tr(lang, "test_tool.market_enable"))
+                                .size(ui_theme::FONT_CAPTION),
+                        )
+                        .changed()
+                    {
+                        self.marketplace_enabled = enabled;
+                        self.persist_config();
+                        if enabled && self.catalog.is_empty() && !self.catalog_busy {
+                            self.refresh_catalog(lang);
+                        }
+                    }
+                }
+            });
+        });
+        ui.add_space(4.0);
 
         let avail = ui.available_size();
         let (full, _) = ui.allocate_exact_size(avail, egui::Sense::hover());
@@ -361,8 +451,16 @@ impl TestToolPanel {
             egui::vec2(view_w, full.height()),
         );
 
-        panel_in_rect(ui, side_rect, |ui| self.browser_panel(ui, lang, tokens));
-        panel_in_rect(ui, view_rect, |ui| self.runner_panel(ui, lang, tokens));
+        match self.hub_mode {
+            HubMode::Plugins => {
+                panel_in_rect(ui, side_rect, |ui| self.browser_panel(ui, lang, tokens));
+                panel_in_rect(ui, view_rect, |ui| self.runner_panel(ui, lang, tokens));
+            }
+            HubMode::Market => {
+                panel_in_rect(ui, side_rect, |ui| self.market_browser_panel(ui, lang, tokens));
+                panel_in_rect(ui, view_rect, |ui| self.market_detail_panel(ui, lang, tokens));
+            }
+        }
     }
 
     fn browser_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
@@ -497,7 +595,12 @@ impl TestToolPanel {
                                 } else {
                                     p.name.as_str()
                                 };
-                                let type_ver = format!("{} · v{}", p.type_name, p.version);
+                                let source_tag = if p.source == "marketplace" {
+                                    tr(lang, "test_tool.source_market")
+                                } else {
+                                    tr(lang, "test_tool.source_local")
+                                };
+                                let type_ver = format!("{} · v{} · {}", p.type_name, p.version, source_tag);
                                 let id = p.id.as_str();
                                 let is_sel = selected_id == Some(id);
                                 let tooltip = format!(
@@ -814,6 +917,79 @@ impl TestToolPanel {
             self.pending_pick = Some(PathPickTarget::Param(name));
             ui.ctx().request_repaint();
         }
+
+        ui.add_space(6.0);
+        egui::CollapsingHeader::new(
+            RichText::new(tr(lang, "test_tool.advanced"))
+                .size(ui_theme::FONT_CAPTION)
+                .strong()
+                .color(tokens.text_muted),
+        )
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            let full_w = ui.available_width();
+
+            ui.label(
+                RichText::new(tr(lang, "test_tool.node_path"))
+                    .size(ui_theme::FONT_CAPTION)
+                    .color(tokens.text_muted),
+            );
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut self.node_path)
+                    .desired_width(full_w)
+                    .hint_text("node")
+                    .margin(egui::vec2(6.0, 3.0)),
+            );
+            if r.lost_focus() {
+                self.persist_config();
+            }
+
+            ui.label(
+                RichText::new(tr(lang, "test_tool.cli_path"))
+                    .size(ui_theme::FONT_CAPTION)
+                    .color(tokens.text_muted),
+            );
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut self.cli_path)
+                    .desired_width(full_w)
+                    .hint_text("wiparse")
+                    .margin(egui::vec2(6.0, 3.0)),
+            );
+            if r.lost_focus() {
+                self.persist_config();
+            }
+
+            ui.label(
+                RichText::new(tr(lang, "test_tool.data_root"))
+                    .size(ui_theme::FONT_CAPTION)
+                    .color(tokens.text_muted),
+            );
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut self.data_root)
+                    .desired_width(full_w)
+                    .hint_text(".")
+                    .margin(egui::vec2(6.0, 3.0)),
+            );
+            if r.lost_focus() {
+                self.persist_config();
+            }
+
+            ui.label(
+                RichText::new(tr(lang, "test_tool.extra_args"))
+                    .size(ui_theme::FONT_CAPTION)
+                    .color(tokens.text_muted),
+            );
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut self.extra_args)
+                    .desired_width(full_w)
+                    .hint_text("--flag value")
+                    .margin(egui::vec2(6.0, 3.0)),
+            );
+            if r.lost_focus() {
+                self.persist_config();
+            }
+        });
     }
 
     fn paint_runner_output(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
@@ -947,213 +1123,57 @@ impl TestToolPanel {
             }
         }
 
-        let hover_resp: Option<egui::Response>;
-        if is_bool {
-            let mut on = is_truthy(self.param_values.get(&name).map(|s| s.as_str()).unwrap_or(""));
-            let resp = place_in_rect(
-                ui,
-                field_rect,
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| ui.checkbox(&mut on, ""),
-            );
-            if resp.changed() {
-                self.param_values
-                    .insert(name.clone(), if on { "true" } else { "false" }.into());
-                self.param_touched.insert(name.clone());
-            }
-            hover_resp = Some(resp);
-        } else if is_device {
-            let current = self
-                .param_values
-                .get(&name)
-                .cloned()
-                .unwrap_or_default();
-            let filtered: Vec<LiveDevice> = self
-                .live_devices
-                .iter()
-                .filter(|d| kind_allowed(&filter_kind, &d.kind))
-                .cloned()
-                .collect();
-            let selected_label = filtered
-                .iter()
-                .find(|d| d.device_id.to_string() == current)
-                .map(|d| d.label())
-                .unwrap_or_else(|| {
-                    if current.trim().is_empty() {
-                        tr(lang, "test_tool.device_auto")
-                    } else {
-                        current.clone()
-                    }
-                });
-            let mut picked = current.clone();
-            let resp = place_in_rect(
-                ui,
-                field_rect,
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    egui::ComboBox::from_id_salt(("hub_device", &name))
-                        .width(field_rect.width())
-                        .selected_text(selected_label)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut picked,
-                                String::new(),
-                                tr(lang, "test_tool.device_auto"),
-                            );
-                            if filtered.is_empty() {
-                                ui.label(
-                                    RichText::new(tr(lang, "test_tool.device_none"))
-                                        .size(ui_theme::FONT_CAPTION)
-                                        .color(tokens.text_muted),
-                                );
-                            }
-                            for d in &filtered {
-                                ui.selectable_value(
-                                    &mut picked,
-                                    d.device_id.to_string(),
-                                    d.label(),
-                                );
-                            }
-                        })
-                        .response
-                },
-            );
-            if picked != current {
-                self.apply_device_selection(&name, &picked);
-            }
-            hover_resp = Some(resp);
-        } else if is_enum && !options.is_empty() {
-            let current = self
-                .param_values
-                .get(&name)
-                .cloned()
-                .unwrap_or_default();
-            let selected_label = options
-                .iter()
-                .find(|(v, _, _)| v == &current)
-                .map(|(v, en, zh)| {
-                    if matches!(lang, Lang::Zh) && !zh.is_empty() {
-                        zh.clone()
-                    } else if !en.is_empty() {
-                        en.clone()
-                    } else {
-                        v.clone()
-                    }
-                })
-                .unwrap_or_else(|| current.clone());
-            let mut picked = current.clone();
-            let resp = place_in_rect(
-                ui,
-                field_rect,
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    egui::ComboBox::from_id_salt(("hub_enum", &name))
-                        .width(field_rect.width())
-                        .selected_text(selected_label)
-                        .show_ui(ui, |ui| {
-                            for (value, en, zh) in &options {
-                                let lab = if matches!(lang, Lang::Zh) && !zh.is_empty() {
-                                    zh.as_str()
-                                } else if !en.is_empty() {
-                                    en.as_str()
-                                } else {
-                                    value.as_str()
-                                };
-                                ui.selectable_value(&mut picked, value.clone(), lab);
-                            }
-                        })
-                        .response
-                },
-            );
-            if picked != current {
-                self.param_values.insert(name.clone(), picked);
-                self.param_touched.insert(name.clone());
-            }
-            hover_resp = Some(resp);
-        } else if is_serial {
-            let current = self
-                .param_values
-                .get(&name)
-                .cloned()
-                .unwrap_or_default();
-            let mut ports = self.serial_ports.clone();
-            if !current.trim().is_empty() && !ports.iter().any(|p| p == &current) {
-                ports.insert(0, current.clone());
-            }
-            let mut picked = current.clone();
-            let selected_text = if current.trim().is_empty() {
-                tr(lang, "test_tool.serial_none")
+            let browse_gap = if is_path {
+                PATH_BROWSE_W + 4.0
             } else {
-                current.clone()
+                0.0
             };
-            let resp = place_in_rect(
-                ui,
-                field_rect,
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    egui::ComboBox::from_id_salt(("hub_serial", &name))
-                        .width(field_rect.width())
-                        .selected_text(selected_text)
-                        .show_ui(ui, |ui| {
-                            if ports.is_empty() {
-                                ui.label(
-                                    RichText::new(tr(lang, "test_tool.serial_none"))
-                                        .size(ui_theme::FONT_CAPTION)
-                                        .color(tokens.text_muted),
-                                );
-                            }
-                            for p in &ports {
-                                ui.selectable_value(&mut picked, p.clone(), p);
-                            }
-                        })
-                        .response
-                },
-            );
-            if picked != current {
-                self.param_values.insert(name.clone(), picked);
-                self.param_touched.insert(name.clone());
-            }
-            hover_resp = Some(resp);
-        } else {
-            let entry = self.param_values.entry(name.clone()).or_default();
-            let resp = place_in_rect(
-                ui,
-                field_rect,
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
-                    ui.add_sized(
-                        field_rect.size(),
-                        egui::TextEdit::singleline(entry)
-                            .desired_width(field_rect.width())
-                            .clip_text(true)
-                            .hint_text(&hint)
-                            .margin(egui::vec2(6.0, 3.0)),
+            let field_w = (ui.available_width() - browse_gap).max(48.0);
+            let is_bool = p.type_name.eq_ignore_ascii_case("boolean")
+                || p.type_name.eq_ignore_ascii_case("bool");
+            if is_bool {
+                let entry = self.param_values.entry(name.clone()).or_default();
+                if entry.is_empty() {
+                    *entry = if p.default.eq_ignore_ascii_case("true") {
+                        "true".into()
+                    } else {
+                        "false".into()
+                    };
+                }
+                let mut on = entry.eq_ignore_ascii_case("true")
+                    || entry == "1"
+                    || entry.eq_ignore_ascii_case("yes");
+                let resp = ui.checkbox(&mut on, "");
+                if resp.changed() {
+                    *self.param_values.entry(name.clone()).or_default() =
+                        if on { "true".into() } else { "false".into() };
+                }
+                if !help.is_empty() {
+                    resp.on_hover_text(help);
+                }
+            } else {
+                let entry = self.param_values.entry(name.clone()).or_default();
+                let resp = ui.add_sized(
+                    egui::vec2(field_w, ui_theme::CTRL_H),
+                    egui::TextEdit::singleline(entry)
+                        .desired_width(field_w)
+                        .hint_text(hint)
+                        .margin(egui::vec2(6.0, 3.0)),
+                );
+                if !help.is_empty() {
+                    resp.on_hover_text(help);
+                }
+                if is_path
+                    && ui_theme::secondary_btn_sized(
+                        ui,
+                        tokens,
+                        "…",
+                        egui::vec2(PATH_BROWSE_W, ui_theme::CTRL_H),
                     )
-                },
-            );
-            if resp.changed() {
-                self.param_touched.insert(name.clone());
-            }
-            hover_resp = Some(resp);
-        }
-        if let Some(resp) = hover_resp {
-            if !help.is_empty() {
-                resp.on_hover_text(help);
-            }
-        }
-        if is_path {
-            let clicked = place_in_rect(
-                ui,
-                btn_rect,
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
-                    ui_theme::secondary_btn_sized(ui, tokens, "…", btn_rect.size()).clicked()
-                },
-            );
-            if clicked {
-                *pending_param = Some(name);
+                    .clicked()
+                {
+                    *pending_param = Some(name);
+                }
             }
         }
     }
@@ -1591,7 +1611,17 @@ impl TestToolPanel {
     }
 
     fn refresh_plugins(&mut self) {
-        self.plugins = scan_plugins(Path::new(self.plugins_dir.trim()));
+        let mut by_id: HashMap<String, PluginInfo> = HashMap::new();
+        for p in scan_plugins(Path::new(self.plugins_dir.trim())) {
+            by_id.insert(p.id.clone(), p);
+        }
+        let mkt_root = self.resolve_marketplace_root();
+        for p in scan_marketplace_active_plugins(&mkt_root) {
+            by_id.insert(p.id.clone(), p);
+        }
+        let mut plugins: Vec<PluginInfo> = by_id.into_values().collect();
+        plugins.sort_by(|a, b| a.id.to_ascii_lowercase().cmp(&b.id.to_ascii_lowercase()));
+        self.plugins = plugins;
         self.station_cache
             .retain(|id, _| self.plugins.iter().any(|p| p.id == *id));
         if let Some(sel) = &self.selected {
@@ -1604,6 +1634,18 @@ impl TestToolPanel {
         }
         self.load_param_defaults_for_selection();
         self.pending_station_merge = false;
+    }
+
+    fn resolve_marketplace_root(&self) -> PathBuf {
+        if !self.marketplace_install_dir.trim().is_empty() {
+            return PathBuf::from(self.marketplace_install_dir.trim());
+        }
+        let data_root = if self.data_root.trim().is_empty() {
+            project_path("")
+        } else {
+            PathBuf::from(self.data_root.trim())
+        };
+        wiparse_core::marketplace::default_marketplace_root(&data_root)
     }
 
     fn run_path_pick(&mut self, target: PathPickTarget) {
@@ -1654,8 +1696,634 @@ impl TestToolPanel {
             cfg.apps.test_tool.cli_path = self.cli_path.clone();
             cfg.apps.test_tool.node_path = self.node_path.clone();
             cfg.apps.test_tool.data_root = self.data_root.clone();
+            cfg.apps.test_tool.marketplace.install_dir = self.marketplace_install_dir.clone();
+            cfg.apps.test_tool.marketplace.enabled = self.marketplace_enabled;
+            cfg.apps.test_tool.marketplace.base_url = self.marketplace_base_url.clone();
+            cfg.apps.test_tool.marketplace.channel = self.marketplace_channel.clone();
             let _ = wiparse_core::config::save_config(&cfg);
         }
+    }
+
+    fn data_root_resolved(&self) -> String {
+        if self.data_root.trim().is_empty() {
+            project_path("").display().to_string()
+        } else {
+            self.data_root.trim().to_owned()
+        }
+    }
+
+    fn refresh_catalog(&mut self, lang: Lang) {
+        if self.catalog_busy {
+            return;
+        }
+        let url = self.marketplace_base_url.trim().to_owned();
+        if url.is_empty() {
+            self.catalog_status = tr(lang, "test_tool.market_no_url").to_string();
+            return;
+        }
+        if !self.marketplace_enabled {
+            self.marketplace_enabled = true;
+            self.persist_config();
+        }
+        self.catalog_busy = true;
+        self.catalog_status = tr(lang, "test_tool.market_loading").to_string();
+        let installed =
+            installed_map_from_registry(&self.resolve_marketplace_root());
+        self.market_job = Some(spawn_catalog_refresh(
+            url,
+            self.marketplace_channel.clone(),
+            installed,
+        ));
+    }
+
+    fn install_selected_catalog_plugin(&mut self, lang: Lang) {
+        let Some(id) = self.catalog_selected.clone() else {
+            return;
+        };
+        let Some(row) = self.catalog.iter().find(|r| r.id == id).cloned() else {
+            return;
+        };
+        let version = self
+            .catalog_selected_version
+            .clone()
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| row.versions.first().cloned())
+            .unwrap_or_else(|| row.latest_version.clone());
+        let url = self.marketplace_base_url.trim().to_owned();
+        if url.is_empty() {
+            self.catalog_status = tr(lang, "test_tool.market_no_url").to_string();
+            return;
+        }
+        let node = self.node_path.trim().to_owned();
+        let cli = marketplace_cli_path();
+        if !cli.is_file() {
+            self.catalog_status = format!("{} {}", tr(lang, "test_tool.market_missing_cli"), cli.display());
+            return;
+        }
+        self.catalog_busy = true;
+        self.catalog_status = tr(lang, "test_tool.market_installing")
+            .replace("{id}", &id)
+            .replace("{version}", &version);
+        self.append_log(
+            LogKind::System,
+            &format!("—— marketplace install {id}@{version} ——\n"),
+        );
+        self.market_job = Some(spawn_pull_install(
+            node,
+            cli,
+            url,
+            id,
+            version,
+            self.data_root_resolved(),
+            self.resolve_marketplace_root().display().to_string(),
+        ));
+    }
+
+    fn uninstall_selected_catalog_plugin(&mut self, lang: Lang) {
+        let Some(id) = self.catalog_selected.clone() else {
+            return;
+        };
+        let Some(row) = self.catalog.iter().find(|r| r.id == id).cloned() else {
+            return;
+        };
+        let Some(version) = row.installed_version.clone() else {
+            self.catalog_status = tr(lang, "test_tool.market_not_installed").to_string();
+            return;
+        };
+        let node = self.node_path.trim().to_owned();
+        let cli = marketplace_cli_path();
+        self.catalog_busy = true;
+        self.catalog_status = tr(lang, "test_tool.market_uninstalling")
+            .replace("{id}", &id)
+            .replace("{version}", &version);
+        self.market_job = Some(spawn_uninstall(
+            node,
+            cli,
+            id,
+            version,
+            self.data_root_resolved(),
+            self.resolve_marketplace_root().display().to_string(),
+        ));
+    }
+
+    fn poll_market_job(&mut self, lang: Lang) {
+        let mut events = Vec::new();
+        let mut disconnected = false;
+        if let Some(job) = self.market_job.as_ref() {
+            loop {
+                match job.rx.try_recv() {
+                    Ok(ev) => events.push(ev),
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        disconnected = true;
+                        break;
+                    }
+                }
+            }
+        } else {
+            return;
+        }
+
+        let mut done = disconnected;
+        for ev in events {
+            match ev {
+                MarketJobEvent::Log(t) => {
+                    self.append_log(LogKind::System, &t);
+                }
+                MarketJobEvent::CatalogOk(rows) => {
+                    self.catalog = rows;
+                    if self.catalog_selected.is_none() {
+                        self.catalog_selected = self.catalog.first().map(|r| r.id.clone());
+                    }
+                    self.catalog_status = tr(lang, "test_tool.market_catalog_count")
+                        .replace("{n}", &self.catalog.len().to_string());
+                    // Keep detail version selection coherent with selected row.
+                    if let Some(sel) = self.catalog_selected.clone() {
+                        if let Some(row) = self.catalog.iter().find(|r| r.id == sel) {
+                            if self.catalog_selected_version.as_deref()
+                                .map(|v| !row.versions.iter().any(|x| x == v) && v != row.latest_version.as_str())
+                                .unwrap_or(true)
+                            {
+                                self.catalog_selected_version = Some(row.latest_version.clone());
+                            }
+                        }
+                    }
+                    self.catalog_busy = false;
+                    done = true;
+                }
+                MarketJobEvent::CatalogErr(e) => {
+                    self.catalog_status = e.clone();
+                    self.append_log(LogKind::System, &format!("[marketplace] catalog error: {e}\n"));
+                    self.catalog_busy = false;
+                    done = true;
+                }
+                MarketJobEvent::InstallOk { id, version, dir } => {
+                    self.append_log(
+                        LogKind::System,
+                        &format!("[marketplace] installed {id}@{version} → {dir}\n"),
+                    );
+                    self.catalog_status = tr(lang, "test_tool.market_installed_ok")
+                        .replace("{id}", &id)
+                        .replace("{version}", &version);
+                    self.catalog_busy = false;
+                    done = true;
+                    self.refresh_plugins();
+                    self.selected = Some(id.clone());
+                    self.load_param_defaults_for_selection();
+                    let installed = installed_map_from_registry(&self.resolve_marketplace_root());
+                    for row in &mut self.catalog {
+                        if let Some((_, v)) = installed.iter().find(|(i, _)| i == &row.id) {
+                            row.installed = true;
+                            row.installed_version = Some(v.clone());
+                        }
+                    }
+                }
+                MarketJobEvent::InstallErr { id, message } => {
+                    self.append_log(
+                        LogKind::System,
+                        &format!("[marketplace] install failed {id}: {message}\n"),
+                    );
+                    self.catalog_status = message;
+                    self.catalog_busy = false;
+                    done = true;
+                }
+                MarketJobEvent::UninstallOk { id, version } => {
+                    self.append_log(
+                        LogKind::System,
+                        &format!("[marketplace] uninstalled {id}@{version}\n"),
+                    );
+                    self.catalog_status = tr(lang, "test_tool.market_uninstalled_ok")
+                        .replace("{id}", &id)
+                        .replace("{version}", &version);
+                    self.catalog_busy = false;
+                    done = true;
+                    self.refresh_plugins();
+                    for row in &mut self.catalog {
+                        if row.id == id {
+                            row.installed = false;
+                            row.installed_version = None;
+                        }
+                    }
+                }
+                MarketJobEvent::UninstallErr { id, message } => {
+                    self.append_log(
+                        LogKind::System,
+                        &format!("[marketplace] uninstall failed {id}: {message}\n"),
+                    );
+                    self.catalog_status = message;
+                    self.catalog_busy = false;
+                    done = true;
+                }
+            }
+        }
+        if done {
+            self.market_job = None;
+        }
+    }
+
+    fn market_browser_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        let card_w = ui.available_width();
+        let inner_w = (card_w - f32::from(CARD_MARGIN_X) * 2.0).max(80.0);
+        Frame::NONE
+            .fill(tokens.surface_bg)
+            .stroke(Stroke::new(1.0_f32, tokens.divider))
+            .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
+            .inner_margin(Margin::symmetric(CARD_MARGIN_X, 10))
+            .show(ui, |ui| {
+                ui.set_min_width(inner_w);
+                ui.set_max_width(inner_w);
+                ui.set_min_height(ui.available_height());
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
+                let ctrl_w = inner_w;
+
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(tr(lang, "test_tool.market"))
+                            .size(ui_theme::FONT_TITLE)
+                            .strong()
+                            .color(tokens.text_primary),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let refresh_w = if matches!(lang, Lang::Zh) { 48.0 } else { 64.0 };
+                        if ui_theme::secondary_btn_sized(
+                            ui,
+                            tokens,
+                            tr(lang, "btn.refresh_browser"),
+                            egui::vec2(refresh_w, ui_theme::CTRL_H),
+                        )
+                        .clicked()
+                            && !self.catalog_busy
+                        {
+                            self.refresh_catalog(lang);
+                        }
+                    });
+                });
+
+                ui.label(
+                    RichText::new(tr(lang, "test_tool.market_url"))
+                        .size(ui_theme::FONT_CAPTION)
+                        .color(tokens.text_muted),
+                );
+                let url_edit = ui.add(
+                    egui::TextEdit::singleline(&mut self.marketplace_base_url)
+                        .desired_width(ctrl_w)
+                        .hint_text("http://127.0.0.1:8787")
+                        .margin(egui::vec2(6.0, 4.0)),
+                );
+                if url_edit.lost_focus() {
+                    self.persist_config();
+                }
+
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(tr(lang, "test_tool.market_channel"))
+                            .size(ui_theme::FONT_CAPTION)
+                            .color(tokens.text_muted),
+                    );
+                    let mut ch = if self.marketplace_channel.trim().is_empty() {
+                        "stable".to_string()
+                    } else {
+                        self.marketplace_channel.clone()
+                    };
+                    let before = ch.clone();
+                    egui::ComboBox::from_id_salt("market_channel")
+                        .width((ctrl_w - 72.0).max(80.0))
+                        .selected_text(ch.clone())
+                        .show_ui(ui, |ui| {
+                            for c in CHANNELS {
+                                ui.selectable_value(&mut ch, (*c).to_string(), *c);
+                            }
+                        });
+                    if ch != before {
+                        self.marketplace_channel = ch;
+                        self.persist_config();
+                        if self.marketplace_enabled {
+                            self.refresh_catalog(lang);
+                        }
+                    }
+                });
+
+                if !self.catalog_status.is_empty() {
+                    let err = self.catalog_status.to_ascii_lowercase().contains("fail")
+                        || self.catalog_status.contains("错误")
+                        || self.catalog_status.contains("失败")
+                        || self.catalog_status.contains("missing")
+                        || self.catalog_status.contains("E_");
+                    let color = if err {
+                        tokens.stop_bg
+                    } else if self.catalog_busy {
+                        tokens.warning
+                    } else {
+                        tokens.text_muted
+                    };
+                    ui.label(
+                        RichText::new(&self.catalog_status)
+                            .size(ui_theme::FONT_CAPTION)
+                            .color(color),
+                    );
+                }
+
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if self.catalog.is_empty() {
+                            ui.label(
+                                RichText::new(tr(lang, "test_tool.market_empty"))
+                                    .color(tokens.text_muted),
+                            );
+                            return;
+                        }
+                        let mut clicked: Option<String> = None;
+                        for row in &self.catalog {
+                            let selected =
+                                self.catalog_selected.as_deref() == Some(row.id.as_str());
+                            let title = if matches!(lang, Lang::Zh) && !row.name_zh.is_empty() {
+                                row.name_zh.as_str()
+                            } else {
+                                row.name.as_str()
+                            };
+                            let update = row
+                                .installed_version
+                                .as_ref()
+                                .map(|v| v != &row.latest_version)
+                                .unwrap_or(false);
+                            let badge = if update {
+                                format!("{} ", tr(lang, "test_tool.market_update_badge"))
+                            } else if row.installed {
+                                "✓ ".to_string()
+                            } else {
+                                String::new()
+                            };
+                            let (rect, resp) = ui.allocate_exact_size(
+                                egui::vec2(ctrl_w, 42.0),
+                                egui::Sense::click(),
+                            );
+                            if ui.is_rect_visible(rect) {
+                                let fill = if selected {
+                                    tokens.accent.linear_multiply(0.18)
+                                } else if resp.hovered() {
+                                    tokens.accent.linear_multiply(0.08)
+                                } else {
+                                    egui::Color32::TRANSPARENT
+                                };
+                                ui.painter().rect_filled(rect, 4.0, fill);
+                                let galley1 = ui.fonts(|f| {
+                                    f.layout_no_wrap(
+                                        format!("{badge}{title}  v{}", row.latest_version),
+                                        egui::FontId::proportional(ui_theme::FONT_BODY),
+                                        tokens.text_primary,
+                                    )
+                                });
+                                let galley2 = ui.fonts(|f| {
+                                    f.layout_no_wrap(
+                                        format!(
+                                            "{} · {}",
+                                            row.type_name,
+                                            if row.publisher.is_empty() {
+                                                "-"
+                                            } else {
+                                                row.publisher.as_str()
+                                            }
+                                        ),
+                                        egui::FontId::proportional(ui_theme::FONT_CAPTION),
+                                        tokens.text_muted,
+                                    )
+                                });
+                                ui.painter().galley(
+                                    egui::pos2(rect.left() + 6.0, rect.top() + 4.0),
+                                    galley1,
+                                    tokens.text_primary,
+                                );
+                                ui.painter().galley(
+                                    egui::pos2(rect.left() + 6.0, rect.top() + 22.0),
+                                    galley2,
+                                    tokens.text_muted,
+                                );
+                            }
+                            if resp.clicked() {
+                                clicked = Some(row.id.clone());
+                            }
+                        }
+                        if let Some(id) = clicked {
+                            if let Some(row) = self.catalog.iter().find(|r| r.id == id) {
+                                self.catalog_selected_version =
+                                    Some(row.latest_version.clone());
+                            }
+                            self.catalog_selected = Some(id);
+                        }
+                    });
+            });
+    }
+
+    fn market_detail_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        Frame::NONE
+            .fill(tokens.surface_bg)
+            .stroke(Stroke::new(1.0_f32, tokens.divider))
+            .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
+            .inner_margin(Margin::same(12))
+            .show(ui, |ui| {
+                ui.set_min_height(ui.available_height());
+                let Some(id) = self.catalog_selected.clone() else {
+                    ui.label(
+                        RichText::new(tr(lang, "test_tool.market_select_hint"))
+                            .color(tokens.text_muted),
+                    );
+                    return;
+                };
+                let Some(row) = self.catalog.iter().find(|r| r.id == id).cloned() else {
+                    ui.label(tr(lang, "test_tool.market_empty"));
+                    return;
+                };
+                let title = if matches!(lang, Lang::Zh) && !row.name_zh.is_empty() {
+                    row.name_zh.clone()
+                } else {
+                    row.name.clone()
+                };
+                let update_available = row
+                    .installed_version
+                    .as_ref()
+                    .map(|v| v != &row.latest_version)
+                    .unwrap_or(false);
+
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(&title)
+                            .size(ui_theme::FONT_TITLE)
+                            .strong()
+                            .color(tokens.text_primary),
+                    );
+                    if update_available {
+                        ui.label(
+                            RichText::new(tr(lang, "test_tool.market_update_badge"))
+                                .size(ui_theme::FONT_CAPTION)
+                                .color(tokens.warning),
+                        );
+                    } else if row.installed {
+                        ui.label(
+                            RichText::new(tr(lang, "test_tool.market_installed"))
+                                .size(ui_theme::FONT_CAPTION)
+                                .color(tokens.success),
+                        );
+                    }
+                });
+                ui.label(
+                    RichText::new(format!("{} · {}", row.id, row.type_name))
+                        .size(ui_theme::FONT_CAPTION)
+                        .color(tokens.text_muted),
+                );
+                ui.add_space(8.0);
+
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(tr(lang, "test_tool.market_version"))
+                            .size(ui_theme::FONT_CAPTION)
+                            .color(tokens.text_muted),
+                    );
+                    let mut versions = row.versions.clone();
+                    if versions.is_empty() {
+                        versions.push(row.latest_version.clone());
+                    }
+                    if self.catalog_selected_version.is_none() {
+                        self.catalog_selected_version = Some(row.latest_version.clone());
+                    }
+                    let mut ver = self
+                        .catalog_selected_version
+                        .clone()
+                        .unwrap_or_else(|| row.latest_version.clone());
+                    egui::ComboBox::from_id_salt(("market_ver", row.id.as_str()))
+                        .width(140.0)
+                        .selected_text(ver.clone())
+                        .show_ui(ui, |ui| {
+                            for v in &versions {
+                                ui.selectable_value(&mut ver, v.clone(), v);
+                            }
+                        });
+                    self.catalog_selected_version = Some(ver);
+                });
+
+                ui.label(format!(
+                    "{}: {}",
+                    tr(lang, "test_tool.market_publisher"),
+                    if row.publisher.is_empty() {
+                        "-"
+                    } else {
+                        row.publisher.as_str()
+                    }
+                ));
+                ui.label(format!(
+                    "{}: {}",
+                    tr(lang, "test_tool.market_channel"),
+                    row.channel
+                ));
+                if row.installed {
+                    ui.label(format!(
+                        "{}: {}",
+                        tr(lang, "test_tool.market_installed"),
+                        row.installed_version.as_deref().unwrap_or("-")
+                    ));
+                    if update_available {
+                        ui.label(
+                            RichText::new(
+                                tr(lang, "test_tool.market_update_hint")
+                                    .replace("{version}", &row.latest_version),
+                            )
+                            .size(ui_theme::FONT_CAPTION)
+                            .color(tokens.warning),
+                        );
+                    }
+                }
+                ui.add_space(8.0);
+                if !row.description.is_empty() {
+                    ui.label(&row.description);
+                    ui.add_space(8.0);
+                }
+
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let install_label = if update_available {
+                        tr(lang, "test_tool.market_update")
+                            .replace("{version}", &row.latest_version)
+                    } else if row.installed {
+                        tr(lang, "test_tool.market_reinstall").to_string()
+                    } else {
+                        tr(lang, "test_tool.market_install").to_string()
+                    };
+                    if ui_theme::primary_btn_sized(
+                        ui,
+                        tokens,
+                        install_label,
+                        egui::vec2(120.0, ui_theme::CTRL_H),
+                    )
+                    .clicked()
+                        && !self.catalog_busy
+                    {
+                        if update_available {
+                            self.catalog_selected_version = Some(row.latest_version.clone());
+                        }
+                        self.install_selected_catalog_plugin(lang);
+                    }
+                    if row.installed
+                        && ui_theme::secondary_btn_sized(
+                            ui,
+                            tokens,
+                            tr(lang, "test_tool.market_open_plugins"),
+                            egui::vec2(120.0, ui_theme::CTRL_H),
+                        )
+                        .clicked()
+                    {
+                        self.selected = Some(row.id.clone());
+                        self.load_param_defaults_for_selection();
+                        self.hub_mode = HubMode::Plugins;
+                    }
+                    if row.installed
+                        && ui_theme::secondary_btn_sized(
+                            ui,
+                            tokens,
+                            tr(lang, "test_tool.market_uninstall"),
+                            egui::vec2(96.0, ui_theme::CTRL_H),
+                        )
+                        .clicked()
+                        && !self.catalog_busy
+                    {
+                        self.uninstall_selected_catalog_plugin(lang);
+                    }
+                    if ui_theme::secondary_btn_sized(
+                        ui,
+                        tokens,
+                        tr(lang, "test_tool.clear_log"),
+                        egui::vec2(72.0, ui_theme::CTRL_H),
+                    )
+                    .clicked()
+                    {
+                        self.log.clear();
+                    }
+                });
+
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(tr(lang, "test_tool.log"))
+                        .size(ui_theme::FONT_CAPTION)
+                        .color(tokens.text_muted),
+                );
+                egui::ScrollArea::vertical()
+                    .stick_to_bottom(true)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if self.log.is_empty() {
+                            ui.label(
+                                RichText::new(tr(lang, "test_tool.market_log_empty"))
+                                    .color(tokens.text_muted),
+                            );
+                        } else {
+                            ui.add(
+                                egui::TextEdit::multiline(&mut self.log.as_str())
+                                    .desired_width(f32::INFINITY)
+                                    .font(egui::TextStyle::Monospace)
+                                    .interactive(false),
+                            );
+                        }
+                    });
+            });
     }
 
     fn build_plugin_args(&self) -> Vec<String> {
@@ -1788,6 +2456,10 @@ impl TestToolPanel {
         };
         args.push("--data-root".into());
         args.push(data_root);
+        args.push("--plugins-root".into());
+        args.push(self.plugins_dir.trim().to_owned());
+        args.push("--marketplace-dir".into());
+        args.push(self.resolve_marketplace_root().display().to_string());
 
         let extra = self.build_plugin_args();
         if !extra.is_empty() {
@@ -2037,6 +2709,14 @@ impl TestToolPanel {
     }
 
     fn stop_job(&mut self) {
+        let marketplace_dir = self.resolve_marketplace_root().display().to_string();
+        let plugins_dir = self.plugins_dir.trim().to_owned();
+        let node = self.node_path.trim().to_owned();
+        let data_root = if self.data_root.trim().is_empty() {
+            project_path("").display().to_string()
+        } else {
+            self.data_root.trim().to_owned()
+        };
         let Some(job) = self.job.as_mut() else {
             return;
         };
@@ -2054,14 +2734,8 @@ impl TestToolPanel {
         };
         // Fallback only when host could not write the stop_file itself.
         if !wrote_stop {
-            let node = self.node_path.trim().to_owned();
             let runner = project_path("test-tools/runner.mjs");
             if !node.is_empty() && runner.is_file() {
-                let data_root = if self.data_root.trim().is_empty() {
-                    project_path("").display().to_string()
-                } else {
-                    self.data_root.trim().to_owned()
-                };
                 let mut stop_cmd = Command::new(&node);
                 stop_cmd
                     .args([
@@ -2072,6 +2746,10 @@ impl TestToolPanel {
                         "stop".into(),
                         "--data-root".into(),
                         data_root,
+                        "--plugins-root".into(),
+                        plugins_dir,
+                        "--marketplace-dir".into(),
+                        marketplace_dir,
                     ])
                     .current_dir(project_path("test-tools"))
                     .stdout(Stdio::null())
@@ -2473,120 +3151,147 @@ fn scan_plugins(root: &Path) -> Vec<PluginInfo> {
         if !path.is_dir() {
             continue;
         }
-        let manifest = path.join("plugin.json");
-        if !manifest.is_file() {
-            continue;
+        if let Some(info) = read_plugin_info(&path) {
+            out.push(info);
         }
-        let Ok(text) = fs::read_to_string(&manifest) else {
-            continue;
-        };
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
-            continue;
-        };
-        let id = v
-            .get("id")
-            .and_then(|x| x.as_str())
-            .unwrap_or_else(|| {
-                path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("plugin")
-            })
-            .to_owned();
-        if id.trim().is_empty() {
-            continue;
-        }
-        let params = v
-            .get("params")
-            .and_then(|x| x.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|p| {
-                        let name = p.get("name")?.as_str()?.to_owned();
-                        Some(PluginParam {
-                            name,
-                            type_name: p
-                                .get("type")
-                                .and_then(|x| x.as_str())
-                                .unwrap_or("string")
-                                .to_owned(),
-                            default: json_to_string(p.get("default")),
-                            path: p
-                                .get("path")
-                                .and_then(|x| x.as_str())
-                                .unwrap_or("")
-                                .to_owned(),
-                            label: p
-                                .get("label")
-                                .and_then(|x| x.as_str())
-                                .unwrap_or("")
-                                .to_owned(),
-                            label_zh: p
-                                .get("label_zh")
-                                .and_then(|x| x.as_str())
-                                .unwrap_or("")
-                                .to_owned(),
-                            help: p
-                                .get("help")
-                                .and_then(|x| x.as_str())
-                                .unwrap_or("")
-                                .to_owned(),
-                            filter_kind: parse_filter_kind(p),
-                            filter_from: p
-                                .get("filter_from")
-                                .and_then(|x| x.as_str())
-                                .unwrap_or("")
-                                .to_owned(),
-                            fills: parse_fills(p),
-                            options: parse_options(p),
-                            hidden: p.get("hidden").and_then(|x| x.as_bool()).unwrap_or(false),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        out.push(PluginInfo {
-            id: id.clone(),
-            name: v
-                .get("name")
-                .and_then(|x| x.as_str())
-                .unwrap_or(&id)
-                .to_owned(),
-            name_zh: v
-                .get("name_zh")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .to_owned(),
-            type_name: v
-                .get("type")
-                .and_then(|x| x.as_str())
-                .unwrap_or("custom")
-                .to_owned(),
-            version: v
-                .get("version")
-                .and_then(|x| x.as_str())
-                .unwrap_or("0.0.0")
-                .to_owned(),
-            description: v
-                .get("description")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .to_owned(),
-            entry: v
-                .get("entry")
-                .and_then(|x| x.as_str())
-                .unwrap_or("index.mjs")
-                .to_owned(),
-            config: v
-                .get("config")
-                .and_then(|x| x.as_str())
-                .unwrap_or("station.json")
-                .to_owned(),
-            dir: path,
-            params,
-        });
     }
     out.sort_by(|a, b| a.id.to_ascii_lowercase().cmp(&b.id.to_ascii_lowercase()));
     out
+}
+
+fn scan_marketplace_active_plugins(marketplace_root: &Path) -> Vec<PluginInfo> {
+    let mut out = Vec::new();
+    let registry = marketplace_root.join("registry.json");
+    let Ok(text) = fs::read_to_string(&registry) else {
+        return out;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return out;
+    };
+    let Some(plugins) = v.get("plugins").and_then(|x| x.as_object()) else {
+        return out;
+    };
+    for (_id, entry) in plugins {
+        let Some(active) = entry.get("active").and_then(|x| x.as_str()) else {
+            continue;
+        };
+        let dir = entry
+            .get("versions")
+            .and_then(|vers| vers.get(active))
+            .and_then(|ver| ver.get("dir"))
+            .and_then(|d| d.as_str())
+            .map(PathBuf::from);
+        let Some(dir) = dir else {
+            continue;
+        };
+        if let Some(mut info) = read_plugin_info(&dir) {
+            info.source = "marketplace".into();
+            out.push(info);
+        }
+    }
+    out
+}
+
+fn read_plugin_info(path: &Path) -> Option<PluginInfo> {
+    let manifest = path.join("plugin.json");
+    if !manifest.is_file() {
+        return None;
+    }
+    let text = fs::read_to_string(&manifest).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let id = v
+        .get("id")
+        .and_then(|x| x.as_str())
+        .unwrap_or_else(|| {
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("plugin")
+        })
+        .to_owned();
+    if id.trim().is_empty() {
+        return None;
+    }
+    let params = v
+        .get("params")
+        .and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| {
+                    let name = p.get("name")?.as_str()?.to_owned();
+                    Some(PluginParam {
+                        name,
+                        type_name: p
+                            .get("type")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("string")
+                            .to_owned(),
+                        default: json_to_string(p.get("default")),
+                        path: p
+                            .get("path")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_owned(),
+                        label: p
+                            .get("label")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_owned(),
+                        label_zh: p
+                            .get("label_zh")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_owned(),
+                        help: p
+                            .get("help")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_owned(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(PluginInfo {
+        id: id.clone(),
+        name: v
+            .get("name")
+            .and_then(|x| x.as_str())
+            .unwrap_or(&id)
+            .to_owned(),
+        name_zh: v
+            .get("name_zh")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_owned(),
+        type_name: v
+            .get("type")
+            .and_then(|x| x.as_str())
+            .unwrap_or("custom")
+            .to_owned(),
+        version: v
+            .get("version")
+            .and_then(|x| x.as_str())
+            .unwrap_or("0.0.0")
+            .to_owned(),
+        description: v
+            .get("description")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_owned(),
+        entry: v
+            .get("entry")
+            .and_then(|x| x.as_str())
+            .unwrap_or("index.mjs")
+            .to_owned(),
+        config: v
+            .get("config")
+            .and_then(|x| x.as_str())
+            .unwrap_or("station.json")
+            .to_owned(),
+        dir: path.to_path_buf(),
+        source: "bundled".into(),
+        params,
+    })
 }
 
 fn load_station_json(plugin: &PluginInfo) -> serde_json::Value {

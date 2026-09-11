@@ -25,6 +25,10 @@ import {
   truthy,
   validatePluginManifest,
 } from "./lib/plugin-contract.mjs";
+import {
+  resolveMarketplaceRoot,
+  resolveActivePluginDirs,
+} from "./lib/marketplace-registry.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PLUGINS_ROOT = path.join(__dirname, "plugins");
@@ -40,6 +44,8 @@ function parseArgs(argv) {
     lifecycle: null,
     json: false,
     skipValidate: false,
+    marketplaceDir: null,
+    pluginsRoot: null,
     passthrough: [],
   };
   let i = 0;
@@ -64,6 +70,13 @@ function parseArgs(argv) {
       out.dataRoot = argv[++i];
     } else if ((a === "--lifecycle" || a === "--life") && argv[i + 1]) {
       out.lifecycle = argv[++i];
+    } else if (
+      (a === "--marketplace-dir" || a === "--marketplace_dir") &&
+      argv[i + 1]
+    ) {
+      out.marketplaceDir = argv[++i];
+    } else if ((a === "--plugins-root" || a === "--plugins_root") && argv[i + 1]) {
+      out.pluginsRoot = argv[++i];
     } else if (a === "--help" || a === "-h") {
       out.help = true;
     } else {
@@ -134,6 +147,9 @@ function readManifest(dir, { validate = true } = {}) {
     capabilities: Array.isArray(raw.capabilities) ? raw.capabilities : ["run"],
     engines: raw.engines && typeof raw.engines === "object" ? raw.engines : undefined,
     params: Array.isArray(raw.params) ? raw.params : [],
+    publisher: raw.publisher ? String(raw.publisher) : undefined,
+    sandbox: raw.sandbox && typeof raw.sandbox === "object" ? raw.sandbox : undefined,
+    source: "bundled",
     dir,
     manifestPath,
   };
@@ -163,11 +179,50 @@ export function discoverPlugins(root = PLUGINS_ROOT, { includeInvalid = false } 
   return out;
 }
 
+/**
+ * Merge bundled plugins with marketplace active installs.
+ * Marketplace active wins on id conflict (with warning).
+ */
+export function discoverPluginsMerged({
+  pluginsRoot = PLUGINS_ROOT,
+  marketplaceRoot = null,
+  includeInvalid = false,
+} = {}) {
+  const bundled = discoverPlugins(pluginsRoot, { includeInvalid });
+  const byId = new Map();
+  for (const p of bundled) {
+    byId.set(p.id, p);
+  }
+  if (marketplaceRoot) {
+    for (const active of resolveActivePluginDirs(marketplaceRoot)) {
+      const m = readManifest(active.dir);
+      if (!m || m.invalid) {
+        if (m?.invalid) {
+          console.error(
+            `[runner] skip invalid marketplace plugin ${active.dir}: ${m.errors?.join("; ")}`
+          );
+        }
+        continue;
+      }
+      m.source = "marketplace";
+      m.marketplace_version = active.version;
+      if (byId.has(m.id) && byId.get(m.id).source !== "marketplace") {
+        console.error(
+          `[runner] warn: marketplace ${m.id}@${active.version} overrides bundled ${byId.get(m.id).dir}`
+        );
+      }
+      byId.set(m.id, m);
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
 function printHelp() {
   console.log(`Usage:
   node runner.mjs --list [--type smoke] [--json]
   node runner.mjs --plugin <id> [--lifecycle preflight|run|stop]
                   [--cli path] [--url url] [--data-root dir]
+                  [--marketplace-dir dir] [--plugins-root dir]
                   [-- --port COM3]
 
 Lifecycle:
@@ -176,6 +231,7 @@ Lifecycle:
   stop       Request graceful stop via paths.stop_file
 
 Plugins root: ${PLUGINS_ROOT}
+Marketplace active installs override bundled ids when present.
 See PLUGIN_SPEC.md
 `);
 }
@@ -232,7 +288,22 @@ async function main() {
     return;
   }
 
-  let plugins = discoverPlugins();
+  const dataRootEarly = resolveDataRoot(opts.dataRoot);
+  const pluginsRoot = opts.pluginsRoot
+    ? path.resolve(opts.pluginsRoot)
+    : PLUGINS_ROOT;
+  const marketplaceRoot = resolveMarketplaceRoot({
+    installDir:
+      opts.marketplaceDir ||
+      process.env.WIPARSE_MARKETPLACE_INSTALL_DIR ||
+      "",
+    dataRoot: dataRootEarly,
+  });
+
+  let plugins = discoverPluginsMerged({
+    pluginsRoot,
+    marketplaceRoot,
+  });
   if (opts.type) {
     const t = opts.type.toLowerCase();
     plugins = plugins.filter((p) => !p.invalid && p.type.toLowerCase() === t);
@@ -246,8 +317,9 @@ async function main() {
     } else {
       for (const p of plugins) {
         const caps = (p.capabilities || []).join(",");
+        const src = p.source === "marketplace" ? "marketplace" : "bundled";
         console.log(
-          `${p.id}\t${p.type}\tv${p.version}\t${p.name_zh || p.name}\t[${caps}]`
+          `${p.id}\t${p.type}\tv${p.version}\t${p.name_zh || p.name}\t[${caps}]\t${src}`
         );
       }
     }
@@ -261,7 +333,11 @@ async function main() {
 
   const plugin = plugins.find((p) => p.id === opts.plugin);
   if (!plugin) {
-    const all = discoverPlugins(PLUGINS_ROOT, { includeInvalid: true });
+    const all = discoverPluginsMerged({
+      pluginsRoot,
+      marketplaceRoot,
+      includeInvalid: true,
+    });
     const hit = all.find((p) => p.id === opts.plugin);
     if (!hit) {
       console.error(`plugin not found: ${opts.plugin}`);
@@ -340,7 +416,8 @@ async function main() {
     cliPath,
     url,
     log,
-    pluginsRoot: PLUGINS_ROOT,
+    pluginsRoot,
+    marketplaceRoot,
     pluginDir: plugin.dir,
     dataRoot,
     configPath: fs.existsSync(configPath) ? configPath : undefined,
@@ -349,7 +426,7 @@ async function main() {
   };
 
   console.log(
-    `[runner] plugin=${plugin.id} lifecycle=${lifecycle} type=${plugin.type} data_root=${dataRoot}`
+    `[runner] plugin=${plugin.id} lifecycle=${lifecycle} type=${plugin.type} source=${plugin.source || "bundled"} data_root=${dataRoot}`
   );
 
   try {

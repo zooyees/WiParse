@@ -9,6 +9,7 @@
 
 - [`schemas/plugin.schema.json`](./schemas/plugin.schema.json)
 - [`schemas/station.schema.json`](./schemas/station.schema.json)
+- [`schemas/marketplace-package.schema.json`](./schemas/marketplace-package.schema.json)
 
 ????????? HTTP / ??????
 
@@ -156,116 +157,21 @@ export default async function run(ctx) { /* ... */ }
 }
 ```
 
-??????? `filter.kind` ?? `dc_source`??????? `path` / `fills`?**??? Testing Hub?**
+## Marketplace (Phase 1 client)
 
-??????`pickInstrument`??VISA `resource` ? ? kind ? `device_id` ? kind+model ? ? kind ???????? session ?? `device_id` ???????
+Local install / verify / pull from the cloud catalog:
 
----
-
-## 5. ?????MUST?
-
-`loadStationConfig(ctx)` ???
-
-1. ? `station.json`
-2. `applyParamPaths`?Hub args ?? `params[].path`????????
-3. `expandTemplates`?`{data_root}` `{product}` `{file_prefix}` `{plugin_dir}`
-4. `{stamp}` ?????
-5. `colocateStatusWithIsf` ? `status_file = {isf_dir}/_loop_status.json`
-6. `colocateSummaryWithReport` ? `summary_md = {report_dir}/{file_prefix}_summary_{stamp}.md`
-
-MD ????????**?????**?? PNG ?????
-
----
-
-## 6. ?????????
-
-```js
-import { pickInstrument, suggestedParamsFromInstrument } from "../../lib/plugin-contract.mjs";
-
-const list = await http.invoke("instrument.list", {}, 30_000);
-const devices = list.data?.devices || [];
-const scope = pickInstrument(devices, {
-  deviceId: cfg.scope?.prefer_device_id,
-  resource: cfg.scope?.resource,
-  model: cfg.scope?.model,
-  kind: cfg.scope?.kind || "oscilloscope",
-});
-const suggested_params = suggestedParamsFromInstrument(scope, {
-  prefer_device_id: "device_id",
-  scope_resource: "resource",
-  scope_model: "model",
-  scope_kind: "kind",
-});
+```powershell
+cd test-tools
+node marketplace.mjs list --json
+node marketplace.mjs verify --zip plugin.zip --meta meta.json
+node marketplace.mjs install --zip plugin.zip --meta meta.json --data-root <root>
+node marketplace.mjs catalog --url https://marketplace.example --channel stable
+node marketplace.mjs pull --plugin <id> --version <ver> --url https://marketplace.example
 ```
 
-`devices[]` ???`device_id`?`resource`?`kind`?`identity.{manufacturer,model,serial,firmware}`?
+Install root defaults to `{data_root}/marketplace`. Runner merges **active** marketplace installs with bundled `plugins/` (marketplace wins on id conflict).
 
-?????????? Tek ? VISA?????????????????????? `resource` ??? `instrument.connect`?
+Schemas: `schemas/marketplace-package.schema.json`. Cloud server: `services/testing-hub-marketplace/`.
 
-?????? model = ??? kind ???????????????? MDO3014 ?????????
-
-???`ScopeStop` / `ScopeRun` ??? `instrument.command`?? GUI ????????????? SCPI?
-
----
-
-## 7. HTTP / invoke ??
-
-SDK?
-
-```js
-import { createHttpClient } from "../../lib/wiparse-sdk.mjs";
-const http = createHttpClient({ url: ctx.url, log: ctx.log });
-await http.health(15_000);
-await http.invoke("instrument.list", {}, 30_000);
-```
-
-?? method?
-
-| method | params |
-|--------|--------|
-| `instrument.list` | `{}` |
-| `instrument.connect` | `{ kind, resource }` |
-| `instrument.command` | `{ device_id, command, timeout_s }` |
-| `instrument.capture` | `{ device_id }` |
-| `instrument.waveform_source` | `{ device_id, dir, filename, overwrite, timeout_s }` |
-| `ui.instrument.select` | `{ device_id }` |
-| `serial.monitor.start` | `{ port, baud }` |
-| `serial.monitor.stop` / `serial.status` | |
-| `log.lines.get` | `{ tab_id, from_row, limit }` |
-
-capture ??? **??** `test.start` / `wait_line` / `ui.wave.browser`?? `log.lines.get` + `from_row` ???????? method ??? `GET /v1/capabilities`?
-
----
-
-## 8. HUD ? Output
-
-? `{isf_dir}/_loop_status.json`?`step`?`hint`?`cycle`?`elapsed_s`?`trigger`?`filename`?  
-`step`?`idle` / `armed` / `wait` / `processing` / `captured` / `stopped`?
-
-`ctx.log("info"|"stderr", text)`?text ? `\n` ???????? HTTP invoke ?????
-
-Stop??? `existsSync(stop_file)`?`finally` ??? ScopeRun / ???Hub ? stop_file ???? 30s ?????
-
----
-
-## 9. ? AI ????
-
-1. ??? `preflight` / `run` / `stop`?
-2. ? `plugin-contract` + `wiparse-sdk`?????? HTTP?
-3. ???????? `params[]`???? `instrument.list` + `suggested_params`?
-4. ????????? `crates/wiparse-gui`?
-5. ISF ? `isf_dir`?PDF/HTML/PNG/??? ? `report_dir`?????? ? `file_prefix`?
-6. MD ????????
-7. `ok: false` ??? `checks[]`?
-8. ?? `GET /v1/capabilities`????? method?
-
----
-
-## 10. Runner CLI
-
-```text
-node runner.mjs --list [--type capture_loop] [--json]
-node runner.mjs --plugin <id> --lifecycle preflight|run|stop
-                [--cli path] [--url url] [--data-root dir]
-                [-- --file_prefix MyLot --port COM7 --scope_resource USB0::...::INSTR]
-```
+Env: `WIPARSE_CLI`, `WIPARSE_URL`, `WIPARSE_DATA_ROOT`, `WIPARSE_MARKETPLACE_URL`, `WIPARSE_MARKETPLACE_ALLOW_HTTP`.

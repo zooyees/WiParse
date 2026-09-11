@@ -1,0 +1,26 @@
+{
+  "id": "market-preflight-lab",
+  "name": "Market Preflight Lab",
+  "name_zh": "市场预检实验",
+  "type": "smoke",
+  "version": "0.9.0",
+  "entry": "index.mjs",
+  "capabilities": [
+    "preflight",
+    "run"
+  ],
+  "description": "Rich preflight checks for Testing Hub marketplace UI demos.",
+  "publisher": "wiparse",
+  "marketplace": {
+    "channel": "stable"
+  },
+  "sandbox": {
+    "permissions": [
+      "gui.api",
+      "cli"
+    ]
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

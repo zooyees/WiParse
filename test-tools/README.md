@@ -18,4 +18,14 @@ node runner.mjs --plugin scope-serial-monitor --lifecycle stop
 
 GUI: open **集成测试 / Testing Hub**, pick **示波器/串口监控 (Scope & Serial Monitor)**, edit params, Preflight / Run / Stop.
 
-Env: `WIPARSE_CLI`, `WIPARSE_URL`, `WIPARSE_DATA_ROOT`.
+Env: `WIPARSE_CLI`, `WIPARSE_URL`, `WIPARSE_DATA_ROOT`, `WIPARSE_MARKETPLACE_URL`, `WIPARSE_MARKETPLACE_ALLOW_HTTP`.
+
+## Marketplace
+
+```powershell
+cd test-tools
+npm test
+node marketplace.mjs list --json
+```
+
+Cloud server: [`services/testing-hub-marketplace`](../services/testing-hub-marketplace).
