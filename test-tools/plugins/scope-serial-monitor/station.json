@@ -14,7 +14,7 @@
   },
   "gui": {
     "api": "http://127.0.0.1:7878",
-    "min_version": "1.1.8"
+    "min_version": "1.1.10"
   },
   "serial": {
     "port": "COM7",
@@ -22,9 +22,8 @@
   },
   "scope": {
     "kind": "oscilloscope",
-    "resource": "USB0::0x0699::0x0408::C047283::INSTR",
-    "prefer_device_id": 2,
-    "model": "MDO3014"
+    "resource": "",
+    "model": ""
   },
   "timing": {
     "post_trigger_delay_s": 0.3,
@@ -41,7 +40,7 @@
     "lock_file": "{plugin_dir}/run.lock",
     "stop_file": "{plugin_dir}/run.stop",
     "status_file": "{data_root}/instrument_data/{product}/_loop_status.json",
-    "summary_md": "{data_root}/test report/{product}/ScopeSerial_summary_{stamp}.md"
+    "summary_md": "{data_root}/test report/{product}/{file_prefix}_summary_{stamp}.md"
   },
   "serial_triggers": {
     "mode": "first_match",

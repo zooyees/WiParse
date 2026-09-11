@@ -1,5 +1,7 @@
 //! Unified VISA instrument workbench.
 
+use crate::plot::paint_envelope_columns;
+use crate::test_tool::LiveDevice;
 use crate::theme::{self, Tokens};
 use chrono::Local;
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -17,7 +19,6 @@ use wiparse_core::instrument::{
     AcquisitionBuffer, Capabilities, ControlCommand, Identity, InstrumentDevice, InstrumentKind,
     MeasureFunction, Reading, ResourceInfo, Sample, ScopeMeasType, WaveformTrace,
 };
-use crate::plot::paint_envelope_columns;
 use wiparse_core::wave_display::{build_overview_envelope, envelope_bounds, ScopeEnvelopeColumn};
 use wiparse_core::waveform_file::{
     join_tek_isf_channels, load_waveform_bytes, load_waveform_bytes_all, save_waveform_file,
@@ -311,6 +312,13 @@ pub struct InstrumentControlPanel {
     pending_save_delay_frames: u8,
     next_job_id: u64,
     job_results: Vec<InstrumentJobResult>,
+}
+
+fn kind_wire(kind: InstrumentKind) -> String {
+    serde_json::to_value(kind)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{kind:?}").to_ascii_lowercase())
 }
 
 impl InstrumentControlPanel {
@@ -714,6 +722,20 @@ impl InstrumentControlPanel {
 
     pub fn device_count(&self) -> usize {
         self.devices.len()
+    }
+
+    pub fn live_devices_for_hub(&self) -> Vec<LiveDevice> {
+        self.devices
+            .iter()
+            .map(|d| LiveDevice {
+                device_id: d.id,
+                resource: d.resource.clone(),
+                kind: kind_wire(d.kind),
+                model: d.identity.model.clone(),
+                manufacturer: d.identity.manufacturer.clone(),
+                serial: d.identity.serial.clone(),
+            })
+            .collect()
     }
 
     pub fn selected_device_id(&self) -> Option<u64> {

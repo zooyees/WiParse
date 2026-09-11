@@ -359,7 +359,30 @@ async function main() {
     }
     const raw = await dispatchLifecycle(mod, ctx, lifecycle);
     const result = normalizeResult(raw, lifecycle);
-    console.log(`[runner] result ${JSON.stringify(result)}`);
+    const bits = [
+      result.ok === false ? "FAIL" : "ok",
+      `lifecycle=${result.lifecycle || lifecycle}`,
+    ];
+    if (result.step) bits.push(`step=${result.step}`);
+    if (result.error) bits.push(`error=${result.error}`);
+    if (result.summary_md) bits.push(`md=${result.summary_md}`);
+    console.log(`[runner] ${bits.join(" ")}`);
+    if (Array.isArray(result.checks)) {
+      for (const c of result.checks) {
+        const mark = c?.ok ? "OK" : "X ";
+        const detail = c?.detail ? `  ${c.detail}` : "";
+        console.log(`  ${mark} ${c?.id || "check"}${detail}`);
+      }
+    }
+    if (result.suggested_params && typeof result.suggested_params === "object") {
+      console.log(
+        `[runner] result ${JSON.stringify({
+          type: "wiparse.plugin_result",
+          suggested_params: result.suggested_params,
+          suggested_params_policy: result.suggested_params_policy || "untouched",
+        })}`
+      );
+    }
     if (result.ok === false) process.exit(1);
   } catch (e) {
     const result = normalizeResult(
@@ -367,7 +390,7 @@ async function main() {
       lifecycle
     );
     console.error(`[runner] failed: ${result.error}`);
-    console.log(`[runner] result ${JSON.stringify(result)}`);
+    console.log(`[runner] FAIL lifecycle=${result.lifecycle} error=${result.error}`);
     process.exit(1);
   }
 }

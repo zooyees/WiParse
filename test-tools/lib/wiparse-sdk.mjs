@@ -123,7 +123,6 @@ export function createHttpClient(opts = {}) {
 
   async function invoke(method, params = {}, ms = 120_000, opts = {}) {
     const allowFail = Boolean(opts.allowFail);
-    log?.("info", `HTTP invoke ${method}\n`);
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), ms);
     try {
@@ -136,6 +135,7 @@ export function createHttpClient(opts = {}) {
       if (!res.ok) {
         const body = await res.text().catch(() => "");
         const msg = `HTTP ${res.status} ${method}: ${body.slice(0, 240)}`;
+        log?.("stderr", `${msg}\n`);
         if (allowFail) return { ok: false, error: msg };
         throw new Error(msg);
       }

@@ -2,9 +2,9 @@
 
 **[中文](#中文)** · **[English](#english)**
 
-无线充电测试工具（Rust）：桌面 GUI + JSON CLI + HTTP API + MCP。当前版本 **1.1.8**。
+无线充电测试工具（Rust）：桌面 GUI + JSON CLI + HTTP API + MCP。当前版本 **1.1.10**。
 
-Wireless charging test utility (Rust): desktop GUI + JSON CLI + HTTP API + MCP. Current version **1.1.8**.
+Wireless charging test utility (Rust): desktop GUI + JSON CLI + HTTP API + MCP. Current version **1.1.10**.
 
 ---
 

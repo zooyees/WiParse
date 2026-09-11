@@ -16,7 +16,8 @@ function logBanner(ctx, config) {
     `[scope-serial] product=${config.station?.product} prefix=${config.paths?.file_prefix}\n` +
       `[scope-serial] isf_dir=${config.paths?.isf_dir}\n` +
       `[scope-serial] report_dir=${config.paths?.report_dir}\n` +
-      `[scope-serial] port=${config.serial?.port}@${config.serial?.baud} api=${config.gui?.api}\n`
+      `[scope-serial] port=${config.serial?.port}@${config.serial?.baud} api=${config.gui?.api}\n` +
+      `[scope-serial] scope=${config.scope?.model || config.scope?.kind || "auto"} ${config.scope?.resource || ""}\n`
   );
 }
 

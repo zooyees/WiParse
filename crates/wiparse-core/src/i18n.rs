@@ -54,16 +54,14 @@ pub fn tr(lang: Lang, key: &str) -> String {
         (Lang::Zh, "about.notes_section") => "本版更新",
         (Lang::En, "about.notes_section") => "What's New",
         (Lang::Zh, "about.notes") => "\
-• Testing Hub：左右布局、整行选插件、参数单列对齐\n\
-• 示波器/串口监控：上升沿触发、状态与 ISF 共置、Stop 宽限 30s\n\
-• 隐藏 Node 控制台；预检含锁/串口；跨页触发上下文\n\
-• 移除遗留 tianshu 插件目录；start/stop 走 runner\n\
+• Testing Hub：仪器/串口参数由插件声明；预检自动回填当前已连接设备\n\
+• 参数类型新增 device / enum / serial_port，换仪器种类不必改平台\n\
+• 示波器插件不再写死 VISA/型号；报告名称仍决定总报告文件名\n\
 详细记录见 docs/CHANGELOG.md",
         (Lang::En, "about.notes") => "\
-• Testing Hub: L/R layout, full-row plugin select, aligned params\n\
-• Scope/Serial: rising-edge, status beside ISF, Stop grace 30s\n\
-• Hidden Node console; preflight lock/serial; cross-chunk context\n\
-• Removed legacy tianshu plugin; start/stop via runner\n\
+• Testing Hub: plugins declare instrument params; Preflight auto-fills the live device\n\
+• New param types device / enum / serial_port — Hub stays instrument-agnostic\n\
+• Scope plugin no longer hard-codes VISA/model; report prefix still names the summary MD\n\
 Details: docs/CHANGELOG.md",
         (Lang::Zh, "about.close") => "关闭",
         (Lang::En, "about.close") => "Close",
@@ -222,6 +220,12 @@ Details: docs/CHANGELOG.md",
         (Lang::En, "test_tool.status_stopped") => "Stopped",
         (Lang::Zh, "test_tool.status_busy") => "已有任务在运行",
         (Lang::En, "test_tool.status_busy") => "A job is already running",
+        (Lang::Zh, "test_tool.device_auto") => "自动（预检填充）",
+        (Lang::En, "test_tool.device_auto") => "Auto (fill on Preflight)",
+        (Lang::Zh, "test_tool.device_none") => "当前没有已连接仪器",
+        (Lang::En, "test_tool.device_none") => "No connected instruments",
+        (Lang::Zh, "test_tool.serial_none") => "未选择串口",
+        (Lang::En, "test_tool.serial_none") => "No serial port",
         (Lang::Zh, "test_tool.status_no_runner") => "未找到 test-tools/runner.mjs",
         (Lang::En, "test_tool.status_no_runner") => "Missing test-tools/runner.mjs",
         (Lang::Zh, "test_tool.status_no_node") => "请配置 Node.js 路径",

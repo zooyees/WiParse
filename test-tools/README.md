@@ -2,7 +2,7 @@
 
 Plugin-style scripts for the GUI **集成测试 / Testing Hub** panel (config key still `test_tool`).  
 Drive **WiParse GUI HTTP API** and/or **CLI**.  
-See **[PLUGIN_SPEC.md](./PLUGIN_SPEC.md)** for the contract (lifecycle, result shape, engines, schemas).
+See **[PLUGIN_SPEC.md](./PLUGIN_SPEC.md)** for the **2026-09-11 / GUI 1.1.10** contract (generic `device` params, preflight `suggested_params`, path colocation, HTTP invoke catalog). This is the document to hand to another developer or AI writing a plugin.
 
 ## Quick start
 

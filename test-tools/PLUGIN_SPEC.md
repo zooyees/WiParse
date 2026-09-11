@@ -1,124 +1,271 @@
-# WiParse Test Plugin Spec
+# WiParse Testing Hub ????
 
-Standard contract for Node.js plugins under `test-tools/plugins/<id>/`.
+**??** 2026-09-11  
+**??** WiParse GUI **1.1.10+**?????? `test_tool`?  
+**???** Node.js **>=18**?ESM `.mjs`  
+**??** ????? / ?? AI
 
-Machine-readable schemas:
+?? schema?
 
 - [`schemas/plugin.schema.json`](./schemas/plugin.schema.json)
 - [`schemas/station.schema.json`](./schemas/station.schema.json)
 
-## Layout
+????????? HTTP / ??????
+
+- `lib/plugin-contract.mjs` — ????????`normalizeResult`?`pickInstrument`
+- `lib/wiparse-sdk.mjs` — HTTP `/v1/health` + `/v1/invoke`
+- `runner.mjs` — Hub ? CLI ?????
+
+???
+
+- `plugins/example-smoke` — CLI + health
+- `plugins/scope-serial-monitor` — capture_loop????? ? ????? / ?? / ISF / PDF / ??? MD
+
+---
+
+## 1. ????
+
+Testing Hub **????????????????**????????
+
+1. ?? `plugins/<id>/plugin.json`
+2. ? `params[]` ???????????
+3. ????? `--name value` ?? runner
+4. ??????? `suggested_params`?????????
+
+??????? VISA???? **????**?`plugin.json` / `station.json` / ?? JS????? GUI?
+
+Hub ???
+
+```text
+node test-tools/runner.mjs
+  --plugin <id>
+  --lifecycle preflight|run|stop
+  --cli <WiParse-CLI.exe>
+  --data-root <root>
+  -- --<param> <value> ...
+```
+
+?????`WIPARSE_URL`?`WIPARSE_CLI`?`WIPARSE_DATA_ROOT`?
+
+---
+
+## 2. ???MUST?
 
 ```
-plugins/<id>/
-  plugin.json      # required manifest (validated on discover/run)
-  index.mjs        # entry: run / preflight / stop
-  station.json     # optional station config (capture_loop etc.)
+test-tools/plugins/<id>/
+  plugin.json      # ?? + Hub ??
+  index.mjs        # ??
+  station.json     # ?????capture_loop ???
 ```
 
-## Lifecycle
+- `<id>` ? `plugin.json.id` ???`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`
+- ?????????`run.lock` / `run.stop` / `_loop_status.json`??????
 
-Host only uses three lifecycle ops:
+---
 
-| Lifecycle | Meaning |
-|-----------|---------|
-| `preflight` | Validate host/config/instruments; no long-running loop |
-| `run` | Start the plugin |
-| `stop` | Request graceful stop (`paths.stop_file` or `stop()`) |
+## 3. ????
 
-```powershell
-node runner.mjs --plugin <id> --lifecycle preflight
-node runner.mjs --plugin <id> --lifecycle run
-node runner.mjs --plugin <id> --lifecycle stop
-```
+| Lifecycle | Hub ?? | ?? |
+|-----------|----------|------|
+| `preflight` | ?? | ?? GUI / ?? / ???**?**????????? `suggested_params` |
+| `run` | ?? | ???????capture_loop ?? Stop |
+| `stop` | ?? | ? `paths.stop_file` |
 
-`--preflight_only true` is treated as `--lifecycle preflight`.
-
-Entry exports (recommended):
+`--preflight_only true` ??? `--lifecycle preflight`?
 
 ```js
-export async function preflight(ctx) { ... }
-export async function stop(ctx) { ... }
-export default async function run(ctx) { ... }  // lifecycle === "run"
+export async function preflight(ctx) { return normalizeResult(raw, "preflight"); }
+export async function stop(ctx) { /* requestStop(config) */ }
+export default async function run(ctx) { /* ... */ }
 ```
 
-## Result contract
-
-Every lifecycle must resolve to:
+### ????MUST?
 
 ```json
 {
   "ok": true,
-  "lifecycle": "run",
-  "step": "optional",
+  "lifecycle": "preflight",
+  "step": "preflight",
   "checks": [{ "id": "gui_api", "ok": true, "detail": "..." }],
-  "artifacts": { "summary_md": "...", "stop_file": "..." },
+  "suggested_params": {
+    "prefer_device_id": "3",
+    "scope_resource": "USB0::...::INSTR",
+    "scope_model": "MDO3014",
+    "scope_kind": "oscilloscope"
+  },
+  "suggested_params_policy": "untouched",
+  "artifacts": {},
   "error": "only when ok=false"
 }
 ```
 
-Use `normalizeResult(raw, lifecycle)` from `lib/plugin-contract.mjs`.
+`suggested_params` ? key **?????? `params[].name`**?Hub ???? `untouched`??????????????? station.json ???????????????????????????????????????????????? `"empty"` / `"always"`?
 
-## `plugin.json`
+??? `return normalizeResult(raw, lifecycle)`?`ok === false` ? runner exit 1?
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `id` | yes | Unique id (`[a-zA-Z0-9][a-zA-Z0-9._-]*`) |
-| `name` | yes | Display name (EN) |
-| `name_zh` | no | Display name (ZH) |
-| `type` | yes | `smoke` / `serial` / `instrument` / `capture_loop` / `custom` |
-| `version` | no | Semver |
-| `entry` | no | Entry file (default `index.mjs`) |
-| `config` | no | Station config relative to plugin dir |
-| `description` | no | Short summary |
-| `capabilities` | no | Subset of `preflight` / `run` / `stop` |
-| `engines` | no | `{ "node": ">=18", "wiparse": ">=1.1.8" }` |
-| `params` | no | Overridable parameters |
+---
 
-### `params[]`
+## 4. `plugin.json` ??
 
-| Field | Description |
-|-------|-------------|
-| `name` | CLI/GUI key (`--name value`) |
-| `type` | `string` / `number` / `boolean` / `path` |
-| `default` | Default when not overridden |
-| `path` | Dot path into station config, e.g. `paths.file_prefix` |
-| `label` / `label_zh` | UI labels |
-| `help` | Hint text |
-
-### Recommended capture-loop params
-
-| name | path |
+| ?? | ?? |
 |------|------|
-| `file_prefix` | `paths.file_prefix` |
-| `isf_dir` | `paths.isf_dir` |
-| `report_dir` | `paths.report_dir` |
-| `product` | `station.product` |
-| `port` | `serial.port` |
-| `baud` | `serial.baud` |
-| `api` | `gui.api` |
-| `preflight_only` | *(maps to lifecycle preflight)* |
+| `name` | CLI `--name` |
+| `type` | ??? |
+| `default` | ???????? |
+| `path` | ?? station ?????? `scope.resource` |
+| `label` / `label_zh` | ???? |
+| `help` | hover |
+| `hidden` | `true` ??????????? fills / ???? |
+| `filter.kind` | `type=device` ?? `instrument.list` ? `kind` ?? |
+| `filter_from` | ???? param ?????? kind ????????? Hub? |
+| `fills` | ??????????????? param ? |
+| `options` | `type=enum` ??? `{ value, label, label_zh }` |
 
-## Path templates
+### `type`
 
-- `{data_root}` â€?workspace / configured data root  
-- `{product}` â€?`station.product`  
-- `{plugin_dir}` â€?absolute plugin directory  
-- `{stamp}` â€?filled at runtime by the plugin  
+| type | Hub ?? | ? |
+|------|----------|-----|
+| `string` / `number` | ??? | ?? / ?? |
+| `boolean` | ??? | `true` / `false` |
+| `path` | ?? + ????? | ?? |
+| `device` | **???????**??? | `device_id`?session ? id? |
+| `enum` | ????`options`? | option.value |
+| `serial_port` | ?? COM ??? | `COM7` ? |
 
-## Station config
+`device` ? `fills` ????`device_id`?`resource`?`kind`?`model`?`manufacturer`?`serial`???? `identity.model`??
 
-Required: `gui.api`, `paths.file_prefix`, `paths.isf_dir`, `paths.report_dir`.  
-Validated by `validateStationConfig` when `loadStationConfig` runs.
+?? kind ? GUI `instrument.list` ???snake_case??`oscilloscope`?`dc_source`?`electronic_load`?`multimeter`?`generic`???? `scope` / `psu` / `dmm` ??????
 
-## Runner
+`preflight_only` ?????????? lifecycle?
 
-```powershell
-cd test-tools
-node runner.mjs --list
-node runner.mjs --plugin example-smoke --lifecycle preflight
-node runner.mjs --plugin scope-serial-monitor --lifecycle run -- --file_prefix MyTest
-node runner.mjs --plugin scope-serial-monitor --lifecycle stop
+### ?????????????
+
+```json
+{
+  "name": "prefer_device_id",
+  "type": "device",
+  "path": "scope.prefer_device_id",
+  "filter": { "kind": "oscilloscope" },
+  "filter_from": "scope_kind",
+  "fills": {
+    "scope_resource": "resource",
+    "scope_model": "model",
+    "scope_kind": "kind"
+  },
+  "label_zh": "??"
+}
 ```
 
-Env: `WIPARSE_CLI`, `WIPARSE_URL`, `WIPARSE_DATA_ROOT`.
+??????? `filter.kind` ?? `dc_source`??????? `path` / `fills`?**??? Testing Hub?**
+
+??????`pickInstrument`??VISA `resource` ? ? kind ? `device_id` ? kind+model ? ? kind ???????? session ?? `device_id` ???????
+
+---
+
+## 5. ?????MUST?
+
+`loadStationConfig(ctx)` ???
+
+1. ? `station.json`
+2. `applyParamPaths`?Hub args ?? `params[].path`????????
+3. `expandTemplates`?`{data_root}` `{product}` `{file_prefix}` `{plugin_dir}`
+4. `{stamp}` ?????
+5. `colocateStatusWithIsf` ? `status_file = {isf_dir}/_loop_status.json`
+6. `colocateSummaryWithReport` ? `summary_md = {report_dir}/{file_prefix}_summary_{stamp}.md`
+
+MD ????????**?????**?? PNG ?????
+
+---
+
+## 6. ?????????
+
+```js
+import { pickInstrument, suggestedParamsFromInstrument } from "../../lib/plugin-contract.mjs";
+
+const list = await http.invoke("instrument.list", {}, 30_000);
+const devices = list.data?.devices || [];
+const scope = pickInstrument(devices, {
+  deviceId: cfg.scope?.prefer_device_id,
+  resource: cfg.scope?.resource,
+  model: cfg.scope?.model,
+  kind: cfg.scope?.kind || "oscilloscope",
+});
+const suggested_params = suggestedParamsFromInstrument(scope, {
+  prefer_device_id: "device_id",
+  scope_resource: "resource",
+  scope_model: "model",
+  scope_kind: "kind",
+});
+```
+
+`devices[]` ???`device_id`?`resource`?`kind`?`identity.{manufacturer,model,serial,firmware}`?
+
+?????????? Tek ? VISA?????????????????????? `resource` ??? `instrument.connect`?
+
+?????? model = ??? kind ???????????????? MDO3014 ?????????
+
+???`ScopeStop` / `ScopeRun` ??? `instrument.command`?? GUI ????????????? SCPI?
+
+---
+
+## 7. HTTP / invoke ??
+
+SDK?
+
+```js
+import { createHttpClient } from "../../lib/wiparse-sdk.mjs";
+const http = createHttpClient({ url: ctx.url, log: ctx.log });
+await http.health(15_000);
+await http.invoke("instrument.list", {}, 30_000);
+```
+
+?? method?
+
+| method | params |
+|--------|--------|
+| `instrument.list` | `{}` |
+| `instrument.connect` | `{ kind, resource }` |
+| `instrument.command` | `{ device_id, command, timeout_s }` |
+| `instrument.capture` | `{ device_id }` |
+| `instrument.waveform_source` | `{ device_id, dir, filename, overwrite, timeout_s }` |
+| `ui.instrument.select` | `{ device_id }` |
+| `serial.monitor.start` | `{ port, baud }` |
+| `serial.monitor.stop` / `serial.status` | |
+| `log.lines.get` | `{ tab_id, from_row, limit }` |
+
+capture ??? **??** `test.start` / `wait_line` / `ui.wave.browser`?? `log.lines.get` + `from_row` ???????? method ??? `GET /v1/capabilities`?
+
+---
+
+## 8. HUD ? Output
+
+? `{isf_dir}/_loop_status.json`?`step`?`hint`?`cycle`?`elapsed_s`?`trigger`?`filename`?  
+`step`?`idle` / `armed` / `wait` / `processing` / `captured` / `stopped`?
+
+`ctx.log("info"|"stderr", text)`?text ? `\n` ???????? HTTP invoke ?????
+
+Stop??? `existsSync(stop_file)`?`finally` ??? ScopeRun / ???Hub ? stop_file ???? 30s ?????
+
+---
+
+## 9. ? AI ????
+
+1. ??? `preflight` / `run` / `stop`?
+2. ? `plugin-contract` + `wiparse-sdk`?????? HTTP?
+3. ???????? `params[]`???? `instrument.list` + `suggested_params`?
+4. ????????? `crates/wiparse-gui`?
+5. ISF ? `isf_dir`?PDF/HTML/PNG/??? ? `report_dir`?????? ? `file_prefix`?
+6. MD ????????
+7. `ok: false` ??? `checks[]`?
+8. ?? `GET /v1/capabilities`????? method?
+
+---
+
+## 10. Runner CLI
+
+```text
+node runner.mjs --list [--type capture_loop] [--json]
+node runner.mjs --plugin <id> --lifecycle preflight|run|stop
+                [--cli path] [--url url] [--data-root dir]
+                [-- --file_prefix MyLot --port COM7 --scope_resource USB0::...::INSTR]
+```

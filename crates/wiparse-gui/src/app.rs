@@ -1223,7 +1223,12 @@ impl eframe::App for WiParseApp {
                     self.test_report.ui(ui, self.lang, &t);
                 }
                 MainTab::TestTool if self.show_test_tool => {
-                    self.test_tool.ui(ui, self.lang, &t);
+                    self.test_tool.ui(
+                        ui,
+                        self.lang,
+                        &t,
+                        &self.instruments.live_devices_for_hub(),
+                    );
                 }
                 _ => {
                     ui.centered_and_justified(|ui| {

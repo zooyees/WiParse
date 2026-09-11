@@ -37,12 +37,41 @@
         "additionalProperties": true,
         "properties": {
           "name": { "type": "string", "minLength": 1 },
-          "type": { "type": "string", "enum": ["string", "number", "boolean", "path"] },
+          "type": { "type": "string", "enum": ["string", "number", "boolean", "path", "device", "enum", "serial_port"] },
           "default": {},
           "path": { "type": "string" },
           "label": { "type": "string" },
           "label_zh": { "type": "string" },
-          "help": { "type": "string" }
+          "help": { "type": "string" },
+          "hidden": { "type": "boolean" },
+          "filter": {
+            "type": "object",
+            "properties": {
+              "kind": { "type": "string" }
+            }
+          },
+          "filter_from": { "type": "string" },
+          "fills": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                { "type": "string" },
+                {
+                  "type": "object",
+                  "required": ["value"],
+                  "properties": {
+                    "value": { "type": "string" },
+                    "label": { "type": "string" },
+                    "label_zh": { "type": "string" }
+                  }
+                }
+              ]
+            }
+          }
         }
       }
     }

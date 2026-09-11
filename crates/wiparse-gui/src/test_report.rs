@@ -1216,10 +1216,11 @@ fn resolve_md_asset(base_dir: Option<&Path>, src: &str) -> Option<PathBuf> {
     if raw.is_empty() || raw.contains('\0') {
         return None;
     }
-    let raw = raw
+    let stripped = raw.trim_matches(|c| c == '<' || c == '>' || c == '"');
+    let raw = stripped
         .strip_prefix("file:///")
-        .or_else(|| raw.strip_prefix("file://"))
-        .unwrap_or(raw);
+        .or_else(|| stripped.strip_prefix("file://"))
+        .unwrap_or(stripped);
     let p = PathBuf::from(raw);
     let resolved = if p.is_absolute() {
         p

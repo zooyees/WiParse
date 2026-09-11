@@ -65,7 +65,8 @@ function coerceParam(type, raw) {
   if (raw === undefined || raw === null) return raw;
   const t = String(type || "string").toLowerCase();
   if (t === "boolean") return truthy(raw);
-  if (t === "number") {
+  if (t === "number" || t === "device") {
+    if (raw === "" || raw === null) return raw;
     const n = Number(raw);
     return Number.isFinite(n) ? n : raw;
   }
@@ -128,9 +129,11 @@ function walkExpand(node, vars) {
 
 export function expandTemplates(config, { dataRoot, pluginDir } = {}) {
   const product = config?.station?.product || "";
+  const file_prefix = config?.paths?.file_prefix || "";
   const vars = {
     data_root: dataRoot || resolveDataRoot(),
     product,
+    file_prefix,
     plugin_dir: pluginDir || "",
   };
   return walkExpand(config, vars);
@@ -145,6 +148,30 @@ export function colocateStatusWithIsf(config) {
   const isf = config.paths.isf_dir;
   if (typeof isf !== "string" || !isf.trim()) return config;
   config.paths.status_file = path.join(isf, "_loop_status.json");
+  return config;
+}
+
+export function sanitizeFilePrefix(raw) {
+  const s = String(raw ?? "").trim() || "report";
+  const cleaned = s.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/[. ]+$/g, "");
+  return cleaned || "report";
+}
+
+/**
+ * Keep the summary Markdown beside report_dir so waveform screenshots
+ * resolve next to the .md even when the Hub overrides report_dir
+ * independently of the summary_md template.
+ *
+ * Filename always follows `paths.file_prefix` (Hub "报告名称/前缀"),
+ * not a hardcoded ScopeSerial_summary basename in station.json.
+ */
+export function colocateSummaryWithReport(config) {
+  if (!config?.paths || typeof config.paths !== "object") return config;
+  const reportDir = config.paths.report_dir;
+  if (typeof reportDir !== "string" || !reportDir.trim()) return config;
+  const prefix = sanitizeFilePrefix(config.paths.file_prefix);
+  config.paths.file_prefix = prefix;
+  config.paths.summary_md = path.join(reportDir, `${prefix}_summary_{stamp}.md`);
   return config;
 }
 
@@ -238,7 +265,7 @@ export function validatePluginManifest(raw) {
         if (!p.name || typeof p.name !== "string") {
           errors.push(`params[${i}].name: required`);
         }
-        if (p.type != null && !["string", "number", "boolean", "path"].includes(p.type)) {
+        if (p.type != null && !["string", "number", "boolean", "path", "device", "enum", "serial_port"].includes(p.type)) {
           errors.push(`params[${i}].type: invalid`);
         }
       });
@@ -328,8 +355,93 @@ export function normalizeResult(raw, lifecycle = "run") {
     out.artifacts = raw.artifacts;
   }
   // Pass through useful extras without breaking contract
-  for (const key of ["summary_md", "session", "preflight", "plugin", "type"]) {
+  for (const key of [
+    "summary_md",
+    "session",
+    "preflight",
+    "plugin",
+    "type",
+    "suggested_params",
+    "suggested_params_policy",
+    "scope",
+  ]) {
     if (raw[key] !== undefined) out[key] = raw[key];
+  }
+  return out;
+}
+
+function normalizeKind(s) {
+  const k = String(s || "")
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, "_");
+  if (["scope", "osc", "oscilloscope"].includes(k)) return "oscilloscope";
+  if (["psu", "dcsource", "dc_source", "source", "power"].includes(k)) return "dc_source";
+  if (["load", "electronic_load", "eload"].includes(k)) return "electronic_load";
+  if (["dmm", "multimeter", "meter"].includes(k)) return "multimeter";
+  return k;
+}
+
+/**
+ * Pick a connected instrument from `instrument.list` devices.
+ * Match order: VISA resource → device_id (kind-safe) → kind+model → first of kind.
+ * Hub stays instrument-agnostic; plugins pass `{ kind, resource, deviceId, model }`.
+ */
+export function pickInstrument(devices, spec = {}) {
+  const list = Array.isArray(devices) ? devices : [];
+  const kinds = String(spec.kind || "")
+    .split(/[,|]/)
+    .map((s) => normalizeKind(s))
+    .filter(Boolean);
+  const inKind = (d) => !kinds.length || kinds.includes(normalizeKind(d.kind));
+
+  const resource = String(spec.resource || "").trim();
+  if (resource) {
+    const hit = list.find((d) => String(d.resource || "") === resource);
+    if (hit) return hit;
+  }
+
+  const idRaw = spec.deviceId ?? spec.device_id ?? spec.prefer_device_id;
+  const idNum = idRaw === "" || idRaw == null ? NaN : Number(idRaw);
+  if (Number.isFinite(idNum)) {
+    const hit = list.find((d) => Number(d.device_id) === idNum && inKind(d));
+    if (hit) return hit;
+  }
+
+  const pool = list.filter(inKind);
+  const model = String(spec.model || "").trim().toLowerCase();
+  if (model) {
+    const hit = pool.find(
+      (d) => String(d.identity?.model || "").toLowerCase() === model
+    );
+    if (hit) return hit;
+  }
+  return pool[0] || null;
+}
+
+/**
+ * Build Hub `suggested_params` from a live device.
+ * `binds` maps plugin param name → device field
+ * (`device_id` | `resource` | `kind` | `model` | `manufacturer` | `serial`).
+ */
+export function suggestedParamsFromInstrument(device, binds = {}) {
+  if (!device || !binds || typeof binds !== "object") return {};
+  const fields = {
+    device_id: device.device_id,
+    id: device.device_id,
+    resource: device.resource,
+    kind: device.kind,
+    model: device.identity?.model,
+    manufacturer: device.identity?.manufacturer,
+    serial: device.identity?.serial,
+  };
+  const out = {};
+  for (const [param, field] of Object.entries(binds)) {
+    if (!param) continue;
+    const key = String(field || "").replace(/^identity\./, "");
+    const val = fields[key];
+    if (val == null || String(val).trim() === "") continue;
+    out[param] = String(val);
   }
   return out;
 }
@@ -373,17 +485,7 @@ export function loadStationConfig(ctx) {
         config.paths[key] = path.resolve(pluginDir, v);
       }
     }
-    if (typeof config.paths.summary_md === "string" && config.paths.summary_md) {
-      const sm = config.paths.summary_md;
-      if (!path.isAbsolute(sm) && !sm.includes("{stamp}")) {
-        config.paths.summary_md = path.resolve(pluginDir, sm);
-      } else if (!path.isAbsolute(sm) && sm.includes("{stamp}")) {
-        const base = config.paths.report_dir || pluginDir;
-        config.paths.summary_md = path.isAbsolute(sm)
-          ? sm
-          : path.join(base, path.basename(sm));
-      }
-    }
+    colocateSummaryWithReport(config);
   }
 
   return { config, args, configPath, dataRoot };
@@ -410,6 +512,8 @@ export default {
   applyParamPaths,
   expandTemplates,
   colocateStatusWithIsf,
+  colocateSummaryWithReport,
+  sanitizeFilePrefix,
   resolveConfigPath,
   parseSemver,
   cmpSemver,
@@ -419,6 +523,8 @@ export default {
   validateStationConfig,
   checkEngines,
   normalizeResult,
+  pickInstrument,
+  suggestedParamsFromInstrument,
   requestStop,
   loadStationConfig,
   resolveLifecycle,

@@ -10,7 +10,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHttpClient } from "../../lib/wiparse-sdk.mjs";
-import { colocateStatusWithIsf } from "../../lib/plugin-contract.mjs";
+import {
+  colocateStatusWithIsf,
+  colocateSummaryWithReport,
+  pickInstrument,
+  suggestedParamsFromInstrument,
+} from "../../lib/plugin-contract.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -185,16 +190,12 @@ function refreshTriggers(force = false) {
     const prev = compiledTriggers.slice();
     const next = loadTriggersFromDisk();
     if (prev.length && prev.map((t) => t.id).join() !== next.map((t) => t.id).join()) {
-      console.log(JSON.stringify({
-        step: "triggers_reloaded",
-        ids: next.map((t) => t.id),
-        labels: next.map((t) => t.label),
-      }));
+      log("info", `[triggers] reloaded ${next.map((t) => t.id).join(", ")}`);
     }
     return next;
   } catch (e) {
     if (compiledTriggers.length) {
-      console.log(JSON.stringify({ step: "triggers_reload_error", error: String(e.message || e) }));
+      log("err", `[triggers] reload failed: ${e.message || e}`);
       return compiledTriggers;
     }
     throw e;
@@ -282,7 +283,8 @@ function writeStatus(extra) {
 
 function setHint(step, hint, extra = {}) {
   writeStatus({ step, hint, ...extra });
-  log("info", JSON.stringify({ step, hint, ...extra }));
+  const n = extra.cycle != null ? ` #${extra.cycle}` : "";
+  log("info", `[${step}${n}] ${hint}`);
 }
 
 async function serialStatus() {
@@ -380,24 +382,36 @@ async function waitNewIsf(dir, filename, sinceMs, timeoutMs) {
 async function resolveScope(depth = 0) {
   const list = await invoke("instrument.list");
   const devices = list.data?.devices || [];
-  const prefer = cfg.scope.prefer_device_id;
-  let scope =
-    (prefer != null ? devices.find((d) => d.device_id === prefer) : null) ||
-    devices.find((d) => d.kind === cfg.scope.kind || d.kind === "oscilloscope") ||
-    devices[0];
+  const spec = scopeSpec();
+  let scope = pickInstrument(devices, spec);
   if (!scope) {
-    if (depth >= 3) {
-      throw new Error("resolveScope: no oscilloscope after connect retries");
+    const resource = String(spec.resource || "").trim();
+    if (!resource || depth >= 3) {
+      throw new Error(
+        resource
+          ? `resolveScope: connect failed for ${resource}`
+          : "resolveScope: 未连接仪器。请在「仪器」页连接，或填写 VISA resource 后预检"
+      );
     }
     await invoke("instrument.connect", {
-      kind: cfg.scope.kind || "oscilloscope",
-      resource: cfg.scope.resource,
+      kind: spec.kind || "oscilloscope",
+      resource,
     });
     await sleep(1500 * (depth + 1));
     return resolveScope(depth + 1);
   }
   await invoke("ui.instrument.select", { device_id: scope.device_id });
   return scope;
+}
+
+function scopeSpec() {
+  const s = cfg.scope || {};
+  return {
+    deviceId: s.prefer_device_id,
+    resource: s.resource,
+    model: s.model,
+    kind: s.kind || "oscilloscope",
+  };
 }
 
 /** Incremental live log cursor — avoids re-fetching thousands of lines each poll. */
@@ -428,13 +442,7 @@ async function waitTrigger(cycle, scopeId) {
         cycle,
         scope_id: scopeId,
         elapsed_s: elapsed,
-        triggers: compiledTriggers.map((t) => ({
-          id: t.id,
-          label: t.label,
-          type: t.type,
-          pattern: t.pattern,
-          unless: t.unless || [],
-        })),
+        triggers: compiledTriggers.map((t) => t.label),
       });
     }
     const { lines, total, next } = await liveLinesSince(fromRow, 200);
@@ -613,6 +621,27 @@ function appendSessionBanner(scopeInfo) {
   fs.appendFileSync(summaryMd, block, "utf8");
 }
 
+function mdRelPath(fromFile, target) {
+  if (!target) return "";
+  const rel = path.relative(path.dirname(fromFile), target);
+  if (!rel || rel.startsWith("..")) return "";
+  return rel.split(path.sep).join("/");
+}
+
+function materializeScreenshot(src, trigger, recStamp) {
+  if (!src) return null;
+  fs.mkdirSync(reportDir, { recursive: true });
+  const dest = path.join(reportDir, `${prefix}_${trigger}_${recStamp}.png`);
+  return copyIfExists(src, dest);
+}
+
+function mdImageBlock(absShot) {
+  const rel = mdRelPath(summaryMd, absShot);
+  if (!rel) return "_无截图_";
+  if (/[\s()]/.test(rel)) return `![波形](<${rel}>)`;
+  return `![波形](${rel})`;
+}
+
 function appendSummaryRecord(rec) {
   ensureSummaryHeader();
   const recId = `${prefix}_${rec.trigger}_${rec.stamp}`;
@@ -622,7 +651,7 @@ function appendSummaryRecord(rec) {
     const mark = l === rec.line ? " <<HIT>>" : "";
     return mdFence(l) + mark;
   }).join("\n");
-  const shotMd = shotName ? `![波形](${shotName})` : "_无截图_";
+  const shotMd = rec.screenshot ? mdImageBlock(String(rec.screenshot)) : "_无截图_";
   const block = `
 ---
 
@@ -822,15 +851,34 @@ async function preflight() {
 
   const list = await invoke("instrument.list", {}, 30_000, { allowFail: true });
   const devices = list.data?.devices || [];
-  const scope =
-    devices.find((d) => d.device_id === cfg.scope.prefer_device_id) ||
-    devices.find((d) => d.kind === "oscilloscope");
-  push("scope", Boolean(scope), scope
-    ? `${scope.identity?.model || "scope"} id=${scope.device_id}`
-    : `missing ${cfg.scope.resource}`);
-  if (scope && cfg.scope.model && scope.identity?.model && scope.identity.model !== cfg.scope.model) {
-    push("scope_model", false, `got ${scope.identity.model}, expect ${cfg.scope.model}`);
+  const spec = scopeSpec();
+  const scope = pickInstrument(devices, spec);
+  const kindLabel = spec.kind || "oscilloscope";
+  push(
+    "scope",
+    Boolean(scope),
+    scope
+      ? `${scope.identity?.model || kindLabel} id=${scope.device_id} ${scope.resource || ""}`.trim()
+      : devices.length
+        ? `未匹配 ${kindLabel}（已连接 ${devices.length} 台）`
+        : `未连接 ${kindLabel}：请在「仪器」页连接，或填写 VISA resource`
+  );
+  const expectModel = String(spec.model || "").trim();
+  if (scope && expectModel && String(scope.identity?.model || "") !== expectModel) {
+    push(
+      "scope_model",
+      true,
+      `connected ${scope.identity?.model || "?"} (form had ${expectModel}; Hub will refresh)`
+    );
+  } else if (scope) {
+    push("scope_model", true, scope.identity?.model || "any");
   }
+  const suggested_params = suggestedParamsFromInstrument(scope, {
+    prefer_device_id: "device_id",
+    scope_resource: "resource",
+    scope_model: "model",
+    scope_kind: "kind",
+  });
   try {
     const list = refreshTriggers(true);
     push("serial_triggers", list.length > 0, list.map((t) => {
@@ -841,7 +889,7 @@ async function preflight() {
     push("serial_triggers", false, String(e.message || e));
   }
   const ok = checks.every((c) => c.ok);
-  return { ok, health, checks, scope };
+  return { ok, health, checks, scope, suggested_params };
 }
 
 
@@ -849,6 +897,7 @@ function bindConfig(cfgInput, opts = {}) {
   cfg = cfgInput;
   if (opts.configPath) cfgPath = opts.configPath;
   colocateStatusWithIsf(cfg);
+  colocateSummaryWithReport(cfg);
   api = String(cfg.gui?.api || "http://127.0.0.1:7878").replace(/\/$/, "");
   outDir = cfg.paths.isf_dir;
   reportDir = cfg.paths.report_dir;
@@ -858,10 +907,12 @@ function bindConfig(cfgInput, opts = {}) {
   lockFile = cfg.paths.lock_file;
   prefix = cfg.paths.file_prefix;
   sessionStamp = stamp();
-  summaryMd = (cfg.paths.summary_md || path.join(reportDir, `${prefix}_总报告_{stamp}.md`)).replaceAll(
+  summaryMd = (cfg.paths.summary_md || path.join(reportDir, `${prefix}_summary_{stamp}.md`)).replaceAll(
     "{stamp}",
     sessionStamp
   );
+  // After {stamp} expand, park the md in report_dir again (basename only).
+  summaryMd = path.join(reportDir, path.basename(summaryMd));
   port = cfg.serial.port;
   baud = cfg.serial.baud;
   delayS = cfg.timing.post_trigger_delay_s;
@@ -883,12 +934,28 @@ function bindConfig(cfgInput, opts = {}) {
 export async function runLoop(cfgInput, opts = {}) {
   bindConfig(cfgInput, opts);
   const pf = await preflight();
-  log("info", JSON.stringify({ step: "preflight", ok: pf.ok, checks: pf.checks }));
+  if (pf.ok) {
+    log("info", "preflight OK");
+  } else {
+    log("err", "preflight FAIL");
+  }
+  for (const c of pf.checks || []) {
+    const mark = c.ok ? "OK" : "X ";
+    const detail = c.detail ? `  ${c.detail}` : "";
+    log(c.ok ? "info" : "err", `  ${mark} ${c.id}${detail}`);
+  }
   if (!pf.ok) {
     setHint("stopped", "预检失败，未启动监控", { checks: pf.checks });
-    return { ok: false, step: "preflight", checks: pf.checks };
+    return { ok: false, step: "preflight", checks: pf.checks, suggested_params: pf.suggested_params };
   }
-  if (preflightOnly) return { ok: true, preflight: true, checks: pf.checks };
+  if (preflightOnly) {
+    return {
+      ok: true,
+      preflight: true,
+      checks: pf.checks,
+      suggested_params: pf.suggested_params,
+    };
+  }
 
   acquireLock();
   process.on("exit", releaseLock);
@@ -1006,6 +1073,11 @@ export async function runLoop(cfgInput, opts = {}) {
       }
       let pdfPath = null;
       let mdPath = null;
+      const shotInReport = materializeScreenshot(
+        shot && fs.existsSync(String(shot)) ? String(shot) : null,
+        trigger,
+        ts,
+      );
       try {
         const written = writePdfReport({
           cycle,
@@ -1015,7 +1087,7 @@ export async function runLoop(cfgInput, opts = {}) {
           line: hit.line,
           context: hit.context || [],
           isfPath: String(saved),
-          screenshotSrc: shot && fs.existsSync(String(shot)) ? String(shot) : null,
+          screenshotSrc: shotInReport || (shot && fs.existsSync(String(shot)) ? String(shot) : null),
           guiVersion,
           scopeId: live.device_id,
           scopeModel: live.identity?.model ?? cfg.scope.model,
@@ -1031,7 +1103,7 @@ export async function runLoop(cfgInput, opts = {}) {
           line: hit.line,
           context: hit.context || [],
           isfPath: String(saved),
-          screenshot: written.screenshot,
+          screenshot: written.screenshot || shotInReport,
           pdfPath,
           guiVersion,
           scopeId: live.device_id,
@@ -1039,7 +1111,7 @@ export async function runLoop(cfgInput, opts = {}) {
           serialMonitoring: monitoring,
         });
       } catch (e) {
-        log("err", JSON.stringify({ step: "pdf_error", error: String(e?.message || e) }));
+        log("err", `[pdf] ${e?.message || e}`);
         try {
           mdPath = appendSummaryRecord({
             cycle,
@@ -1049,7 +1121,7 @@ export async function runLoop(cfgInput, opts = {}) {
             line: hit.line,
             context: hit.context || [],
             isfPath: String(saved),
-            screenshot: shot && fs.existsSync(String(shot)) ? String(shot) : null,
+            screenshot: shotInReport,
             pdfPath: null,
             guiVersion,
             scopeId: live.device_id,
@@ -1057,7 +1129,7 @@ export async function runLoop(cfgInput, opts = {}) {
             serialMonitoring: monitoring,
           });
         } catch (e2) {
-          log("err", JSON.stringify({ step: "md_error", error: String(e2?.message || e2) }));
+          log("err", `[md] ${e2?.message || e2}`);
         }
       }
 
@@ -1087,7 +1159,7 @@ export async function runLoop(cfgInput, opts = {}) {
     return { ok: true, summary_md: summaryMd, session: sessionStamp };
   } catch (e) {
     const msg = String(e?.message || e);
-    log("err", JSON.stringify({ step: "fatal", error: msg }));
+    log("err", `[fatal] ${msg}`);
     try {
       setHint("stopped", `异常停止：${msg}`, { cycle, error: msg });
     } catch {
@@ -1117,7 +1189,7 @@ if (isDirect) {
     argConfig || process.env.WIPARSE_STATION_CONFIG || path.join(here, "station.json"),
   );
   import("../../lib/plugin-contract.mjs")
-    .then(({ expandTemplates, resolveDataRoot, projectRoot, colocateStatusWithIsf }) => {
+    .then(({ expandTemplates, resolveDataRoot, projectRoot, colocateStatusWithIsf, colocateSummaryWithReport }) => {
       const loaded = JSON.parse(fs.readFileSync(pth, "utf8"));
       const dataRoot = resolveDataRoot(process.env.WIPARSE_DATA_ROOT || projectRoot());
       const config = expandTemplates(loaded, { dataRoot, pluginDir: here });
@@ -1128,6 +1200,7 @@ if (isDirect) {
           config.paths[key] = path.resolve(here, v);
         }
       }
+      colocateSummaryWithReport(config);
       return runLoop(config, {
         configPath: pth,
         preflightOnly: process.argv.includes("--preflight"),

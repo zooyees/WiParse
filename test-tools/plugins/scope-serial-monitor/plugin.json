@@ -3,14 +3,14 @@
   "name": "Scope & Serial Monitor",
   "name_zh": "示波器/串口监控",
   "type": "capture_loop",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "entry": "index.mjs",
   "config": "station.json",
-  "description": "Serial rising-edge → scope stop → shot/ISF/PDF → resume. Overridable prefix, paths, and port.",
+  "description": "Serial rising-edge → scope stop → shot/ISF/PDF → resume. Instrument identity is a Hub param; Preflight auto-fills the connected device.",
   "capabilities": ["preflight", "run", "stop"],
   "engines": {
     "node": ">=18",
-    "wiparse": ">=1.1.8"
+    "wiparse": ">=1.1.10"
   },
   "params": [
     {
@@ -18,9 +18,59 @@
       "type": "string",
       "path": "paths.file_prefix",
       "default": "ScopeSerial",
-      "label": "File prefix",
-      "label_zh": "测试数据名称/前缀",
-      "help": "ISF / PDF / MD record id prefix"
+      "label": "Report name / prefix",
+      "label_zh": "报告名称/前缀",
+      "help": "Prefix for ISF, PDF, PNG, and the summary Markdown (e.g. MyLot → MyLot_summary_*.md)"
+    },
+    {
+      "name": "prefer_device_id",
+      "type": "device",
+      "path": "scope.prefer_device_id",
+      "filter": { "kind": "oscilloscope" },
+      "filter_from": "scope_kind",
+      "fills": {
+        "scope_resource": "resource",
+        "scope_model": "model",
+        "scope_kind": "kind"
+      },
+      "default": "",
+      "label": "Instrument",
+      "label_zh": "仪器",
+      "help": "Pick a connected instrument, or leave Auto and click Preflight to fill from the live list."
+    },
+    {
+      "name": "scope_kind",
+      "type": "enum",
+      "path": "scope.kind",
+      "default": "oscilloscope",
+      "label": "Instrument kind",
+      "label_zh": "仪器类型",
+      "help": "Filters the instrument picker. Changing kind does not require Hub code changes.",
+      "options": [
+        { "value": "oscilloscope", "label": "Oscilloscope", "label_zh": "示波器" },
+        { "value": "dc_source", "label": "DC source", "label_zh": "直流电源" },
+        { "value": "electronic_load", "label": "Electronic load", "label_zh": "电子负载" },
+        { "value": "multimeter", "label": "Multimeter", "label_zh": "万用表" },
+        { "value": "generic", "label": "Generic SCPI", "label_zh": "通用 SCPI" }
+      ]
+    },
+    {
+      "name": "scope_model",
+      "type": "string",
+      "path": "scope.model",
+      "default": "",
+      "label": "Model",
+      "label_zh": "型号",
+      "help": "Optional. Empty = accept any model of this kind. Preflight fills from *IDN?."
+    },
+    {
+      "name": "scope_resource",
+      "type": "string",
+      "path": "scope.resource",
+      "default": "",
+      "label": "VISA resource",
+      "label_zh": "VISA 资源",
+      "help": "Optional. Empty = use the connected device. Used to reconnect if the session dropped."
     },
     {
       "name": "isf_dir",
@@ -51,7 +101,7 @@
     },
     {
       "name": "port",
-      "type": "string",
+      "type": "serial_port",
       "path": "serial.port",
       "default": "COM7",
       "label": "Serial port",
