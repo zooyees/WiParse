@@ -5,6 +5,15 @@ use std::path::{Path, PathBuf};
 
 /// Writable data root: directory containing the running executable, or cwd in tests/dev.
 pub fn app_root() -> PathBuf {
+    // Packaged / portable runs: allow explicit project root (demo tarball, installers).
+    for key in ["WIPARSE_PROJECT_ROOT", "WIPARSE_APP_ROOT", "WCM_PROJECT_ROOT"] {
+        if let Ok(v) = env::var(key) {
+            let t = v.trim();
+            if !t.is_empty() {
+                return PathBuf::from(t);
+            }
+        }
+    }
     if let Ok(exe) = env::current_exe() {
         if let Some(parent) = exe.parent() {
             // Prefer cargo target/.../deps parent chain only when running from target/
@@ -16,6 +25,15 @@ pub fn app_root() -> PathBuf {
                     let p = PathBuf::from(manifest);
                     if let Some(ws) = p.parent().and_then(|p| p.parent()) {
                         return ws.to_path_buf();
+                    }
+                }
+            }
+            // If binary lives in `<root>/bin`, treat parent as project root when
+            // sibling `test-tools/` exists (portable demo layout).
+            if parent.file_name().and_then(|n| n.to_str()) == Some("bin") {
+                if let Some(pkg) = parent.parent() {
+                    if pkg.join("test-tools").is_dir() {
+                        return pkg.to_path_buf();
                     }
                 }
             }

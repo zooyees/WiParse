@@ -1,5 +1,9 @@
 //! Testing Hub — discover Node.js plugins and run them via WiParse CLI / HTTP.
 
+use crate::market_jobs::{
+    installed_map_from_registry, marketplace_cli_path, spawn_catalog_refresh, spawn_pull_install,
+    spawn_uninstall, CatalogRow, HubMode, MarketJob, MarketJobEvent,
+};
 use crate::theme::{self as ui_theme, Tokens};
 use egui::{CornerRadius, Frame, Margin, RichText, Stroke};
 use std::collections::HashMap;
@@ -100,6 +104,15 @@ pub struct TestToolPanel {
     node_path: String,
     data_root: String,
     marketplace_install_dir: String,
+    marketplace_enabled: bool,
+    marketplace_base_url: String,
+    marketplace_channel: String,
+    hub_mode: HubMode,
+    catalog: Vec<CatalogRow>,
+    catalog_selected: Option<String>,
+    catalog_status: String,
+    catalog_busy: bool,
+    market_job: Option<MarketJob>,
     plugins: Vec<PluginInfo>,
     selected: Option<String>,
     type_filter: String,
@@ -136,12 +149,32 @@ impl TestToolPanel {
         }
         let data_root = cfg.apps.test_tool.data_root.clone();
         let marketplace_install_dir = cfg.apps.test_tool.marketplace.install_dir.clone();
+        let marketplace_enabled = cfg.apps.test_tool.marketplace.enabled;
+        let marketplace_base_url = if cfg.apps.test_tool.marketplace.base_url.trim().is_empty() {
+            "http://127.0.0.1:8787".into()
+        } else {
+            cfg.apps.test_tool.marketplace.base_url.clone()
+        };
+        let marketplace_channel = if cfg.apps.test_tool.marketplace.channel.trim().is_empty() {
+            "stable".into()
+        } else {
+            cfg.apps.test_tool.marketplace.channel.clone()
+        };
         let mut panel = Self {
             plugins_dir,
             cli_path,
             node_path,
             data_root,
             marketplace_install_dir,
+            marketplace_enabled,
+            marketplace_base_url,
+            marketplace_channel,
+            hub_mode: HubMode::Plugins,
+            catalog: Vec::new(),
+            catalog_selected: None,
+            catalog_status: String::new(),
+            catalog_busy: false,
+            market_job: None,
             plugins: Vec::new(),
             selected: None,
             type_filter: String::new(),
@@ -264,7 +297,8 @@ impl TestToolPanel {
             self.merge_station_into_params();
         }
         self.poll_job(lang);
-        if self.job.is_some() {
+        self.poll_market_job(lang);
+        if self.job.is_some() || self.market_job.is_some() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(250));
         }
@@ -272,6 +306,42 @@ impl TestToolPanel {
         if let Some(target) = self.pending_pick.take() {
             self.run_path_pick(target);
         }
+
+        // Plugins | Market mode toggle
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let plugins_sel = self.hub_mode == HubMode::Plugins;
+            let market_sel = self.hub_mode == HubMode::Market;
+            if ui
+                .selectable_label(plugins_sel, tr(lang, "test_tool.plugins"))
+                .clicked()
+            {
+                self.hub_mode = HubMode::Plugins;
+            }
+            if ui
+                .selectable_label(market_sel, tr(lang, "test_tool.market"))
+                .clicked()
+            {
+                self.hub_mode = HubMode::Market;
+                if self.catalog.is_empty() && !self.catalog_busy {
+                    self.refresh_catalog();
+                }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if self.hub_mode == HubMode::Market {
+                    ui.label(
+                        RichText::new(if self.marketplace_enabled {
+                            tr(lang, "test_tool.market_on")
+                        } else {
+                            tr(lang, "test_tool.market_off")
+                        })
+                        .size(ui_theme::FONT_CAPTION)
+                        .color(tokens.text_muted),
+                    );
+                }
+            });
+        });
+        ui.add_space(4.0);
 
         let avail = ui.available_size();
         let (full, _) = ui.allocate_exact_size(avail, egui::Sense::hover());
@@ -290,8 +360,16 @@ impl TestToolPanel {
             egui::vec2(view_w, full.height()),
         );
 
-        panel_in_rect(ui, side_rect, |ui| self.browser_panel(ui, lang, tokens));
-        panel_in_rect(ui, view_rect, |ui| self.runner_panel(ui, lang, tokens));
+        match self.hub_mode {
+            HubMode::Plugins => {
+                panel_in_rect(ui, side_rect, |ui| self.browser_panel(ui, lang, tokens));
+                panel_in_rect(ui, view_rect, |ui| self.runner_panel(ui, lang, tokens));
+            }
+            HubMode::Market => {
+                panel_in_rect(ui, side_rect, |ui| self.market_browser_panel(ui, lang, tokens));
+                panel_in_rect(ui, view_rect, |ui| self.market_detail_panel(ui, lang, tokens));
+            }
+        }
     }
 
     fn browser_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
@@ -1237,8 +1315,460 @@ impl TestToolPanel {
             cfg.apps.test_tool.node_path = self.node_path.clone();
             cfg.apps.test_tool.data_root = self.data_root.clone();
             cfg.apps.test_tool.marketplace.install_dir = self.marketplace_install_dir.clone();
+            cfg.apps.test_tool.marketplace.enabled = self.marketplace_enabled;
+            cfg.apps.test_tool.marketplace.base_url = self.marketplace_base_url.clone();
+            cfg.apps.test_tool.marketplace.channel = self.marketplace_channel.clone();
             let _ = wiparse_core::config::save_config(&cfg);
         }
+    }
+
+    fn data_root_resolved(&self) -> String {
+        if self.data_root.trim().is_empty() {
+            project_path("").display().to_string()
+        } else {
+            self.data_root.trim().to_owned()
+        }
+    }
+
+    fn refresh_catalog(&mut self) {
+        if self.catalog_busy {
+            return;
+        }
+        let url = self.marketplace_base_url.trim().to_owned();
+        if url.is_empty() {
+            self.catalog_status = "missing marketplace URL".into();
+            return;
+        }
+        self.marketplace_enabled = true;
+        self.catalog_busy = true;
+        self.catalog_status = "loading…".into();
+        let installed =
+            installed_map_from_registry(&self.resolve_marketplace_root());
+        self.market_job = Some(spawn_catalog_refresh(
+            url,
+            self.marketplace_channel.clone(),
+            installed,
+        ));
+    }
+
+    fn install_selected_catalog_plugin(&mut self, lang: Lang) {
+        let Some(id) = self.catalog_selected.clone() else {
+            return;
+        };
+        let Some(row) = self.catalog.iter().find(|r| r.id == id).cloned() else {
+            return;
+        };
+        let version = row.latest_version.clone();
+        let url = self.marketplace_base_url.trim().to_owned();
+        if url.is_empty() {
+            self.catalog_status = tr(lang, "test_tool.market_no_url").to_string();
+            return;
+        }
+        let node = self.node_path.trim().to_owned();
+        let cli = marketplace_cli_path();
+        if !cli.is_file() {
+            self.catalog_status = format!("missing {}", cli.display());
+            return;
+        }
+        self.catalog_busy = true;
+        self.catalog_status = format!("installing {id}@{version}…");
+        self.append_log(
+            LogKind::System,
+            &format!("—— marketplace install {id}@{version} ——\n"),
+        );
+        self.market_job = Some(spawn_pull_install(
+            node,
+            cli,
+            url,
+            id,
+            version,
+            self.data_root_resolved(),
+            self.resolve_marketplace_root().display().to_string(),
+        ));
+    }
+
+    fn uninstall_selected_catalog_plugin(&mut self, lang: Lang) {
+        let Some(id) = self.catalog_selected.clone() else {
+            return;
+        };
+        let Some(row) = self.catalog.iter().find(|r| r.id == id).cloned() else {
+            return;
+        };
+        let Some(version) = row.installed_version.clone() else {
+            self.catalog_status = tr(lang, "test_tool.market_not_installed").to_string();
+            return;
+        };
+        let node = self.node_path.trim().to_owned();
+        let cli = marketplace_cli_path();
+        self.catalog_busy = true;
+        self.catalog_status = format!("uninstalling {id}@{version}…");
+        self.market_job = Some(spawn_uninstall(
+            node,
+            cli,
+            id,
+            version,
+            self.data_root_resolved(),
+            self.resolve_marketplace_root().display().to_string(),
+        ));
+    }
+
+    fn poll_market_job(&mut self, lang: Lang) {
+        let mut events = Vec::new();
+        let mut disconnected = false;
+        if let Some(job) = self.market_job.as_ref() {
+            loop {
+                match job.rx.try_recv() {
+                    Ok(ev) => events.push(ev),
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        disconnected = true;
+                        break;
+                    }
+                }
+            }
+        } else {
+            return;
+        }
+
+        let mut done = disconnected;
+        for ev in events {
+            match ev {
+                MarketJobEvent::Log(t) => {
+                    self.append_log(LogKind::System, &t);
+                }
+                MarketJobEvent::CatalogOk(rows) => {
+                    self.catalog = rows;
+                    if self.catalog_selected.is_none() {
+                        self.catalog_selected = self.catalog.first().map(|r| r.id.clone());
+                    }
+                    self.catalog_status = format!(
+                        "{} {}",
+                        tr(lang, "test_tool.count"),
+                        self.catalog.len()
+                    );
+                    self.catalog_busy = false;
+                    done = true;
+                }
+                MarketJobEvent::CatalogErr(e) => {
+                    self.catalog_status = e.clone();
+                    self.append_log(LogKind::System, &format!("[marketplace] catalog error: {e}\n"));
+                    self.catalog_busy = false;
+                    done = true;
+                }
+                MarketJobEvent::InstallOk { id, version, dir } => {
+                    self.append_log(
+                        LogKind::System,
+                        &format!("[marketplace] installed {id}@{version} → {dir}\n"),
+                    );
+                    self.catalog_status = format!("installed {id}@{version}");
+                    self.catalog_busy = false;
+                    done = true;
+                    self.refresh_plugins();
+                    let installed = installed_map_from_registry(&self.resolve_marketplace_root());
+                    for row in &mut self.catalog {
+                        if let Some((_, v)) = installed.iter().find(|(i, _)| i == &row.id) {
+                            row.installed = true;
+                            row.installed_version = Some(v.clone());
+                        }
+                    }
+                }
+                MarketJobEvent::InstallErr { id, message } => {
+                    self.append_log(
+                        LogKind::System,
+                        &format!("[marketplace] install failed {id}: {message}\n"),
+                    );
+                    self.catalog_status = message;
+                    self.catalog_busy = false;
+                    done = true;
+                }
+                MarketJobEvent::UninstallOk { id, version } => {
+                    self.append_log(
+                        LogKind::System,
+                        &format!("[marketplace] uninstalled {id}@{version}\n"),
+                    );
+                    self.catalog_status = format!("uninstalled {id}@{version}");
+                    self.catalog_busy = false;
+                    done = true;
+                    self.refresh_plugins();
+                    for row in &mut self.catalog {
+                        if row.id == id {
+                            row.installed = false;
+                            row.installed_version = None;
+                        }
+                    }
+                }
+                MarketJobEvent::UninstallErr { id, message } => {
+                    self.append_log(
+                        LogKind::System,
+                        &format!("[marketplace] uninstall failed {id}: {message}\n"),
+                    );
+                    self.catalog_status = message;
+                    self.catalog_busy = false;
+                    done = true;
+                }
+            }
+        }
+        if done {
+            self.market_job = None;
+        }
+    }
+
+    fn market_browser_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        let card_w = ui.available_width();
+        let inner_w = (card_w - f32::from(CARD_MARGIN_X) * 2.0).max(80.0);
+        Frame::NONE
+            .fill(tokens.surface_bg)
+            .stroke(Stroke::new(1.0_f32, tokens.divider))
+            .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
+            .inner_margin(Margin::symmetric(CARD_MARGIN_X, 10))
+            .show(ui, |ui| {
+                ui.set_min_width(inner_w);
+                ui.set_max_width(inner_w);
+                ui.set_min_height(ui.available_height());
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
+                let ctrl_w = inner_w;
+
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(tr(lang, "test_tool.market"))
+                            .size(ui_theme::FONT_TITLE)
+                            .strong()
+                            .color(tokens.text_primary),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let refresh_w = if matches!(lang, Lang::Zh) { 48.0 } else { 64.0 };
+                        if ui_theme::secondary_btn_sized(
+                            ui,
+                            tokens,
+                            tr(lang, "btn.refresh_browser"),
+                            egui::vec2(refresh_w, ui_theme::CTRL_H),
+                        )
+                        .clicked()
+                            && !self.catalog_busy
+                        {
+                            self.refresh_catalog();
+                        }
+                    });
+                });
+
+                ui.label(
+                    RichText::new(tr(lang, "test_tool.market_url"))
+                        .size(ui_theme::FONT_CAPTION)
+                        .color(tokens.text_muted),
+                );
+                let url_edit = ui.add(
+                    egui::TextEdit::singleline(&mut self.marketplace_base_url)
+                        .desired_width(ctrl_w)
+                        .hint_text("http://127.0.0.1:8787")
+                        .margin(egui::vec2(6.0, 4.0)),
+                );
+                if url_edit.lost_focus() {
+                    self.marketplace_enabled = !self.marketplace_base_url.trim().is_empty();
+                    self.persist_config();
+                }
+
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(tr(lang, "test_tool.market_channel"))
+                            .size(ui_theme::FONT_CAPTION)
+                            .color(tokens.text_muted),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.marketplace_channel)
+                            .desired_width((ctrl_w - 64.0).max(80.0))
+                            .hint_text("stable")
+                            .margin(egui::vec2(6.0, 3.0)),
+                    );
+                });
+
+                if !self.catalog_status.is_empty() {
+                    ui.label(
+                        RichText::new(&self.catalog_status)
+                            .size(ui_theme::FONT_CAPTION)
+                            .color(tokens.text_muted),
+                    );
+                }
+
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if self.catalog.is_empty() {
+                            ui.label(
+                                RichText::new(tr(lang, "test_tool.market_empty"))
+                                    .color(tokens.text_muted),
+                            );
+                            return;
+                        }
+                        let mut clicked: Option<String> = None;
+                        for row in &self.catalog {
+                            let selected = self.catalog_selected.as_deref() == Some(row.id.as_str());
+                            let label = if matches!(lang, Lang::Zh) && !row.name_zh.is_empty() {
+                                format!("{}  v{}", row.name_zh, row.latest_version)
+                            } else {
+                                format!("{}  v{}", row.name, row.latest_version)
+                            };
+                            let badge = if row.installed { "✓ " } else { "" };
+                            let resp = ui.selectable_label(selected, format!("{badge}{label}"));
+                            if resp.clicked() {
+                                clicked = Some(row.id.clone());
+                            }
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} · {}",
+                                    row.type_name,
+                                    if row.publisher.is_empty() {
+                                        "-"
+                                    } else {
+                                        row.publisher.as_str()
+                                    }
+                                ))
+                                .size(ui_theme::FONT_CAPTION)
+                                .color(tokens.text_muted),
+                            );
+                            ui.add_space(4.0);
+                        }
+                        if let Some(id) = clicked {
+                            self.catalog_selected = Some(id);
+                        }
+                    });
+            });
+    }
+
+    fn market_detail_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        Frame::NONE
+            .fill(tokens.surface_bg)
+            .stroke(Stroke::new(1.0_f32, tokens.divider))
+            .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
+            .inner_margin(Margin::same(12))
+            .show(ui, |ui| {
+                ui.set_min_height(ui.available_height());
+                let Some(id) = self.catalog_selected.clone() else {
+                    ui.label(
+                        RichText::new(tr(lang, "test_tool.market_select_hint"))
+                            .color(tokens.text_muted),
+                    );
+                    return;
+                };
+                let Some(row) = self.catalog.iter().find(|r| r.id == id).cloned() else {
+                    ui.label(tr(lang, "test_tool.market_empty"));
+                    return;
+                };
+                let title = if matches!(lang, Lang::Zh) && !row.name_zh.is_empty() {
+                    row.name_zh.clone()
+                } else {
+                    row.name.clone()
+                };
+                ui.label(
+                    RichText::new(&title)
+                        .size(ui_theme::FONT_TITLE)
+                        .strong()
+                        .color(tokens.text_primary),
+                );
+                ui.label(
+                    RichText::new(format!("{} · {}", row.id, row.type_name))
+                        .size(ui_theme::FONT_CAPTION)
+                        .color(tokens.text_muted),
+                );
+                ui.add_space(8.0);
+                ui.label(format!(
+                    "{}: {}",
+                    tr(lang, "test_tool.market_version"),
+                    row.latest_version
+                ));
+                ui.label(format!(
+                    "{}: {}",
+                    tr(lang, "test_tool.market_publisher"),
+                    if row.publisher.is_empty() {
+                        "-"
+                    } else {
+                        row.publisher.as_str()
+                    }
+                ));
+                ui.label(format!(
+                    "{}: {}",
+                    tr(lang, "test_tool.market_channel"),
+                    row.channel
+                ));
+                if row.installed {
+                    ui.label(format!(
+                        "{}: {}",
+                        tr(lang, "test_tool.market_installed"),
+                        row.installed_version.as_deref().unwrap_or("-")
+                    ));
+                }
+                ui.add_space(8.0);
+                if !row.description.is_empty() {
+                    ui.label(&row.description);
+                    ui.add_space(8.0);
+                }
+
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let install_label = if row.installed {
+                        tr(lang, "test_tool.market_reinstall")
+                    } else {
+                        tr(lang, "test_tool.market_install")
+                    };
+                    if ui_theme::primary_btn_sized(
+                        ui,
+                        tokens,
+                        install_label,
+                        egui::vec2(96.0, ui_theme::CTRL_H),
+                    )
+                    .clicked()
+                        && !self.catalog_busy
+                    {
+                        self.install_selected_catalog_plugin(lang);
+                    }
+                    if row.installed
+                        && ui_theme::secondary_btn_sized(
+                            ui,
+                            tokens,
+                            tr(lang, "test_tool.market_uninstall"),
+                            egui::vec2(96.0, ui_theme::CTRL_H),
+                        )
+                        .clicked()
+                        && !self.catalog_busy
+                    {
+                        self.uninstall_selected_catalog_plugin(lang);
+                    }
+                    if ui_theme::secondary_btn_sized(
+                        ui,
+                        tokens,
+                        tr(lang, "test_tool.clear_log"),
+                        egui::vec2(72.0, ui_theme::CTRL_H),
+                    )
+                    .clicked()
+                    {
+                        self.log.clear();
+                    }
+                });
+
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(tr(lang, "test_tool.log"))
+                        .size(ui_theme::FONT_CAPTION)
+                        .color(tokens.text_muted),
+                );
+                egui::ScrollArea::vertical()
+                    .stick_to_bottom(true)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if self.log.is_empty() {
+                            ui.label(
+                                RichText::new(tr(lang, "test_tool.log_empty"))
+                                    .color(tokens.text_muted),
+                            );
+                        } else {
+                            ui.add(
+                                egui::TextEdit::multiline(&mut self.log.as_str())
+                                    .desired_width(f32::INFINITY)
+                                    .font(egui::TextStyle::Monospace)
+                                    .interactive(false),
+                            );
+                        }
+                    });
+            });
     }
 
     fn build_plugin_args(&self) -> Vec<String> {
@@ -1621,6 +2151,14 @@ impl TestToolPanel {
     }
 
     fn stop_job(&mut self) {
+        let marketplace_dir = self.resolve_marketplace_root().display().to_string();
+        let plugins_dir = self.plugins_dir.trim().to_owned();
+        let node = self.node_path.trim().to_owned();
+        let data_root = if self.data_root.trim().is_empty() {
+            project_path("").display().to_string()
+        } else {
+            self.data_root.trim().to_owned()
+        };
         let Some(job) = self.job.as_mut() else {
             return;
         };
@@ -1638,14 +2176,8 @@ impl TestToolPanel {
         };
         // Fallback only when host could not write the stop_file itself.
         if !wrote_stop {
-            let node = self.node_path.trim().to_owned();
             let runner = project_path("test-tools/runner.mjs");
             if !node.is_empty() && runner.is_file() {
-                let data_root = if self.data_root.trim().is_empty() {
-                    project_path("").display().to_string()
-                } else {
-                    self.data_root.trim().to_owned()
-                };
                 let mut stop_cmd = Command::new(&node);
                 stop_cmd
                     .args([
@@ -1657,9 +2189,9 @@ impl TestToolPanel {
                         "--data-root".into(),
                         data_root,
                         "--plugins-root".into(),
-                        self.plugins_dir.trim().to_owned(),
+                        plugins_dir,
                         "--marketplace-dir".into(),
-                        self.resolve_marketplace_root().display().to_string(),
+                        marketplace_dir,
                     ])
                     .current_dir(project_path("test-tools"))
                     .stdout(Stdio::null())

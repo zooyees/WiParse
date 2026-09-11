@@ -24,3 +24,6 @@ test-tools/plugins/**/logs/
 # Marketplace server local data / caches
 services/testing-hub-marketplace/data/
 **/marketplace/cache/
+/marketplace/
+dist/wiparse-linux-marketplace-demo/
+dist/wiparse-linux-marketplace-demo.tar.gz

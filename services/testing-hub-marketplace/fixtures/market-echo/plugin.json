@@ -1,0 +1,26 @@
+{
+  "id": "market-echo",
+  "name": "Market Echo",
+  "name_zh": "市场回显",
+  "type": "custom",
+  "version": "1.0.0",
+  "entry": "index.mjs",
+  "capabilities": [
+    "preflight",
+    "run"
+  ],
+  "description": "Echoes params/context to verify install + run wiring.",
+  "publisher": "wiparse",
+  "marketplace": {
+    "channel": "stable"
+  },
+  "sandbox": {
+    "permissions": [
+      "gui.api",
+      "cli"
+    ]
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

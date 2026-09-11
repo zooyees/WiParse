@@ -1,0 +1,26 @@
+{
+  "id": "demo-marketplace-plugin",
+  "name": "Demo Marketplace Plugin",
+  "name_zh": "市场演示插件",
+  "type": "smoke",
+  "version": "1.0.0",
+  "entry": "index.mjs",
+  "capabilities": [
+    "preflight",
+    "run"
+  ],
+  "description": "Minimal smoke plugin for marketplace browse/install demos.",
+  "publisher": "wiparse",
+  "marketplace": {
+    "channel": "stable"
+  },
+  "sandbox": {
+    "permissions": [
+      "gui.api",
+      "cli"
+    ]
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

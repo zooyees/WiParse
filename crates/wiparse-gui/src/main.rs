@@ -18,6 +18,7 @@ mod theme;
 mod update;
 mod data_analysis;
 mod data_extract_cache;
+mod market_jobs;
 mod test_report;
 mod test_tool;
 mod waveform_analysis;

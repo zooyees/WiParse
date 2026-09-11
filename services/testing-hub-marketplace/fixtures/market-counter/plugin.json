@@ -1,0 +1,26 @@
+{
+  "id": "market-counter",
+  "name": "Market Counter",
+  "name_zh": "市场计数器",
+  "type": "smoke",
+  "version": "1.1.0",
+  "entry": "index.mjs",
+  "capabilities": [
+    "preflight",
+    "run"
+  ],
+  "description": "Counts 1..N and returns a summary (good after-install run).",
+  "publisher": "wiparse",
+  "marketplace": {
+    "channel": "stable"
+  },
+  "sandbox": {
+    "permissions": [
+      "gui.api",
+      "cli"
+    ]
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

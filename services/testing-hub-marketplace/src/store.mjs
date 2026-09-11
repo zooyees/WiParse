@@ -46,7 +46,7 @@ export function createStore(dataDir) {
       if (channel && latest.channel && latest.channel !== channel) continue;
       if (type && latest.type && latest.type !== type) continue;
       if (q) {
-        const hay = `${id} ${latest.name || ""} ${latest.description || ""}`.toLowerCase();
+        const hay = `${id} ${latest.name || ""} ${latest.name_zh || ""} ${latest.description || ""}`.toLowerCase();
         if (!hay.includes(String(q).toLowerCase())) continue;
       }
       out.push({
