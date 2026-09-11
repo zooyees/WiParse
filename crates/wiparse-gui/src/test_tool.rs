@@ -1656,6 +1656,10 @@ impl TestToolPanel {
                         "stop".into(),
                         "--data-root".into(),
                         data_root,
+                        "--plugins-root".into(),
+                        self.plugins_dir.trim().to_owned(),
+                        "--marketplace-dir".into(),
+                        self.resolve_marketplace_root().display().to_string(),
                     ])
                     .current_dir(project_path("test-tools"))
                     .stdout(Stdio::null())

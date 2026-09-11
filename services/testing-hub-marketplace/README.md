@@ -31,6 +31,18 @@ Publish body:
 }
 ```
 
+## Local simulation (no cloud)
+
+From repo root:
+
+```bash
+CLEAN=1 node scripts/local-marketplace-sim.mjs
+```
+
+This boots loopback HTTP, publishes the demo fixture, pulls into a temp install
+root, and checks runner discovery. Set `WIPARSE_MARKETPLACE_ALLOW_HTTP=1` when
+calling the client CLI against `http://127.0.0.1:…`.
+
 ## Tests
 
 ```bash
