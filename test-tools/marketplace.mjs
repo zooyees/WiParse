@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * Testing Hub marketplace CLI (local registry + optional cloud).
+ * Testing Hub marketplace CLI (local registry + optional remote/local server).
  *
  *   node marketplace.mjs list [--json]
- *   node marketplace.mjs verify --zip file.zip --meta meta.json [--json]
- *   node marketplace.mjs install --zip file.zip --meta meta.json [--install-dir d]
+ *   node marketplace.mjs verify --zip file.zip --meta meta.json
+ *   node marketplace.mjs install --zip file.zip --meta meta.json [--data-root d]
  *   node marketplace.mjs uninstall --plugin id --version x.y.z
- *   node marketplace.mjs catalog [--url https://...] [--channel stable]
+ *   node marketplace.mjs catalog [--url http://127.0.0.1:8787]
  *   node marketplace.mjs pull --plugin id --version x.y.z [--url ...]
  */
 
@@ -30,8 +30,6 @@ import {
 import { installFromZip, installFromZipFile } from "./lib/marketplace-install.mjs";
 import { createMarketplaceClient } from "./lib/marketplace-client.mjs";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
 function parseArgs(argv) {
   const out = {
     cmd: null,
@@ -50,9 +48,7 @@ function parseArgs(argv) {
     help: false,
   };
   const rest = [...argv];
-  if (rest[0] && !rest[0].startsWith("-")) {
-    out.cmd = rest.shift();
-  }
+  if (rest[0] && !rest[0].startsWith("-")) out.cmd = rest.shift();
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === "--json") out.json = true;
@@ -81,15 +77,17 @@ function parseArgs(argv) {
 function printHelp() {
   console.log(`Usage:
   node marketplace.mjs list [--install-dir d] [--json]
-  node marketplace.mjs verify --zip <file> --meta <json> [--require-signature]
-  node marketplace.mjs install --zip <file> --meta <json> [--install-dir d]
-  node marketplace.mjs uninstall --plugin <id> --version <ver> [--install-dir d]
+  node marketplace.mjs verify --zip <file> --meta <json>
+  node marketplace.mjs install --zip <file> --meta <json> [--data-root d]
+  node marketplace.mjs uninstall --plugin <id> --version <ver>
   node marketplace.mjs activate --plugin <id> --version <ver>
   node marketplace.mjs catalog [--url URL] [--channel stable] [--json]
-  node marketplace.mjs pull --plugin <id> --version <ver> [--url URL] [--install-dir d]
+  node marketplace.mjs pull --plugin <id> --version <ver> [--url URL]
 
-Env: WIPARSE_MARKETPLACE_URL, WIPARSE_MARKETPLACE_TOKEN, WIPARSE_MARKETPLACE_ALLOW_HTTP,
-     WIPARSE_DATA_ROOT
+Local loopback (HTTP):
+  WIPARSE_MARKETPLACE_ALLOW_HTTP=1 node marketplace.mjs catalog --url http://127.0.0.1:8787
+
+Env: WIPARSE_MARKETPLACE_URL, WIPARSE_MARKETPLACE_TOKEN, WIPARSE_MARKETPLACE_ALLOW_HTTP, WIPARSE_DATA_ROOT
 `);
 }
 
@@ -111,16 +109,9 @@ function trustFromOpts(opts) {
   });
 }
 
-function loadMeta(p) {
-  return JSON.parse(fs.readFileSync(p, "utf8"));
-}
-
-function emit(opts, obj, exitCode = 0) {
-  if (opts.json) console.log(JSON.stringify(obj, null, 2));
-  else if (obj?.ok === false) console.error(JSON.stringify(obj));
-  else if (typeof obj === "string") console.log(obj);
-  else console.log(JSON.stringify(obj, null, 2));
-  process.exit(exitCode);
+function emit(opts, obj) {
+  console.log(typeof obj === "string" ? obj : JSON.stringify(obj, null, 2));
+  process.exit(0);
 }
 
 function rootFromOpts(opts) {
@@ -144,13 +135,14 @@ async function main() {
     if (opts.cmd === "list") {
       const root = rootFromOpts(opts);
       ensureMarketplaceLayout(root);
-      const items = listInstalled(root);
-      emit(opts, { ok: true, install_dir: root, plugins: items });
+      emit(opts, { ok: true, install_dir: root, plugins: listInstalled(root) });
     }
 
     if (opts.cmd === "verify") {
-      if (!opts.zip || !opts.meta) throw new MarketplaceError("E_CONFIG", "need --zip and --meta");
-      const meta = loadMeta(opts.meta);
+      if (!opts.zip || !opts.meta) {
+        throw new MarketplaceError("E_CONFIG", "need --zip and --meta");
+      }
+      const meta = JSON.parse(fs.readFileSync(opts.meta, "utf8"));
       const result = verifyArtifactIntegrity({
         meta,
         filePath: path.resolve(opts.zip),
@@ -160,9 +152,11 @@ async function main() {
     }
 
     if (opts.cmd === "install") {
-      if (!opts.zip || !opts.meta) throw new MarketplaceError("E_CONFIG", "need --zip and --meta");
+      if (!opts.zip || !opts.meta) {
+        throw new MarketplaceError("E_CONFIG", "need --zip and --meta");
+      }
       const root = rootFromOpts(opts);
-      const meta = loadMeta(opts.meta);
+      const meta = JSON.parse(fs.readFileSync(opts.meta, "utf8"));
       const result = installFromZipFile({
         marketplaceRoot: root,
         meta,
@@ -178,24 +172,19 @@ async function main() {
       if (!opts.plugin || !opts.version) {
         throw new MarketplaceError("E_CONFIG", "need --plugin and --version");
       }
-      const root = rootFromOpts(opts);
-      emit(opts, uninstallVersion(root, opts.plugin, opts.version));
+      emit(opts, uninstallVersion(rootFromOpts(opts), opts.plugin, opts.version));
     }
 
     if (opts.cmd === "activate") {
       if (!opts.plugin || !opts.version) {
         throw new MarketplaceError("E_CONFIG", "need --plugin and --version");
       }
-      const root = rootFromOpts(opts);
-      const entry = setActiveVersion(root, opts.plugin, opts.version);
+      const entry = setActiveVersion(rootFromOpts(opts), opts.plugin, opts.version);
       emit(opts, { ok: true, id: opts.plugin, active: entry.active });
     }
 
     if (opts.cmd === "catalog") {
-      const url =
-        opts.url ||
-        process.env.WIPARSE_MARKETPLACE_URL ||
-        "";
+      const url = opts.url || process.env.WIPARSE_MARKETPLACE_URL || "";
       if (!url) throw new MarketplaceError("E_CONFIG", "need --url or WIPARSE_MARKETPLACE_URL");
       const client = createMarketplaceClient({
         baseUrl: url,
@@ -203,10 +192,7 @@ async function main() {
         trust,
         allowHttp: allowHttpFromEnv(),
       });
-      const data = await client.catalog({
-        channel: opts.channel || undefined,
-      });
-      emit(opts, data);
+      emit(opts, await client.catalog({ channel: opts.channel || undefined }));
     }
 
     if (opts.cmd === "pull") {
@@ -224,9 +210,8 @@ async function main() {
       const metaResp = await client.getVersion(opts.plugin, opts.version);
       const meta = metaResp.version || metaResp;
       const zipBytes = await client.download(opts.plugin, opts.version);
-      const root = rootFromOpts(opts);
       const result = installFromZip({
-        marketplaceRoot: root,
+        marketplaceRoot: rootFromOpts(opts),
         meta,
         zipBytes,
         trust,
@@ -242,16 +227,17 @@ async function main() {
       e instanceof MarketplaceError
         ? e.toJSON()
         : { ok: false, error: { code: "E_INTERNAL", message: String(e?.message || e) } };
+    console.error(
+      `[marketplace] ${payload.error?.code || "E_INTERNAL"}: ${payload.error?.message || e}`
+    );
     if (opts.json) console.log(JSON.stringify(payload, null, 2));
-    else console.error(`[marketplace] ${payload.error.code}: ${payload.error.message}`);
     process.exit(1);
   }
 }
 
-const isDirect =
+if (
   process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-
-if (isDirect) {
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
   main();
 }
