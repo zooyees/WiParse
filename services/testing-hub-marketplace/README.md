@@ -43,6 +43,39 @@ This boots loopback HTTP, publishes the demo fixture, pulls into a temp install
 root, and checks runner discovery. Set `WIPARSE_MARKETPLACE_ALLOW_HTTP=1` when
 calling the client CLI against `http://127.0.0.1:…`.
 
+## Seed + deploy (demo catalog)
+
+```bash
+# Write 4 sample plugins into ./data (offline)
+CLEAN=1 node ../../scripts/seed-marketplace-plugins.mjs --data ./data
+
+# Or one-shot deploy (seed + listen on :8787)
+TOKEN=dev-token ./../../scripts/deploy-marketplace.sh
+```
+
+Sample plugins: `demo-marketplace-plugin`, `market-echo`, `market-counter`,
+`market-preflight-lab`.
+
+## Package WiParse demo (Linux)
+
+From repo root:
+
+```bash
+./scripts/package-marketplace-demo.sh
+# → dist/wiparse-linux-marketplace-demo/
+# → dist/wiparse-linux-marketplace-demo.tar.gz
+```
+
+Then:
+
+```bash
+cd dist/wiparse-linux-marketplace-demo
+./start-marketplace.sh
+./start-wiparse.sh
+```
+
+In Testing Hub switch **Plugins | Market**, refresh catalog, Install, then run.
+
 ## Tests
 
 ```bash
