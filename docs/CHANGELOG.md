@@ -6,22 +6,30 @@
 
 ---
 
-## Unreleased — Testing Hub 插件市场基础设施
+## 1.1.11 — 2026-09-12
 
-### Phase 1（WiParse 内）
+Testing Hub 插件市场可在应用内浏览/安装；Hub 布局简化并消除控件重叠。界面仍为原标签（串口 / 仪表 / 波形 / 数据 / 集成测试 / 报告 / 计算器）。
 
+### Testing Hub / 市场
+
+- 左侧 **插件 | 市场** 分段，去掉启用开关与顶栏往返；安装成功后切回插件并选中即可运行。
 - 市场契约与 schema：`test-tools/schemas/marketplace-package.schema.json`；`plugin.json` 可选 `publisher` / `sandbox` / `marketplace.channel`。
-- Node 客户端：`marketplace-trust` / `registry` / `install` / `client` + `marketplace.mjs` CLI（verify / install / list / catalog / pull）。
-- Runner / GUI：合并发现捆绑插件与 `{data_root}/marketplace` 已激活版本；安装路径最小权限、SHA-256、可选 Ed25519 签名钩子。
-- Rust：`wiparse_core::marketplace` + `apps.test_tool.marketplace` 配置；目录拉取走 HTTPS（ureq `tls`）。本机 `127.0.0.1` / `localhost` 才允许明文 HTTP。
-- 修正 `.gitignore` 的 `log/` 误忽略 `crates/wiparse-core/src/log/`（日志宿主以目录模块入库，去掉市场分支顶替的 `log.rs`）。
-- Testing Hub **插件 / 市场** 双模式：目录浏览、安装/卸载；与 1.1.10 仪器参数控件并存。
-- 本机 `127.0.0.1` / `localhost` / `::1` 明文 HTTP 可直接访问（无需再设 `WIPARSE_MARKETPLACE_ALLOW_HTTP`）；其它 HTTP 仍需该环境变量。
-- Windows 本地市场：`scripts/deploy-marketplace.ps1` 播种并监听 `http://127.0.0.1:8787`；`scripts/package-marketplace-demo.ps1` 产出 `dist/wiparse-win-marketplace-demo.zip`。
+- Node 客户端：`marketplace.mjs`（verify / install / list / catalog / pull）；runner 合并捆绑插件与 `{data_root}/marketplace` 已激活版本；SHA-256，可选 Ed25519。
+- Rust：`wiparse_core::marketplace` + `apps.test_tool.marketplace`；HTTPS 拉目录。本机 `127.0.0.1` / `localhost` / `::1` 明文 HTTP 可直接访问；其它 HTTP 仍需 `WIPARSE_MARKETPLACE_ALLOW_HTTP`。
+- 云端骨架 `services/testing-hub-marketplace`：catalog / 详情 / 下载 / Bearer 发布与删除。
+- Windows：`scripts/deploy-marketplace.ps1` 播种并监听 `http://127.0.0.1:8787`；`scripts/package-marketplace-demo.ps1` 产出演示 zip，并尽力同步 `dist/WiParse.exe`（GUI 占用则跳过拷贝）。
 
-### Phase 2（云端骨架）
+### 布局 / 文档
 
-- `services/testing-hub-marketplace`：catalog / 详情 / 下载 / Bearer 发布与删除；文件系统制品库；`node --test` 覆盖。
+- 搜索+刷新、插件/市场分段改为精确分格，圆角控件不再互相覆盖。
+- 根目录 README 补充功能、使用范围、编译与 dist 工作流。
+- 修正 `.gitignore` 的 `log/` 误忽略 `crates/wiparse-core/src/log/`。
+
+### 兼容性
+
+- 配置键仍为 `test_tool`。GUI 主标签与 1.1.10 相同。
+- 旧插件未走市场安装时行为不变。
+- 关于页展示本版简化要点；完整备份以本文为准。
 
 ---
 

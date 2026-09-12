@@ -49,12 +49,6 @@ $CliExe = Join-Path $Root "target\release\wiparse.exe"
 if (-not (Test-Path $GuiExe)) { throw "missing $GuiExe" }
 if (-not (Test-Path $CliExe)) { throw "missing $CliExe" }
 
-Write-Host "[package] seed marketplace data"
-$env:CLEAN = "1"
-& node (Join-Path $Root "scripts\seed-marketplace-plugins.mjs") --data (Join-Path $Root "services\testing-hub-marketplace\data")
-Remove-Item Env:CLEAN -ErrorAction SilentlyContinue
-if ($LASTEXITCODE -ne 0) { throw "seed failed" }
-
 if (Test-Path $Out) { Remove-Item $Out -Recurse -Force }
 New-Item -ItemType Directory -Force -Path (Join-Path $Out "bin") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $Out "scripts") | Out-Null
@@ -63,14 +57,28 @@ New-Item -ItemType Directory -Force -Path (Join-Path $Out "marketplace") | Out-N
 Copy-Item -Force $GuiExe (Join-Path $Out "bin\WiParse.exe")
 Copy-Item -Force $CliExe (Join-Path $Out "bin\WiParse-CLI.exe")
 
-# Also refresh the daily dist/ runtime copy.
+# Also refresh the daily dist/ runtime copy (skip if the running GUI has the file mapped).
 New-Item -ItemType Directory -Force -Path (Join-Path $Root "dist") | Out-Null
-Copy-Item -Force $GuiExe (Join-Path $Root "dist\WiParse.exe")
-Copy-Item -Force $CliExe (Join-Path $Root "dist\WiParse-CLI.exe")
+foreach ($pair in @(
+    @{ Src = $GuiExe; Dst = Join-Path $Root "dist\WiParse.exe" },
+    @{ Src = $CliExe; Dst = Join-Path $Root "dist\WiParse-CLI.exe" }
+)) {
+    try {
+        Copy-Item -Force $pair.Src $pair.Dst
+    } catch {
+        Write-Host "[package] skip $($pair.Dst) (in use): $($_.Exception.Message)"
+    }
+}
 Copy-Tree (Join-Path $Root "test-tools") (Join-Path $Root "dist\test-tools")
 
 Copy-Tree (Join-Path $Root "test-tools") (Join-Path $Out "test-tools")
 Copy-Tree (Join-Path $Root "services\testing-hub-marketplace") (Join-Path $Out "services\testing-hub-marketplace")
+Write-Host "[package] seed marketplace data into package"
+$PackageData = Join-Path $Out "services\testing-hub-marketplace\data"
+$env:CLEAN = "1"
+& node (Join-Path $Root "scripts\seed-marketplace-plugins.mjs") --data $PackageData
+Remove-Item Env:CLEAN -ErrorAction SilentlyContinue
+if ($LASTEXITCODE -ne 0) { throw "seed failed" }
 Copy-Item -Force (Join-Path $Root "scripts\deploy-marketplace.ps1") (Join-Path $Out "scripts\deploy-marketplace.ps1")
 Copy-Item -Force (Join-Path $Root "scripts\seed-marketplace-plugins.mjs") (Join-Path $Out "scripts\seed-marketplace-plugins.mjs")
 Copy-Item -Force (Join-Path $Root "scripts\local-marketplace-sim.mjs") (Join-Path $Out "scripts\local-marketplace-sim.mjs")
@@ -126,9 +134,9 @@ Seeded plugins:
 ``````
 
 In **集成测试 / Testing Hub**:
-1. Switch to **市场 / Market**
-2. Confirm URL ``http://127.0.0.1:$Port`` and **启用市场**
-3. Refresh → Install a plugin → switch back to **插件** and run it
+1. Switch the left segment to **市场 / Market**
+2. If needed, expand **服务器 / Server** and confirm URL ``http://127.0.0.1:$Port``
+3. Refresh → Install a plugin → it opens in **插件** ready to run
 
 Requires Node.js 18+ on PATH.
 

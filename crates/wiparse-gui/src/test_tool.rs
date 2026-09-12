@@ -20,14 +20,14 @@ use wiparse_core::i18n::{tr, Lang};
 use wiparse_core::paths::project_path;
 use wiparse_core::marketplace::CHANNELS;
 
-const SIDE_W: f32 = 220.0;
+const SIDE_W: f32 = 248.0;
 const PANEL_GAP: f32 = 8.0;
 const CARD_MARGIN_X: i8 = 8;
 const MAX_LOG_CHARS: usize = 200_000;
 const LABEL_COL_MIN: f32 = 72.0;
 const LABEL_COL_MAX: f32 = 168.0;
 const BTN_W: f32 = 72.0;
-const PATH_BROWSE_W: f32 = 28.0;
+const PATH_BROWSE_W: f32 = 32.0;
 const PARAM_GAP_X: f32 = 8.0;
 const PLUGIN_ROW_H: f32 = 44.0;
 const HUD_H: f32 = 26.0;
@@ -169,6 +169,7 @@ pub struct TestToolPanel {
     catalog_selected_version: Option<String>,
     catalog_status: String,
     catalog_busy: bool,
+    catalog_autoload: bool,
     market_job: Option<MarketJob>,
     plugins: Vec<PluginInfo>,
     selected: Option<String>,
@@ -238,6 +239,7 @@ impl TestToolPanel {
             catalog_selected_version: None,
             catalog_status: String::new(),
             catalog_busy: false,
+            catalog_autoload: false,
             market_job: None,
             plugins: Vec::new(),
             selected: None,
@@ -413,66 +415,13 @@ impl TestToolPanel {
             self.run_path_pick(target);
         }
 
-        // Get plugins drawer (not a peer Plugins|Market mode)
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            if self.hub_mode == HubMode::Market {
-                if ui_theme::ghost_btn_sized(
-                    ui,
-                    tokens,
-                    tr(lang, "test_tool.back_plugins"),
-                    egui::vec2(text_btn_w(ui, &tr(lang, "test_tool.back_plugins")) + 16.0, ui_theme::CTRL_H),
-                    false,
-                )
-                .clicked()
-                {
-                    self.hub_mode = HubMode::Plugins;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let mut enabled = self.marketplace_enabled;
-                    if ui
-                        .checkbox(
-                            &mut enabled,
-                            RichText::new(tr(lang, "test_tool.market_enable"))
-                                .size(ui_theme::FONT_CAPTION),
-                        )
-                        .changed()
-                    {
-                        self.marketplace_enabled = enabled;
-                        self.persist_config();
-                        if enabled && self.catalog.is_empty() && !self.catalog_busy {
-                            self.refresh_catalog(lang);
-                        }
-                    }
-                });
-            } else {
-                let get_lbl = tr(lang, "test_tool.get_plugins");
-                let updates = self.catalog.iter().filter(|r| r.has_update()).count();
-                let get_text = if updates > 0 {
-                    format!("{} ({updates})", get_lbl)
-                } else {
-                    get_lbl
-                };
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let get_w = text_btn_w(ui, &get_text) + 16.0;
-                    if ui_theme::ghost_btn_sized(
-                        ui,
-                        tokens,
-                        get_text,
-                        egui::vec2(get_w, ui_theme::CTRL_H),
-                        false,
-                    )
-                    .clicked()
-                    {
-                        self.hub_mode = HubMode::Market;
-                        if self.marketplace_enabled && self.catalog.is_empty() && !self.catalog_busy {
-                            self.refresh_catalog(lang);
-                        }
-                    }
-                });
-            }
-        });
-        ui.add_space(4.0);
+        if !self.catalog_autoload
+            && !self.catalog_busy
+            && !self.marketplace_base_url.trim().is_empty()
+        {
+            self.catalog_autoload = true;
+            self.refresh_catalog(lang);
+        }
 
         let avail = ui.available_size();
         let (full, _) = ui.allocate_exact_size(avail, egui::Sense::hover());
@@ -503,6 +452,36 @@ impl TestToolPanel {
         }
     }
 
+    fn paint_hub_mode_tabs(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        width: f32,
+    ) {
+        let plugins_sel = self.hub_mode == HubMode::Plugins;
+        let left = tr(lang, "test_tool.plugins");
+        let right = tr(lang, "test_tool.market");
+        let changed = ui_theme::segmented_two(
+            ui,
+            tokens,
+            &left,
+            &right,
+            plugins_sel,
+            egui::vec2(width, ui_theme::CTRL_H),
+        );
+        if let Some(want_plugins) = changed {
+            if want_plugins {
+                self.hub_mode = HubMode::Plugins;
+            } else {
+                self.hub_mode = HubMode::Market;
+                if self.catalog.is_empty() && !self.catalog_busy {
+                    self.refresh_catalog(lang);
+                }
+            }
+        }
+    }
+
     fn browser_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
         let card_w = ui.available_width();
         let inner_w = (card_w - f32::from(CARD_MARGIN_X) * 2.0).max(80.0);
@@ -512,94 +491,68 @@ impl TestToolPanel {
             .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
             .inner_margin(Margin::symmetric(CARD_MARGIN_X, 10))
             .show(ui, |ui| {
-                ui.set_min_width(inner_w);
                 ui.set_max_width(inner_w);
                 ui.set_min_height(ui.available_height());
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
-                let ctrl_w = inner_w;
+                let ctrl_w = ui.available_width();
 
-                ui.horizontal(|ui| {
-                    ui.set_max_width(ctrl_w);
-                    ui.label(
-                        RichText::new(tr(lang, "test_tool.plugins"))
-                            .size(ui_theme::FONT_TITLE)
-                            .strong()
-                            .color(tokens.text_primary),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 6.0;
-                        let refresh_w = if matches!(lang, Lang::Zh) { 48.0 } else { 64.0 };
-                        let browse_w = if matches!(lang, Lang::Zh) { 48.0 } else { 64.0 };
-                        if ui_theme::secondary_btn_sized(
-                            ui,
-                            tokens,
-                            tr(lang, "btn.refresh_browser"),
-                            egui::vec2(refresh_w, ui_theme::CTRL_H),
-                        )
-                        .clicked()
-                        {
-                            self.refresh_plugins();
-                        }
-                        if ui_theme::secondary_btn_sized(
-                            ui,
-                            tokens,
-                            tr(lang, "test_tool.browse"),
-                            egui::vec2(browse_w, ui_theme::CTRL_H),
-                        )
-                        .clicked()
-                        {
-                            self.pending_pick = Some(PathPickTarget::PluginsDir);
-                            ui.ctx().request_repaint();
-                        }
-                    });
-                });
+                self.paint_hub_mode_tabs(ui, lang, tokens, ctrl_w);
 
-                let path_edit = ui.add(
-                    egui::TextEdit::singleline(&mut self.plugins_dir)
-                        .desired_width(ctrl_w)
-                        .hint_text(tr(lang, "test_tool.plugins_hint"))
-                        .margin(egui::vec2(6.0, 4.0)),
+                let refresh_lbl = tr(lang, "btn.refresh_browser");
+                let search_hint = tr(lang, "test_tool.search");
+                let (_, refresh) = hub_edit_with_btn(
+                    ui,
+                    tokens,
+                    &mut self.type_filter,
+                    search_hint,
+                    &refresh_lbl,
+                    ctrl_w,
                 );
-                if path_edit.lost_focus() {
+                if refresh {
                     self.refresh_plugins();
-                    self.persist_config();
                 }
 
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(tr(lang, "test_tool.type_filter"))
-                            .size(ui_theme::FONT_CAPTION)
-                            .color(tokens.text_muted),
+                egui::CollapsingHeader::new(
+                    RichText::new(tr(lang, "test_tool.folder"))
+                        .size(ui_theme::FONT_CAPTION)
+                        .color(tokens.text_muted),
+                )
+                .default_open(false)
+                .show(ui, |ui| {
+                    let browse_lbl = tr(lang, "test_tool.browse");
+                    let hint = tr(lang, "test_tool.plugins_hint");
+                    let (path_edit, browse) = hub_edit_with_btn(
+                        ui,
+                        tokens,
+                        &mut self.plugins_dir,
+                        hint,
+                        &browse_lbl,
+                        ui.available_width().min(ctrl_w),
                     );
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.type_filter)
-                            .desired_width((ctrl_w - 48.0).max(80.0))
-                            .hint_text("smoke / capture_loop")
-                            .margin(egui::vec2(6.0, 3.0)),
-                    );
+                    if browse {
+                        self.pending_pick = Some(PathPickTarget::PluginsDir);
+                        ui.ctx().request_repaint();
+                    }
+                    if path_edit.lost_focus() {
+                        self.refresh_plugins();
+                        self.persist_config();
+                    }
                 });
 
-                let filter = self.type_filter.trim().to_ascii_lowercase();
+                let search = self.type_filter.trim().to_ascii_lowercase();
                 let visible_idxs: Vec<usize> = self
                     .plugins
                     .iter()
                     .enumerate()
                     .filter(|(_, p)| {
-                        filter.is_empty() || p.type_name.to_ascii_lowercase().contains(&filter)
+                        search.is_empty()
+                            || p.id.to_ascii_lowercase().contains(&search)
+                            || p.name.to_ascii_lowercase().contains(&search)
+                            || p.name_zh.to_ascii_lowercase().contains(&search)
+                            || p.type_name.to_ascii_lowercase().contains(&search)
                     })
                     .map(|(i, _)| i)
                     .collect();
-
-                let count_label = if matches!(lang, Lang::Zh) {
-                    format!("{} {}", tr(lang, "test_tool.count"), visible_idxs.len())
-                } else {
-                    format!("{} plugins", visible_idxs.len())
-                };
-                ui.label(
-                    RichText::new(count_label)
-                        .size(ui_theme::FONT_CAPTION)
-                        .color(tokens.text_muted),
-                );
 
                 ui.add_space(2.0);
                 ui.painter().hline(
@@ -618,20 +571,25 @@ impl TestToolPanel {
                     if ui_theme::primary_btn_sized(
                         ui,
                         tokens,
-                        tr(lang, "test_tool.get_plugins"),
-                        egui::vec2(inner_w.min(160.0), ui_theme::CTRL_H),
+                        tr(lang, "test_tool.market"),
+                        egui::vec2(inner_w.min(120.0), ui_theme::CTRL_H),
                     )
                     .clicked()
                     {
                         self.hub_mode = HubMode::Market;
-                        if self.marketplace_enabled && self.catalog.is_empty() && !self.catalog_busy
-                        {
+                        if self.catalog.is_empty() && !self.catalog_busy {
                             self.refresh_catalog(lang);
                         }
                     }
                 } else {
                     let list_h = ui.available_height().max(72.0);
-                    let selected_id = self.selected.as_deref();
+                    let selected_id = self.selected.clone();
+                    let update_ids: std::collections::HashSet<String> = self
+                        .catalog
+                        .iter()
+                        .filter(|r| r.has_update())
+                        .map(|r| r.id.clone())
+                        .collect();
                     let mut pick: Option<String> = None;
                     egui::ScrollArea::vertical()
                         .id_salt("test_tool_plugins")
@@ -645,39 +603,50 @@ impl TestToolPanel {
                                     continue;
                                 };
                                 let title = if matches!(lang, Lang::Zh) && !p.name_zh.is_empty() {
-                                    p.name_zh.as_str()
+                                    p.name_zh.clone()
                                 } else {
-                                    p.name.as_str()
+                                    p.name.clone()
                                 };
                                 let source_tag = if p.source == "marketplace" {
                                     tr(lang, "test_tool.source_market")
                                 } else {
                                     tr(lang, "test_tool.source_local")
                                 };
-                                let type_ver = format!("{} · v{} · {}", p.type_name, p.version, source_tag);
-                                let id = p.id.as_str();
-                                let is_sel = selected_id == Some(id);
+                                let type_ver = format!("v{} · {}", p.version, source_tag);
+                                let id = p.id.clone();
+                                let is_sel = selected_id.as_deref() == Some(id.as_str());
+                                let badge_text = tr(lang, "test_tool.market_update_badge");
+                                let badge = if update_ids.contains(&id) {
+                                    Some((badge_text.as_str(), tokens.warning))
+                                } else {
+                                    None
+                                };
                                 let tooltip = format!(
                                     "{}\nv{}\n{}",
                                     p.id, p.version, p.description
                                 );
-                                // Painter-only row: one click rect, no Label widgets (text
-                                // selection used to steal clicks and overflow into the next card).
-                                let resp = ui.push_id(id, |ui| {
+                                let resp = ui.push_id(&id, |ui| {
                                     let (rect, resp) = ui.allocate_exact_size(
                                         egui::vec2(ctrl_w, PLUGIN_ROW_H),
                                         egui::Sense::click(),
                                     );
                                     if ui.is_rect_visible(rect) {
                                         paint_plugin_row(
-                                            ui, tokens, rect, resp.hovered(), is_sel, title, &type_ver,
+                                            ui,
+                                            tokens,
+                                            rect,
+                                            resp.hovered(),
+                                            is_sel,
+                                            &title,
+                                            &type_ver,
+                                            badge,
                                         );
                                     }
                                     resp
                                 })
                                 .inner;
                                 if resp.clicked() {
-                                    pick = Some(id.to_owned());
+                                    pick = Some(id);
                                 }
                                 resp.on_hover_text(tooltip);
                             }
@@ -1047,6 +1016,21 @@ impl TestToolPanel {
             if r.lost_focus() {
                 self.persist_config();
             }
+
+            ui.label(
+                RichText::new(tr(lang, "test_tool.market_url"))
+                    .size(ui_theme::FONT_CAPTION)
+                    .color(tokens.text_muted),
+            );
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut self.marketplace_base_url)
+                    .desired_width(full_w)
+                    .hint_text("http://127.0.0.1:8787")
+                    .margin(egui::vec2(6.0, 3.0)),
+            );
+            if r.lost_focus() {
+                self.persist_config();
+            }
         });
     }
 
@@ -1187,7 +1171,7 @@ impl TestToolPanel {
             let resp = place_in_rect(
                 ui,
                 field_rect,
-                egui::Layout::left_to_right(egui::Align::Center),
+                egui::Layout::top_down(egui::Align::Min),
                 |ui| ui.checkbox(&mut on, ""),
             );
             if resp.changed() {
@@ -1223,7 +1207,7 @@ impl TestToolPanel {
             let resp = place_in_rect(
                 ui,
                 field_rect,
-                egui::Layout::left_to_right(egui::Align::Center),
+                egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     egui::ComboBox::from_id_salt(("hub_device", &name))
                         .width(field_rect.width())
@@ -1279,7 +1263,7 @@ impl TestToolPanel {
             let resp = place_in_rect(
                 ui,
                 field_rect,
-                egui::Layout::left_to_right(egui::Align::Center),
+                egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     egui::ComboBox::from_id_salt(("hub_enum", &name))
                         .width(field_rect.width())
@@ -1323,7 +1307,7 @@ impl TestToolPanel {
             let resp = place_in_rect(
                 ui,
                 field_rect,
-                egui::Layout::left_to_right(egui::Align::Center),
+                egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     egui::ComboBox::from_id_salt(("hub_serial", &name))
                         .width(field_rect.width())
@@ -1350,22 +1334,7 @@ impl TestToolPanel {
             hover_resp = Some(resp);
         } else {
             let entry = self.param_values.entry(name.clone()).or_default();
-            let resp = place_in_rect(
-                ui,
-                field_rect,
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
-                    ui.add_sized(
-                        field_rect.size(),
-                        egui::TextEdit::singleline(entry)
-                            .desired_width(field_rect.width())
-                            .clip_text(true)
-                            .hint_text(&hint)
-                            .margin(egui::vec2(6.0, 3.0)),
-                    )
-                },
-            );
+            let resp = hub_text_edit(ui, field_rect, entry, &hint);
             if resp.changed() {
                 self.param_touched.insert(name.clone());
             }
@@ -1380,11 +1349,8 @@ impl TestToolPanel {
             let clicked = place_in_rect(
                 ui,
                 btn_rect,
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
-                    ui_theme::secondary_btn_sized(ui, tokens, "…", btn_rect.size()).clicked()
-                },
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| ui_theme::secondary_btn_sized(ui, tokens, "…", btn_rect.size()).clicked(),
             );
             if clicked {
                 *pending_param = Some(name);
@@ -1684,7 +1650,7 @@ impl TestToolPanel {
         ui.scope_builder(
             egui::UiBuilder::new()
                 .max_rect(inner)
-                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                .layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(false)),
             |ui| {
                 ui.set_clip_rect(inner.intersect(ui.clip_rect()));
                 ui.set_min_height(inner.height());
@@ -2084,6 +2050,7 @@ impl TestToolPanel {
                     self.refresh_plugins();
                     self.selected = Some(id.clone());
                     self.load_param_defaults_for_selection();
+                    self.hub_mode = HubMode::Plugins;
                     let installed = installed_map_from_registry(&self.resolve_marketplace_root());
                     for row in &mut self.catalog {
                         if let Some((_, v)) = installed.iter().find(|(i, _)| i == &row.id) {
@@ -2144,77 +2111,73 @@ impl TestToolPanel {
             .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
             .inner_margin(Margin::symmetric(CARD_MARGIN_X, 10))
             .show(ui, |ui| {
-                ui.set_min_width(inner_w);
                 ui.set_max_width(inner_w);
                 ui.set_min_height(ui.available_height());
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
-                let ctrl_w = inner_w;
+                let ctrl_w = ui.available_width();
 
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(tr(lang, "test_tool.market"))
-                            .size(ui_theme::FONT_TITLE)
-                            .strong()
-                            .color(tokens.text_primary),
+                self.paint_hub_mode_tabs(ui, lang, tokens, ctrl_w);
+
+                let refresh_lbl = tr(lang, "btn.refresh_browser");
+                let search_hint = tr(lang, "test_tool.search");
+                let (_, refresh) = hub_edit_with_btn(
+                    ui,
+                    tokens,
+                    &mut self.type_filter,
+                    search_hint,
+                    &refresh_lbl,
+                    ctrl_w,
+                );
+                if refresh && !self.catalog_busy {
+                    self.refresh_catalog(lang);
+                }
+
+                egui::CollapsingHeader::new(
+                    RichText::new(tr(lang, "test_tool.market_connect"))
+                        .size(ui_theme::FONT_CAPTION)
+                        .color(tokens.text_muted),
+                )
+                .default_open(self.marketplace_base_url.trim().is_empty())
+                .show(ui, |ui| {
+                    let url_w = ui.available_width().max(80.0);
+                    let url_edit = ui.add(
+                        egui::TextEdit::singleline(&mut self.marketplace_base_url)
+                            .desired_width(url_w)
+                            .clip_text(true)
+                            .hint_text("http://127.0.0.1:8787")
+                            .margin(egui::vec2(6.0, 4.0)),
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let refresh_w = if matches!(lang, Lang::Zh) { 48.0 } else { 64.0 };
-                        if ui_theme::secondary_btn_sized(
-                            ui,
-                            tokens,
-                            tr(lang, "btn.refresh_browser"),
-                            egui::vec2(refresh_w, ui_theme::CTRL_H),
-                        )
-                        .clicked()
-                            && !self.catalog_busy
-                        {
+                    if url_edit.lost_focus() {
+                        self.persist_config();
+                    }
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        ui.label(
+                            RichText::new(tr(lang, "test_tool.market_channel"))
+                                .size(ui_theme::FONT_CAPTION)
+                                .color(tokens.text_muted),
+                        );
+                        let mut ch = if self.marketplace_channel.trim().is_empty() {
+                            "stable".to_string()
+                        } else {
+                            self.marketplace_channel.clone()
+                        };
+                        let before = ch.clone();
+                        let combo_w = ui.available_width().max(80.0);
+                        egui::ComboBox::from_id_salt("market_channel")
+                            .width(combo_w)
+                            .selected_text(ch.clone())
+                            .show_ui(ui, |ui| {
+                                for c in CHANNELS {
+                                    ui.selectable_value(&mut ch, (*c).to_string(), *c);
+                                }
+                            });
+                        if ch != before {
+                            self.marketplace_channel = ch;
+                            self.persist_config();
                             self.refresh_catalog(lang);
                         }
                     });
-                });
-
-                ui.label(
-                    RichText::new(tr(lang, "test_tool.market_url"))
-                        .size(ui_theme::FONT_CAPTION)
-                        .color(tokens.text_muted),
-                );
-                let url_edit = ui.add(
-                    egui::TextEdit::singleline(&mut self.marketplace_base_url)
-                        .desired_width(ctrl_w)
-                        .hint_text("http://127.0.0.1:8787")
-                        .margin(egui::vec2(6.0, 4.0)),
-                );
-                if url_edit.lost_focus() {
-                    self.persist_config();
-                }
-
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(tr(lang, "test_tool.market_channel"))
-                            .size(ui_theme::FONT_CAPTION)
-                            .color(tokens.text_muted),
-                    );
-                    let mut ch = if self.marketplace_channel.trim().is_empty() {
-                        "stable".to_string()
-                    } else {
-                        self.marketplace_channel.clone()
-                    };
-                    let before = ch.clone();
-                    egui::ComboBox::from_id_salt("market_channel")
-                        .width((ctrl_w - 72.0).max(80.0))
-                        .selected_text(ch.clone())
-                        .show_ui(ui, |ui| {
-                            for c in CHANNELS {
-                                ui.selectable_value(&mut ch, (*c).to_string(), *c);
-                            }
-                        });
-                    if ch != before {
-                        self.marketplace_channel = ch;
-                        self.persist_config();
-                        if self.marketplace_enabled {
-                            self.refresh_catalog(lang);
-                        }
-                    }
                 });
 
                 if !self.catalog_status.is_empty() {
@@ -2230,98 +2193,102 @@ impl TestToolPanel {
                     } else {
                         tokens.text_muted
                     };
-                    ui.label(
-                        RichText::new(&self.catalog_status)
-                            .size(ui_theme::FONT_CAPTION)
-                            .color(color),
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(&self.catalog_status)
+                                .size(ui_theme::FONT_CAPTION)
+                                .color(color),
+                        )
+                        .truncate()
+                        .selectable(false),
                     );
                 }
 
+                let search = self.type_filter.trim().to_ascii_lowercase();
+                let rows: Vec<(String, String, String, bool, bool)> = self
+                    .catalog
+                    .iter()
+                    .filter(|row| {
+                        if search.is_empty() {
+                            return true;
+                        }
+                        row.id.to_ascii_lowercase().contains(&search)
+                            || row.name.to_ascii_lowercase().contains(&search)
+                            || row.name_zh.to_ascii_lowercase().contains(&search)
+                            || row.type_name.to_ascii_lowercase().contains(&search)
+                    })
+                    .map(|row| {
+                        let title = if matches!(lang, Lang::Zh) && !row.name_zh.is_empty() {
+                            row.name_zh.clone()
+                        } else {
+                            row.name.clone()
+                        };
+                        (
+                            row.id.clone(),
+                            title,
+                            format!("v{} · {}", row.latest_version, row.type_name),
+                            row.installed,
+                            row.has_update(),
+                        )
+                    })
+                    .collect();
+                let selected = self.catalog_selected.clone();
+
                 egui::ScrollArea::vertical()
+                    .id_salt("test_tool_market")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        if self.catalog.is_empty() {
+                        ui.set_width(ctrl_w);
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        if rows.is_empty() {
                             ui.label(
                                 RichText::new(tr(lang, "test_tool.market_empty"))
+                                    .size(ui_theme::FONT_CAPTION)
                                     .color(tokens.text_muted),
                             );
                             return;
                         }
                         let mut clicked: Option<String> = None;
-                        for row in &self.catalog {
-                            let selected =
-                                self.catalog_selected.as_deref() == Some(row.id.as_str());
-                            let title = if matches!(lang, Lang::Zh) && !row.name_zh.is_empty() {
-                                row.name_zh.as_str()
+                        for (id, title, type_ver, installed, update) in &rows {
+                            let is_sel = selected.as_deref() == Some(id.as_str());
+                            let badge_owned;
+                            let badge = if *update {
+                                badge_owned = tr(lang, "test_tool.market_update_badge");
+                                Some((badge_owned.as_str(), tokens.warning))
+                            } else if *installed {
+                                badge_owned = tr(lang, "test_tool.market_installed");
+                                Some((badge_owned.as_str(), tokens.success))
                             } else {
-                                row.name.as_str()
+                                badge_owned = tr(lang, "test_tool.market_available");
+                                Some((badge_owned.as_str(), tokens.text_muted))
                             };
-                            let update = row
-                                .installed_version
-                                .as_ref()
-                                .map(|v| v != &row.latest_version)
-                                .unwrap_or(false);
-                            let badge = if update {
-                                format!("{} ", tr(lang, "test_tool.market_update_badge"))
-                            } else if row.installed {
-                                "✓ ".to_string()
-                            } else {
-                                String::new()
-                            };
-                            let (rect, resp) = ui.allocate_exact_size(
-                                egui::vec2(ctrl_w, 42.0),
-                                egui::Sense::click(),
-                            );
-                            if ui.is_rect_visible(rect) {
-                                let fill = if selected {
-                                    tokens.accent.linear_multiply(0.18)
-                                } else if resp.hovered() {
-                                    tokens.accent.linear_multiply(0.08)
-                                } else {
-                                    egui::Color32::TRANSPARENT
-                                };
-                                ui.painter().rect_filled(rect, 4.0, fill);
-                                let galley1 = ui.fonts(|f| {
-                                    f.layout_no_wrap(
-                                        format!("{badge}{title}  v{}", row.latest_version),
-                                        egui::FontId::proportional(ui_theme::FONT_BODY),
-                                        tokens.text_primary,
-                                    )
-                                });
-                                let galley2 = ui.fonts(|f| {
-                                    f.layout_no_wrap(
-                                        format!(
-                                            "{} · {}",
-                                            row.type_name,
-                                            if row.publisher.is_empty() {
-                                                "-"
-                                            } else {
-                                                row.publisher.as_str()
-                                            }
-                                        ),
-                                        egui::FontId::proportional(ui_theme::FONT_CAPTION),
-                                        tokens.text_muted,
-                                    )
-                                });
-                                ui.painter().galley(
-                                    egui::pos2(rect.left() + 6.0, rect.top() + 4.0),
-                                    galley1,
-                                    tokens.text_primary,
+                            let resp = ui.push_id(id, |ui| {
+                                let (rect, resp) = ui.allocate_exact_size(
+                                    egui::vec2(ctrl_w, PLUGIN_ROW_H),
+                                    egui::Sense::click(),
                                 );
-                                ui.painter().galley(
-                                    egui::pos2(rect.left() + 6.0, rect.top() + 22.0),
-                                    galley2,
-                                    tokens.text_muted,
-                                );
-                            }
+                                if ui.is_rect_visible(rect) {
+                                    paint_plugin_row(
+                                        ui,
+                                        tokens,
+                                        rect,
+                                        resp.hovered(),
+                                        is_sel,
+                                        title,
+                                        type_ver,
+                                        badge,
+                                    );
+                                }
+                                resp
+                            })
+                            .inner;
                             if resp.clicked() {
-                                clicked = Some(row.id.clone());
+                                clicked = Some(id.clone());
                             }
                         }
                         if let Some(id) = clicked {
                             if let Some(row) = self.catalog.iter().find(|r| r.id == id) {
-                                self.catalog_selected_version =
-                                    Some(row.latest_version.clone());
+                                self.catalog_selected_version = Some(row.latest_version.clone());
                             }
                             self.catalog_selected = Some(id);
                         }
@@ -2334,12 +2301,15 @@ impl TestToolPanel {
             .fill(tokens.surface_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-            .inner_margin(Margin::same(12))
+            .inner_margin(Margin::symmetric(10, 8))
             .show(ui, |ui| {
-                ui.set_min_height(ui.available_height());
+                ui.set_min_size(ui.available_size());
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
+
                 let Some(id) = self.catalog_selected.clone() else {
                     ui.label(
                         RichText::new(tr(lang, "test_tool.market_select_hint"))
+                            .size(ui_theme::FONT_CAPTION)
                             .color(tokens.text_muted),
                     );
                     return;
@@ -2353,190 +2323,136 @@ impl TestToolPanel {
                 } else {
                     row.name.clone()
                 };
-                let update_available = row
-                    .installed_version
-                    .as_ref()
-                    .map(|v| v != &row.latest_version)
-                    .unwrap_or(false);
+                let update_available = row.has_update();
+                let busy = self.catalog_busy;
 
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(&title)
-                            .size(ui_theme::FONT_TITLE)
-                            .strong()
-                            .color(tokens.text_primary),
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(&title)
+                                .size(ui_theme::FONT_TITLE)
+                                .strong()
+                                .color(tokens.text_primary),
+                        )
+                        .truncate()
+                        .selectable(false),
                     );
-                    if update_available {
-                        ui.label(
-                            RichText::new(tr(lang, "test_tool.market_update_badge"))
-                                .size(ui_theme::FONT_CAPTION)
-                                .color(tokens.warning),
-                        );
+                    let (pill, color) = if update_available {
+                        (tr(lang, "test_tool.market_update_badge"), tokens.warning)
                     } else if row.installed {
-                        ui.label(
-                            RichText::new(tr(lang, "test_tool.market_installed"))
-                                .size(ui_theme::FONT_CAPTION)
-                                .color(tokens.success),
-                        );
-                    }
-                });
-                ui.label(
-                    RichText::new(format!("{} · {}", row.id, row.type_name))
-                        .size(ui_theme::FONT_CAPTION)
-                        .color(tokens.text_muted),
-                );
-                ui.add_space(8.0);
-
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(tr(lang, "test_tool.market_version"))
-                            .size(ui_theme::FONT_CAPTION)
-                            .color(tokens.text_muted),
-                    );
-                    let mut versions = row.versions.clone();
-                    if versions.is_empty() {
-                        versions.push(row.latest_version.clone());
-                    }
-                    if self.catalog_selected_version.is_none() {
-                        self.catalog_selected_version = Some(row.latest_version.clone());
-                    }
-                    let mut ver = self
-                        .catalog_selected_version
-                        .clone()
-                        .unwrap_or_else(|| row.latest_version.clone());
-                    egui::ComboBox::from_id_salt(("market_ver", row.id.as_str()))
-                        .width(140.0)
-                        .selected_text(ver.clone())
-                        .show_ui(ui, |ui| {
-                            for v in &versions {
-                                ui.selectable_value(&mut ver, v.clone(), v);
-                            }
-                        });
-                    self.catalog_selected_version = Some(ver);
-                });
-
-                ui.label(format!(
-                    "{}: {}",
-                    tr(lang, "test_tool.market_publisher"),
-                    if row.publisher.is_empty() {
-                        "-"
+                        (tr(lang, "test_tool.market_installed"), tokens.success)
                     } else {
-                        row.publisher.as_str()
-                    }
-                ));
-                ui.label(format!(
-                    "{}: {}",
-                    tr(lang, "test_tool.market_channel"),
-                    row.channel
-                ));
-                if row.installed {
-                    ui.label(format!(
-                        "{}: {}",
-                        tr(lang, "test_tool.market_installed"),
-                        row.installed_version.as_deref().unwrap_or("-")
-                    ));
-                    if update_available {
-                        ui.label(
-                            RichText::new(
-                                tr(lang, "test_tool.market_update_hint")
-                                    .replace("{version}", &row.latest_version),
-                            )
-                            .size(ui_theme::FONT_CAPTION)
-                            .color(tokens.warning),
-                        );
-                    }
-                }
-                ui.add_space(8.0);
-                if !row.description.is_empty() {
-                    ui.label(&row.description);
-                    ui.add_space(8.0);
-                }
-
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    let install_label = if update_available {
-                        tr(lang, "test_tool.market_update")
-                            .replace("{version}", &row.latest_version)
-                    } else if row.installed {
-                        tr(lang, "test_tool.market_reinstall").to_string()
-                    } else {
-                        tr(lang, "test_tool.market_install").to_string()
+                        (tr(lang, "test_tool.market_available"), tokens.text_muted)
                     };
-                    if ui_theme::primary_btn_sized(
-                        ui,
-                        tokens,
-                        install_label,
-                        egui::vec2(120.0, ui_theme::CTRL_H),
-                    )
-                    .clicked()
-                        && !self.catalog_busy
-                    {
-                        if update_available {
-                            self.catalog_selected_version = Some(row.latest_version.clone());
-                        }
-                        self.install_selected_catalog_plugin(lang);
-                    }
-                    if row.installed
-                        && ui_theme::secondary_btn_sized(
-                            ui,
-                            tokens,
-                            tr(lang, "test_tool.market_open_plugins"),
-                            egui::vec2(120.0, ui_theme::CTRL_H),
-                        )
-                        .clicked()
-                    {
-                        self.selected = Some(row.id.clone());
-                        self.load_param_defaults_for_selection();
-                        self.hub_mode = HubMode::Plugins;
-                    }
-                    if row.installed
-                        && ui_theme::secondary_btn_sized(
-                            ui,
-                            tokens,
-                            tr(lang, "test_tool.market_uninstall"),
-                            egui::vec2(96.0, ui_theme::CTRL_H),
-                        )
-                        .clicked()
-                        && !self.catalog_busy
-                    {
-                        self.uninstall_selected_catalog_plugin(lang);
-                    }
-                    if ui_theme::secondary_btn_sized(
-                        ui,
-                        tokens,
-                        tr(lang, "test_tool.clear_log"),
-                        egui::vec2(72.0, ui_theme::CTRL_H),
-                    )
-                    .clicked()
-                    {
-                        self.log.clear();
-                    }
+                    ui.label(
+                        RichText::new(pill)
+                            .size(ui_theme::FONT_CAPTION)
+                            .color(color),
+                    );
                 });
-
-                ui.add_space(8.0);
                 ui.label(
-                    RichText::new(tr(lang, "test_tool.log"))
+                    RichText::new(format!("v{} · {}", row.latest_version, row.id))
                         .size(ui_theme::FONT_CAPTION)
                         .color(tokens.text_muted),
                 );
-                egui::ScrollArea::vertical()
-                    .stick_to_bottom(true)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        if self.log.is_empty() {
-                            ui.label(
-                                RichText::new(tr(lang, "test_tool.market_log_empty"))
-                                    .color(tokens.text_muted),
-                            );
-                        } else {
-                            ui.add(
-                                egui::TextEdit::multiline(&mut self.log.as_str())
-                                    .desired_width(f32::INFINITY)
-                                    .font(egui::TextStyle::Monospace)
-                                    .interactive(false),
-                            );
-                        }
-                    });
+
+                let body_h = ui.available_height().max(120.0);
+                let body_w = ui.available_width();
+                let gap = RUNNER_SPLIT_GAP * 2.0;
+                let cfg_w = if body_w < CONFIG_MIN_W + OUTPUT_MIN_W + gap {
+                    (body_w * 0.48).max(160.0)
+                } else {
+                    (body_w * CONFIG_FRAC).clamp(CONFIG_MIN_W, body_w - OUTPUT_MIN_W - gap)
+                };
+
+                ui.horizontal(|ui| {
+                    ui.set_min_height(body_h);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(cfg_w, body_h),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_min_height(body_h);
+                            ui.set_max_width(cfg_w);
+                            ui.spacing_mut().item_spacing.y = 8.0;
+                            if !row.publisher.is_empty() {
+                                ui.label(
+                                    RichText::new(&row.publisher)
+                                        .size(ui_theme::FONT_CAPTION)
+                                        .color(tokens.text_muted),
+                                );
+                            }
+                            if !row.description.is_empty() {
+                                ui.label(
+                                    RichText::new(&row.description)
+                                        .size(ui_theme::FONT_BODY)
+                                        .color(tokens.text_primary),
+                                );
+                            }
+                            ui.add_space(4.0);
+
+                            let primary = if update_available {
+                                tr(lang, "test_tool.market_update")
+                                    .replace("{version}", &row.latest_version)
+                            } else if row.installed {
+                                tr(lang, "test_tool.market_open_plugins")
+                            } else {
+                                tr(lang, "test_tool.market_install")
+                            };
+                            let primary_w = text_btn_w(ui, &primary).max(72.0);
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                if ui_theme::primary_btn_sized_enabled(
+                                    ui,
+                                    tokens,
+                                    primary,
+                                    egui::vec2(primary_w, ui_theme::CTRL_H),
+                                    !busy || (row.installed && !update_available),
+                                )
+                                .clicked()
+                                {
+                                    if row.installed && !update_available {
+                                        self.selected = Some(row.id.clone());
+                                        self.load_param_defaults_for_selection();
+                                        self.hub_mode = HubMode::Plugins;
+                                    } else if !busy {
+                                        self.catalog_selected_version =
+                                            Some(row.latest_version.clone());
+                                        self.install_selected_catalog_plugin(lang);
+                                    }
+                                }
+                                if row.installed
+                                    && ui_theme::ghost_btn_sized_enabled(
+                                        ui,
+                                        tokens,
+                                        tr(lang, "test_tool.market_uninstall"),
+                                        egui::vec2(64.0, ui_theme::CTRL_H),
+                                        !busy,
+                                    )
+                                    .clicked()
+                                    && !busy
+                                {
+                                    self.uninstall_selected_catalog_plugin(lang);
+                                }
+                            });
+                        },
+                    );
+                    ui.add_space(RUNNER_SPLIT_GAP);
+                    let div_x = ui.cursor().left();
+                    let div_y = ui.max_rect().y_range();
+                    ui.painter()
+                        .vline(div_x, div_y, Stroke::new(1.0_f32, tokens.divider));
+                    ui.add_space(RUNNER_SPLIT_GAP + 1.0);
+                    let out_avail = ui.available_width().max(120.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(out_avail, body_h),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_min_height(body_h);
+                            ui.set_min_width(out_avail);
+                            self.paint_runner_output(ui, lang, tokens);
+                        },
+                    );
+                });
             });
     }
 
@@ -3149,15 +3065,74 @@ fn place_in_rect<R>(
     add: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
     ui.scope_builder(
-        egui::UiBuilder::new().max_rect(rect).layout(layout),
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(layout.with_main_wrap(false)),
         |ui| {
             ui.set_clip_rect(rect.intersect(ui.clip_rect()));
             ui.set_min_size(rect.size());
             ui.set_max_size(rect.size());
+            ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
             add(ui)
         },
     )
     .inner
+}
+
+/// Text field clipped to `rect`. `desired_width` + margin must not spill out.
+fn hub_text_edit(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    text: &mut String,
+    hint: &str,
+) -> egui::Response {
+    place_in_rect(
+        ui,
+        rect,
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.add_sized(
+                rect.size(),
+                egui::TextEdit::singleline(text)
+                    .desired_width(rect.width())
+                    .clip_text(true)
+                    .hint_text(hint),
+            )
+        },
+    )
+}
+
+/// One row: text field on the left, trailing button on the right. No wrap/overlap.
+fn hub_edit_with_btn(
+    ui: &mut egui::Ui,
+    tokens: &Tokens,
+    text: &mut String,
+    hint: impl Into<String>,
+    btn_label: &str,
+    row_w: f32,
+) -> (egui::Response, bool) {
+    let btn_w = text_btn_w(ui, btn_label);
+    let gap = 8.0;
+    let row_h = ui_theme::CTRL_H;
+    let (row, _) = ui.allocate_exact_size(egui::vec2(row_w.max(1.0), row_h), egui::Sense::hover());
+    let btn_w = btn_w.min((row.width() - 40.0).max(1.0));
+    let btn_rect = egui::Rect::from_min_size(
+        egui::pos2(row.max.x - btn_w, row.min.y),
+        egui::vec2(btn_w, row_h),
+    );
+    let edit_rect = egui::Rect::from_min_max(
+        row.min,
+        egui::pos2((btn_rect.min.x - gap).max(row.min.x + 32.0), row.max.y),
+    );
+    let hint = hint.into();
+    let edit = hub_text_edit(ui, edit_rect, text, &hint);
+    let clicked = place_in_rect(
+        ui,
+        btn_rect,
+        egui::Layout::top_down(egui::Align::Center),
+        |ui| ui_theme::ghost_btn_sized(ui, tokens, btn_label, btn_rect.size(), false).clicked(),
+    );
+    (edit, clicked)
 }
 
 fn paint_plugin_row(
@@ -3168,6 +3143,7 @@ fn paint_plugin_row(
     selected: bool,
     title: &str,
     type_ver: &str,
+    badge: Option<(&str, egui::Color32)>,
 ) {
     let fill = if selected {
         tokens.accent.linear_multiply(0.18)
@@ -3185,6 +3161,15 @@ fn paint_plugin_row(
     } else {
         tokens.text_primary
     };
+    if let Some((text, color)) = badge {
+        clip.text(
+            egui::pos2(inner.max.x, inner.min.y + 1.0),
+            Align2::RIGHT_TOP,
+            text,
+            FontId::proportional(ui_theme::FONT_CAPTION),
+            color,
+        );
+    }
     clip.text(
         egui::pos2(inner.min.x, inner.min.y + 1.0),
         Align2::LEFT_TOP,

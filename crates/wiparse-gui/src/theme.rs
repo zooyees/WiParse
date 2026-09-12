@@ -1,6 +1,8 @@
 //! Industrial × Apple-minimal design tokens and shared controls.
 
-use egui::{Color32, CornerRadius, FontId, Frame, Margin, RichText, Sense, Stroke, Vec2, Visuals};
+use egui::{
+    Color32, CornerRadius, FontId, Frame, Margin, Rect, RichText, Sense, Stroke, Vec2, Visuals,
+};
 
 /// Control / card radii (Apple-like consistency).
 pub const RADIUS_CTRL: u8 = 6;
@@ -476,7 +478,10 @@ fn paint_focus_ring(ui: &egui::Ui, t: &Tokens, resp: &egui::Response) {
     }
 }
 
-/// Two-option segmented control. Returns true if selection changed.
+/// Two-option segmented control. Returns `Some(want_left)` if selection changed.
+///
+/// Segments are laid out into exact rects with a gap so the two rounded
+/// chips cannot wrap or paint on top of each other.
 pub fn segmented_two(
     ui: &mut egui::Ui,
     t: &Tokens,
@@ -485,18 +490,47 @@ pub fn segmented_two(
     left_selected: bool,
     size: Vec2,
 ) -> Option<bool> {
+    let gap = SPACE_XS;
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    let half_w = ((rect.width() - gap) * 0.5).max(1.0);
+    let left_rect = Rect::from_min_size(rect.min, Vec2::new(half_w, rect.height()));
+    let right_x = left_rect.max.x + gap;
+    let right_rect = Rect::from_min_max(
+        egui::pos2(right_x, rect.min.y),
+        egui::pos2(rect.max.x, rect.max.y),
+    );
     let mut out = None;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        let half = Vec2::new((size.x * 0.5).max(40.0), size.y);
-        if ghost_btn_sized(ui, t, left, half, left_selected).clicked() && !left_selected {
-            out = Some(true);
-        }
-        if ghost_btn_sized(ui, t, right, half, !left_selected).clicked() && left_selected {
-            out = Some(false);
-        }
-    });
+    if ghost_btn_in_rect(ui, t, left, left_rect, left_selected).clicked() && !left_selected {
+        out = Some(true);
+    }
+    if ghost_btn_in_rect(ui, t, right, right_rect, !left_selected).clicked() && left_selected {
+        out = Some(false);
+    }
     out
+}
+
+fn ghost_btn_in_rect(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    label: &str,
+    rect: Rect,
+    selected: bool,
+) -> egui::Response {
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::centered_and_justified(
+                egui::Direction::LeftToRight,
+            )),
+        |ui| {
+            ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+            ui.set_min_size(rect.size());
+            ui.set_max_size(rect.size());
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            ghost_btn_sized(ui, t, label, rect.size(), selected)
+        },
+    )
+    .inner
 }
 
 /// Status dot + caption for the bottom bar.
