@@ -312,6 +312,8 @@ pub struct InstrumentControlPanel {
     pending_save_delay_frames: u8,
     next_job_id: u64,
     job_results: Vec<InstrumentJobResult>,
+    scope_capture_mode: usize,
+    scope_preview_shot: bool,
 }
 
 fn kind_wire(kind: InstrumentKind) -> String {
@@ -376,6 +378,8 @@ impl InstrumentControlPanel {
             pending_save_delay_frames: 0,
             next_job_id: 1,
             job_results: Vec::new(),
+            scope_capture_mode: 0,
+            scope_preview_shot: true,
         };
         let _ = std::fs::create_dir_all(&panel.save_dir);
         panel
@@ -1115,6 +1119,7 @@ impl InstrumentControlPanel {
                     ),
                 );
                 self.screenshot_png.insert(id, png.clone());
+                self.scope_preview_shot = true;
                 self.status =
                     "截图已显示并复制到剪贴板 / Screenshot copied to clipboard".into();
                 if let Some(path) = save_path {
@@ -1334,6 +1339,16 @@ impl InstrumentControlPanel {
 
     pub fn status_text(&self) -> &str {
         &self.status
+    }
+
+    pub fn status_tone(&self) -> crate::theme::StatusTone {
+        if self.scanning || self.live_active() {
+            crate::theme::StatusTone::Busy
+        } else if !self.devices.is_empty() {
+            crate::theme::StatusTone::Ok
+        } else {
+            crate::theme::StatusTone::Neutral
+        }
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
@@ -1853,7 +1868,7 @@ impl InstrumentControlPanel {
         let (col_l, col_r) = instrument_row_column_widths(avail.x);
 
         instrument_grid_row(ui, avail.x, row1_h, col_l, col_r, |ui, left, right| {
-            instrument_grid_cell(ui, left, tokens, text(lang, "① 示波器控制", "① Scope Control"), |ui| {
+            instrument_grid_cell(ui, left, tokens, text(lang, "控制", "Control"), |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt(("scope-ctrl-scroll", id))
                     .auto_shrink([false, false])
@@ -1863,19 +1878,50 @@ impl InstrumentControlPanel {
                         self.dispatch_scope_commands(id, commands);
                     });
             });
-            instrument_grid_cell(ui, right, tokens, text(lang, "② 屏幕截图", "② Screen Capture"), |ui| {
-                self.scope_screenshot_ui(ui, lang, tokens, id, index, defer_heavy);
+            instrument_grid_cell(ui, right, tokens, text(lang, "采集", "Capture"), |ui| {
+                self.scope_capture_ui(ui, lang, tokens, id, index, defer_heavy);
             });
         });
         ui.add_space(SCOPE_ROW_GAP);
         instrument_grid_row(ui, avail.x, row2_h, col_l, col_r, |ui, left, right| {
-            instrument_grid_cell(ui, left, tokens, text(lang, "③ 波形数据", "③ Waveform Samples"), |ui| {
-                self.scope_waveform_data_ui(ui, lang, tokens, id, index, defer_heavy);
+            instrument_grid_cell(ui, left, tokens, text(lang, "波形", "Waveform"), |ui| {
+                self.scope_preview_ui(ui, lang, tokens, id, index, defer_heavy);
             });
-            instrument_grid_cell(ui, right, tokens, text(lang, "④ SCPI 控制台", "④ SCPI Console"), |ui| {
+            instrument_grid_cell(ui, right, tokens, text(lang, "控制台", "Console"), |ui| {
                 self.console_ui_compact(ui, lang, tokens, id, index);
             });
         });
+    }
+
+    fn scope_capture_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        id: u64,
+        index: usize,
+        defer_heavy: bool,
+    ) {
+        let labels = [
+            text(lang, "截图", "Screen"),
+            text(lang, "文件", "File"),
+            text(lang, "实时", "Live"),
+        ];
+        if let Some(mode) = theme::segmented_n(
+            ui,
+            tokens,
+            &labels,
+            self.scope_capture_mode.min(2),
+            egui::vec2(ui.available_width().min(280.0), theme::CTRL_H),
+        ) {
+            self.scope_capture_mode = mode;
+        }
+        ui.add_space(6.0);
+        match self.scope_capture_mode {
+            1 => self.scope_wave_file_ui(ui, lang, tokens, id, index),
+            2 => self.scope_live_sample_bar(ui, lang, tokens, id, index),
+            _ => self.scope_screenshot_ui(ui, lang, tokens, id, index, defer_heavy),
+        }
     }
 
     fn scope_screenshot_ui(
@@ -1910,39 +1956,6 @@ impl InstrumentControlPanel {
                     id,
                     job_id: None,
                     save_path: None,
-                });
-            }
-            // Oscilloscope workbench always exposes VISA waveform-source read
-            // (capability flag can be false on generic/demo profiles).
-            let can_wave_src = self.devices[index].kind == InstrumentKind::Oscilloscope
-                || self.devices[index].capabilities.waveform;
-            let vendor = self.devices[index].identity.manufacturer.as_str();
-            let wave_tip = scope_waveform_source_tip(lang, vendor);
-            if ui
-                .add_enabled(
-                    can_wave_src && !busy,
-                    egui::Button::new(text(lang, "读取波形源文件", "Read Wave Source"))
-                        .min_size(egui::vec2(128.0, 28.0)),
-                )
-                .on_hover_text(wave_tip)
-                .clicked()
-            {
-                self.begin_busy(
-                    id,
-                    text(lang, "正在读取波形源文件", "Reading waveform source").to_string(),
-                );
-                self.status = text(
-                    lang,
-                    "正在读取示波器上已打开的全部通道（不受下方通道选择影响）…",
-                    "Reading all channels displayed on the scope (ignores the channel selector below)…",
-                )
-                .into();
-                let _ = self.tx.send(Job::WaveformSource {
-                    id,
-                    job_id: None,
-                    auto_dir: None,
-                    auto_filename: None,
-                    overwrite: false,
                 });
             }
             if ui
@@ -1996,7 +2009,7 @@ impl InstrumentControlPanel {
         ui.add_space(6.0);
         let preview_h = ui.available_height().max(80.0);
         if defer_heavy {
-            media_slot_empty(ui, preview_h, tokens);
+            media_slot_empty(ui, preview_h, tokens, true);
         } else if let Some(texture) = self.screenshots.get(&id) {
             paint_screenshot(ui, texture, preview_h, tokens);
         } else {
@@ -2008,13 +2021,79 @@ impl InstrumentControlPanel {
                     "点击「屏幕截图」抓取仪器画面",
                     "Click Screenshot for the scope display",
                 ),
-                tokens.plot_fg,
+                tokens.text_muted,
                 tokens,
+                true,
             );
         }
     }
 
-    fn scope_waveform_data_ui(
+    fn scope_wave_file_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        id: u64,
+        index: usize,
+    ) {
+        let busy = self.busy_device == Some(id);
+        let can_wave_src = self.devices[index].kind == InstrumentKind::Oscilloscope
+            || self.devices[index].capabilities.waveform;
+        let vendor = self.devices[index].identity.manufacturer.as_str();
+        let wave_tip = scope_waveform_source_tip(lang, vendor);
+        if ui
+            .add_enabled(
+                can_wave_src && !busy,
+                egui::Button::new(text(lang, "读取波形源文件", "Read Wave Source"))
+                    .fill(tokens.accent)
+                    .min_size(egui::vec2(128.0, 28.0)),
+            )
+            .on_hover_text(wave_tip)
+            .clicked()
+        {
+            self.begin_busy(
+                id,
+                text(lang, "正在读取波形源文件", "Reading waveform source").to_string(),
+            );
+            self.status = text(
+                lang,
+                "正在读取示波器上已打开的全部通道（不受下方通道选择影响）…",
+                "Reading all channels displayed on the scope (ignores the channel selector below)…",
+            )
+            .into();
+            self.scope_preview_shot = false;
+            let _ = self.tx.send(Job::WaveformSource {
+                id,
+                job_id: None,
+                auto_dir: None,
+                auto_filename: None,
+                overwrite: false,
+            });
+        }
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(text(
+                lang,
+                "从仪器读取已打开的波形文件（ISF/WFM）。",
+                "Read waveform files currently open on the instrument.",
+            ))
+            .small()
+            .color(tokens.text_muted),
+        );
+    }
+
+    fn scope_live_sample_bar(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        id: u64,
+        index: usize,
+    ) {
+        self.scope_waveform_toolbar(ui, lang, tokens, id, index);
+    }
+
+    fn scope_preview_ui(
         &mut self,
         ui: &mut egui::Ui,
         lang: Lang,
@@ -2022,6 +2101,26 @@ impl InstrumentControlPanel {
         id: u64,
         index: usize,
         defer_heavy: bool,
+    ) {
+        if self.scope_preview_shot && self.screenshots.contains_key(&id) {
+            let preview_h = ui.available_height().max(80.0);
+            if defer_heavy {
+                media_slot_empty(ui, preview_h, tokens, true);
+            } else if let Some(texture) = self.screenshots.get(&id) {
+                paint_screenshot(ui, texture, preview_h, tokens);
+            }
+            return;
+        }
+        self.scope_waveform_plot(ui, lang, tokens, id, index, defer_heavy);
+    }
+
+    fn scope_waveform_toolbar(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        id: u64,
+        index: usize,
     ) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
@@ -2052,7 +2151,8 @@ impl InstrumentControlPanel {
                 ))
                 .clicked()
             {
-                let channel = self.devices[index].controls.scope_channel;
+            self.scope_preview_shot = false;
+            let channel = self.devices[index].controls.scope_channel;
                 self.status = text(lang, "正在读取屏幕波形…", "Reading on-screen waveform…").into();
                 let _ = self.tx.send(Job::Waveform {
                     id,
@@ -2108,7 +2208,17 @@ impl InstrumentControlPanel {
                 );
             });
         });
+    }
 
+    fn scope_waveform_plot(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        id: u64,
+        _index: usize,
+        defer_heavy: bool,
+    ) {
         if let (Some(plot), Some(trace)) = (self.wave_plots.get(&id), self.waveforms.get(&id)) {
             let stats = plot.stats;
             ui.add_space(4.0);
@@ -2150,9 +2260,14 @@ impl InstrumentControlPanel {
         ui.add_space(6.0);
         let preview_h = ui.available_height().max(80.0);
         if defer_heavy {
-            media_slot_empty(ui, preview_h, tokens);
+            media_slot_empty(ui, preview_h, tokens, true);
         } else if let Some(cached) = self.wave_plots.get(&id) {
-            paint_waveform(ui, &cached.columns, cached.bounds, preview_h, tokens.accent, tokens);
+            let color = self
+                .waveforms
+                .get(&id)
+                .and_then(|tr| crate::waveform_analysis::tek_channel_color(&tr.channel))
+                .unwrap_or(tokens.accent);
+            paint_waveform(ui, &cached.columns, cached.bounds, preview_h, color, tokens);
         } else {
             placeholder_panel(
                 ui,
@@ -2162,8 +2277,9 @@ impl InstrumentControlPanel {
                     "读取后可看曲线、统计并导出 CSV",
                     "Read to plot, stats, and export CSV",
                 ),
-                tokens.plot_fg,
+                tokens.text_muted,
                 tokens,
+                true,
             );
         }
     }
@@ -2273,7 +2389,7 @@ impl InstrumentControlPanel {
         let (col_l, col_r) = instrument_row_column_widths(avail.x);
 
         instrument_grid_row(ui, avail.x, row1_h, col_l, col_r, |ui, left, right| {
-            instrument_grid_cell(ui, left, tokens, text(lang, "① 通道输出", "① Channel Outputs"), |ui| {
+            instrument_grid_cell(ui, left, tokens, text(lang, "通道输出", "Channel Outputs"), |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt(("source-ch-scroll", id))
                     .auto_shrink([false, false])
@@ -2283,13 +2399,13 @@ impl InstrumentControlPanel {
                         self.dispatch_scope_commands(id, commands);
                     });
             });
-            instrument_grid_cell(ui, right, tokens, text(lang, "② 实测读数", "② Measurements"), |ui| {
+            instrument_grid_cell(ui, right, tokens, text(lang, "实测读数", "Measurements"), |ui| {
                 self.source_readings_ui(ui, lang, tokens, id, index);
             });
         });
         ui.add_space(SCOPE_ROW_GAP);
         instrument_grid_row(ui, avail.x, row2_h, col_l, col_r, |ui, left, right| {
-            instrument_grid_cell(ui, left, tokens, text(lang, "③ 保护设定", "③ Protection"), |ui| {
+            instrument_grid_cell(ui, left, tokens, text(lang, "保护设定", "Protection"), |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt(("source-prot-scroll", id))
                     .auto_shrink([false, false])
@@ -2299,7 +2415,7 @@ impl InstrumentControlPanel {
                         self.dispatch_scope_commands(id, commands);
                     });
             });
-            instrument_grid_cell(ui, right, tokens, text(lang, "④ SCPI 控制台", "④ SCPI Console"), |ui| {
+            instrument_grid_cell(ui, right, tokens, text(lang, "控制台", "Console"), |ui| {
                 self.console_ui_compact(ui, lang, tokens, id, index);
             });
         });
@@ -2317,22 +2433,22 @@ impl InstrumentControlPanel {
             ui,
             [
                 (
-                    text(lang, "① 负载控制", "① Load Control"),
+                    text(lang, "负载控制", "Load Control"),
                     "load-ctrl-scroll",
                     InstrumentPanelBody::LoadControl,
                 ),
                 (
-                    text(lang, "② 实测读数", "② Measurements"),
+                    text(lang, "实测读数", "Measurements"),
                     "load-meas",
                     InstrumentPanelBody::LoadReadings,
                 ),
                 (
-                    text(lang, "③ 设备信息", "③ Device Info"),
+                    text(lang, "设备信息", "Device Info"),
                     "load-info-scroll",
                     InstrumentPanelBody::LoadInfo,
                 ),
                 (
-                    text(lang, "④ SCPI 控制台", "④ SCPI Console"),
+                    text(lang, "控制台", "Console"),
                     "load-scpi",
                     InstrumentPanelBody::Scpi,
                 ),
@@ -2356,22 +2472,22 @@ impl InstrumentControlPanel {
             ui,
             [
                 (
-                    text(lang, "① 测量配置", "① Measure Setup"),
+                    text(lang, "测量配置", "Measure Setup"),
                     "dmm-setup-scroll",
                     InstrumentPanelBody::DmmSetup,
                 ),
                 (
-                    text(lang, "② 读数", "② Reading"),
+                    text(lang, "读数", "Reading"),
                     "dmm-reading",
                     InstrumentPanelBody::DmmReading,
                 ),
                 (
-                    text(lang, "③ 设备信息", "③ Device Info"),
+                    text(lang, "设备信息", "Device Info"),
                     "dmm-info-scroll",
                     InstrumentPanelBody::DmmInfo,
                 ),
                 (
-                    text(lang, "④ SCPI 控制台", "④ SCPI Console"),
+                    text(lang, "控制台", "Console"),
                     "dmm-scpi",
                     InstrumentPanelBody::Scpi,
                 ),
@@ -2594,6 +2710,7 @@ impl InstrumentControlPanel {
                 text(lang, "点击「单次测量」或开始连续采样", "Measure once or start sampling"),
                 tokens.plot_fg,
                 tokens,
+                false,
             );
         }
     }
@@ -2809,26 +2926,46 @@ impl InstrumentControlPanel {
         ui.label(
             RichText::new(text(
                 lang,
-                "当前类型尚未连接。左侧扫描或输入 VISA 地址后即可启用全部功能。",
-                "No instrument of this type is connected. Scan or enter a VISA resource on the left to enable all functions.",
+                "尚未连接。扫描 USB/LAN 或在左侧输入 VISA 地址。",
+                "Not connected. Scan USB/LAN or enter a VISA resource on the left.",
             ))
             .color(tokens.text_muted),
         );
         ui.add_space(12.0);
-        let features = instrument_features(lang, self.selected_kind);
-        ui.columns(3, |columns| {
-            for (column, (title, body)) in columns.iter_mut().zip(features) {
-                card(column, tokens, title, |ui| {
-                    ui.label(RichText::new(body).color(tokens.text_muted));
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new(text(lang, "连接后启用", "Available after connection"))
-                            .small()
-                            .color(tokens.accent),
-                    );
-                });
-            }
-        });
+        if ui
+            .add_enabled(
+                !self.scanning,
+                egui::Button::new(text(lang, "扫描并连接", "Scan and connect"))
+                    .fill(tokens.accent)
+                    .min_size(egui::vec2(140.0, theme::CTRL_H)),
+            )
+            .clicked()
+        {
+            self.scanning = true;
+            self.status = text(
+                lang,
+                "正在扫描并识别设备…",
+                "Scanning and identifying…",
+            )
+            .into();
+            let _ = self.tx.send(Job::Scan {
+                library: self.visa_library.clone(),
+                timeout_ms: self.timeout_ms,
+            });
+        }
+        ui.add_space(16.0);
+        placeholder_panel(
+            ui,
+            ui.available_height().max(80.0),
+            text(
+                lang,
+                "连接后显示控制 / 采集 / 波形 / 控制台",
+                "Control / Capture / Waveform / Console after connect",
+            ),
+            tokens.text_muted,
+            tokens,
+            true,
+        );
     }
 
     fn instrument_parameters_ui(
@@ -3918,15 +4055,17 @@ fn scope_card_fill(
     );
 }
 
-fn media_slot_empty(ui: &mut egui::Ui, height: f32, tokens: &Tokens) {
+fn media_slot_empty(ui: &mut egui::Ui, height: f32, tokens: &Tokens, light: bool) {
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_CTRL), tokens.plot_bg);
+    let fill = if light { tokens.surface_bg } else { tokens.plot_bg };
+    let border = if light { tokens.border } else { tokens.plot_border };
+    painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_CTRL), fill);
     painter.rect_stroke(
         rect,
         CornerRadius::same(theme::RADIUS_CTRL),
-        Stroke::new(1.0_f32, tokens.plot_border),
+        Stroke::new(1.0_f32, border),
         egui::StrokeKind::Inside,
     );
 }
@@ -3996,23 +4135,38 @@ fn paint_screenshot(ui: &mut egui::Ui, texture: &egui::TextureHandle, height: f3
         .paint_at(ui, image_rect);
 }
 
-fn placeholder_panel(ui: &mut egui::Ui, height: f32, message: &str, color: Color32, tokens: &Tokens) {
+fn placeholder_panel(
+    ui: &mut egui::Ui,
+    height: f32,
+    message: &str,
+    color: Color32,
+    tokens: &Tokens,
+    light: bool,
+) {
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_CTRL), tokens.plot_bg);
+    let fill = if light { tokens.surface_bg } else { tokens.plot_bg };
+    let border = if light { tokens.border } else { tokens.plot_border };
+    painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_CTRL), fill);
     painter.rect_stroke(
         rect,
         CornerRadius::same(theme::RADIUS_CTRL),
-        Stroke::new(1.0_f32, tokens.plot_border),
+        Stroke::new(1.0_f32, border),
         egui::StrokeKind::Inside,
     );
-    painter.text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        message,
-        egui::FontId::proportional(13.0),
-        color,
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink(12.0))
+            .layout(egui::Layout::top_down(egui::Align::Center)),
+        |ui| {
+            ui.add_space((height * 0.35).max(8.0));
+            ui.add(
+                egui::Label::new(RichText::new(message).size(13.0).color(color))
+                    .wrap()
+                    .selectable(false),
+            );
+        },
     );
 }
 
@@ -5422,6 +5576,7 @@ fn instrument_settings_hint(lang: Lang, kind: InstrumentKind) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 fn instrument_features(lang: Lang, kind: InstrumentKind) -> [(&'static str, &'static str); 3] {
     let control = match kind {
         InstrumentKind::Oscilloscope => text(

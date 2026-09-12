@@ -53,8 +53,13 @@ pub fn project_path(relative: impl AsRef<Path>) -> PathBuf {
 }
 
 pub fn config_file() -> PathBuf {
-    if let Ok(env_path) = env::var("WCM_CONFIG") {
-        return PathBuf::from(env_path);
+    for key in ["WCM_CONFIG", "WIPARSE_CONFIG"] {
+        if let Ok(env_path) = env::var(key) {
+            let t = env_path.trim();
+            if !t.is_empty() {
+                return PathBuf::from(t);
+            }
+        }
     }
     project_path("config.json")
 }

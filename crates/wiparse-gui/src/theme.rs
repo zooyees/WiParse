@@ -329,6 +329,39 @@ pub fn primary_btn_sized(
     resp
 }
 
+pub fn primary_btn_sized_enabled(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    label: impl Into<String>,
+    size: Vec2,
+    enabled: bool,
+) -> egui::Response {
+    ui.add_enabled_ui(enabled, |ui| primary_btn_sized(ui, t, label, size))
+        .inner
+}
+
+pub fn stop_btn_sized(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    label: impl Into<String>,
+    size: Vec2,
+) -> egui::Response {
+    let resp = ui.add_sized(
+        size,
+        egui::Button::new(
+            RichText::new(label.into())
+                .size(FONT_TITLE)
+                .color(t.accent_text)
+                .strong(),
+        )
+        .fill(t.stop_bg)
+        .stroke(Stroke::NONE)
+        .corner_radius(btn_radius()),
+    );
+    paint_focus_ring(ui, t, &resp);
+    resp
+}
+
 pub fn secondary_btn_sized(
     ui: &mut egui::Ui,
     t: &Tokens,
@@ -461,6 +494,31 @@ pub fn segmented_two(
         }
         if ghost_btn_sized(ui, t, right, half, !left_selected).clicked() && left_selected {
             out = Some(false);
+        }
+    });
+    out
+}
+
+/// N-option segmented control. Returns the newly selected index.
+pub fn segmented_n(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    labels: &[&str],
+    selected: usize,
+    size: Vec2,
+) -> Option<usize> {
+    if labels.is_empty() {
+        return None;
+    }
+    let mut out = None;
+    let n = labels.len() as f32;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let cell = Vec2::new((size.x / n).max(36.0), size.y);
+        for (i, label) in labels.iter().enumerate() {
+            if ghost_btn_sized(ui, t, *label, cell, i == selected).clicked() && i != selected {
+                out = Some(i);
+            }
         }
     });
     out

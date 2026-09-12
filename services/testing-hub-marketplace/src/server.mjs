@@ -42,6 +42,23 @@ export function createApp({ dataDir, publishTokens = [] } = {}) {
       const { pathname } = url;
       const method = req.method || "GET";
 
+      if (method === "GET" && (pathname === "/" || pathname === "/v1")) {
+        return sendJson(res, 200, {
+          ok: true,
+          service: "testing-hub-marketplace",
+          version: SERVICE_VERSION,
+          endpoints: [
+            "GET /v1/health",
+            "GET /v1/catalog",
+            "GET /v1/plugins/:id",
+            "GET /v1/plugins/:id/versions/:version",
+            "GET /v1/plugins/:id/versions/:version/download",
+            "POST /v1/plugins/:id/versions",
+            "DELETE /v1/plugins/:id/versions/:version",
+          ],
+        });
+      }
+
       if (method === "GET" && pathname === "/v1/health") {
         return sendJson(res, 200, {
           ok: true,
@@ -224,6 +241,7 @@ function sendJson(res, status, obj) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(body),
+    "Access-Control-Allow-Origin": "*",
   });
   res.end(body);
 }

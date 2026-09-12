@@ -102,6 +102,10 @@ impl TestReportPanel {
         &self.status
     }
 
+    pub fn status_tone(&self) -> crate::theme::StatusTone {
+        crate::theme::tone_from_status(&self.status)
+    }
+
     fn report_count(&self) -> usize {
         self.folders.iter().map(|f| f.files.len()).sum()
     }
@@ -356,6 +360,11 @@ impl TestReportPanel {
                             .strong()
                             .color(tokens.text_primary),
                     );
+                    ui.label(
+                        RichText::new(tr(lang, "report.md_subtitle"))
+                            .size(ui_theme::FONT_CAPTION)
+                            .color(tokens.text_muted),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.selected.is_some()
                             && ui_theme::secondary_btn_sized(
@@ -411,6 +420,7 @@ impl TestReportPanel {
                                         ui.set_min_width((ui.available_width() - 4.0).max(80.0));
                                         paint_md_doc(
                                             ui,
+                                            lang,
                                             doc,
                                             tokens,
                                             base_dir.as_deref(),
@@ -973,6 +983,7 @@ fn parse_md(src: &str) -> MdDoc {
 
 fn paint_md_doc(
     ui: &mut egui::Ui,
+    lang: Lang,
     doc: &MdDoc,
     tokens: &Tokens,
     base_dir: Option<&Path>,
@@ -1005,11 +1016,7 @@ fn paint_md_doc(
             }
             MdBlock::Paragraph { text } => {
                 ui.add_space(4.0);
-                ui.add(
-                    egui::Label::new(md_inline_job(text, ui_theme::FONT_BODY, false, tokens))
-                        .wrap()
-                        .selectable(true),
-                );
+                paint_md_inlines(ui, lang, text, ui_theme::FONT_BODY, false, tokens, base_dir);
                 ui.add_space(2.0);
             }
             MdBlock::Bullet { depth, text } => {
@@ -1133,7 +1140,7 @@ fn paint_md_doc(
             }
             MdBlock::Image { alt, src } => {
                 ui.add_space(6.0);
-                paint_md_image(ui, tokens, base_dir, textures, alt, src);
+                paint_md_image(ui, lang, tokens, base_dir, textures, alt, src);
                 ui.add_space(4.0);
             }
             MdBlock::Table { rows } => {
@@ -1275,6 +1282,7 @@ fn load_md_texture(
 
 fn paint_md_image(
     ui: &mut egui::Ui,
+    lang: Lang,
     tokens: &Tokens,
     base_dir: Option<&Path>,
     textures: &mut HashMap<PathBuf, Option<egui::TextureHandle>>,
@@ -1283,7 +1291,7 @@ fn paint_md_image(
 ) {
     let Some(path) = resolve_md_asset(base_dir, src) else {
         ui.label(
-            RichText::new(format!("[img blocked] {alt}"))
+            RichText::new(tr(lang, "report.img_blocked").replace("{alt}", alt))
                 .size(ui_theme::FONT_CAPTION)
                 .color(tokens.text_muted),
         );
@@ -1316,11 +1324,65 @@ fn paint_md_image(
             });
     } else {
         ui.label(
-            RichText::new(format!("[img missing] {alt}"))
+            RichText::new(tr(lang, "report.img_missing").replace("{alt}", alt))
                 .size(ui_theme::FONT_CAPTION)
                 .color(tokens.text_muted),
         );
     }
+}
+
+fn paint_md_inlines(
+    ui: &mut egui::Ui,
+    _lang: Lang,
+    text: &str,
+    size: f32,
+    strong_all: bool,
+    tokens: &Tokens,
+    base_dir: Option<&Path>,
+) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let chars: Vec<char> = text.chars().collect();
+        let mut i = 0usize;
+        let mut buf = String::new();
+        let flush_label = |ui: &mut egui::Ui, buf: &mut String| {
+            if buf.is_empty() {
+                return;
+            }
+            ui.add(
+                egui::Label::new(md_inline_job(buf, size, strong_all, tokens))
+                    .wrap()
+                    .selectable(true),
+            );
+            buf.clear();
+        };
+        while i < chars.len() {
+            if chars[i] == '[' {
+                if let Some((label, url, next)) = parse_md_link(&chars, i) {
+                    flush_label(ui, &mut buf);
+                    let href = url.trim().to_string();
+                    let resp = ui.hyperlink_to(
+                        RichText::new(label)
+                            .size(size)
+                            .color(tokens.accent),
+                        href.clone(),
+                    );
+                    if resp.clicked()
+                        && !(href.starts_with("http://") || href.starts_with("https://"))
+                    {
+                        if let Some(path) = resolve_md_asset(base_dir, &href) {
+                            let _ = open_path_external(&path);
+                        }
+                    }
+                    i = next;
+                    continue;
+                }
+            }
+            buf.push(chars[i]);
+            i += 1;
+        }
+        flush_label(ui, &mut buf);
+    });
 }
 
 fn paint_md_table(ui: &mut egui::Ui, tokens: &Tokens, id: u32, rows: &[Vec<String>]) {
@@ -1345,16 +1407,22 @@ fn paint_md_table(ui: &mut egui::Ui, tokens: &Tokens, id: u32, rows: &[Vec<Strin
     let sum: f32 = weights.iter().sum::<f32>().max(1.0);
     let col_w: Vec<f32> = weights
         .iter()
-        .map(|w| ((avail - 8.0) * (*w / sum)).max(36.0))
+        .map(|w| ((avail - 8.0) * (*w / sum)).max(72.0))
         .collect();
+    let table_w: f32 = col_w.iter().sum::<f32>() + 16.0;
 
-    Frame::NONE
+    egui::ScrollArea::horizontal()
+        .id_salt(("md_table_h", id))
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.set_min_width(table_w.max(avail));
+            Frame::NONE
         .fill(tokens.surface_bg)
         .stroke(Stroke::new(1.0_f32, tokens.divider))
         .corner_radius(CornerRadius::same(5))
         .inner_margin(Margin::symmetric(6, 4))
         .show(ui, |ui| {
-            ui.set_min_width(avail);
+            ui.set_min_width(table_w);
             for (ri, row) in rows.iter().enumerate() {
                 let row_bg = if ri == 0 {
                     tokens.accent.gamma_multiply(0.10)
@@ -1363,9 +1431,9 @@ fn paint_md_table(ui: &mut egui::Ui, tokens: &Tokens, id: u32, rows: &[Vec<Strin
                 } else {
                     Color32::TRANSPARENT
                 };
-                let row_h_guess = if ri == 0 { 26.0 } else { 22.0 };
+                let row_h_guess = if ri == 0 { 28.0 } else { 26.0 };
                 let (row_rect, _) = ui.allocate_exact_size(
-                    egui::vec2(avail - 4.0, row_h_guess),
+                    egui::vec2((table_w - 8.0).max(40.0), row_h_guess),
                     egui::Sense::hover(),
                 );
                 if row_bg.a() > 0 {
@@ -1416,6 +1484,7 @@ fn paint_md_table(ui: &mut egui::Ui, tokens: &Tokens, id: u32, rows: &[Vec<Strin
                 }
                 let _ = id;
             }
+        });
         });
 }
 

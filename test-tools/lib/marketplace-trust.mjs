@@ -93,6 +93,14 @@ export function sha256File(path) {
   return hash.digest("hex");
 }
 
+export function isLoopbackHostname(host) {
+  const h = String(host || "")
+    .replace(/^\[|\]$/g, "")
+    .trim()
+    .toLowerCase();
+  return h === "127.0.0.1" || h === "localhost" || h === "::1";
+}
+
 export function assertHttpsUrl(url, { allowHttp = false } = {}) {
   const s = String(url || "").trim();
   if (!s) {
@@ -105,7 +113,9 @@ export function assertHttpsUrl(url, { allowHttp = false } = {}) {
     throw new MarketplaceError(MARKETPLACE_ERROR.CONFIG, `invalid URL: ${s}`);
   }
   if (u.protocol === "https:") return u;
-  if (allowHttp && u.protocol === "http:") return u;
+  if (u.protocol === "http:" && (allowHttp || isLoopbackHostname(u.hostname))) {
+    return u;
+  }
   throw new MarketplaceError(
     MARKETPLACE_ERROR.HTTPS,
     `URL must use HTTPS: ${s}`,

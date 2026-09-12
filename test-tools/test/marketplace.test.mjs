@@ -11,6 +11,7 @@ import {
   MarketplaceError,
   sha256Hex,
   validatePackageMeta,
+  assertHttpsUrl,
 } from "../lib/marketplace-trust.mjs";
 import {
   resolveMarketplaceRoot,
@@ -178,4 +179,21 @@ test("resolveMarketplaceRoot defaults under data root", () => {
   assert.equal(r, path.resolve("/tmp/data/marketplace"));
   ensureMarketplaceLayout; // touch import
   assert.equal(sha256Hex(Buffer.from("a")).length, 64);
+});
+
+test("loopback HTTP is allowed without WIPARSE_MARKETPLACE_ALLOW_HTTP", () => {
+  const prev = process.env.WIPARSE_MARKETPLACE_ALLOW_HTTP;
+  delete process.env.WIPARSE_MARKETPLACE_ALLOW_HTTP;
+  try {
+    const u = assertHttpsUrl("http://127.0.0.1:8787/v1/catalog");
+    assert.equal(u.hostname, "127.0.0.1");
+    assertHttpsUrl("http://localhost:8787");
+    assert.throws(
+      () => assertHttpsUrl("http://example.com"),
+      (e) => e instanceof MarketplaceError && e.code === "E_HTTPS"
+    );
+  } finally {
+    if (prev == null) delete process.env.WIPARSE_MARKETPLACE_ALLOW_HTTP;
+    else process.env.WIPARSE_MARKETPLACE_ALLOW_HTTP = prev;
+  }
 });

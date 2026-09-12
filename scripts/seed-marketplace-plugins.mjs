@@ -73,6 +73,16 @@ export async function preflight() {
     description: "Counts 1..N and returns a summary (good after-install run).",
     publisher: "wiparse",
     channel: "stable",
+    params: [
+      {
+        name: "count",
+        type: "number",
+        default: "3",
+        label: "Count",
+        label_zh: "次数",
+        help: "How many steps to count",
+      },
+    ],
     entry: `export default async function run(ctx) {
   const n = Math.max(1, Number(ctx.params?.count ?? 3) || 3);
   const steps = [];
@@ -148,6 +158,7 @@ function writeFixture(spec) {
     sandbox: { permissions: ["gui.api", "cli"] },
     engines: { node: ">=18" },
   };
+  if (spec.params) pluginJson.params = spec.params;
   fs.writeFileSync(path.join(dir, "plugin.json"), JSON.stringify(pluginJson, null, 2) + "\n");
   fs.writeFileSync(path.join(dir, "index.mjs"), spec.entry);
   return dir;

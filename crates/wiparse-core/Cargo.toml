@@ -21,7 +21,7 @@ rayon = { workspace = true }
 libloading = "0.8"
 memmap2 = "0.9"
 sha2 = "0.10"
-ureq = { version = "2", default-features = false, features = ["json"] }
+ureq = { version = "2", default-features = false, features = ["json", "tls"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [dev-dependencies]

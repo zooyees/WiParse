@@ -270,6 +270,27 @@ impl TestToolPanel {
         }
     }
 
+    pub fn status_tone(&self) -> crate::theme::StatusTone {
+        use crate::theme::StatusTone;
+        if self.job.is_some() || self.catalog_busy {
+            return StatusTone::Busy;
+        }
+        let s = self.status_text();
+        let low = s.to_ascii_lowercase();
+        if low.contains("fail")
+            || low.contains("error")
+            || s.contains("失败")
+            || s.contains("错误")
+            || low.contains("e_")
+        {
+            StatusTone::Error
+        } else if s.contains("已安装") || low.contains("installed") || low.contains("ok") {
+            StatusTone::Ok
+        } else {
+            StatusTone::Neutral
+        }
+    }
+
     pub fn api_snapshot(&self) -> serde_json::Value {
         serde_json::json!({
             "plugins_dir": self.plugins_dir,
@@ -392,28 +413,22 @@ impl TestToolPanel {
             self.run_path_pick(target);
         }
 
-        // Plugins | Market mode toggle
+        // Get plugins drawer (not a peer Plugins|Market mode)
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            let plugins_sel = self.hub_mode == HubMode::Plugins;
-            let market_sel = self.hub_mode == HubMode::Market;
-            if ui
-                .selectable_label(plugins_sel, tr(lang, "test_tool.plugins"))
+            if self.hub_mode == HubMode::Market {
+                if ui_theme::ghost_btn_sized(
+                    ui,
+                    tokens,
+                    tr(lang, "test_tool.back_plugins"),
+                    egui::vec2(text_btn_w(ui, &tr(lang, "test_tool.back_plugins")) + 16.0, ui_theme::CTRL_H),
+                    false,
+                )
                 .clicked()
-            {
-                self.hub_mode = HubMode::Plugins;
-            }
-            if ui
-                .selectable_label(market_sel, tr(lang, "test_tool.market"))
-                .clicked()
-            {
-                self.hub_mode = HubMode::Market;
-                if self.catalog.is_empty() && !self.catalog_busy {
-                    self.refresh_catalog(lang);
+                {
+                    self.hub_mode = HubMode::Plugins;
                 }
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if self.hub_mode == HubMode::Market {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut enabled = self.marketplace_enabled;
                     if ui
                         .checkbox(
@@ -429,8 +444,33 @@ impl TestToolPanel {
                             self.refresh_catalog(lang);
                         }
                     }
-                }
-            });
+                });
+            } else {
+                let get_lbl = tr(lang, "test_tool.get_plugins");
+                let updates = self.catalog.iter().filter(|r| r.has_update()).count();
+                let get_text = if updates > 0 {
+                    format!("{} ({updates})", get_lbl)
+                } else {
+                    get_lbl
+                };
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let get_w = text_btn_w(ui, &get_text) + 16.0;
+                    if ui_theme::ghost_btn_sized(
+                        ui,
+                        tokens,
+                        get_text,
+                        egui::vec2(get_w, ui_theme::CTRL_H),
+                        false,
+                    )
+                    .clicked()
+                    {
+                        self.hub_mode = HubMode::Market;
+                        if self.marketplace_enabled && self.catalog.is_empty() && !self.catalog_busy {
+                            self.refresh_catalog(lang);
+                        }
+                    }
+                });
+            }
         });
         ui.add_space(4.0);
 
@@ -571,10 +611,24 @@ impl TestToolPanel {
 
                 if visible_idxs.is_empty() {
                     ui.label(
-                        RichText::new(tr(lang, "test_tool.empty"))
+                        RichText::new(tr(lang, "test_tool.empty_cta"))
                             .size(ui_theme::FONT_CAPTION)
                             .color(tokens.text_muted),
                     );
+                    if ui_theme::primary_btn_sized(
+                        ui,
+                        tokens,
+                        tr(lang, "test_tool.get_plugins"),
+                        egui::vec2(inner_w.min(160.0), ui_theme::CTRL_H),
+                    )
+                    .clicked()
+                    {
+                        self.hub_mode = HubMode::Market;
+                        if self.marketplace_enabled && self.catalog.is_empty() && !self.catalog_busy
+                        {
+                            self.refresh_catalog(lang);
+                        }
+                    }
                 } else {
                     let list_h = ui.available_height().max(72.0);
                     let selected_id = self.selected.as_deref();
@@ -783,8 +837,9 @@ impl TestToolPanel {
             egui::Layout::right_to_left(egui::Align::Center),
             |ui| {
                 ui.spacing_mut().item_spacing.x = gap;
+                let can_run = sel_idx.is_some() && !running;
                 if running {
-                    stop_clicked = ui_theme::secondary_btn_sized(
+                    stop_clicked = ui_theme::stop_btn_sized(
                         ui,
                         tokens,
                         run_lbl,
@@ -792,19 +847,22 @@ impl TestToolPanel {
                     )
                     .clicked();
                 } else {
-                    run_clicked = ui_theme::primary_btn_sized(
+                    run_clicked = ui_theme::primary_btn_sized_enabled(
                         ui,
                         tokens,
                         run_lbl,
                         egui::vec2(run_w, row_h),
+                        can_run,
                     )
                     .clicked();
-                    pre_clicked = ui_theme::secondary_btn_sized(
+                    pre_clicked = ui_theme::secondary_btn_sized_enabled(
                         ui,
                         tokens,
                         pre_lbl,
                         egui::vec2(pre_w, row_h),
+                        can_run,
                     )
+                    .on_hover_text(tr(lang, "test_tool.preflight_help"))
                     .clicked();
                 }
                 clear_clicked = ui_theme::secondary_btn_sized(
@@ -1123,57 +1181,213 @@ impl TestToolPanel {
             }
         }
 
-            let browse_gap = if is_path {
-                PATH_BROWSE_W + 4.0
-            } else {
-                0.0
-            };
-            let field_w = (ui.available_width() - browse_gap).max(48.0);
-            let is_bool = p.type_name.eq_ignore_ascii_case("boolean")
-                || p.type_name.eq_ignore_ascii_case("bool");
-            if is_bool {
-                let entry = self.param_values.entry(name.clone()).or_default();
-                if entry.is_empty() {
-                    *entry = if p.default.eq_ignore_ascii_case("true") {
-                        "true".into()
+        let hover_resp: Option<egui::Response>;
+        if is_bool {
+            let mut on = is_truthy(self.param_values.get(&name).map(|s| s.as_str()).unwrap_or(""));
+            let resp = place_in_rect(
+                ui,
+                field_rect,
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| ui.checkbox(&mut on, ""),
+            );
+            if resp.changed() {
+                self.param_values
+                    .insert(name.clone(), if on { "true" } else { "false" }.into());
+                self.param_touched.insert(name.clone());
+            }
+            hover_resp = Some(resp);
+        } else if is_device {
+            let current = self
+                .param_values
+                .get(&name)
+                .cloned()
+                .unwrap_or_default();
+            let filtered: Vec<LiveDevice> = self
+                .live_devices
+                .iter()
+                .filter(|d| kind_allowed(&filter_kind, &d.kind))
+                .cloned()
+                .collect();
+            let selected_label = filtered
+                .iter()
+                .find(|d| d.device_id.to_string() == current)
+                .map(|d| d.label())
+                .unwrap_or_else(|| {
+                    if current.trim().is_empty() {
+                        tr(lang, "test_tool.device_auto")
                     } else {
-                        "false".into()
-                    };
-                }
-                let mut on = entry.eq_ignore_ascii_case("true")
-                    || entry == "1"
-                    || entry.eq_ignore_ascii_case("yes");
-                let resp = ui.checkbox(&mut on, "");
-                if resp.changed() {
-                    *self.param_values.entry(name.clone()).or_default() =
-                        if on { "true".into() } else { "false".into() };
-                }
-                if !help.is_empty() {
-                    resp.on_hover_text(help);
-                }
+                        current.clone()
+                    }
+                });
+            let mut picked = current.clone();
+            let resp = place_in_rect(
+                ui,
+                field_rect,
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    egui::ComboBox::from_id_salt(("hub_device", &name))
+                        .width(field_rect.width())
+                        .selected_text(selected_label)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut picked,
+                                String::new(),
+                                tr(lang, "test_tool.device_auto"),
+                            );
+                            if filtered.is_empty() {
+                                ui.label(
+                                    RichText::new(tr(lang, "test_tool.device_none"))
+                                        .size(ui_theme::FONT_CAPTION)
+                                        .color(tokens.text_muted),
+                                );
+                            }
+                            for d in &filtered {
+                                ui.selectable_value(
+                                    &mut picked,
+                                    d.device_id.to_string(),
+                                    d.label(),
+                                );
+                            }
+                        })
+                        .response
+                },
+            );
+            if picked != current {
+                self.apply_device_selection(&name, &picked);
+            }
+            hover_resp = Some(resp);
+        } else if is_enum && !options.is_empty() {
+            let current = self
+                .param_values
+                .get(&name)
+                .cloned()
+                .unwrap_or_default();
+            let selected_label = options
+                .iter()
+                .find(|(v, _, _)| v == &current)
+                .map(|(v, en, zh)| {
+                    if matches!(lang, Lang::Zh) && !zh.is_empty() {
+                        zh.clone()
+                    } else if !en.is_empty() {
+                        en.clone()
+                    } else {
+                        v.clone()
+                    }
+                })
+                .unwrap_or_else(|| current.clone());
+            let mut picked = current.clone();
+            let resp = place_in_rect(
+                ui,
+                field_rect,
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    egui::ComboBox::from_id_salt(("hub_enum", &name))
+                        .width(field_rect.width())
+                        .selected_text(selected_label)
+                        .show_ui(ui, |ui| {
+                            for (value, en, zh) in &options {
+                                let lab = if matches!(lang, Lang::Zh) && !zh.is_empty() {
+                                    zh.as_str()
+                                } else if !en.is_empty() {
+                                    en.as_str()
+                                } else {
+                                    value.as_str()
+                                };
+                                ui.selectable_value(&mut picked, value.clone(), lab);
+                            }
+                        })
+                        .response
+                },
+            );
+            if picked != current {
+                self.param_values.insert(name.clone(), picked);
+                self.param_touched.insert(name.clone());
+            }
+            hover_resp = Some(resp);
+        } else if is_serial {
+            let current = self
+                .param_values
+                .get(&name)
+                .cloned()
+                .unwrap_or_default();
+            let mut ports = self.serial_ports.clone();
+            if !current.trim().is_empty() && !ports.iter().any(|p| p == &current) {
+                ports.insert(0, current.clone());
+            }
+            let mut picked = current.clone();
+            let selected_text = if current.trim().is_empty() {
+                tr(lang, "test_tool.serial_none")
             } else {
-                let entry = self.param_values.entry(name.clone()).or_default();
-                let resp = ui.add_sized(
-                    egui::vec2(field_w, ui_theme::CTRL_H),
-                    egui::TextEdit::singleline(entry)
-                        .desired_width(field_w)
-                        .hint_text(hint)
-                        .margin(egui::vec2(6.0, 3.0)),
-                );
-                if !help.is_empty() {
-                    resp.on_hover_text(help);
-                }
-                if is_path
-                    && ui_theme::secondary_btn_sized(
-                        ui,
-                        tokens,
-                        "…",
-                        egui::vec2(PATH_BROWSE_W, ui_theme::CTRL_H),
+                current.clone()
+            };
+            let resp = place_in_rect(
+                ui,
+                field_rect,
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    egui::ComboBox::from_id_salt(("hub_serial", &name))
+                        .width(field_rect.width())
+                        .selected_text(selected_text)
+                        .show_ui(ui, |ui| {
+                            if ports.is_empty() {
+                                ui.label(
+                                    RichText::new(tr(lang, "test_tool.serial_none"))
+                                        .size(ui_theme::FONT_CAPTION)
+                                        .color(tokens.text_muted),
+                                );
+                            }
+                            for p in &ports {
+                                ui.selectable_value(&mut picked, p.clone(), p);
+                            }
+                        })
+                        .response
+                },
+            );
+            if picked != current {
+                self.param_values.insert(name.clone(), picked);
+                self.param_touched.insert(name.clone());
+            }
+            hover_resp = Some(resp);
+        } else {
+            let entry = self.param_values.entry(name.clone()).or_default();
+            let resp = place_in_rect(
+                ui,
+                field_rect,
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                    ui.add_sized(
+                        field_rect.size(),
+                        egui::TextEdit::singleline(entry)
+                            .desired_width(field_rect.width())
+                            .clip_text(true)
+                            .hint_text(&hint)
+                            .margin(egui::vec2(6.0, 3.0)),
                     )
-                    .clicked()
-                {
-                    *pending_param = Some(name);
-                }
+                },
+            );
+            if resp.changed() {
+                self.param_touched.insert(name.clone());
+            }
+            hover_resp = Some(resp);
+        }
+        if let Some(resp) = hover_resp {
+            if !help.is_empty() {
+                resp.on_hover_text(help);
+            }
+        }
+        if is_path {
+            let clicked = place_in_rect(
+                ui,
+                btn_rect,
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                    ui_theme::secondary_btn_sized(ui, tokens, "…", btn_rect.size()).clicked()
+                },
+            );
+            if clicked {
+                *pending_param = Some(name);
             }
         }
     }
@@ -1638,12 +1852,12 @@ impl TestToolPanel {
 
     fn resolve_marketplace_root(&self) -> PathBuf {
         if !self.marketplace_install_dir.trim().is_empty() {
-            return PathBuf::from(self.marketplace_install_dir.trim());
+            return resolve_dir(self.marketplace_install_dir.trim());
         }
         let data_root = if self.data_root.trim().is_empty() {
             project_path("")
         } else {
-            PathBuf::from(self.data_root.trim())
+            resolve_dir(self.data_root.trim())
         };
         wiparse_core::marketplace::default_marketplace_root(&data_root)
     }
@@ -3123,6 +3337,11 @@ fn resolve_dir(raw: &str) -> PathBuf {
 
 fn default_cli_path() -> String {
     let candidates = [
+        project_path("WiParse-CLI.exe"),
+        project_path("wiparse.exe"),
+        project_path("bin/WiParse-CLI.exe"),
+        project_path("bin/wiparse.exe"),
+        project_path("bin/wiparse"),
         project_path("dist/WiParse-CLI.exe"),
         project_path("dist/wiparse-cli.exe"),
         project_path("dist/wiparse.exe"),
@@ -3246,6 +3465,15 @@ fn read_plugin_info(path: &Path) -> Option<PluginInfo> {
                             .and_then(|x| x.as_str())
                             .unwrap_or("")
                             .to_owned(),
+                        filter_kind: parse_filter_kind(p),
+                        filter_from: p
+                            .get("filter_from")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_owned(),
+                        fills: parse_fills(p),
+                        options: parse_options(p),
+                        hidden: p.get("hidden").and_then(|x| x.as_bool()).unwrap_or(false),
                     })
                 })
                 .collect()

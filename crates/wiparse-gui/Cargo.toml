@@ -21,7 +21,7 @@ tracing-subscriber = { workspace = true }
 crossbeam-channel = { workspace = true }
 rayon = { workspace = true }
 dirs = { workspace = true }
-ureq = { version = "2", default-features = false }
+ureq = { version = "2", default-features = false, features = ["tls"] }
 rfd = { workspace = true }
 chrono = { workspace = true }
 tiny_http = "0.12"

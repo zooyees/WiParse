@@ -131,6 +131,7 @@ cd "\$HERE"
 export WIPARSE_MARKETPLACE_ALLOW_HTTP=1
 export WIPARSE_PROJECT_ROOT="\$HERE"
 export WIPARSE_CONFIG="\${WIPARSE_CONFIG:-\$HERE/config.json}"
+export WCM_CONFIG="\$WIPARSE_CONFIG"
 exec "\$HERE/bin/wiparse-gui" "\$@"
 EOF
 chmod +x "$OUT/start-wiparse.sh" "$OUT/bin/"*

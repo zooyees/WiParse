@@ -61,11 +61,38 @@ pub fn allow_http() -> bool {
     )
 }
 
+/// True for `http://127.0.0.1`, `http://localhost`, and `http://[::1]` (any port/path).
+pub fn is_loopback_http_url(url: &str) -> bool {
+    let rest = url
+        .trim()
+        .strip_prefix("http://")
+        .or_else(|| url.trim().strip_prefix("HTTP://"));
+    let Some(rest) = rest else {
+        return false;
+    };
+    let hostport = rest.split('/').next().unwrap_or(rest);
+    let host = if let Some(inner) = hostport.strip_prefix('[') {
+        inner.split(']').next().unwrap_or("")
+    } else if let Some((h, port)) = hostport.rsplit_once(':') {
+        if port.chars().all(|c| c.is_ascii_digit()) {
+            h
+        } else {
+            hostport
+        }
+    } else {
+        hostport
+    };
+    matches!(
+        host.trim().to_ascii_lowercase().as_str(),
+        "127.0.0.1" | "localhost" | "::1"
+    )
+}
+
 fn assert_url_scheme(url: &str) -> Result<(), MarketplaceError> {
     if url.starts_with("https://") {
         return Ok(());
     }
-    if allow_http() && url.starts_with("http://") {
+    if url.starts_with("http://") && (allow_http() || is_loopback_http_url(url)) {
         return Ok(());
     }
     Err(MarketplaceError::Https(format!(
@@ -192,5 +219,16 @@ mod tests {
         };
         let err = check_publisher_trust(Some("evil"), &policy).unwrap_err();
         assert!(matches!(err, MarketplaceError::Trust(_)));
+    }
+
+    #[test]
+    fn loopback_http_is_allowed_without_env() {
+        assert!(is_loopback_http_url("http://127.0.0.1:8787"));
+        assert!(is_loopback_http_url("http://localhost/v1/catalog"));
+        assert!(is_loopback_http_url("http://[::1]:8787/v1/health"));
+        assert!(!is_loopback_http_url("https://127.0.0.1:8787"));
+        assert!(!is_loopback_http_url("http://example.com"));
+        assert!(assert_url_scheme("http://127.0.0.1:8787").is_ok());
+        assert!(assert_url_scheme("http://evil.example").is_err());
     }
 }

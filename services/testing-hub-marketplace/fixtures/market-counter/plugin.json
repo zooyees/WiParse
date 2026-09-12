@@ -22,5 +22,15 @@
   },
   "engines": {
     "node": ">=18"
-  }
+  },
+  "params": [
+    {
+      "name": "count",
+      "type": "number",
+      "default": "3",
+      "label": "Count",
+      "label_zh": "次数",
+      "help": "How many steps to count"
+    }
+  ]
 }

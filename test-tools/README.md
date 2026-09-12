@@ -29,3 +29,10 @@ node marketplace.mjs list --json
 ```
 
 Cloud server: [`services/testing-hub-marketplace`](../services/testing-hub-marketplace).
+
+Local Windows server (repo root):
+
+```powershell
+..\scripts\deploy-marketplace.ps1
+node marketplace.mjs catalog --url http://127.0.0.1:8787 --json
+```

@@ -13,11 +13,63 @@
 - 市场契约与 schema：`test-tools/schemas/marketplace-package.schema.json`；`plugin.json` 可选 `publisher` / `sandbox` / `marketplace.channel`。
 - Node 客户端：`marketplace-trust` / `registry` / `install` / `client` + `marketplace.mjs` CLI（verify / install / list / catalog / pull）。
 - Runner / GUI：合并发现捆绑插件与 `{data_root}/marketplace` 已激活版本；安装路径最小权限、SHA-256、可选 Ed25519 签名钩子。
-- Rust：`wiparse_core::marketplace` + `apps.test_tool.marketplace` 配置；补齐缺失的 `wiparse_core::log`（GUI 日志宿主依赖）。
+- Rust：`wiparse_core::marketplace` + `apps.test_tool.marketplace` 配置；目录拉取走 HTTPS（ureq `tls`）。本机 `127.0.0.1` / `localhost` 才允许明文 HTTP。
+- 修正 `.gitignore` 的 `log/` 误忽略 `crates/wiparse-core/src/log/`（日志宿主以目录模块入库，去掉市场分支顶替的 `log.rs`）。
+- Testing Hub **插件 / 市场** 双模式：目录浏览、安装/卸载；与 1.1.10 仪器参数控件并存。
+- UI/UE Phase 1–3：四职导航（采集/分析/测试/报告）+ More；台架/分析/完整配置；串口合并保存目录；仪表统一 Capture 分段；计算器列表+详情；数据限值折叠；市场改为「获取插件」抽屉；报告 Markdown 链接可点。
+- 本机 `127.0.0.1` / `localhost` / `::1` 明文 HTTP 可直接访问（无需再设 `WIPARSE_MARKETPLACE_ALLOW_HTTP`）；其它 HTTP 仍需该环境变量。
+- Windows 本地市场：`scripts/deploy-marketplace.ps1` 播种并监听 `http://127.0.0.1:8787`；`scripts/package-marketplace-demo.ps1` 产出 `dist/wiparse-win-marketplace-demo.zip`。
 
 ### Phase 2（云端骨架）
 
 - `services/testing-hub-marketplace`：catalog / 详情 / 下载 / Bearer 发布与删除；文件系统制品库；`node --test` 覆盖。
+
+---
+
+## 1.1.10 — 2026-09-11
+
+Testing Hub 把仪器当成通用参数，不再把示波器写进平台。插件预检可读取当前已连接设备并回填表单。
+
+### Testing Hub（平台）
+
+- 新参数类型：`device`（已连接仪器下拉）、`enum`、`serial_port`、`boolean` 复选框。Hub **不**识别示波器/电源，只按 `filter.kind` / `filter_from` 过滤。
+- `type: device` 可用 `fills` 把 `resource` / `model` / `kind` 写入其它 param。
+- 预检 JSON 的 `suggested_params` 按参数名回填；默认策略 `untouched`（不覆盖用户刚改过的字段）。
+
+### 插件 / 契约
+
+- `pickInstrument` / `suggestedParamsFromInstrument` 进入 `plugin-contract.mjs`。
+- `scope-serial-monitor` **v0.3.0**：仪器、型号、VISA、类型均在 Hub 表单；预检填充当前示波器；不再写死 MDO3014 / 某条 USB VISA。
+- 规范：[`test-tools/PLUGIN_SPEC.md`](../test-tools/PLUGIN_SPEC.md)。
+
+### 兼容性
+
+- 配置键仍为 `test_tool`。旧插件未声明 `device` 参数时行为与 1.1.9 相同。
+- 换仪器种类：改插件 `filter.kind` / `scope_kind`，不必改 GUI。
+
+---
+
+## 1.1.9 — 2026-09-11
+
+Testing Hub 布局与报告命名对齐产线操作；插件契约写成可给其他 AI / 开发者直接执行的规范。
+
+### Testing Hub
+
+- 顶栏 **Clear / Preflight / Run**（运行中 Clear / Stop）同一行按文字宽度排列，不再与 Output 的 Clear 叠在右下角。
+- 参数行改为行矩形坐标放置；插件列表 painter 整行点击（文字不可选中、不重叠）。
+- Output 按行整理：预检 OK/X、`[wait #n] hint`；成功 HTTP invoke 不再刷屏。
+
+### 插件 / 契约
+
+- `file_prefix`（表单「报告名称/前缀」）同时决定 ISF/PDF/PNG **与** `{report_dir}/{file_prefix}_summary_{stamp}.md`。
+- `summary_md` 与 PNG 共置 `report_dir`，MD 用相对路径引用波形图。
+- 规范全文：[`test-tools/PLUGIN_SPEC.md`](../test-tools/PLUGIN_SPEC.md)（2026-09-11）。
+- `scope-serial-monitor` **v0.2.3**。
+
+### 兼容性
+
+- 配置键仍为 `test_tool`；生命周期仍仅 `preflight` / `run` / `stop`。
+- 插件 `engines.wiparse` 仍建议 `>=1.1.8`。
 
 ---
 

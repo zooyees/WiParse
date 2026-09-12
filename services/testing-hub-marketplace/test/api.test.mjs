@@ -56,6 +56,10 @@ test("health catalog publish download authz", async () => {
     const health = await anon.health();
     assert.equal(health.ok, true);
 
+    const root = await fetch(url).then((r) => r.json());
+    assert.equal(root.ok, true);
+    assert.equal(root.service, "testing-hub-marketplace");
+
     await assert.rejects(
       () =>
         anon.publish("cloud-demo", {

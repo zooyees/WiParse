@@ -6,8 +6,9 @@
 config.json
 *.db
 monitor.log
-log/
-logs/
+# Runtime log dirs at repo root only — do not ignore crates/*/src/log/
+/log/
+/logs/
 scope_captures/
 node_modules/
 /WiParse-Deploy/
@@ -25,5 +26,9 @@ test-tools/plugins/**/logs/
 services/testing-hub-marketplace/data/
 **/marketplace/cache/
 /marketplace/
+dist/test-tools/
+dist/marketplace/
 dist/wiparse-linux-marketplace-demo/
 dist/wiparse-linux-marketplace-demo.tar.gz
+dist/wiparse-win-marketplace-demo/
+dist/wiparse-win-marketplace-demo.zip

@@ -86,6 +86,26 @@ node runner.mjs --plugin scope-serial-monitor --lifecycle stop
 GUI：**集成测试** → 选择 **示波器/串口监控** → 预检 / 运行 / 停止。  
 环境变量：`WIPARSE_CLI`、`WIPARSE_URL`、`WIPARSE_DATA_ROOT`。
 
+### 本地插件市场
+
+Testing Hub 的 **市场** 页可浏览/安装远程或本机目录。本机服务：
+
+```powershell
+.\scripts\deploy-marketplace.ps1
+```
+
+默认 `http://127.0.0.1:8787`，示例插件：`demo-marketplace-plugin`、`market-echo`、`market-counter`、`market-preflight-lab`。
+
+然后打开 GUI → **集成测试** → **市场** → 启用市场 → 刷新 → 安装。打包检验包：
+
+```powershell
+.\scripts\package-marketplace-demo.ps1
+# → dist\wiparse-win-marketplace-demo\
+# → dist\wiparse-win-marketplace-demo.zip
+```
+
+详见 [`services/testing-hub-marketplace/README.md`](services/testing-hub-marketplace/README.md)。
+
 ### 文档索引
 
 | 文档 | 内容 |
@@ -175,6 +195,26 @@ node runner.mjs --plugin scope-serial-monitor --lifecycle stop
 
 GUI: **Testing Hub** → **Scope & Serial Monitor** → Preflight / Run / Stop.  
 Env: `WIPARSE_CLI`, `WIPARSE_URL`, `WIPARSE_DATA_ROOT`.
+
+### Local plugin marketplace
+
+Testing Hub **Market** tab browses/installs plugins from a catalog. Local server:
+
+```powershell
+.\scripts\deploy-marketplace.ps1
+```
+
+Default `http://127.0.0.1:8787`. Sample plugins: `demo-marketplace-plugin`, `market-echo`, `market-counter`, `market-preflight-lab`.
+
+Then: GUI → **Testing Hub** → **Market** → enable → Refresh → Install. Windows demo bundle:
+
+```powershell
+.\scripts\package-marketplace-demo.ps1
+# → dist\wiparse-win-marketplace-demo\
+# → dist\wiparse-win-marketplace-demo.zip
+```
+
+See [`services/testing-hub-marketplace/README.md`](services/testing-hub-marketplace/README.md).
 
 ### Docs
 

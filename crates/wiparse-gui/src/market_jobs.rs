@@ -6,8 +6,21 @@ use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use wiparse_core::marketplace::{
-    fetch_catalog, fetch_version_meta, CatalogQuery, MarketplacePackageMeta, PluginCatalogEntry,
+    fetch_catalog, fetch_version_meta, is_loopback_http_url, CatalogQuery, MarketplacePackageMeta,
+    PluginCatalogEntry,
 };
+
+fn loopback_http_ok(url: &str) -> bool {
+    is_loopback_http_url(url)
+}
+
+fn enable_loopback_http(url: &str) {
+    if loopback_http_ok(url) {
+        std::env::set_var("WIPARSE_MARKETPLACE_ALLOW_HTTP", "1");
+    } else {
+        std::env::remove_var("WIPARSE_MARKETPLACE_ALLOW_HTTP");
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HubMode {
@@ -50,6 +63,13 @@ impl CatalogRow {
             versions: e.versions.clone().unwrap_or_default(),
             installed: installed_version.is_some(),
             installed_version,
+        }
+    }
+
+    pub fn has_update(&self) -> bool {
+        match &self.installed_version {
+            Some(v) => !self.latest_version.is_empty() && v != &self.latest_version,
+            None => false,
         }
     }
 }
@@ -99,7 +119,7 @@ pub fn spawn_catalog_refresh(
 ) -> MarketJob {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        std::env::set_var("WIPARSE_MARKETPLACE_ALLOW_HTTP", "1");
+        enable_loopback_http(&base_url);
         let q = CatalogQuery {
             channel: if channel.trim().is_empty() {
                 None
@@ -146,7 +166,7 @@ pub fn spawn_pull_install(
         let _ = tx.send(MarketJobEvent::Log(format!(
             "[marketplace] pull {plugin_id}@{version} from {base_url}\n"
         )));
-        std::env::set_var("WIPARSE_MARKETPLACE_ALLOW_HTTP", "1");
+        enable_loopback_http(&base_url);
         if let Err(e) = fetch_version_meta(&base_url, &plugin_id, &version) {
             let _ = tx.send(MarketJobEvent::InstallErr {
                 id: plugin_id.clone(),
@@ -170,8 +190,10 @@ pub fn spawn_pull_install(
                 &install_dir,
                 "--json",
             ])
-            .env("WIPARSE_MARKETPLACE_ALLOW_HTTP", "1")
             .env("WIPARSE_MARKETPLACE_URL", &base_url);
+        if loopback_http_ok(&base_url) {
+            cmd.env("WIPARSE_MARKETPLACE_ALLOW_HTTP", "1");
+        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;

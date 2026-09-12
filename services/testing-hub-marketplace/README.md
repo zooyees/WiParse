@@ -10,6 +10,16 @@ export MARKETPLACE_PUBLISH_TOKENS=dev-token
 node src/index.mjs --port 8787 --data ./data
 ```
 
+Windows (from repo root):
+
+```powershell
+.\scripts\deploy-marketplace.ps1
+```
+
+Then in WiParse: **Testing Hub → Market → Enable market → Refresh**.
+
+URL: `http://127.0.0.1:8787` (loopback HTTP is allowed by the client).
+
 ## API
 
 | Method | Path | Auth |
@@ -56,14 +66,22 @@ TOKEN=dev-token ./../../scripts/deploy-marketplace.sh
 Sample plugins: `demo-marketplace-plugin`, `market-echo`, `market-counter`,
 `market-preflight-lab`.
 
-## Package WiParse demo (Linux)
+## Package WiParse demo
 
-From repo root:
+Linux:
 
 ```bash
 ./scripts/package-marketplace-demo.sh
 # → dist/wiparse-linux-marketplace-demo/
 # → dist/wiparse-linux-marketplace-demo.tar.gz
+```
+
+Windows:
+
+```powershell
+.\scripts\package-marketplace-demo.ps1
+# → dist\wiparse-win-marketplace-demo\
+# → dist\wiparse-win-marketplace-demo.zip
 ```
 
 Then:
@@ -72,6 +90,12 @@ Then:
 cd dist/wiparse-linux-marketplace-demo
 ./start-marketplace.sh
 ./start-wiparse.sh
+```
+
+```powershell
+cd dist\wiparse-win-marketplace-demo
+.\start-marketplace.ps1
+.\start-wiparse.ps1
 ```
 
 In Testing Hub switch **Plugins | Market**, refresh catalog, Install, then run.

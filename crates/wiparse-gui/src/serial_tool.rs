@@ -136,10 +136,10 @@ impl SerialToolPanel {
         let baud_custom = !baud_options.iter().any(|b| b == &baud);
         let live_dir = cfg.log_monitor.save_dir.clone();
         let live_name = cfg.log_monitor.default_filename.clone();
-        let browser_dir = if cfg.log_monitor.log_browser_dir.trim().is_empty() {
-            String::new()
-        } else {
+        let browser_dir = if live_dir.trim().is_empty() {
             cfg.log_monitor.log_browser_dir.clone()
+        } else {
+            live_dir.clone()
         };
         let mut tabs = vec![LogTabPage::live_tab(lang)];
         tabs[0].title = live_name.clone();
@@ -207,7 +207,7 @@ impl SerialToolPanel {
                 cfg.log_monitor.save_dir = self.live_dir.clone();
                 cfg.log_monitor.open_log_files = paths;
                 cfg.log_monitor.last_open_dir = self.open_dir.clone();
-                cfg.log_monitor.log_browser_dir = self.browser_dir.clone();
+                cfg.log_monitor.log_browser_dir = self.live_dir.clone();
                 cfg.log_monitor.save_live_to_disk = self.save_live_to_disk;
                 let _ = save_config(&cfg);
             }
@@ -217,7 +217,7 @@ impl SerialToolPanel {
                 cfg.log_monitor.save_dir = self.live_dir.clone();
                 cfg.log_monitor.open_log_files = paths;
                 cfg.log_monitor.last_open_dir = self.open_dir.clone();
-                cfg.log_monitor.log_browser_dir = self.browser_dir.clone();
+                cfg.log_monitor.log_browser_dir = self.live_dir.clone();
                 cfg.log_monitor.save_live_to_disk = self.save_live_to_disk;
                 let _ = save_config(&cfg);
             }
@@ -1248,31 +1248,14 @@ impl SerialToolPanel {
         }
         if let Some(dir) = dialog.pick_folder() {
             self.live_dir = dir.to_string_lossy().into_owned();
-            self.persist_open_log_files();
-        }
-    }
-
-    fn browse_log_browser_dir(&mut self) {
-        let mut dialog = rfd::FileDialog::new();
-        let start = if !self.browser_dir.trim().is_empty() {
-            project_path(&self.browser_dir)
-        } else if !self.live_dir.trim().is_empty() {
-            project_path(&self.live_dir)
-        } else {
-            PathBuf::new()
-        };
-        if start.is_dir() {
-            dialog = dialog.set_directory(start);
-        }
-        if let Some(dir) = dialog.pick_folder() {
-            self.browser_dir = dir.to_string_lossy().into_owned();
+            self.browser_dir = self.live_dir.clone();
             self.refresh_log_browser();
             self.persist_open_log_files();
         }
     }
 
     fn resolve_browser_root(&self) -> Option<PathBuf> {
-        let raw = self.browser_dir.trim();
+        let raw = self.live_dir.trim();
         if raw.is_empty() {
             return None;
         }
@@ -1280,10 +1263,11 @@ impl SerialToolPanel {
         root.is_dir().then_some(root)
     }
 
-    /// Scan `browser_dir` for *immediate* subfolders that contain `.txt` files.
+    /// Scan the save directory for *immediate* subfolders that contain `.txt` files.
     /// Nested subfolders are ignored (first level only).
     fn refresh_log_browser(&mut self) {
-        let scanned_key = self.browser_dir.trim().to_owned();
+        self.browser_dir = self.live_dir.clone();
+        let scanned_key = self.live_dir.trim().to_owned();
         self.browser_scanned_dir = scanned_key;
         self.browser_folders.clear();
         let Some(root) = self.resolve_browser_root() else {
@@ -1785,12 +1769,21 @@ impl SerialToolPanel {
                                 }
                             }
 
-                            if ui_theme::secondary_button(ui, t, tr(lang, "btn.new")).clicked() {
-                                self.new_live_log(lang);
-                            }
-                            if ui_theme::secondary_button(ui, t, tr(lang, "btn.clear")).clicked() {
-                                self.clear_live_display();
-                            }
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                let half = ((ctrl_w - 6.0) * 0.5).max(48.0);
+                                let sz = egui::vec2(half, ui_theme::CTRL_H);
+                                if ui_theme::ghost_btn_sized(ui, t, tr(lang, "btn.new"), sz, false)
+                                    .clicked()
+                                {
+                                    self.new_live_log(lang);
+                                }
+                                if ui_theme::ghost_btn_sized(ui, t, tr(lang, "btn.clear"), sz, false)
+                                    .clicked()
+                                {
+                                    self.clear_live_display();
+                                }
+                            });
 
                             ui.add_space(2.0);
                             ui.label(
@@ -1837,22 +1830,44 @@ impl SerialToolPanel {
                                     .size(12.0)
                                     .color(t.text_muted),
                             );
-                            ui.add(
+                            let dir_edit = ui.add(
                                 egui::TextEdit::singleline(&mut self.live_dir)
                                     .desired_width(ctrl_w)
                                     .margin(egui::vec2(6.0, 4.0)),
                             );
+                            if dir_edit.lost_focus() {
+                                self.browser_dir = self.live_dir.clone();
+                                self.refresh_log_browser();
+                                self.persist_open_log_files();
+                            }
 
-                            if ui_theme::secondary_button(ui, t, tr(lang, "btn.browse_dir"))
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                let half = ((ctrl_w - 6.0) * 0.5).max(48.0);
+                                let sz = egui::vec2(half, ui_theme::CTRL_H);
+                                if ui_theme::ghost_btn_sized(
+                                    ui,
+                                    t,
+                                    tr(lang, "btn.browse_dir"),
+                                    sz,
+                                    false,
+                                )
                                 .clicked()
-                            {
-                                self.browse_dir();
-                            }
-                            if ui_theme::secondary_button(ui, t, tr(lang, "btn.open_log"))
+                                {
+                                    self.browse_dir();
+                                }
+                                if ui_theme::ghost_btn_sized(
+                                    ui,
+                                    t,
+                                    tr(lang, "btn.open_log"),
+                                    sz,
+                                    false,
+                                )
                                 .clicked()
-                            {
-                                self.open_files();
-                            }
+                                {
+                                    self.open_files();
+                                }
+                            });
                         });
                     paint_sidebar_card_border(ui, g1.response.rect, card_w, t.border);
 
@@ -1901,47 +1916,35 @@ impl SerialToolPanel {
                                     ui.set_clip_rect(content.intersect(ui.clip_rect()));
                                     ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
                                     let ctrl_w = content.width().max(1.0);
-                                    let inner_w = ctrl_w;
 
-                                    ui.label(
-                                        egui::RichText::new(tr(lang, "log.browser_dir"))
-                                            .size(12.0)
-                                            .strong()
-                                            .color(t.text_primary),
-                                    );
-                                    let browser_edit = ui.add(
-                                        egui::TextEdit::singleline(&mut self.browser_dir)
-                                            .desired_width(ctrl_w)
-                                            .hint_text(tr(lang, "log.browser_hint"))
-                                            .margin(egui::vec2(6.0, 4.0)),
-                                    );
-                                    if browser_edit.lost_focus() {
-                                        self.refresh_log_browser();
-                                        self.persist_open_log_files();
-                                    }
-
-                                    if ui_theme::secondary_button(
-                                        ui,
-                                        t,
-                                        tr(lang, "btn.browse_dir"),
-                                    )
-                                    .clicked()
-                                    {
-                                        self.browse_log_browser_dir();
-                                    }
-                                    if ui_theme::secondary_button(
-                                        ui,
-                                        t,
-                                        tr(lang, "btn.refresh_browser"),
-                                    )
-                                    .clicked()
-                                    {
-                                        self.refresh_log_browser();
-                                    }
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            egui::RichText::new(tr(lang, "log.browse_here"))
+                                                .size(12.0)
+                                                .strong()
+                                                .color(t.text_primary),
+                                        );
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if ui_theme::ghost_btn_sized(
+                                                    ui,
+                                                    t,
+                                                    tr(lang, "btn.refresh_browser"),
+                                                    egui::vec2(56.0, ui_theme::CTRL_H),
+                                                    false,
+                                                )
+                                                .clicked()
+                                                {
+                                                    self.refresh_log_browser();
+                                                }
+                                            },
+                                        );
+                                    });
 
                                     self.ensure_log_browser_fresh();
 
-                                    if self.browser_dir.trim().is_empty() {
+                                    if self.live_dir.trim().is_empty() {
                                         ui.add(
                                             egui::Label::new(
                                                 egui::RichText::new(tr(lang, "log.browser_hint"))
@@ -2059,9 +2062,27 @@ impl SerialToolPanel {
                             const NAV_W: f32 = 22.0;
                             const TAB_TITLE_W: f32 = 132.0;
                             const TAB_CLOSE_W: f32 = 22.0;
-                            let row_w = ui.available_width();
                             let tab_stride = TAB_TITLE_W + TAB_CLOSE_W + 4.0;
-                            let tab_lane_w = (row_w - NAV_W * 2.0 - 8.0).max(80.0);
+                            let row_w = ui.available_width();
+                            let tab_content_w: f32 = self
+                                .tabs
+                                .iter()
+                                .enumerate()
+                                .map(|(i, _)| {
+                                    let w = if i == 0 {
+                                        TAB_TITLE_W
+                                    } else {
+                                        TAB_TITLE_W + TAB_CLOSE_W
+                                    };
+                                    w + 4.0
+                                })
+                                .sum();
+                            let need_nav = tab_content_w > (row_w - 8.0).max(80.0);
+                            let tab_lane_w = if need_nav {
+                                (row_w - NAV_W * 2.0 - 8.0).max(80.0)
+                            } else {
+                                (row_w - 4.0).max(80.0)
+                            };
                             ui.allocate_ui_with_layout(
                                 egui::vec2(row_w, TAB_ROW_H),
                                 egui::Layout::right_to_left(egui::Align::Center),
@@ -2071,35 +2092,38 @@ impl SerialToolPanel {
                                 ui.spacing_mut().item_spacing.x = 2.0;
                                 let scroll_step = 180.0_f32;
 
-                                // Draw ▶ then ◀ (right-to-left → appear as ◀▶ on the right).
-                                let right_clicked = ui
-                                    .add_sized(
-                                        [NAV_W, TAB_CTRL_H],
-                                        egui::Button::new(
-                                            egui::RichText::new("▶")
-                                                .size(11.0)
-                                                .color(t.text_primary),
+                                let mut right_clicked = false;
+                                let mut left_clicked = false;
+                                if need_nav {
+                                    right_clicked = ui
+                                        .add_sized(
+                                            [NAV_W, TAB_CTRL_H],
+                                            egui::Button::new(
+                                                egui::RichText::new("▶")
+                                                    .size(11.0)
+                                                    .color(t.text_primary),
+                                            )
+                                            .fill(t.button_bg)
+                                            .stroke(Stroke::new(1.0_f32, t.border))
+                                            .corner_radius(CornerRadius::same(3)),
                                         )
-                                        .fill(t.button_bg)
-                                        .stroke(Stroke::new(1.0_f32, t.border))
-                                        .corner_radius(CornerRadius::same(3)),
-                                    )
-                                    .on_hover_text(tr(lang, "log.tab.scroll_right"))
-                                    .clicked();
-                                let left_clicked = ui
-                                    .add_sized(
-                                        [NAV_W, TAB_CTRL_H],
-                                        egui::Button::new(
-                                            egui::RichText::new("◀")
-                                                .size(11.0)
-                                                .color(t.text_primary),
+                                        .on_hover_text(tr(lang, "log.tab.scroll_right"))
+                                        .clicked();
+                                    left_clicked = ui
+                                        .add_sized(
+                                            [NAV_W, TAB_CTRL_H],
+                                            egui::Button::new(
+                                                egui::RichText::new("◀")
+                                                    .size(11.0)
+                                                    .color(t.text_primary),
+                                            )
+                                            .fill(t.button_bg)
+                                            .stroke(Stroke::new(1.0_f32, t.border))
+                                            .corner_radius(CornerRadius::same(3)),
                                         )
-                                        .fill(t.button_bg)
-                                        .stroke(Stroke::new(1.0_f32, t.border))
-                                        .corner_radius(CornerRadius::same(3)),
-                                    )
-                                    .on_hover_text(tr(lang, "log.tab.scroll_left"))
-                                    .clicked();
+                                        .on_hover_text(tr(lang, "log.tab.scroll_left"))
+                                        .clicked();
+                                }
 
                                 // Remaining width is a fixed lane for scrolling tabs.
                                 let scroll_w =
@@ -2126,54 +2150,49 @@ impl SerialToolPanel {
                                                             std::mem::take(&mut self.tab_elide_cache);
                                                         for (i, tab) in self.tabs.iter().enumerate() {
                                                             let selected = self.active_tab == i;
-                                                            let (fill, fg) = if selected {
-                                                                (t.surface_bg, t.text_primary)
+                                                            let fg = if selected {
+                                                                t.text_primary
                                                             } else {
-                                                                (t.tab_inactive_bg, t.tab_inactive_text)
+                                                                t.tab_inactive_text
                                                             };
-                                                            let stroke = if selected {
-                                                                Stroke::new(2.0_f32, t.accent)
+                                                            let live = i == 0;
+                                                            let tab_w = if live {
+                                                                TAB_TITLE_W
                                                             } else {
-                                                                Stroke::new(1.0_f32, t.border)
+                                                                TAB_TITLE_W + TAB_CLOSE_W
                                                             };
-
-                                                            // One exact rect per tab. Nested Buttons
-                                                            // negotiated their own natural heights
-                                                            // after a file was loaded, so the title
-                                                            // and close segment no longer shared a
-                                                            // visually consistent row.
-                                                            let tab_w = TAB_TITLE_W + TAB_CLOSE_W;
-                                                            let (tab_rect, _) = ui.allocate_exact_size(
-                                                                egui::vec2(tab_w, TAB_CTRL_H),
-                                                                egui::Sense::hover(),
-                                                            );
-                                                            let close_rect = egui::Rect::from_min_max(
-                                                                egui::pos2(
-                                                                    tab_rect.right() - TAB_CLOSE_W,
-                                                                    tab_rect.top(),
-                                                                ),
-                                                                tab_rect.max,
-                                                            );
-                                                            let title_rect = egui::Rect::from_min_max(
-                                                                tab_rect.min,
-                                                                egui::pos2(close_rect.left(), tab_rect.bottom()),
-                                                            );
-                                                            ui.painter().rect_filled(
-                                                                tab_rect,
-                                                                CornerRadius::same(4),
-                                                                fill,
-                                                            );
-                                                            ui.painter().rect_stroke(
-                                                                tab_rect,
-                                                                CornerRadius::same(4),
-                                                                stroke,
-                                                                egui::StrokeKind::Inside,
-                                                            );
-                                                            if i > 0 {
-                                                                ui.painter().vline(
-                                                                    close_rect.left(),
-                                                                    close_rect.top()..=close_rect.bottom(),
-                                                                    Stroke::new(1.0_f32, t.border),
+                                                            let (tab_rect, tab_hover) =
+                                                                ui.allocate_exact_size(
+                                                                    egui::vec2(tab_w, TAB_CTRL_H),
+                                                                    egui::Sense::hover(),
+                                                                );
+                                                            let close_rect = if live {
+                                                                egui::Rect::NOTHING
+                                                            } else {
+                                                                egui::Rect::from_min_max(
+                                                                    egui::pos2(
+                                                                        tab_rect.right() - TAB_CLOSE_W,
+                                                                        tab_rect.top(),
+                                                                    ),
+                                                                    tab_rect.max,
+                                                                )
+                                                            };
+                                                            let title_rect = if live {
+                                                                tab_rect
+                                                            } else {
+                                                                egui::Rect::from_min_max(
+                                                                    tab_rect.min,
+                                                                    egui::pos2(
+                                                                        close_rect.left(),
+                                                                        tab_rect.bottom(),
+                                                                    ),
+                                                                )
+                                                            };
+                                                            if tab_hover.hovered() && !selected {
+                                                                ui.painter().rect_filled(
+                                                                    tab_rect,
+                                                                    CornerRadius::ZERO,
+                                                                    t.accent_soft,
                                                                 );
                                                             }
                                                             let title_resp = ui.interact(
@@ -2223,13 +2242,17 @@ impl SerialToolPanel {
                                                                         egui::Sense::click(),
                                                                     )
                                                                     .on_hover_text(tr(lang, "log.tab.close"));
-                                                                ui.painter().text(
-                                                                    close_rect.center(),
-                                                                    egui::Align2::CENTER_CENTER,
-                                                                    "×",
-                                                                    egui::FontId::proportional(TAB_FONT + 1.0),
-                                                                    fg,
-                                                                );
+                                                                if cr.hovered() || tab_hover.hovered() {
+                                                                    ui.painter().text(
+                                                                        close_rect.center(),
+                                                                        egui::Align2::CENTER_CENTER,
+                                                                        "×",
+                                                                        egui::FontId::proportional(
+                                                                            TAB_FONT + 1.0,
+                                                                        ),
+                                                                        fg,
+                                                                    );
+                                                                }
                                                                 if cr.clicked() {
                                                                     close_idx = Some(i);
                                                                 }
@@ -2410,6 +2433,14 @@ impl SerialToolPanel {
 
     pub fn status_text(&self) -> &str {
         &self.status
+    }
+
+    pub fn status_tone(&self) -> crate::theme::StatusTone {
+        if self.monitoring {
+            crate::theme::StatusTone::Ok
+        } else {
+            crate::theme::StatusTone::Neutral
+        }
     }
 
     /// Monitor-only status for API (not file-open / indexing UI strings).

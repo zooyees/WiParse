@@ -292,6 +292,10 @@ impl WaveformAnalysisPanel {
         &self.status
     }
 
+    pub fn status_tone(&self) -> crate::theme::StatusTone {
+        crate::theme::tone_from_status(&self.status)
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
         self.poll_pending_loads(lang);
         self.poll_pending_viewport();
@@ -511,83 +515,61 @@ impl WaveformAnalysisPanel {
                         self.request_zoom_to_cursors();
                     }
 
-                    // Compact zoom icon group
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
-                        let z = egui::vec2(32.0, ui_theme::CTRL_H);
-                        if ui_theme::ghost_btn_sized(ui, tokens, "X+", z, false)
-                            .on_hover_text(t(lang, "横向放大", "Zoom in X"))
-                            .clicked()
-                        {
-                            self.request_zoom_axis(true, 0.5);
-                        }
-                        if ui_theme::ghost_btn_sized(ui, tokens, "X−", z, false)
-                            .on_hover_text(t(lang, "横向缩小", "Zoom out X"))
-                            .clicked()
-                        {
-                            self.request_zoom_axis(true, 2.0);
-                        }
-                        if ui_theme::ghost_btn_sized(ui, tokens, "Y+", z, false)
-                            .on_hover_text(t(lang, "纵向放大", "Zoom in Y"))
-                            .clicked()
-                        {
-                            self.apply_y_zoom_factor(2.0);
-                        }
-                        if ui_theme::ghost_btn_sized(ui, tokens, "Y−", z, false)
-                            .on_hover_text(t(lang, "纵向缩小", "Zoom out Y"))
-                            .clicked()
-                        {
-                            self.apply_y_zoom_factor(0.5);
-                        }
-                    });
-
-                    if ui_theme::ghost_btn_sized_enabled(
+                    // Compact zoom / reset in a View menu so the toolbar stays one row.
+                    let view_lbl = tr(lang, "wave.view");
+                    let view_btn = ui_theme::ghost_btn_sized(
                         ui,
                         tokens,
-                        t(lang, "复位通道", "Reset CH"),
-                        egui::vec2(72.0, ui_theme::CTRL_H),
-                        self.selected.is_some(),
-                    )
-                    .clicked()
-                    {
-                        if let Some(i) = self.selected {
-                            self.reset_channel_display(i);
-                        }
-                    }
-                    if ui_theme::ghost_btn_sized_enabled(
-                        ui,
-                        tokens,
-                        t(lang, "复位全部", "Reset All"),
-                        egui::vec2(72.0, ui_theme::CTRL_H),
-                        !self.waves.is_empty(),
-                    )
-                    .clicked()
-                    {
-                        self.reset_all_channel_display();
-                    }
-                    if ui_theme::ghost_btn_sized(
-                        ui,
-                        tokens,
-                        t(lang, "清除光标", "Clear"),
-                        egui::vec2(72.0, ui_theme::CTRL_H),
+                        view_lbl,
+                        egui::vec2(56.0, ui_theme::CTRL_H),
                         false,
                     )
-                    .clicked()
-                    {
-                        self.clear_active_cursors();
+                    .on_hover_text(tr(lang, "wave.wheel_hint"));
+                    let view_id = ui.make_persistent_id("wave_view_menu");
+                    if view_btn.clicked() {
+                        ui.memory_mut(|m| m.toggle_popup(view_id));
                     }
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(t(
-                                lang,
-                                "Ctrl+滚轮=X · Ctrl+Shift+滚轮=Y",
-                                "Ctrl+wheel=X · Ctrl+Shift+wheel=Y",
-                            ))
-                            .size(ui_theme::FONT_CAPTION)
-                            .color(tokens.text_muted),
-                        );
-                    });
+                    egui::popup::popup_below_widget(
+                        ui,
+                        view_id,
+                        &view_btn,
+                        egui::popup::PopupCloseBehavior::CloseOnClick,
+                        |ui| {
+                            ui.set_min_width(140.0);
+                            if ui.button("X+").clicked() {
+                                self.request_zoom_axis(true, 0.5);
+                            }
+                            if ui.button("X−").clicked() {
+                                self.request_zoom_axis(true, 2.0);
+                            }
+                            if ui.button("Y+").clicked() {
+                                self.apply_y_zoom_factor(2.0);
+                            }
+                            if ui.button("Y−").clicked() {
+                                self.apply_y_zoom_factor(0.5);
+                            }
+                            if ui
+                                .add_enabled(self.selected.is_some(), egui::Button::new(t(lang, "复位通道", "Reset CH")))
+                                .clicked()
+                            {
+                                if let Some(i) = self.selected {
+                                    self.reset_channel_display(i);
+                                }
+                            }
+                            if ui
+                                .add_enabled(
+                                    !self.waves.is_empty(),
+                                    egui::Button::new(t(lang, "复位全部", "Reset All")),
+                                )
+                                .clicked()
+                            {
+                                self.reset_all_channel_display();
+                            }
+                            if ui.button(t(lang, "清除光标", "Clear")).clicked() {
+                                self.clear_active_cursors();
+                            }
+                        },
+                    );
                 });
             });
     }

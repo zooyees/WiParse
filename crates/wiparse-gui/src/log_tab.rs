@@ -23,7 +23,7 @@ use wiparse_core::protocol::{decode_qi_message, format_qi_tooltip, QiTipLine, Qi
 use crate::log_view::{
     show_virtual_line_editor, show_virtual_log_pane, show_virtual_search_pane, LineEditorSession,
 };
-use crate::theme::Tokens;
+use crate::theme::{self as ui_theme, Tokens};
 
 pub(crate) const LOG_FONT_DEFAULT: f32 = 13.0;
 pub(crate) const LOG_FONT_MIN: f32 = 8.0;
@@ -1045,24 +1045,37 @@ impl LogTabPage {
         self.handle_view_shortcuts(ui);
 
         const TOOLBAR_ROW_H: f32 = 28.0;
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), TOOLBAR_ROW_H),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                egui::ScrollArea::horizontal()
-                    .id_salt("log_toolbar")
-                    .max_height(TOOLBAR_ROW_H)
-                    .auto_shrink([false, true])
-                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.set_min_height(TOOLBAR_ROW_H);
-                            ui.set_max_height(TOOLBAR_ROW_H);
-                            self.toolbar_row_main(ui, lang, t);
-                        });
-                    });
-            },
-        );
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), TOOLBAR_ROW_H),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_height(TOOLBAR_ROW_H);
+                    ui.set_max_height(TOOLBAR_ROW_H);
+                    if !self.live && !self.loading {
+                        self.toolbar_edit_controls(ui, lang, t);
+                        if !self.edit_mode {
+                            ui.separator();
+                        }
+                    }
+                    if !self.edit_mode {
+                        self.toolbar_row_find(ui, lang, t);
+                    }
+                },
+            );
+            if !self.edit_mode {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), TOOLBAR_ROW_H),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_height(TOOLBAR_ROW_H);
+                        ui.set_max_height(TOOLBAR_ROW_H);
+                        self.toolbar_row_view(ui, lang, t);
+                    },
+                );
+            }
+        });
 
         ui.add_space(2.0);
         Frame::NONE
@@ -1331,17 +1344,7 @@ impl LogTabPage {
         }
     }
 
-    fn toolbar_row_main(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
-        if !self.live && !self.loading {
-            self.toolbar_edit_controls(ui, lang, t);
-            ui.separator();
-        }
-
-        if !self.edit_mode {
-            self.toolbar_row_find(ui, lang, t);
-            ui.separator();
-        }
-
+    fn toolbar_row_view(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
         let was_split = self.split_enabled;
         ui.checkbox(
             &mut self.split_enabled,
@@ -1390,11 +1393,8 @@ impl LogTabPage {
             }
         }
 
-        if ui
-            .add_sized(
-                [56.0, 24.0],
-                egui::Button::new(tr(lang, "log.goto")),
-            )
+        if ui_theme::secondary_btn_sized(ui, t, tr(lang, "log.goto"), egui::vec2(56.0, ui_theme::CTRL_H))
+            .on_hover_text(tr(lang, "log.goto_hint"))
             .clicked()
         {
             self.open_goto_dialog();
@@ -1531,30 +1531,38 @@ impl LogTabPage {
         }
         let selected = self.selected_pane.min(n_filters.saturating_sub(1));
 
-        if ui
-            .add_sized(
-                [56.0, 24.0],
-                egui::Button::new(tr(lang, "log.find_prev")),
-            )
-            .clicked()
+        if ui_theme::ghost_btn_sized(
+            ui,
+            t,
+            tr(lang, "log.find_prev"),
+            egui::vec2(56.0, ui_theme::CTRL_H),
+            false,
+        )
+        .on_hover_text(tr(lang, "log.find_prev_hint"))
+        .clicked()
         {
             prev_idx = Some(selected);
         }
-        if ui
-            .add_sized(
-                [56.0, 24.0],
-                egui::Button::new(tr(lang, "log.find_next")),
-            )
-            .clicked()
+        if ui_theme::ghost_btn_sized(
+            ui,
+            t,
+            tr(lang, "log.find_next"),
+            egui::vec2(56.0, ui_theme::CTRL_H),
+            false,
+        )
+        .on_hover_text(tr(lang, "log.find_next_hint"))
+        .clicked()
         {
             next_idx = Some(selected);
         }
-        if ui
-            .add_sized(
-                [72.0, 24.0],
-                egui::Button::new(tr(lang, "log.list_all")),
-            )
-            .clicked()
+        if ui_theme::ghost_btn_sized(
+            ui,
+            t,
+            tr(lang, "log.list_all"),
+            egui::vec2(72.0, ui_theme::CTRL_H),
+            false,
+        )
+        .clicked()
         {
             list_idx = Some(selected);
         }

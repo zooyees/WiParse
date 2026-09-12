@@ -58,6 +58,18 @@
       "known_tcpip_resources": [],
       "waveform_browser_dir": "",
       "waveform_source_dir": ""
+    },
+    "test_tool": {
+      "plugins_dir": "",
+      "cli_path": "",
+      "node_path": "",
+      "data_root": "",
+      "marketplace": {
+        "enabled": false,
+        "base_url": "http://127.0.0.1:8787",
+        "install_dir": "",
+        "channel": "stable"
+      }
     }
   },
   "update": {
