@@ -232,7 +232,6 @@ pub struct DataAnalysisPanel {
     thr_current_on: bool,
     thr_temperature: f64,
     thr_temperature_on: bool,
-    live_drawer_open: bool,
 
     fit_request: bool,
     pending_bounds: Option<PlotBounds>,
@@ -305,7 +304,6 @@ impl DataAnalysisPanel {
             thr_current_on: da.threshold_current_on,
             thr_temperature: da.threshold_temperature,
             thr_temperature_on: da.threshold_temperature_on,
-            live_drawer_open: false,
             fit_request: false,
             pending_bounds: None,
             last_x_range: None,
@@ -323,16 +321,6 @@ impl DataAnalysisPanel {
 
     pub fn status_text(&self) -> &str {
         &self.status
-    }
-
-    pub fn status_tone(&self) -> crate::theme::StatusTone {
-        if self.pending_load.is_some() {
-            crate::theme::StatusTone::Busy
-        } else if self.series.iter().any(|s| !s.points.is_empty()) {
-            crate::theme::StatusTone::Ok
-        } else {
-            crate::theme::StatusTone::Neutral
-        }
     }
 
     pub fn needs_repaint(&self) -> bool {
@@ -519,16 +507,7 @@ impl DataAnalysisPanel {
             egui::vec2(plot_w, body_h),
         );
 
-        let live = matches!(self.source, DataSource::SerialLive);
-        let browser_h = if live {
-            if self.live_drawer_open {
-                (body_h * 0.28).clamp(88.0, 160.0)
-            } else {
-                36.0
-            }
-        } else {
-            (body_h * 0.42).clamp(140.0, body_h - 160.0)
-        };
+        let browser_h = (body_h * 0.42).clamp(140.0, body_h - 160.0);
         let rules_h = (body_h - browser_h - PANEL_GAP).max(140.0);
         let browser_rect =
             egui::Rect::from_min_size(side_rect.min, egui::vec2(side_w, browser_h));
@@ -540,26 +519,7 @@ impl DataAnalysisPanel {
         panel_in_rect(ui, toolbar_rect, |ui| self.toolbar(ui, lang, tokens));
         panel_in_rect(ui, browser_rect, |ui| {
             if matches!(self.source, DataSource::SerialLive) {
-                Frame::NONE
-                    .fill(tokens.surface_bg)
-                    .stroke(Stroke::new(1.0_f32, tokens.divider))
-                    .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-                    .inner_margin(Margin::symmetric(CARD_MARGIN_X, 6))
-                    .show(ui, |ui| {
-                        if ui
-                            .add(
-                                egui::Button::new(tr(lang, "data.live_drawer"))
-                                    .fill(Color32::TRANSPARENT)
-                                    .stroke(Stroke::NONE),
-                            )
-                            .clicked()
-                        {
-                            self.live_drawer_open = !self.live_drawer_open;
-                        }
-                        if self.live_drawer_open {
-                            self.live_status_panel(ui, lang, tokens);
-                        }
-                    });
+                self.live_status_panel(ui, lang, tokens);
             } else {
                 self.browser_panel(ui, lang, tokens);
             }
@@ -580,25 +540,14 @@ impl DataAnalysisPanel {
                 ui.set_min_width(ui.available_width());
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
-                    let has_data = self.series.iter().any(|s| !s.points.is_empty());
-                    let open_clicked = if has_data {
-                        ui_theme::secondary_btn_sized(
-                            ui,
-                            tokens,
-                            tr(lang, "data.open_file"),
-                            egui::vec2(100.0, ui_theme::CTRL_H),
-                        )
-                        .clicked()
-                    } else {
-                        ui_theme::primary_btn_sized(
-                            ui,
-                            tokens,
-                            tr(lang, "data.open_file"),
-                            egui::vec2(100.0, ui_theme::CTRL_H),
-                        )
-                        .clicked()
-                    };
-                    if open_clicked {
+                    if ui_theme::primary_btn_sized(
+                        ui,
+                        tokens,
+                        tr(lang, "data.open_file"),
+                        egui::vec2(100.0, ui_theme::CTRL_H),
+                    )
+                    .clicked()
+                    {
                         self.pick_open_file(lang);
                     }
                     if ui_theme::secondary_btn_sized(
@@ -733,25 +682,14 @@ impl DataAnalysisPanel {
                             .color(tokens.text_primary),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let has_data = self.series.iter().any(|s| !s.points.is_empty());
-                        let apply_clicked = if has_data {
-                            ui_theme::primary_btn_sized(
-                                ui,
-                                tokens,
-                                tr(lang, "data.apply"),
-                                egui::vec2(72.0, ui_theme::CTRL_H),
-                            )
-                            .clicked()
-                        } else {
-                            ui_theme::secondary_btn_sized(
-                                ui,
-                                tokens,
-                                tr(lang, "data.apply"),
-                                egui::vec2(72.0, ui_theme::CTRL_H),
-                            )
-                            .clicked()
-                        };
-                        if apply_clicked {
+                        if ui_theme::primary_btn_sized(
+                            ui,
+                            tokens,
+                            tr(lang, "data.apply"),
+                            egui::vec2(72.0, 24.0),
+                        )
+                        .clicked()
+                        {
                             apply_now = true;
                         }
                     });
@@ -890,45 +828,42 @@ impl DataAnalysisPanel {
                     });
 
                 ui.add_space(4.0);
-                let mut thr_dirty = false;
-                egui::CollapsingHeader::new(
-                    RichText::new(tr(lang, "data.limits"))
+                ui.label(
+                    RichText::new(tr(lang, "data.thresholds"))
                         .size(ui_theme::FONT_CAPTION)
                         .strong()
                         .color(tokens.text_primary),
-                )
-                .default_open(false)
-                .show(ui, |ui| {
-                    ui.label(
-                        RichText::new(tr(lang, "data.threshold_hint"))
-                            .size(10.0)
-                            .color(tokens.text_muted),
-                    );
-                    thr_dirty |= threshold_row(
-                        ui,
-                        tokens,
-                        lang,
-                        DataKind::Voltage,
-                        &mut self.thr_voltage_on,
-                        &mut self.thr_voltage,
-                    );
-                    thr_dirty |= threshold_row(
-                        ui,
-                        tokens,
-                        lang,
-                        DataKind::Current,
-                        &mut self.thr_current_on,
-                        &mut self.thr_current,
-                    );
-                    thr_dirty |= threshold_row(
-                        ui,
-                        tokens,
-                        lang,
-                        DataKind::Temperature,
-                        &mut self.thr_temperature_on,
-                        &mut self.thr_temperature,
-                    );
-                });
+                );
+                ui.label(
+                    RichText::new(tr(lang, "data.threshold_hint"))
+                        .size(10.0)
+                        .color(tokens.text_muted),
+                );
+                let mut thr_dirty = false;
+                thr_dirty |= threshold_row(
+                    ui,
+                    tokens,
+                    lang,
+                    DataKind::Voltage,
+                    &mut self.thr_voltage_on,
+                    &mut self.thr_voltage,
+                );
+                thr_dirty |= threshold_row(
+                    ui,
+                    tokens,
+                    lang,
+                    DataKind::Current,
+                    &mut self.thr_current_on,
+                    &mut self.thr_current,
+                );
+                thr_dirty |= threshold_row(
+                    ui,
+                    tokens,
+                    lang,
+                    DataKind::Temperature,
+                    &mut self.thr_temperature_on,
+                    &mut self.thr_temperature,
+                );
                 if thr_dirty {
                     self.persist_rules();
                 }

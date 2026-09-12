@@ -16,7 +16,6 @@
 - Rust：`wiparse_core::marketplace` + `apps.test_tool.marketplace` 配置；目录拉取走 HTTPS（ureq `tls`）。本机 `127.0.0.1` / `localhost` 才允许明文 HTTP。
 - 修正 `.gitignore` 的 `log/` 误忽略 `crates/wiparse-core/src/log/`（日志宿主以目录模块入库，去掉市场分支顶替的 `log.rs`）。
 - Testing Hub **插件 / 市场** 双模式：目录浏览、安装/卸载；与 1.1.10 仪器参数控件并存。
-- UI/UE Phase 1–3：四职导航（采集/分析/测试/报告）+ More；台架/分析/完整配置；串口合并保存目录；仪表统一 Capture 分段；计算器列表+详情；数据限值折叠；市场改为「获取插件」抽屉；报告 Markdown 链接可点。
 - 本机 `127.0.0.1` / `localhost` / `::1` 明文 HTTP 可直接访问（无需再设 `WIPARSE_MARKETPLACE_ALLOW_HTTP`）；其它 HTTP 仍需该环境变量。
 - Windows 本地市场：`scripts/deploy-marketplace.ps1` 播种并监听 `http://127.0.0.1:8787`；`scripts/package-marketplace-demo.ps1` 产出 `dist/wiparse-win-marketplace-demo.zip`。
 

@@ -499,31 +499,6 @@ pub fn segmented_two(
     out
 }
 
-/// N-option segmented control. Returns the newly selected index.
-pub fn segmented_n(
-    ui: &mut egui::Ui,
-    t: &Tokens,
-    labels: &[&str],
-    selected: usize,
-    size: Vec2,
-) -> Option<usize> {
-    if labels.is_empty() {
-        return None;
-    }
-    let mut out = None;
-    let n = labels.len() as f32;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        let cell = Vec2::new((size.x / n).max(36.0), size.y);
-        for (i, label) in labels.iter().enumerate() {
-            if ghost_btn_sized(ui, t, *label, cell, i == selected).clicked() && i != selected {
-                out = Some(i);
-            }
-        }
-    });
-    out
-}
-
 /// Status dot + caption for the bottom bar.
 pub fn status_line(ui: &mut egui::Ui, t: &Tokens, tone: StatusTone, text: &str) {
     let color = match tone {

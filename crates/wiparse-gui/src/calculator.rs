@@ -1035,7 +1035,6 @@ pub struct CalculatorPanel {
     rc: RcState,
     crc: CrcState,
     converter: ConverterPanel,
-    selected: usize,
 }
 
 impl CalculatorPanel {
@@ -1047,68 +1046,49 @@ impl CalculatorPanel {
             rc: RcState::default(),
             crc: CrcState::default(),
             converter: ConverterPanel::new(),
-            selected: 0,
         }
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
         let available = ui.available_rect_before_wrap();
         let gap = 8.0;
-        let list_w = 188.0_f32.min(available.width() * 0.28).max(140.0);
-        let list_rect = Rect::from_min_size(available.min, Vec2::new(list_w, available.height()));
-        let detail_rect = Rect::from_min_max(
-            Pos2::new(available.min.x + list_w + gap, available.min.y),
-            available.max,
-        );
+        let cell_width = ((available.width() - gap * 2.0) / 3.0).max(1.0);
+        let cell_height = ((available.height() - gap) / 2.0).max(1.0);
 
-        ui.scope_builder(egui::UiBuilder::new().max_rect(list_rect), |ui| {
-            Frame::NONE
-                .fill(t.panel_bg)
-                .stroke(Stroke::new(1.0_f32, t.border))
-                .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-                .inner_margin(Margin::same(8))
-                .show(ui, |ui| {
-                    ui.set_min_size(list_rect.shrink(8.0).size());
-                    ui.spacing_mut().item_spacing.y = 4.0;
-                    for (index, (title, _desc)) in calc_tool_meta(lang).iter().enumerate() {
-                        let selected = self.selected == index;
-                        if ui_theme::ghost_btn_sized(
-                            ui,
-                            t,
-                            *title,
-                            Vec2::new((list_w - 20.0).max(80.0), ui_theme::CTRL_H),
-                            selected,
-                        )
-                        .clicked()
-                        {
-                            self.selected = index;
-                        }
-                    }
-                });
-        });
-
-        ui.scope_builder(egui::UiBuilder::new().max_rect(detail_rect), |ui| {
-            Frame::NONE
-                .fill(t.panel_bg)
-                .stroke(Stroke::new(1.0_f32, t.border))
-                .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-                .inner_margin(Margin::same(12))
-                .show(ui, |ui| {
-                    ui.set_min_size(detail_rect.shrink(12.0).size());
-                    egui::ScrollArea::vertical()
-                        .id_salt(("calculator_tool", self.selected))
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| match self.selected {
-                            0 => self.lc_ui(ui, lang, t),
-                            1 => self.bandpass_ui(ui, lang, t),
-                            2 => self.q_ui(ui, lang, t),
-                            3 => self.rc_ui(ui, lang, t),
-                            4 => self.crc_ui(ui, lang, t),
-                            5 => self.converter.ui(ui, lang, t),
-                            _ => {}
-                        });
-                });
-        });
+        for index in 0..6 {
+            let row = index / 3;
+            let column = index % 3;
+            let min = Pos2::new(
+                available.left() + column as f32 * (cell_width + gap),
+                available.top() + row as f32 * (cell_height + gap),
+            );
+            let rect = Rect::from_min_size(min, Vec2::new(cell_width, cell_height));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                Frame::NONE
+                    .fill(t.panel_bg)
+                    .stroke(Stroke::new(1.0_f32, t.border))
+                    .corner_radius(CornerRadius::same(6))
+                    .inner_margin(Margin::same(10))
+                    .show(ui, |ui| {
+                        ui.set_min_size(Vec2::new(
+                            (cell_width - 20.0).max(1.0),
+                            (cell_height - 20.0).max(1.0),
+                        ));
+                        egui::ScrollArea::vertical()
+                            .id_salt(("calculator_tool", index))
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| match index {
+                                0 => self.lc_ui(ui, lang, t),
+                                1 => self.bandpass_ui(ui, lang, t),
+                                2 => self.q_ui(ui, lang, t),
+                                3 => self.rc_ui(ui, lang, t),
+                                4 => self.crc_ui(ui, lang, t),
+                                5 => self.converter.ui(ui, lang, t),
+                                _ => placeholder_ui(ui, lang, t, index + 1),
+                            });
+                    });
+            });
+        }
         ui.allocate_rect(available, Sense::hover());
     }
 
@@ -1247,10 +1227,10 @@ impl CalculatorPanel {
     }
 
     fn lc_ui(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
-        self.lc.calculate();
         tool_header(
             ui,
             t,
+            1,
             text(lang, "LC 谐振频率", "LC Resonance"),
             text(
                 lang,
@@ -1363,10 +1343,10 @@ impl CalculatorPanel {
     }
 
     fn bandpass_ui(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
-        self.bandpass.calculate();
         tool_header(
             ui,
             t,
+            2,
             text(lang, "带通滤波器", "Band-pass Filter"),
             text(
                 lang,
@@ -1476,10 +1456,10 @@ impl CalculatorPanel {
     }
 
     fn q_ui(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
-        self.q.calculate();
         tool_header(
             ui,
             t,
+            3,
             text(lang, "Q 值（峰值衰减）", "Q from Peak Decay"),
             text(
                 lang,
@@ -1581,10 +1561,10 @@ impl CalculatorPanel {
     }
 
     fn rc_ui(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
-        self.rc.calculate();
         tool_header(
             ui,
             t,
+            4,
             text(lang, "RC 时间常数", "RC Time Constant"),
             text(
                 lang,
@@ -1698,10 +1678,10 @@ impl CalculatorPanel {
     }
 
     fn crc_ui(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
-        self.crc.calculate();
         tool_header(
             ui,
             t,
+            5,
             text(lang, "CRC 计算器", "CRC Calculator"),
             text(
                 lang,
@@ -1873,39 +1853,10 @@ fn text<'a>(lang: Lang, zh: &'a str, en: &'a str) -> &'a str {
     }
 }
 
-fn calc_tool_meta(lang: Lang) -> [(&'static str, &'static str); 6] {
-    [
-        (
-            text(lang, "LC 谐振", "LC Resonance"),
-            text(lang, "串联 LC 谐振与谐振腔电流", "Series LC resonance"),
-        ),
-        (
-            text(lang, "带通", "Bandpass"),
-            text(lang, "高通 + 低通", "High-pass + low-pass"),
-        ),
-        (
-            text(lang, "Q 值", "Q factor"),
-            text(lang, "衰减振荡", "Damped oscillation"),
-        ),
-        (
-            text(lang, "RC 时间", "RC time"),
-            text(lang, "充放电", "Charge / discharge"),
-        ),
-        (
-            text(lang, "CRC", "CRC"),
-            text(lang, "校验计算", "Checksum"),
-        ),
-        (
-            text(lang, "换算", "Convert"),
-            text(lang, "进制与单位", "Radix and units"),
-        ),
-    ]
-}
-
-fn tool_header(ui: &mut egui::Ui, t: &Tokens, title: &str, description: &str) {
+fn tool_header(ui: &mut egui::Ui, t: &Tokens, number: usize, title: &str, description: &str) {
     ui.spacing_mut().item_spacing.y = 6.0;
     ui.heading(
-        egui::RichText::new(title)
+        egui::RichText::new(format!("{number}. {title}"))
             .size(16.0)
             .color(t.text_primary),
     );
@@ -1922,6 +1873,26 @@ fn section_heading(ui: &mut egui::Ui, t: &Tokens, title: &str) {
             .color(t.text_primary),
     );
     ui.separator();
+}
+
+fn placeholder_ui(ui: &mut egui::Ui, lang: Lang, t: &Tokens, number: usize) {
+    tool_header(
+        ui,
+        t,
+        number,
+        text(lang, "预留工具", "Reserved Tool"),
+        text(
+            lang,
+            "功能将在后续版本提供",
+            "Functionality planned for a future release",
+        ),
+    );
+    section_heading(ui, t, text(lang, "内容", "Content"));
+    formula_box(
+        ui,
+        t,
+        &[text(lang, "预留 / 即将推出", "Reserved / Coming soon")],
+    );
 }
 
 fn plain_value_row(ui: &mut egui::Ui, label: &str, value: &mut String, suffix: &str) {
@@ -2064,25 +2035,17 @@ fn error_slot(ui: &mut egui::Ui, error: Option<&str>) {
 }
 
 fn formula_box(ui: &mut egui::Ui, t: &Tokens, lines: &[&str]) {
-    egui::CollapsingHeader::new(
-        egui::RichText::new(lines.first().copied().unwrap_or("f(x)"))
-            .size(12.0)
-            .color(t.text_muted),
-    )
-    .default_open(false)
-    .show(ui, |ui| {
-        Frame::NONE
-            .fill(t.surface_bg)
-            .stroke(Stroke::new(1.0_f32, t.border.gamma_multiply(0.45)))
-            .corner_radius(CornerRadius::same(4))
-            .inner_margin(Margin::same(8))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                for line in lines {
-                    ui.label(egui::RichText::new(*line).small().color(t.text_muted));
-                }
-            });
-    });
+    Frame::NONE
+        .fill(t.surface_bg)
+        .stroke(Stroke::new(1.0_f32, t.border.gamma_multiply(0.45)))
+        .corner_radius(CornerRadius::same(4))
+        .inner_margin(Margin::same(8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            for line in lines {
+                ui.label(egui::RichText::new(*line).small().color(t.text_muted));
+            }
+        });
 }
 
 #[derive(Debug, Clone, Copy)]
