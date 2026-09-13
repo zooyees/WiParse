@@ -39,7 +39,7 @@ impl InstrumentProfile {
                 capabilities.range_control = true;
                 capabilities.nplc_control = true;
             }
-            InstrumentKind::Generic => {}
+            InstrumentKind::DebugProbe | InstrumentKind::UsbBridge | InstrumentKind::Generic => {}
         }
         Self {
             name: format!("{} {}", vendor.trim(), kind.label())
@@ -168,6 +168,16 @@ pub fn classify_instrument_kind(vendor: &str, model: &str) -> InstrumentKind {
         || (vendor.contains("KEYSIGHT") && (model.starts_with("344") || model.starts_with("345")))
     {
         InstrumentKind::Multimeter
+    } else if vendor.contains("SEGGER")
+        || model.contains("J-LINK")
+        || model.contains("JLINK")
+        || model.contains("ST-LINK")
+        || model.contains("STLINK")
+        || model.contains("CMSIS-DAP")
+    {
+        InstrumentKind::DebugProbe
+    } else if model.contains("FT4222") {
+        InstrumentKind::UsbBridge
     } else {
         InstrumentKind::Generic
     }
@@ -550,6 +560,90 @@ pub enum ControlCommand {
         function: MeasureFunction,
         value: f64,
     },
+    ProbeHalt,
+    ProbeRun,
+    ProbeReset {
+        #[serde(default)]
+        hardware: bool,
+    },
+    ProbeAttach {
+        #[serde(default)]
+        target: String,
+    },
+    ProbeFlash {
+        path: String,
+        #[serde(default)]
+        verify: bool,
+        #[serde(default)]
+        base_address: Option<u64>,
+    },
+    ProbeMemRead {
+        address: String,
+        #[serde(default = "default_mem_len")]
+        len: u32,
+    },
+    ProbeMemWrite {
+        address: String,
+        data_hex: String,
+    },
+    ProbeRttStart {
+        #[serde(default)]
+        up_channel: u32,
+    },
+    ProbeRttStop,
+    ProbeRttRead,
+    ProbeStatus,
+    ProbeRegs,
+    ProbeErase,
+    ProbeSpeed {
+        #[serde(default = "default_probe_khz")]
+        khz: u32,
+    },
+    BridgeSpi {
+        #[serde(default)]
+        mode: u8,
+        #[serde(default = "default_spi_hz")]
+        clock_hz: u32,
+        #[serde(default)]
+        cs: u8,
+        #[serde(default)]
+        write_hex: String,
+        #[serde(default)]
+        read_len: u32,
+    },
+    BridgeI2c {
+        addr: String,
+        #[serde(default)]
+        write_hex: String,
+        #[serde(default)]
+        read_len: u32,
+        #[serde(default = "default_i2c_hz")]
+        clock_hz: u32,
+    },
+    BridgeGpio {
+        pin: u8,
+        #[serde(default)]
+        dir: Option<bool>,
+        #[serde(default)]
+        value: Option<bool>,
+    },
+    BridgeInfo,
+}
+
+fn default_mem_len() -> u32 {
+    64
+}
+
+fn default_spi_hz() -> u32 {
+    1_000_000
+}
+
+fn default_i2c_hz() -> u32 {
+    100_000
+}
+
+fn default_probe_khz() -> u32 {
+    4_000
 }
 
 /// Accept `"ScopeStop"` (unit variant) and `{ "ScopeStop": null }` as well as
@@ -799,6 +893,26 @@ impl InstrumentDevice {
                     .write(&format!("SENS:{}:NPLC {value}", function.scpi()))
                     .map(|_| None)
             }
+            ProbeHalt
+            | ProbeRun
+            | ProbeReset { .. }
+            | ProbeAttach { .. }
+            | ProbeFlash { .. }
+            | ProbeMemRead { .. }
+            | ProbeMemWrite { .. }
+            | ProbeRttStart { .. }
+            | ProbeRttStop
+            | ProbeRttRead
+            | ProbeStatus
+            | ProbeRegs
+            | ProbeErase
+            | ProbeSpeed { .. }
+            | BridgeSpi { .. }
+            | BridgeI2c { .. }
+            | BridgeGpio { .. }
+            | BridgeInfo => Err(InstrumentError::Unsupported(
+                "this command is for a debug probe or FT4222 session".into(),
+            )),
         };
         result
     }
@@ -845,6 +959,7 @@ impl InstrumentDevice {
                 value: self.session.query_f64("READ?")?,
                 unit: String::new(),
             }]),
+            InstrumentKind::DebugProbe | InstrumentKind::UsbBridge => Ok(Vec::new()),
         }
     }
 
@@ -3135,6 +3250,34 @@ mod tests {
             classify_instrument_kind("Keysight Technologies", "34461A"),
             InstrumentKind::Multimeter
         );
+        assert_eq!(
+            classify_instrument_kind("SEGGER", "J-Link"),
+            InstrumentKind::DebugProbe
+        );
+        assert_eq!(
+            classify_instrument_kind("FTDI", "FT4222H"),
+            InstrumentKind::UsbBridge
+        );
+        assert!(matches!(
+            parse_control_command(&serde_json::json!("ProbeHalt")).unwrap(),
+            ControlCommand::ProbeHalt
+        ));
+        assert!(matches!(
+            parse_control_command(&serde_json::json!("ProbeStatus")).unwrap(),
+            ControlCommand::ProbeStatus
+        ));
+        assert!(matches!(
+            parse_control_command(&serde_json::json!("BridgeInfo")).unwrap(),
+            ControlCommand::BridgeInfo
+        ));
+        let flash = parse_control_command(&serde_json::json!({
+            "ProbeFlash": { "path": "app.hex", "verify": true }
+        }))
+        .unwrap();
+        assert!(matches!(
+            flash,
+            ControlCommand::ProbeFlash { verify: true, .. }
+        ));
     }
 
     #[test]

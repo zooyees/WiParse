@@ -5,7 +5,7 @@ use crate::test_tool::LiveDevice;
 use crate::theme::{self, Tokens};
 use chrono::Local;
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use egui::{Color32, CornerRadius, Frame, Margin, RichText, Stroke};
+use egui::{Color32, CornerRadius, Frame, Margin, Rect, RichText, Stroke};
 use egui_plot::{Legend, Line, Plot, PlotPoints};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -14,11 +14,14 @@ use std::thread;
 use std::time::{Duration, Instant};
 use wiparse_core::config::AppConfig;
 use wiparse_core::i18n::Lang;
+use wiparse_core::bridge::Ft4222Session;
 use wiparse_core::instrument::{
     discover_resources_with_library, export_csv, humanize_scope_reading_text, parse_control_command,
     AcquisitionBuffer, Capabilities, ControlCommand, Identity, InstrumentDevice, InstrumentKind,
     MeasureFunction, Reading, ResourceInfo, Sample, ScopeMeasType, WaveformTrace,
 };
+use wiparse_core::probe::ProbeSession;
+use wiparse_core::usb::{is_usb_session_address, parse_usb_resource, UsbIface};
 use wiparse_core::wave_display::{build_overview_envelope, envelope_bounds, ScopeEnvelopeColumn};
 use wiparse_core::waveform_file::{
     join_tek_isf_channels, load_waveform_bytes, load_waveform_bytes_all, save_waveform_file,
@@ -48,6 +51,7 @@ enum Job {
         command: ControlCommand,
         job_id: Option<u64>,
     },
+    PollRtt(u64),
     Measure(u64),
     /// Capture scope screen for in-app preview + clipboard (no save dialog).
     Capture {
@@ -87,6 +91,10 @@ enum Event {
         id: u64,
         job_id: Option<u64>,
         response: Option<String>,
+    },
+    SessionOutput {
+        id: u64,
+        text: Option<String>,
     },
     Measurements {
         id: u64,
@@ -229,6 +237,27 @@ struct ControlState {
     dmm_range: f64,
     dmm_nplc: f64,
     console: String,
+    probe_chip: String,
+    probe_flash_path: String,
+    probe_flash_verify: bool,
+    probe_mem_addr: String,
+    probe_mem_len: u32,
+    probe_mem_write_hex: String,
+    probe_rtt_on: bool,
+    probe_rtt_channel: u32,
+    probe_speed_khz: u32,
+    io_log: String,
+    bridge_tab: u8,
+    bridge_spi_mode: u8,
+    bridge_spi_hz: u32,
+    bridge_spi_cs: u8,
+    bridge_write_hex: String,
+    bridge_read_len: u32,
+    bridge_i2c_addr: String,
+    bridge_i2c_hz: u32,
+    bridge_gpio_pin: u8,
+    bridge_gpio_out: bool,
+    bridge_gpio_value: bool,
 }
 
 impl Default for ControlState {
@@ -257,6 +286,27 @@ impl Default for ControlState {
             dmm_range: 10.0,
             dmm_nplc: 1.0,
             console: "*IDN?".into(),
+            probe_chip: String::new(),
+            probe_flash_path: String::new(),
+            probe_flash_verify: true,
+            probe_mem_addr: "08000000".into(),
+            probe_mem_len: 64,
+            probe_mem_write_hex: String::new(),
+            probe_rtt_on: false,
+            probe_rtt_channel: 0,
+            probe_speed_khz: 4_000,
+            io_log: String::new(),
+            bridge_tab: 0,
+            bridge_spi_mode: 0,
+            bridge_spi_hz: 1_000_000,
+            bridge_spi_cs: 0,
+            bridge_write_hex: String::new(),
+            bridge_read_len: 4,
+            bridge_i2c_addr: "50".into(),
+            bridge_i2c_hz: 100_000,
+            bridge_gpio_pin: 0,
+            bridge_gpio_out: true,
+            bridge_gpio_value: false,
         }
     }
 }
@@ -271,13 +321,14 @@ struct DeviceUi {
     controls: ControlState,
     acquiring: bool,
     paused: bool,
+    last_activity: String,
 }
 
 pub struct InstrumentControlPanel {
     tx: Sender<Job>,
     rx: Receiver<Event>,
     resources: Vec<ResourceInfo>,
-    resource_inputs: [String; 4],
+    resource_inputs: [String; 6],
     devices: Vec<DeviceUi>,
     selected_kind: InstrumentKind,
     selected_id: Option<u64>,
@@ -301,6 +352,12 @@ pub struct InstrumentControlPanel {
     scope_heavy_defer_frames: u8,
     logs: VecDeque<String>,
     scanning: bool,
+    /// Left-rail "control mesh" card — shows every live session on the right.
+    overview_open: bool,
+    /// Optional device photos loaded from `{save_dir}/device_photos/`.
+    device_photos: HashMap<u64, egui::TextureHandle>,
+    /// Device ids already probed for a photo (avoid disk I/O every frame).
+    device_photo_tried: HashSet<u64>,
     /// When set, every instrument card is shown and missing kinds use demo sessions.
     debug_mode: bool,
     /// Device id currently running Capture / WaveformSource (for status + UI busy).
@@ -312,6 +369,8 @@ pub struct InstrumentControlPanel {
     pending_save_delay_frames: u8,
     next_job_id: u64,
     job_results: Vec<InstrumentJobResult>,
+    last_rtt: Instant,
+    rtt_pending: HashSet<u64>,
 }
 
 fn kind_wire(kind: InstrumentKind) -> String {
@@ -327,7 +386,7 @@ impl InstrumentControlPanel {
         let (events, rx) = unbounded();
         thread::spawn(move || worker_loop(jobs, events));
         let instrument_cfg = &cfg.apps.instruments;
-        let mut resource_inputs: [String; 4] = std::array::from_fn(|_| String::new());
+        let mut resource_inputs: [String; 6] = std::array::from_fn(|_| String::new());
         if let Some(first) = instrument_cfg.known_tcpip_resources.first() {
             // Seed only until a scan classifies and redistributes devices.
             resource_inputs[0] = first.clone();
@@ -368,6 +427,9 @@ impl InstrumentControlPanel {
             scope_heavy_defer_frames: 0,
             logs: VecDeque::new(),
             scanning: false,
+            overview_open: true,
+            device_photos: HashMap::new(),
+            device_photo_tried: HashSet::new(),
             debug_mode: false,
             busy_device: None,
             busy_started: None,
@@ -376,6 +438,8 @@ impl InstrumentControlPanel {
             pending_save_delay_frames: 0,
             next_job_id: 1,
             job_results: Vec::new(),
+            last_rtt: Instant::now(),
+            rtt_pending: HashSet::new(),
         };
         let _ = std::fs::create_dir_all(&panel.save_dir);
         panel
@@ -407,6 +471,8 @@ impl InstrumentControlPanel {
             InstrumentKind::DcSource,
             InstrumentKind::ElectronicLoad,
             InstrumentKind::Multimeter,
+            InstrumentKind::DebugProbe,
+            InstrumentKind::UsbBridge,
         ] {
             let has_live = self.devices.iter().any(|device| device.kind == kind);
             if has_live {
@@ -429,11 +495,13 @@ impl InstrumentControlPanel {
     }
 
     fn visible_instrument_kinds(&self) -> Vec<InstrumentKind> {
-        const ALL: [InstrumentKind; 4] = [
+        const ALL: [InstrumentKind; 6] = [
             InstrumentKind::Oscilloscope,
             InstrumentKind::DcSource,
             InstrumentKind::ElectronicLoad,
             InstrumentKind::Multimeter,
+            InstrumentKind::DebugProbe,
+            InstrumentKind::UsbBridge,
         ];
         if self.debug_mode {
             return ALL.to_vec();
@@ -514,6 +582,25 @@ impl InstrumentControlPanel {
         }
         if self.scanning {
             ctx.request_repaint_after(Duration::from_millis(50));
+        }
+        if self.last_rtt.elapsed() >= Duration::from_millis(150) {
+            self.last_rtt = Instant::now();
+            let rtt_ids: Vec<u64> = self
+                .devices
+                .iter()
+                .filter(|device| {
+                    device.kind == InstrumentKind::DebugProbe && device.controls.probe_rtt_on
+                })
+                .map(|device| device.id)
+                .collect();
+            for id in rtt_ids {
+                if self.rtt_pending.insert(id) {
+                    let _ = self.tx.send(Job::PollRtt(id));
+                }
+            }
+            if !self.rtt_pending.is_empty() {
+                ctx.request_repaint_after(Duration::from_millis(150));
+            }
         }
     }
 
@@ -742,42 +829,181 @@ impl InstrumentControlPanel {
         self.selected_id
     }
 
+    pub fn overview_open(&self) -> bool {
+        self.overview_open
+    }
+
+    pub fn is_scanning(&self) -> bool {
+        self.scanning
+    }
+
     pub fn api_select(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let overview = params
+            .get("overview")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+            || params
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .is_some_and(|k| k.eq_ignore_ascii_case("overview") || k.eq_ignore_ascii_case("mesh"));
+        if overview {
+            self.select_overview();
+            return ok(
+                "ui.instrument.select",
+                serde_json::json!({
+                    "overview": true,
+                    "device_id": self.selected_id,
+                }),
+            );
+        }
+        if let Some(kind_val) = params.get("kind") {
+            if let Ok(kind) = serde_json::from_value::<InstrumentKind>(kind_val.clone()) {
+                self.select_kind(kind);
+            } else if let Some(s) = kind_val.as_str() {
+                return err(
+                    "ui.instrument.select",
+                    &format!("unknown kind '{s}'"),
+                );
+            }
+        }
         let id = params
             .get("device_id")
             .or_else(|| params.get("id"))
             .and_then(|v| v.as_u64());
-        let Some(id) = id else {
-            return err("ui.instrument.select", "missing device_id");
-        };
-        if !self.devices.iter().any(|d| d.id == id) {
-            return err("ui.instrument.select", "device not found");
+        if let Some(id) = id {
+            let Some(kind) = self.devices.iter().find(|d| d.id == id).map(|d| d.kind) else {
+                return err("ui.instrument.select", "device not found");
+            };
+            self.select_kind(kind);
+            self.selected_id = Some(id);
+            return ok(
+                "ui.instrument.select",
+                serde_json::json!({ "device_id": id, "kind": kind, "overview": false }),
+            );
         }
-        self.selected_id = Some(id);
-        ok(
+        if params.get("kind").is_some() {
+            return ok(
+                "ui.instrument.select",
+                serde_json::json!({
+                    "device_id": self.selected_id,
+                    "kind": self.selected_kind,
+                    "overview": false,
+                }),
+            );
+        }
+        err(
             "ui.instrument.select",
-            serde_json::json!({ "device_id": id }),
+            "missing device_id (or pass overview=true / kind)",
         )
     }
 
-    pub fn api_list(&self) -> serde_json::Value {
+    pub fn api_list(&self, lang: Lang, params: &serde_json::Value) -> serde_json::Value {
+        let kind_filter = params
+            .get("kind")
+            .and_then(|v| serde_json::from_value::<InstrumentKind>(v.clone()).ok());
+        self.api_inventory(lang, kind_filter, false)
+    }
+
+    pub fn api_overview(&self, lang: Lang) -> serde_json::Value {
+        self.api_inventory(lang, None, true)
+    }
+
+    fn api_inventory(
+        &self,
+        lang: Lang,
+        kind_filter: Option<InstrumentKind>,
+        twin: bool,
+    ) -> serde_json::Value {
         let devices: Vec<_> = self
             .devices
             .iter()
-            .map(|d| {
+            .filter(|d| kind_filter.map(|k| d.kind == k).unwrap_or(true))
+            .map(|d| self.api_device_snapshot(lang, d, twin))
+            .collect();
+        let resources: Vec<_> = self
+            .resources
+            .iter()
+            .filter(|r| kind_filter.map(|k| r.kind == Some(k)).unwrap_or(true))
+            .map(|r| {
                 serde_json::json!({
-                    "device_id": d.id,
-                    "resource": d.resource,
-                    "kind": d.kind,
-                    "profile": d.profile,
-                    "identity": d.identity,
-                    "capabilities": d.capabilities,
-                    "acquiring": d.acquiring,
+                    "address": r.address,
+                    "transport": r.transport,
+                    "kind": r.kind,
+                    "identity": r.identity,
+                    "probe_error": r.probe_error,
+                    "connected": self.devices.iter().any(|d| d.resource == r.address),
                 })
             })
             .collect();
-        serde_json::json!({ "devices": devices, "scanning": self.scanning })
+        let live = self
+            .devices
+            .iter()
+            .filter(|d| d.acquiring && !d.paused)
+            .count();
+        serde_json::json!({
+            "devices": devices,
+            "scanning": self.scanning,
+            "resources": resources,
+            "overview_open": self.overview_open,
+            "selected_id": self.selected_id,
+            "sessions": self.devices.len(),
+            "live": live,
+            "busy_device": self.busy_device,
+            "busy_label": self.busy_label,
+        })
+    }
+
+    fn api_device_snapshot(&self, lang: Lang, d: &DeviceUi, twin: bool) -> serde_json::Value {
+        let (status, status_color) =
+            overview_runtime_status(lang, d, self.busy_device, self.busy_label.as_str());
+        let params = overview_param_lines(lang, d, &self.latest);
+        let readings: Vec<_> = self
+            .latest
+            .iter()
+            .filter(|((id, _), _)| *id == d.id)
+            .map(|((_, ch), r)| {
+                serde_json::json!({
+                    "channel": ch,
+                    "value": r.value,
+                    "unit": r.unit,
+                })
+            })
+            .collect();
+        let mut obj = serde_json::json!({
+            "device_id": d.id,
+            "resource": d.resource,
+            "kind": d.kind,
+            "profile": d.profile,
+            "identity": d.identity,
+            "capabilities": d.capabilities,
+            "acquiring": d.acquiring,
+            "paused": d.paused,
+            "live": d.acquiring && !d.paused,
+            "last_activity": d.last_activity,
+            "status": status,
+            "status_key": overview_status_key(d, self.busy_device),
+            "status_color": format!(
+                "#{:02X}{:02X}{:02X}",
+                status_color.r(),
+                status_color.g(),
+                status_color.b()
+            ),
+            "channels": d.capabilities.channels,
+            "params": params.iter().map(|(k, v)| serde_json::json!({ "key": k, "value": v })).collect::<Vec<_>>(),
+            "readings": readings,
+        });
+        if twin {
+            let face = twin_face_of(d, &self.latest, self.waveforms.get(&d.id));
+            obj["name"] = serde_json::json!(if d.identity.model.trim().is_empty() {
+                instrument_name(lang, d.kind).to_owned()
+            } else {
+                d.identity.model.clone()
+            });
+            obj["face"] = twin_face_json(&face);
+            obj["has_photo"] = serde_json::json!(self.device_photos.contains_key(&d.id));
+        }
+        obj
     }
 
     pub fn api_scan(&mut self, _params: &serde_json::Value) -> crate::backend::InvokeReply {
@@ -823,6 +1049,24 @@ impl InstrumentControlPanel {
             }
             Err(e) => err("instrument.connect", &e.to_string()),
         }
+    }
+
+    pub fn api_connect_all(
+        &mut self,
+        lang: Lang,
+    ) -> crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let queued = self.queue_connect_all(lang);
+        if queued.is_empty() {
+            return err(
+                "instrument.connect_all",
+                "no new discovered resources to connect",
+            );
+        }
+        ok(
+            "instrument.connect_all",
+            serde_json::json!({ "accepted": true, "queued": queued }),
+        )
     }
 
     pub fn api_disconnect(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
@@ -1026,20 +1270,28 @@ impl InstrumentControlPanel {
                     controls: ControlState::default(),
                     acquiring: false,
                     paused: false,
+                    last_activity: "LINK UP".into(),
                 });
-                self.select_kind(kind);
-                self.selected_id = Some(id);
+                if self.overview_open {
+                    self.selected_id = Some(id);
+                } else {
+                    self.select_kind(kind);
+                    self.selected_id = Some(id);
+                }
             }
             Event::Disconnected(id) => {
                 if self.busy_device == Some(id) {
                     self.clear_busy();
                 }
                 self.devices.retain(|device| device.id != id);
+                self.device_photos.remove(&id);
+                self.device_photo_tried.remove(&id);
                 self.measurement_pending.remove(&id);
                 self.waveforms.remove(&id);
                 self.wave_plots.remove(&id);
                 self.screenshots.remove(&id);
                 self.screenshot_png.remove(&id);
+                self.rtt_pending.remove(&id);
                 self.selected_id = self
                     .selected_id
                     .filter(|selected| *selected != id)
@@ -1053,9 +1305,12 @@ impl InstrumentControlPanel {
                 self.log(format!("DISCONNECT #{id}"));
             }
             Event::CommandDone { id, job_id, response } => {
+                self.rtt_pending.remove(&id);
                 if let Some(response) = response.clone() {
                     if let Some(device) = self.devices.iter_mut().find(|device| device.id == id) {
                         store_scope_measure_result(&mut device.controls, &response);
+                        append_io_log(&mut device.controls.io_log, &response);
+                        note_activity(&mut device.last_activity, &response);
                     }
                     self.status = response.clone();
                     self.log(format!("#{id} ◀ {response}"));
@@ -1077,6 +1332,16 @@ impl InstrumentControlPanel {
                     );
                 }
             }
+            Event::SessionOutput { id, text } => {
+                self.rtt_pending.remove(&id);
+                if let Some(text) = text {
+                    if let Some(device) = self.devices.iter_mut().find(|device| device.id == id) {
+                        append_io_log(&mut device.controls.io_log, &text);
+                        note_activity(&mut device.last_activity, "RTT");
+                    }
+                    self.log(format!("#{id} RTT {text}"));
+                }
+            }
             Event::Measurements {
                 id,
                 resource,
@@ -1091,6 +1356,9 @@ impl InstrumentControlPanel {
                         &reading.unit,
                     ));
                     self.latest.insert((id, reading.channel.clone()), reading);
+                }
+                if let Some(device) = self.devices.iter_mut().find(|device| device.id == id) {
+                    note_activity(&mut device.last_activity, "TELEMETRY");
                 }
                 self.status = format!("Updated {}", Local::now().format("%H:%M:%S"));
             }
@@ -1115,6 +1383,9 @@ impl InstrumentControlPanel {
                     ),
                 );
                 self.screenshot_png.insert(id, png.clone());
+                if let Some(device) = self.devices.iter_mut().find(|device| device.id == id) {
+                    note_activity(&mut device.last_activity, "SCREEN CAPTURE");
+                }
                 self.status =
                     "截图已显示并复制到剪贴板 / Screenshot copied to clipboard".into();
                 if let Some(path) = save_path {
@@ -1299,6 +1570,7 @@ impl InstrumentControlPanel {
                 }
                 if let Some(id) = id {
                     self.measurement_pending.remove(&id);
+                    self.rtt_pending.remove(&id);
                     if self
                         .devices
                         .iter()
@@ -1350,6 +1622,7 @@ impl InstrumentControlPanel {
     }
 
     fn select_kind(&mut self, kind: InstrumentKind) {
+        self.overview_open = false;
         let kind_changed = self.selected_kind != kind;
         self.selected_kind = kind;
         self.selected_id = self
@@ -1375,6 +1648,11 @@ impl InstrumentControlPanel {
         }
     }
 
+    fn select_overview(&mut self) {
+        self.overview_open = true;
+        self.selected_id = None;
+    }
+
     fn apply_discovered_resources(&mut self, resources: Vec<ResourceInfo>) {
         for resource in resources {
             if let Some(existing) = self
@@ -1393,7 +1671,7 @@ impl InstrumentControlPanel {
                 .then_with(|| a.address.cmp(&b.address))
         });
 
-        let mut assigned = [false; 4];
+        let mut assigned = [false; 6];
         for resource in &self.resources {
             let Some(kind) = resource.kind else {
                 continue;
@@ -1438,7 +1716,7 @@ impl InstrumentControlPanel {
             )
         };
         self.log(format!(
-            "SCAN {} resource(s); auto-assigned to cards by *IDN?",
+            "SCAN {} resource(s); auto-assigned by *IDN? / USB VID-PID",
             self.resources.len()
         ));
     }
@@ -1460,26 +1738,91 @@ impl InstrumentControlPanel {
         let Some(resource) = self.resolve_card_resource(kind) else {
             self.status = text(
                 lang,
-                "无可用 VISA 资源，请先扫描或手动输入地址",
-                "No VISA resource available. Scan or enter an address first.",
+                "无可用资源，请先扫描或手动输入地址",
+                "No resource available. Scan or enter an address first.",
             )
             .into();
             return;
         };
+        self.begin_connect_address(kind, resource, lang, true);
+    }
+
+    fn begin_connect_address(
+        &mut self,
+        kind: InstrumentKind,
+        resource: String,
+        lang: Lang,
+        select: bool,
+    ) -> Option<u64> {
+        if self.devices.iter().any(|d| d.resource == resource) {
+            self.status = text(lang, "该地址已连接", "Already connected").into();
+            return None;
+        }
         let slot = instrument_kind_slot(kind);
-        self.resource_inputs[slot] = resource.clone();
+        if slot < self.resource_inputs.len() {
+            self.resource_inputs[slot] = resource.clone();
+        }
         let id = self.next_id;
         self.next_id += 1;
-        self.select_kind(kind);
+        if select && !self.overview_open {
+            self.select_kind(kind);
+        }
         self.status = text(lang, "正在连接…", "Connecting…").into();
+        let connect_kind = if is_usb_session_address(&resource) {
+            parse_usb_resource(&resource).map(|spec| spec.iface.kind())
+        } else if matches!(
+            kind,
+            InstrumentKind::DebugProbe | InstrumentKind::UsbBridge
+        ) {
+            Some(kind)
+        } else {
+            None
+        };
         let _ = self.tx.send(Job::Connect {
             id,
             resource,
-            // Let *IDN? classify the live session; UI then jumps to the detected card.
-            kind: None,
+            kind: connect_kind,
             timeout_ms: self.timeout_ms,
             library: self.visa_library.clone(),
         });
+        Some(id)
+    }
+
+    fn queue_connect_all(&mut self, lang: Lang) -> Vec<serde_json::Value> {
+        let pending: Vec<(InstrumentKind, String)> = self
+            .resources
+            .iter()
+            .filter(|r| {
+                !r.address.trim().is_empty()
+                    && !self.devices.iter().any(|d| d.resource == r.address)
+            })
+            .map(|r| {
+                (
+                    r.kind.unwrap_or(InstrumentKind::Generic),
+                    r.address.clone(),
+                )
+            })
+            .collect();
+        let mut queued = Vec::new();
+        for (kind, address) in pending {
+            if let Some(id) = self.begin_connect_address(kind, address.clone(), lang, false) {
+                queued.push(serde_json::json!({
+                    "device_id": id,
+                    "resource": address,
+                    "kind": kind,
+                }));
+            }
+        }
+        if queued.is_empty() {
+            self.status = text(lang, "没有可连接的新设备", "Nothing new to connect").into();
+        } else {
+            self.status = format!(
+                "{} {}",
+                text(lang, "正在连接全部", "Connecting all"),
+                queued.len()
+            );
+        }
+        queued
     }
 
     fn begin_connect_demo(&mut self, kind: InstrumentKind, lang: Lang) {
@@ -1525,6 +1868,23 @@ impl InstrumentControlPanel {
                                 .small()
                                 .color(tokens.text_muted),
                         );
+                        let pending = self
+                            .resources
+                            .iter()
+                            .filter(|r| {
+                                !r.address.trim().is_empty()
+                                    && !self.devices.iter().any(|d| d.resource == r.address)
+                            })
+                            .count();
+                        if ui
+                            .add_enabled(
+                                pending > 0,
+                                egui::Button::new(text(lang, "连接全部", "Connect all")),
+                            )
+                            .clicked()
+                        {
+                            let _ = self.queue_connect_all(lang);
+                        }
                     });
                 });
                 ui.add_space(6.0);
@@ -1605,9 +1965,7 @@ impl InstrumentControlPanel {
                             self.select_kind(target);
                         }
                         if let Some((target, address)) = connect_action {
-                            let slot = instrument_kind_slot(target);
-                            self.resource_inputs[slot] = address;
-                            self.begin_connect(target, lang);
+                            self.begin_connect_address(target, address, lang, false);
                         }
                     });
             });
@@ -1647,16 +2005,16 @@ impl InstrumentControlPanel {
                     if self.scanning {
                         ui.spinner().on_hover_text(text(
                             lang,
-                            "扫描后通过 *IDN? 识别类型并分发到对应卡片",
-                            "After scan, *IDN? classifies devices onto matching cards",
+                            "扫描后通过 *IDN? / USB VID-PID 识别并分发到对应卡片",
+                            "After scan, *IDN? / USB VID-PID classifies devices onto matching cards",
                         ));
                     }
                 });
                 ui.label(
                     RichText::new(text(
                         lang,
-                        "扫描后自动识别类型并填入对应卡片；也可手动选择地址后连接",
-                        "Scan auto-classifies and fills cards; or pick an address manually",
+                        "扫描后自动识别 VISA 与 USB 探针/桥并填入对应卡片；也可手动选择地址后连接",
+                        "Scan auto-classifies VISA and USB probes/bridges onto cards; or pick an address manually",
                     ))
                     .small()
                     .color(tokens.text_muted),
@@ -1671,6 +2029,17 @@ impl InstrumentControlPanel {
                     .max_height(cards_height)
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
+                        let overview_action = overview_type_card(
+                            ui,
+                            lang,
+                            tokens,
+                            self.overview_open,
+                            self.devices.len(),
+                        );
+                        if overview_action {
+                            self.select_overview();
+                        }
+                        ui.add_space(7.0);
                         for kind in self.visible_instrument_kinds() {
                             let matching_count = self
                                 .devices
@@ -1688,14 +2057,14 @@ impl InstrumentControlPanel {
                                 lang,
                                 tokens,
                                 kind,
-                                self.selected_kind == kind,
+                                !self.overview_open && self.selected_kind == kind,
                                 matching_device.as_ref().map(|(_, model)| model.as_str()),
                                 matching_count,
                                 matching_device.as_ref().map(|(id, _)| *id),
                                 &mut self.resource_inputs[input_slot],
                                 &self.resources,
                             );
-                            if action.selected && self.selected_kind != kind {
+                            if action.selected {
                                 self.select_kind(kind);
                             }
                             if action.connect {
@@ -1713,6 +2082,10 @@ impl InstrumentControlPanel {
     }
 
     fn workspace(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        if self.overview_open {
+            self.overview_workspace(ui, lang, tokens);
+            return;
+        }
         let Some(index) = self.active_device_index() else {
             self.empty_instrument_workspace(ui, lang, tokens);
             return;
@@ -1757,8 +2130,192 @@ impl InstrumentControlPanel {
             InstrumentKind::DcSource => self.source_workspace(ui, lang, tokens, id, index),
             InstrumentKind::ElectronicLoad => self.load_workspace(ui, lang, tokens, id, index),
             InstrumentKind::Multimeter => self.dmm_workspace(ui, lang, tokens, id, index),
+            InstrumentKind::DebugProbe => self.probe_workspace(ui, lang, tokens, id, index),
+            InstrumentKind::UsbBridge => self.bridge_workspace(ui, lang, tokens, id, index),
             InstrumentKind::Generic => {
                 self.generic_workspace(ui, lang, tokens, id, index, kind);
+            }
+        }
+    }
+
+    fn overview_workspace(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        ui.ctx().request_repaint_after(Duration::from_millis(80));
+        let t = ui.input(|i| i.time) as f32;
+        let connected = self.devices.len();
+        let live = self
+            .devices
+            .iter()
+            .filter(|d| d.acquiring && !d.paused)
+            .count();
+        let busy = self.busy_device.is_some();
+        let hud = hud_tokens(tokens);
+
+        let avail = ui.available_size();
+        let (rect, _resp) = ui.allocate_exact_size(avail, egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        paint_hud_backdrop(&painter, rect, &hud, t);
+
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect.shrink(12.0))
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        child.set_clip_rect(rect);
+
+        child.horizontal(|ui| {
+            ui.label(
+                RichText::new(text(lang, "设备控制总览", "DIGITAL TWIN"))
+                    .strong()
+                    .size(18.0)
+                    .color(hud.cyan),
+            );
+            ui.label(
+                RichText::new("  /  LAB BENCH")
+                    .small()
+                    .monospace()
+                    .color(hud.dim),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new(Local::now().format("%H:%M:%S").to_string())
+                        .monospace()
+                        .color(hud.cyan),
+                );
+                hud_chip(
+                    ui,
+                    &hud,
+                    format!("{connected} {}", text(lang, "会话", "SESSIONS")),
+                    hud.cyan,
+                );
+                if live > 0 {
+                    hud_chip(
+                        ui,
+                        &hud,
+                        format!("{live} LIVE"),
+                        hud.ok,
+                    );
+                }
+                if busy {
+                    hud_chip(ui, &hud, "BUSY", hud.warn);
+                }
+            });
+        });
+        child.add_space(8.0);
+        paint_control_pipeline(&mut child, lang, &hud, t, connected, live, self.scanning);
+        child.add_space(10.0);
+        child.label(
+            RichText::new(text(
+                lang,
+                "数字孪生工位：面板按真实通道/功能绘制，LCD 同步实测。点击设备进入控制台。实物图可放 device_photos/{序列号或型号}.png",
+                "Digital twin bench — front panels follow real channels and live LCD readouts. Click a unit for its console. Photos: device_photos/{serial|model}.png",
+            ))
+            .small()
+            .color(hud.dim),
+        );
+        child.add_space(6.0);
+
+        let ids: Vec<u64> = self.devices.iter().map(|d| d.id).collect();
+        for id in &ids {
+            self.ensure_device_photo(*id, child.ctx());
+        }
+
+        let snaps: Vec<TwinSnap> = self
+            .devices
+            .iter()
+            .map(|device| {
+                let (status, status_color) = overview_runtime_status(
+                    lang,
+                    device,
+                    self.busy_device,
+                    self.busy_label.as_str(),
+                );
+                TwinSnap {
+                    id: device.id,
+                    kind: device.kind,
+                    name: if device.identity.model.trim().is_empty() {
+                        instrument_name(lang, device.kind).to_owned()
+                    } else {
+                        device.identity.model.clone()
+                    },
+                    manufacturer: device.identity.manufacturer.clone(),
+                    serial: if device.identity.serial.trim().is_empty() {
+                        short_resource(&device.resource)
+                    } else {
+                        format!("SN {}", device.identity.serial)
+                    },
+                    resource: short_resource(&device.resource),
+                    status,
+                    status_color,
+                    params: overview_param_lines(lang, device, &self.latest),
+                    activity: device.last_activity.clone(),
+                    live: device.acquiring && !device.paused,
+                    photo: self.device_photos.get(&device.id).cloned(),
+                    face: twin_face_of(device, &self.latest, self.waveforms.get(&device.id)),
+                }
+            })
+            .collect();
+
+        let remain = child.available_size();
+        let (scene, _) = child.allocate_exact_size(remain.max(egui::vec2(120.0, 180.0)), egui::Sense::hover());
+        if let Some(id) = paint_digital_twin_lab(
+            &child,
+            scene,
+            lang,
+            tokens,
+            &hud,
+            t,
+            &snaps,
+            self.scanning,
+        ) {
+            if let Some(device) = self.devices.iter().find(|d| d.id == id) {
+                let kind = device.kind;
+                self.select_kind(kind);
+                self.selected_id = Some(id);
+            }
+        }
+    }
+
+    fn ensure_device_photo(&mut self, id: u64, ctx: &egui::Context) {
+        if self.device_photos.contains_key(&id) || self.device_photo_tried.contains(&id) {
+            return;
+        }
+        self.device_photo_tried.insert(id);
+        let Some(device) = self.devices.iter().find(|d| d.id == id) else {
+            return;
+        };
+        let dir = self.save_dir.join("device_photos");
+        let serial = sanitize_photo_stem(&device.identity.serial);
+        let model = sanitize_photo_stem(&device.identity.model);
+        let candidates = [
+            dir.join(format!("{serial}.png")),
+            dir.join(format!("{model}.png")),
+            dir.join(format!("{serial}.jpg")),
+            dir.join(format!("{model}.jpg")),
+        ];
+        for path in candidates {
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .trim();
+            if stem.is_empty() {
+                continue;
+            }
+            if path.is_file() {
+                if let Ok(bytes) = std::fs::read(&path) {
+                    if let Ok(image) = image::load_from_memory(&bytes) {
+                        let rgba = image.into_rgba8();
+                        let size = [rgba.width() as usize, rgba.height() as usize];
+                        let color = egui::ColorImage::from_rgba_unmultiplied(size, &rgba);
+                        let tex = ctx.load_texture(
+                            format!("overview-photo-{id}"),
+                            color,
+                            Default::default(),
+                        );
+                        self.device_photos.insert(id, tex);
+                        return;
+                    }
+                }
             }
         }
     }
@@ -2383,6 +2940,360 @@ impl InstrumentControlPanel {
         );
     }
 
+    fn probe_workspace(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        id: u64,
+        index: usize,
+    ) {
+        egui::ScrollArea::vertical()
+            .id_salt(format!("probe-workspace-{id}"))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.columns(3, |columns| {
+                    card(
+                        &mut columns[0],
+                        tokens,
+                        text(lang, "参数设置", "Parameters"),
+                        |ui| {
+                            self.probe_parameters_ui(ui, lang, tokens, index);
+                        },
+                    );
+                    card(
+                        &mut columns[1],
+                        tokens,
+                        text(lang, "控制", "Control"),
+                        |ui| {
+                            let commands = probe_controls(ui, lang, tokens, &mut self.devices[index]);
+                            self.dispatch_scope_commands(id, commands);
+                        },
+                    );
+                    card(
+                        &mut columns[2],
+                        tokens,
+                        text(lang, "日志 / RTT", "Log / RTT"),
+                        |ui| {
+                            ui.label(
+                                RichText::new(text(
+                                    lang,
+                                    "烧录与 RTT 会占用探针。ST-Link 若被 STM32Cube 独占，请关闭 Cube 或改用 WinUSB (Zadig)。SWO/ITM 未接上时会在此标明。",
+                                    "Flash and RTT occupy the probe. If ST-Link is held by STM32Cube, close Cube or switch to WinUSB (Zadig). SWO/ITM is secondary and marked when unavailable.",
+                                ))
+                                .small()
+                                .color(tokens.text_muted),
+                            );
+                            ui.add_space(6.0);
+                            self.device_io_log_ui(ui, tokens, index);
+                        },
+                    );
+                });
+            });
+    }
+
+    fn bridge_workspace(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        id: u64,
+        index: usize,
+    ) {
+        egui::ScrollArea::vertical()
+            .id_salt(format!("bridge-workspace-{id}"))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.columns(3, |columns| {
+                    card(
+                        &mut columns[0],
+                        tokens,
+                        text(lang, "参数设置", "Parameters"),
+                        |ui| {
+                            self.bridge_parameters_ui(ui, lang, tokens, index);
+                        },
+                    );
+                    card(
+                        &mut columns[1],
+                        tokens,
+                        text(lang, "控制", "Control"),
+                        |ui| {
+                            let commands =
+                                bridge_controls(ui, lang, tokens, &mut self.devices[index]);
+                            self.dispatch_scope_commands(id, commands);
+                        },
+                    );
+                    card(
+                        &mut columns[2],
+                        tokens,
+                        text(lang, "日志", "Log"),
+                        |ui| {
+                            ui.label(
+                                RichText::new(text(
+                                    lang,
+                                    "识别不需要 DLL。SPI/I2C/GPIO 会从 WiParse 目录、vendor/ftdi 或 FTDI 安装路径加载 LibFT4222.dll。J-Link/ST-Link/DAP 无需厂商 DLL。",
+                                    "Scan needs no DLL. SPI/I2C/GPIO load LibFT4222 from the WiParse folder, vendor/ftdi, or an FTDI install. J-Link/ST-Link/DAP need no vendor DLL.",
+                                ))
+                                .small()
+                                .color(tokens.text_muted),
+                            );
+                            ui.add_space(6.0);
+                            self.device_io_log_ui(ui, tokens, index);
+                        },
+                    );
+                });
+            });
+    }
+
+    fn probe_parameters_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        index: usize,
+    ) {
+        let device = &mut self.devices[index];
+        egui::Grid::new(("probe-id-grid", device.id))
+            .num_columns(2)
+            .spacing([10.0, 4.0])
+            .show(ui, |ui| {
+                setting_row(ui, text(lang, "资源", "Resource"), &device.resource);
+                setting_row(
+                    ui,
+                    text(lang, "制造商", "Manufacturer"),
+                    &device.identity.manufacturer,
+                );
+                setting_row(ui, text(lang, "型号", "Model"), &device.identity.model);
+                setting_row(ui, text(lang, "序列号", "Serial"), &device.identity.serial);
+            });
+        ui.add_space(8.0);
+        ui.label(RichText::new(text(lang, "目标芯片", "Target chip")).strong());
+        ui.add(
+            egui::TextEdit::singleline(&mut device.controls.probe_chip)
+                .hint_text("STM32F103C8 / empty = DP only")
+                .desired_width(ui.available_width()),
+        );
+        ui.label(
+            RichText::new(text(
+                lang,
+                "留空则只连接 DP，不能烧录。",
+                "Leave empty to attach DP only (no flash).",
+            ))
+            .small()
+            .color(tokens.text_muted),
+        );
+        ui.add_space(8.0);
+        ui.label(RichText::new(text(lang, "烧录文件", "Flash file")).strong());
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut device.controls.probe_flash_path)
+                    .desired_width(160.0)
+                    .hint_text("HEX / BIN / ELF"),
+            );
+            if ui.button(text(lang, "浏览", "Browse")).clicked() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Firmware", &["hex", "ihex", "bin", "elf"])
+                    .pick_file()
+                {
+                    device.controls.probe_flash_path = path.display().to_string();
+                }
+            }
+        });
+        ui.checkbox(
+            &mut device.controls.probe_flash_verify,
+            text(lang, "校验", "Verify"),
+        );
+        ui.add_space(8.0);
+        ui.label(RichText::new(text(lang, "内存", "Memory")).strong());
+        ui.horizontal(|ui| {
+            ui.label(text(lang, "地址", "Address"));
+            ui.add(
+                egui::TextEdit::singleline(&mut device.controls.probe_mem_addr)
+                    .desired_width(100.0)
+                    .hint_text("08000000"),
+            );
+            ui.label(text(lang, "长度", "Len"));
+            ui.add(
+                egui::DragValue::new(&mut device.controls.probe_mem_len)
+                    .range(1..=4096)
+                    .suffix(" B"),
+            );
+        });
+        ui.add(
+            egui::TextEdit::singleline(&mut device.controls.probe_mem_write_hex)
+                .hint_text("write hex, e.g. DE AD BE EF")
+                .desired_width(ui.available_width()),
+        );
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(text(lang, "RTT 通道", "RTT channel"));
+            ui.add(egui::DragValue::new(&mut device.controls.probe_rtt_channel).range(0..=15));
+        });
+        ui.horizontal(|ui| {
+            ui.label(text(lang, "SWD 速率", "SWD kHz"));
+            ui.add(
+                egui::DragValue::new(&mut device.controls.probe_speed_khz)
+                    .range(10..=50_000)
+                    .suffix(" kHz")
+                    .speed(100.0),
+            );
+        });
+    }
+
+    fn bridge_parameters_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        index: usize,
+    ) {
+        let device = &self.devices[index];
+        egui::Grid::new(("bridge-id-grid", device.id))
+            .num_columns(2)
+            .spacing([10.0, 4.0])
+            .show(ui, |ui| {
+                setting_row(ui, text(lang, "资源", "Resource"), &device.resource);
+                setting_row(ui, text(lang, "型号", "Model"), &device.identity.model);
+                setting_row(ui, text(lang, "序列号", "Serial"), &device.identity.serial);
+            });
+        ui.add_space(8.0);
+        let tab = &mut self.devices[index].controls.bridge_tab;
+        ui.horizontal(|ui| {
+            ui.selectable_value(tab, 0, "SPI");
+            ui.selectable_value(tab, 1, "I2C");
+            ui.selectable_value(tab, 2, "GPIO");
+        });
+        ui.add_space(6.0);
+        match self.devices[index].controls.bridge_tab {
+            1 => {
+                ui.horizontal(|ui| {
+                    ui.label(text(lang, "7-bit 地址", "7-bit addr"));
+                    ui.add(
+                        egui::TextEdit::singleline(
+                            &mut self.devices[index].controls.bridge_i2c_addr,
+                        )
+                        .desired_width(60.0)
+                        .hint_text("50"),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label(text(lang, "I2C 时钟", "I2C clock"));
+                    ui.add(
+                        egui::DragValue::new(&mut self.devices[index].controls.bridge_i2c_hz)
+                            .range(60_000..=3_400_000)
+                            .suffix(" Hz")
+                            .speed(1000.0),
+                    );
+                });
+                ui.label(text(lang, "写 hex", "Write hex"));
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.devices[index].controls.bridge_write_hex)
+                        .desired_width(ui.available_width()),
+                );
+                ui.horizontal(|ui| {
+                    ui.label(text(lang, "读字节", "Read len"));
+                    ui.add(
+                        egui::DragValue::new(&mut self.devices[index].controls.bridge_read_len)
+                            .range(0..=256),
+                    );
+                });
+            }
+            2 => {
+                ui.horizontal(|ui| {
+                    ui.label(text(lang, "引脚", "Pin"));
+                    ui.add(
+                        egui::DragValue::new(&mut self.devices[index].controls.bridge_gpio_pin)
+                            .range(0..=3),
+                    );
+                });
+                ui.checkbox(
+                    &mut self.devices[index].controls.bridge_gpio_out,
+                    text(lang, "输出", "Output"),
+                );
+                ui.checkbox(
+                    &mut self.devices[index].controls.bridge_gpio_value,
+                    text(lang, "高电平", "High"),
+                );
+            }
+            _ => {
+                ui.horizontal(|ui| {
+                    ui.label("SPI mode");
+                    ui.add(
+                        egui::DragValue::new(&mut self.devices[index].controls.bridge_spi_mode)
+                            .range(0..=3),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label(text(lang, "时钟", "Clock"));
+                    ui.add(
+                        egui::DragValue::new(&mut self.devices[index].controls.bridge_spi_hz)
+                            .range(1_000..=40_000_000)
+                            .suffix(" Hz")
+                            .speed(10_000.0),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label("CS");
+                    ui.add(
+                        egui::DragValue::new(&mut self.devices[index].controls.bridge_spi_cs)
+                            .range(0..=3),
+                    );
+                });
+                ui.label(text(lang, "写 hex", "Write hex"));
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.devices[index].controls.bridge_write_hex)
+                        .desired_width(ui.available_width()),
+                );
+                ui.horizontal(|ui| {
+                    ui.label(text(lang, "读字节", "Read len"));
+                    ui.add(
+                        egui::DragValue::new(&mut self.devices[index].controls.bridge_read_len)
+                            .range(0..=256),
+                    );
+                });
+            }
+        }
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(text(
+                lang,
+                "无 DLL 时仍可识别；把 LibFT4222.dll 与 ftd2xx.dll 放到 WiParse.exe 旁或 vendor/ftdi。",
+                "Identify works without DLLs; drop LibFT4222.dll and ftd2xx.dll next to WiParse.exe or in vendor/ftdi.",
+            ))
+            .small()
+            .color(tokens.text_muted),
+        );
+    }
+
+    fn device_io_log_ui(&mut self, ui: &mut egui::Ui, tokens: &Tokens, index: usize) {
+        let log = self.devices[index].controls.io_log.clone();
+        egui::ScrollArea::vertical()
+            .id_salt(("device-io-log", self.devices[index].id))
+            .stick_to_bottom(true)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                if log.is_empty() {
+                    ui.label(
+                        RichText::new("—")
+                            .monospace()
+                            .small()
+                            .color(tokens.text_muted),
+                    );
+                } else {
+                    ui.label(
+                        RichText::new(&log)
+                            .monospace()
+                            .small()
+                            .color(tokens.text_muted),
+                    );
+                }
+            });
+        if ui.button("Clear").clicked() {
+            self.devices[index].controls.io_log.clear();
+        }
+    }
+
     fn instrument_two_by_two(
         &mut self,
         ui: &mut egui::Ui,
@@ -2809,8 +3720,8 @@ impl InstrumentControlPanel {
         ui.label(
             RichText::new(text(
                 lang,
-                "当前类型尚未连接。左侧扫描或输入 VISA 地址后即可启用全部功能。",
-                "No instrument of this type is connected. Scan or enter a VISA resource on the left to enable all functions.",
+                "当前类型尚未连接。左侧扫描或输入地址后即可启用全部功能。",
+                "No instrument of this type is connected. Scan or enter a resource on the left to enable all functions.",
             ))
             .color(tokens.text_muted),
         );
@@ -2916,6 +3827,7 @@ impl InstrumentControlPanel {
                 );
             }
             InstrumentKind::Generic => {}
+            InstrumentKind::DebugProbe | InstrumentKind::UsbBridge => {}
         }
     }
 
@@ -3246,7 +4158,7 @@ impl InstrumentControlPanel {
 }
 
 fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
-    let mut devices = HashMap::<u64, InstrumentDevice>::new();
+    let mut devices = HashMap::<u64, LiveSession>::new();
     while let Ok(job) = jobs.recv() {
         match job {
             Job::Scan {
@@ -3273,37 +4185,23 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                 kind,
                 timeout_ms,
                 library,
-            } => match InstrumentDevice::connect_with_library(
+            } => match open_live_session(
                 resource.clone(),
-                timeout_ms,
                 kind,
+                timeout_ms,
                 (!library.trim().is_empty()).then_some(library.as_str()),
             ) {
-                Ok(device) => {
-                    let event = Event::Connected {
-                        id,
-                        resource,
-                        identity: device.identity.clone(),
-                        kind: device.profile.kind,
-                        profile: device.profile.name.clone(),
-                        capabilities: device.profile.capabilities.clone(),
-                    };
-                    devices.insert(id, device);
+                Ok(session) => {
+                    let event = connected_event(id, &session);
+                    devices.insert(id, session);
                     let _ = events.send(event);
                 }
                 Err(error) => send_error(&events, Some(id), error),
             },
-            Job::ConnectDemo { id, kind } => match InstrumentDevice::connect_demo(kind) {
-                Ok(device) => {
-                    let event = Event::Connected {
-                        id,
-                        resource: device.resource.clone(),
-                        identity: device.identity.clone(),
-                        kind: device.profile.kind,
-                        profile: device.profile.name.clone(),
-                        capabilities: device.profile.capabilities.clone(),
-                    };
-                    devices.insert(id, device);
+            Job::ConnectDemo { id, kind } => match open_demo_session(kind) {
+                Ok(session) => {
+                    let event = connected_event(id, &session);
+                    devices.insert(id, session);
                     let _ = events.send(event);
                 }
                 Err(error) => send_error(&events, Some(id), error),
@@ -3328,9 +4226,21 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                     send_error_job(&events, Some(id), job_id, "device not connected");
                 }
             }
+            Job::PollRtt(id) => {
+                if let Some(LiveSession::Probe(probe)) = devices.get_mut(&id) {
+                    match probe.execute(ControlCommand::ProbeRttRead) {
+                        Ok(text) => {
+                            let _ = events.send(Event::SessionOutput { id, text });
+                        }
+                        Err(error) => send_error(&events, Some(id), error),
+                    }
+                } else {
+                    let _ = events.send(Event::SessionOutput { id, text: None });
+                }
+            }
             Job::Measure(id) => {
-                if let Some(device) = devices.get_mut(&id) {
-                    match device.read_measurements() {
+                match devices.get_mut(&id) {
+                    Some(LiveSession::Scpi(device)) => match device.read_measurements() {
                         Ok(readings) => {
                             let _ = events.send(Event::Measurements {
                                 id,
@@ -3339,9 +4249,15 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                             });
                         }
                         Err(error) => send_error(&events, Some(id), error),
+                    },
+                    Some(_) => {
+                        let _ = events.send(Event::Measurements {
+                            id,
+                            resource: String::new(),
+                            readings: Vec::new(),
+                        });
                     }
-                } else {
-                    send_error(&events, Some(id), "device not connected");
+                    None => send_error(&events, Some(id), "device not connected"),
                 }
             }
             Job::Capture {
@@ -3353,7 +4269,7 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                     id: Some(id),
                     message: "正在截取屏幕… / Capturing screen…".into(),
                 });
-                if let Some(device) = devices.get_mut(&id) {
+                if let Some(LiveSession::Scpi(device)) = devices.get_mut(&id) {
                     match device.capture_scope_png() {
                         Ok(png) => {
                             let _ = events.send(Event::Progress {
@@ -3402,7 +4318,7 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                     message: "正在查询已打开通道并读取波形（采样率×屏幕时宽）… / Querying displayed channels, reading acquisition-density screen window…"
                         .into(),
                 });
-                if let Some(device) = devices.get_mut(&id) {
+                if let Some(LiveSession::Scpi(device)) = devices.get_mut(&id) {
                     match device.capture_scope_waveform_sources_displayed() {
                         Ok(parts) => {
                             let mut channel_files = Vec::new();
@@ -3555,7 +4471,7 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                 channel,
                 points: _,
             } => {
-                if let Some(device) = devices.get_mut(&id) {
+                if let Some(LiveSession::Scpi(device)) = devices.get_mut(&id) {
                     match device.read_scope_source_waveform(channel) {
                         Ok(trace) => {
                             let _ = events.send(Event::Waveform { id, trace });
@@ -3568,6 +4484,93 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
             }
             Job::Shutdown => break,
         }
+    }
+}
+
+enum LiveSession {
+    Scpi(InstrumentDevice),
+    Probe(ProbeSession),
+    Bridge(Ft4222Session),
+}
+
+impl LiveSession {
+    fn execute(
+        &mut self,
+        command: ControlCommand,
+    ) -> Result<Option<String>, wiparse_core::instrument::InstrumentError> {
+        match self {
+            Self::Scpi(device) => device.execute(command),
+            Self::Probe(device) => device.execute(command),
+            Self::Bridge(device) => device.execute(command),
+        }
+    }
+}
+
+fn open_demo_session(kind: InstrumentKind) -> Result<LiveSession, wiparse_core::instrument::InstrumentError> {
+    match kind {
+        InstrumentKind::DebugProbe => Ok(LiveSession::Probe(ProbeSession::demo(
+            "probe://jlink/serial=DEMO",
+        ))),
+        InstrumentKind::UsbBridge => Ok(LiveSession::Bridge(Ft4222Session::demo(
+            "bridge://ft4222/serial=DEMO",
+        ))),
+        other => InstrumentDevice::connect_demo(other).map(LiveSession::Scpi),
+    }
+}
+
+fn open_live_session(
+    resource: String,
+    kind: Option<InstrumentKind>,
+    timeout_ms: u32,
+    library: Option<&str>,
+) -> Result<LiveSession, wiparse_core::instrument::InstrumentError> {
+    if resource.starts_with("DEMO::") {
+        return open_demo_session(kind.unwrap_or(InstrumentKind::Generic));
+    }
+    if let Some(spec) = parse_usb_resource(&resource) {
+        return match spec.iface {
+            UsbIface::Ft4222 => Ft4222Session::open(&resource).map(LiveSession::Bridge),
+            _ => ProbeSession::open(&resource, None).map(LiveSession::Probe),
+        };
+    }
+    match kind {
+        Some(InstrumentKind::DebugProbe) => {
+            ProbeSession::open(&resource, None).map(LiveSession::Probe)
+        }
+        Some(InstrumentKind::UsbBridge) => {
+            Ft4222Session::open(&resource).map(LiveSession::Bridge)
+        }
+        requested => InstrumentDevice::connect_with_library(resource, timeout_ms, requested, library)
+            .map(LiveSession::Scpi),
+    }
+}
+
+fn connected_event(id: u64, session: &LiveSession) -> Event {
+    match session {
+        LiveSession::Scpi(device) => Event::Connected {
+            id,
+            resource: device.resource.clone(),
+            identity: device.identity.clone(),
+            kind: device.profile.kind,
+            profile: device.profile.name.clone(),
+            capabilities: device.profile.capabilities.clone(),
+        },
+        LiveSession::Probe(device) => Event::Connected {
+            id,
+            resource: device.resource.clone(),
+            identity: device.identity.clone(),
+            kind: device.kind,
+            profile: format!("{} {}", device.identity.manufacturer, device.identity.model),
+            capabilities: Capabilities::default(),
+        },
+        LiveSession::Bridge(device) => Event::Connected {
+            id,
+            resource: device.resource.clone(),
+            identity: device.identity.clone(),
+            kind: device.kind,
+            profile: format!("{} {}", device.identity.manufacturer, device.identity.model),
+            capabilities: Capabilities::default(),
+        },
     }
 }
 
@@ -4118,8 +5121,158 @@ fn control_ui(
                 "Unknown instruments are limited to the SCPI console to avoid incompatible commands.",
             ));
         }
+        InstrumentKind::DebugProbe => {
+            commands.extend(probe_controls(ui, lang, tokens, device));
+        }
+        InstrumentKind::UsbBridge => {
+            commands.extend(bridge_controls(ui, lang, tokens, device));
+        }
     }
     (commands, measure_once)
+}
+
+fn probe_controls(
+    ui: &mut egui::Ui,
+    lang: Lang,
+    tokens: &Tokens,
+    device: &mut DeviceUi,
+) -> Vec<ControlCommand> {
+    let mut out = Vec::new();
+    ui.horizontal_wrapped(|ui| {
+        if theme::accent_button(ui, tokens, text(lang, "连接目标", "Attach")).clicked() {
+            out.push(ControlCommand::ProbeAttach {
+                target: device.controls.probe_chip.clone(),
+            });
+        }
+        if ui.button(text(lang, "Halt", "Halt")).clicked() {
+            out.push(ControlCommand::ProbeHalt);
+        }
+        if ui.button(text(lang, "Run", "Run")).clicked() {
+            out.push(ControlCommand::ProbeRun);
+        }
+        if ui.button(text(lang, "复位", "Reset")).clicked() {
+            out.push(ControlCommand::ProbeReset { hardware: false });
+        }
+        if ui.button(text(lang, "硬件复位", "HW Reset")).clicked() {
+            out.push(ControlCommand::ProbeReset { hardware: true });
+        }
+        if ui.button(text(lang, "状态", "Status")).clicked() {
+            out.push(ControlCommand::ProbeStatus);
+        }
+        if ui.button(text(lang, "寄存器", "Regs")).clicked() {
+            out.push(ControlCommand::ProbeRegs);
+        }
+        if ui.button(text(lang, "擦除", "Erase")).clicked() {
+            out.push(ControlCommand::ProbeErase);
+        }
+        if ui.button(text(lang, "速率", "Speed")).clicked() {
+            out.push(ControlCommand::ProbeSpeed {
+                khz: device.controls.probe_speed_khz,
+            });
+        }
+    });
+    ui.add_space(8.0);
+    ui.horizontal_wrapped(|ui| {
+        if ui.button(text(lang, "烧录", "Flash")).clicked() {
+            out.push(ControlCommand::ProbeFlash {
+                path: device.controls.probe_flash_path.clone(),
+                verify: device.controls.probe_flash_verify,
+                base_address: None,
+            });
+        }
+        if ui.button(text(lang, "读内存", "Read mem")).clicked() {
+            out.push(ControlCommand::ProbeMemRead {
+                address: device.controls.probe_mem_addr.clone(),
+                len: device.controls.probe_mem_len,
+            });
+        }
+        if ui.button(text(lang, "写内存", "Write mem")).clicked() {
+            out.push(ControlCommand::ProbeMemWrite {
+                address: device.controls.probe_mem_addr.clone(),
+                data_hex: device.controls.probe_mem_write_hex.clone(),
+            });
+        }
+    });
+    ui.add_space(8.0);
+    let mut rtt_on = device.controls.probe_rtt_on;
+    if ui
+        .checkbox(&mut rtt_on, text(lang, "RTT 输出", "RTT output"))
+        .changed()
+    {
+        device.controls.probe_rtt_on = rtt_on;
+        if rtt_on {
+            out.push(ControlCommand::ProbeRttStart {
+                up_channel: device.controls.probe_rtt_channel,
+            });
+        } else {
+            out.push(ControlCommand::ProbeRttStop);
+        }
+    }
+    ui.label(
+        RichText::new(text(
+            lang,
+            "SWO/ITM 为次优先；当前构建以 RTT 为主。",
+            "SWO/ITM is secondary; this build uses RTT first.",
+        ))
+        .small()
+        .color(tokens.text_muted),
+    );
+    out
+}
+
+fn bridge_controls(
+    ui: &mut egui::Ui,
+    lang: Lang,
+    _tokens: &Tokens,
+    device: &mut DeviceUi,
+) -> Vec<ControlCommand> {
+    let mut out = Vec::new();
+    match device.controls.bridge_tab {
+        1 => {
+            if ui.button(text(lang, "I2C 事务", "I2C xfer")).clicked() {
+                out.push(ControlCommand::BridgeI2c {
+                    addr: device.controls.bridge_i2c_addr.clone(),
+                    write_hex: device.controls.bridge_write_hex.clone(),
+                    read_len: device.controls.bridge_read_len,
+                    clock_hz: device.controls.bridge_i2c_hz,
+                });
+            }
+            if ui.button(text(lang, "芯片信息", "Chip info")).clicked() {
+                out.push(ControlCommand::BridgeInfo);
+            }
+        }
+        2 => {
+            if ui.button(text(lang, "应用 GPIO", "Apply GPIO")).clicked() {
+                out.push(ControlCommand::BridgeGpio {
+                    pin: device.controls.bridge_gpio_pin,
+                    dir: Some(device.controls.bridge_gpio_out),
+                    value: Some(device.controls.bridge_gpio_value),
+                });
+            }
+            if ui.button(text(lang, "读全部", "Read all")).clicked() {
+                out.push(ControlCommand::BridgeGpio {
+                    pin: 255,
+                    dir: None,
+                    value: None,
+                });
+            }
+        }
+        _ => {
+            if ui.button(text(lang, "SPI 事务", "SPI xfer")).clicked() {
+                out.push(ControlCommand::BridgeSpi {
+                    mode: device.controls.bridge_spi_mode,
+                    clock_hz: device.controls.bridge_spi_hz,
+                    cs: device.controls.bridge_spi_cs,
+                    write_hex: device.controls.bridge_write_hex.clone(),
+                    read_len: device.controls.bridge_read_len,
+                });
+            }
+            if ui.button(text(lang, "芯片信息", "Chip info")).clicked() {
+                out.push(ControlCommand::BridgeInfo);
+            }
+        }
+    }
+    out
 }
 
 fn scope_unified_controls(
@@ -5086,8 +6239,7 @@ fn instrument_type_card(
             ui.vertical(|ui| {
                 ui.set_width(content_width);
                 let display = if resource_input.trim().is_empty() {
-                    text(lang, "选择或输入 VISA 地址", "Select or enter VISA address")
-                        .to_owned()
+                    resource_empty_prompt(lang, kind).to_owned()
                 } else {
                     short_resource(resource_input)
                 };
@@ -5157,7 +6309,7 @@ fn instrument_type_card(
                 let edit = ui.add_sized(
                     [content_width, CARD_CONTROL_HEIGHT],
                     egui::TextEdit::singleline(resource_input)
-                        .hint_text("USB0::0x0699::...::INSTR")
+                        .hint_text(resource_address_hint(kind))
                         .margin(egui::vec2(6.0, 4.0)),
                 );
                 if edit.clicked() || edit.gained_focus() {
@@ -5312,8 +6464,10 @@ fn kind_sort_key(kind: Option<InstrumentKind>) -> u8 {
         Some(InstrumentKind::DcSource) => 1,
         Some(InstrumentKind::ElectronicLoad) => 2,
         Some(InstrumentKind::Multimeter) => 3,
-        Some(InstrumentKind::Generic) => 4,
-        None => 5,
+        Some(InstrumentKind::DebugProbe) => 4,
+        Some(InstrumentKind::UsbBridge) => 5,
+        Some(InstrumentKind::Generic) => 6,
+        None => 7,
     }
 }
 
@@ -5323,6 +6477,8 @@ fn instrument_kind_slot(kind: InstrumentKind) -> usize {
         InstrumentKind::DcSource => 1,
         InstrumentKind::ElectronicLoad => 2,
         InstrumentKind::Multimeter => 3,
+        InstrumentKind::DebugProbe => 4,
+        InstrumentKind::UsbBridge => 5,
         InstrumentKind::Generic => 0,
     }
 }
@@ -5333,6 +6489,8 @@ fn instrument_name(lang: Lang, kind: InstrumentKind) -> &'static str {
         InstrumentKind::DcSource => text(lang, "直流电源", "DC Source"),
         InstrumentKind::ElectronicLoad => text(lang, "电子负载", "Electronic Load"),
         InstrumentKind::Multimeter => text(lang, "数字万用表", "Digital Multimeter"),
+        InstrumentKind::DebugProbe => text(lang, "调试探针", "Debug Probe"),
+        InstrumentKind::UsbBridge => text(lang, "USB 桥", "USB Bridge"),
         InstrumentKind::Generic => text(lang, "通用 SCPI", "Generic SCPI"),
     }
 }
@@ -5364,6 +6522,16 @@ fn instrument_control_hint(lang: Lang, kind: InstrumentKind) -> &'static str {
             "请使用下方 SCPI 控制台发送命令。",
             "Use the SCPI console below to send commands.",
         ),
+        InstrumentKind::DebugProbe => text(
+            lang,
+            "连接目标芯片，Halt/Run/复位，烧录 HEX/BIN/ELF，读写内存，打开 RTT。",
+            "Attach a target, halt/run/reset, flash HEX/BIN/ELF, read/write memory, and stream RTT.",
+        ),
+        InstrumentKind::UsbBridge => text(
+            lang,
+            "FT4222 SPI / I2C / GPIO 收发。识别不需要 DLL，事务需要 LibFT4222。",
+            "FT4222 SPI / I2C / GPIO. Scan needs no DLL; transactions need LibFT4222.",
+        ),
     }
 }
 
@@ -5388,6 +6556,16 @@ fn instrument_acquisition_hint(lang: Lang, kind: InstrumentKind) -> &'static str
             lang,
             "可通过 READ? 或自定义 SCPI 查询进行采样。",
             "Sample using READ? or custom SCPI queries.",
+        ),
+        InstrumentKind::DebugProbe => text(
+            lang,
+            "RTT 文本与内存/烧录结果写入右侧日志。",
+            "RTT text and memory/flash results go to the log panel.",
+        ),
+        InstrumentKind::UsbBridge => text(
+            lang,
+            "SPI/I2C/GPIO 往返数据写入右侧日志。",
+            "SPI/I2C/GPIO traffic is written to the log panel.",
         ),
     }
 }
@@ -5419,6 +6597,16 @@ fn instrument_settings_hint(lang: Lang, kind: InstrumentKind) -> &'static str {
             "查看设备信息与通信诊断命令。",
             "View device identity, communication and diagnostics.",
         ),
+        InstrumentKind::DebugProbe => text(
+            lang,
+            "查看探针序列号、目标芯片与烧录/内存参数。",
+            "View probe serial, target chip, flash and memory parameters.",
+        ),
+        InstrumentKind::UsbBridge => text(
+            lang,
+            "查看 FT4222 序列号与 SPI/I2C/GPIO 参数。",
+            "View FT4222 serial and SPI/I2C/GPIO parameters.",
+        ),
     }
 }
 
@@ -5445,6 +6633,16 @@ fn instrument_features(lang: Lang, kind: InstrumentKind) -> [(&'static str, &'st
             "Functions, range, resolution and NPLC",
         ),
         InstrumentKind::Generic => text(lang, "原始 SCPI 控制", "Raw SCPI control"),
+        InstrumentKind::DebugProbe => text(
+            lang,
+            "Halt/Run/复位、烧录、内存与 RTT",
+            "Halt/run/reset, flash, memory and RTT",
+        ),
+        InstrumentKind::UsbBridge => text(
+            lang,
+            "SPI / I2C / GPIO 收发",
+            "SPI / I2C / GPIO transfers",
+        ),
     };
     [
         (
@@ -5456,14 +6654,24 @@ fn instrument_features(lang: Lang, kind: InstrumentKind) -> [(&'static str, &'st
             ),
         ),
         (text(lang, "控制", "Control"), control),
-        (
-            text(lang, "数据采集", "Data Acquisition"),
-            text(
-                lang,
-                "单次/连续采样、实时曲线与 CSV",
-                "Single/continuous sampling, live plots and CSV",
-            ),
-        ),
+        if matches!(
+            kind,
+            InstrumentKind::DebugProbe | InstrumentKind::UsbBridge
+        ) {
+            (
+                text(lang, "日志", "Log"),
+                instrument_acquisition_hint(lang, kind),
+            )
+        } else {
+            (
+                text(lang, "数据采集", "Data Acquisition"),
+                text(
+                    lang,
+                    "单次/连续采样、实时曲线与 CSV",
+                    "Single/continuous sampling, live plots and CSV",
+                ),
+            )
+        },
     ]
 }
 
@@ -5490,8 +6698,2147 @@ fn kind_icon(kind: InstrumentKind) -> &'static str {
         InstrumentKind::DcSource => "SRC",
         InstrumentKind::ElectronicLoad => "LOAD",
         InstrumentKind::Multimeter => "DMM",
+        InstrumentKind::DebugProbe => "PROBE",
+        InstrumentKind::UsbBridge => "FT42",
         InstrumentKind::Generic => "SCPI",
     }
+}
+
+fn resource_address_hint(kind: InstrumentKind) -> &'static str {
+    match kind {
+        InstrumentKind::DebugProbe => "probe://jlink/serial=...",
+        InstrumentKind::UsbBridge => "bridge://ft4222/serial=...",
+        _ => "USB0::0x0699::...::INSTR",
+    }
+}
+
+fn resource_empty_prompt(lang: Lang, kind: InstrumentKind) -> &'static str {
+    match kind {
+        InstrumentKind::DebugProbe => text(lang, "选择或输入探针地址", "Select or enter probe address"),
+        InstrumentKind::UsbBridge => text(lang, "选择或输入桥地址", "Select or enter bridge address"),
+        _ => text(lang, "选择或输入 VISA 地址", "Select or enter VISA address"),
+    }
+}
+
+fn append_io_log(log: &mut String, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    if !log.is_empty() && !log.ends_with('\n') {
+        log.push('\n');
+    }
+    log.push_str(text);
+    const MAX: usize = 32_768;
+    if log.len() > MAX {
+        let drain = log.len() - 24_576;
+        log.drain(..drain);
+    }
+}
+
+fn note_activity(slot: &mut String, text: &str) {
+    let one = text.trim().replace('\n', " ");
+    if one.is_empty() {
+        return;
+    }
+    *slot = if one.chars().count() > 72 {
+        format!("{}…", one.chars().take(71).collect::<String>())
+    } else {
+        one
+    };
+}
+
+struct HudTokens {
+    cyan: Color32,
+    dim: Color32,
+    ok: Color32,
+    warn: Color32,
+    panel: Color32,
+    line: Color32,
+}
+
+fn hud_tokens(tokens: &Tokens) -> HudTokens {
+    HudTokens {
+        cyan: Color32::from_rgb(0x4A, 0xE3, 0xFF),
+        dim: Color32::from_rgba_unmultiplied(0x7A, 0xC8, 0xE0, 160),
+        ok: tokens.success,
+        warn: tokens.warning,
+        panel: Color32::from_rgb(0x07, 0x10, 0x18),
+        line: Color32::from_rgba_unmultiplied(0x4A, 0xE3, 0xFF, 55),
+    }
+}
+
+fn hud_chip(ui: &mut egui::Ui, hud: &HudTokens, label: impl Into<String>, color: Color32) {
+    Frame::NONE
+        .fill(Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 28))
+        .stroke(Stroke::new(1.0_f32, color))
+        .corner_radius(CornerRadius::same(3))
+        .inner_margin(Margin::symmetric(8, 3))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(label.into())
+                    .small()
+                    .monospace()
+                    .color(color),
+            );
+        });
+}
+
+fn paint_hud_backdrop(painter: &egui::Painter, rect: Rect, hud: &HudTokens, t: f32) {
+    painter.rect_filled(rect, CornerRadius::same(8), hud.panel);
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(8),
+        Stroke::new(1.0_f32, hud.line),
+        egui::StrokeKind::Inside,
+    );
+    let step = 22.0;
+    let mut x = rect.left();
+    while x < rect.right() {
+        painter.line_segment(
+            [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 12)),
+        );
+        x += step;
+    }
+    let mut y = rect.top();
+    while y < rect.bottom() {
+        painter.line_segment(
+            [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 10)),
+        );
+        y += step;
+    }
+    let scan = rect.top() + (t * 48.0).rem_euclid(rect.height().max(1.0));
+    painter.line_segment(
+        [egui::pos2(rect.left(), scan), egui::pos2(rect.right(), scan)],
+        Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 40)),
+    );
+}
+
+fn paint_control_pipeline(
+    ui: &mut egui::Ui,
+    lang: Lang,
+    hud: &HudTokens,
+    t: f32,
+    sessions: usize,
+    live: usize,
+    scanning: bool,
+) {
+    let nodes = [
+        (
+            text(lang, "扫描", "SCAN"),
+            if scanning { hud.warn } else { hud.cyan },
+            scanning,
+        ),
+        (
+            text(lang, "识别", "IDENT"),
+            hud.cyan,
+            sessions > 0,
+        ),
+        (
+            text(lang, "会话", "LINK"),
+            if sessions > 0 { hud.ok } else { hud.dim },
+            sessions > 0,
+        ),
+        (
+            text(lang, "控制", "CTRL"),
+            if live > 0 { hud.ok } else { hud.cyan },
+            live > 0,
+        ),
+    ];
+    let pulse = 0.55 + 0.45 * (t * 3.2).sin();
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        for (i, (label, color, on)) in nodes.iter().enumerate() {
+            if i > 0 {
+                let w = 28.0;
+                let (r, _) = ui.allocate_exact_size(egui::vec2(w, 28.0), egui::Sense::hover());
+                let y = r.center().y;
+                ui.painter().line_segment(
+                    [egui::pos2(r.left() + 2.0, y), egui::pos2(r.right() - 2.0, y)],
+                    Stroke::new(1.2_f32, hud.line),
+                );
+                let dash = r.left() + (t * 40.0).rem_euclid(w);
+                ui.painter().circle_filled(
+                    egui::pos2(dash, y),
+                    2.2,
+                    Color32::from_rgba_unmultiplied(hud.cyan.r(), hud.cyan.g(), hud.cyan.b(), 180),
+                );
+            }
+            let fill = if *on {
+                Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), (40.0 + 50.0 * pulse) as u8)
+            } else {
+                Color32::from_rgba_unmultiplied(74, 227, 255, 16)
+            };
+            Frame::NONE
+                .fill(fill)
+                .stroke(Stroke::new(1.0_f32, *color))
+                .corner_radius(CornerRadius::same(3))
+                .inner_margin(Margin::symmetric(10, 5))
+                .show(ui, |ui| {
+                    ui.label(
+                        RichText::new(*label)
+                            .small()
+                            .monospace()
+                            .strong()
+                            .color(*color),
+                    );
+                });
+        }
+    });
+}
+
+struct TwinSourceCh {
+    on: bool,
+    set_v: f64,
+    set_i: f64,
+    meas_v: Option<(f64, String)>,
+    meas_i: Option<(f64, String)>,
+    meas_w: Option<(f64, String)>,
+}
+
+enum TwinFace {
+    Scope {
+        channels: u8,
+        channel_on: [bool; 4],
+        timebase: f64,
+        trigger: String,
+        wave: Vec<f32>,
+        meas: Option<String>,
+    },
+    DcSource {
+        channels: u8,
+        rows: Vec<TwinSourceCh>,
+    },
+    Load {
+        mode: String,
+        level: f64,
+        input: bool,
+        voltage: Option<(f64, String)>,
+        current: Option<(f64, String)>,
+        power: Option<(f64, String)>,
+    },
+    Dmm {
+        function: String,
+        unit: String,
+        autorange: bool,
+        reading: Option<(f64, String)>,
+    },
+    Probe {
+        chip: String,
+        rtt: bool,
+        rtt_ch: u32,
+        speed_khz: u32,
+    },
+    Bridge {
+        tab: u8,
+        spi_hz: u32,
+        spi_mode: u8,
+        i2c_addr: String,
+        gpio_pin: u8,
+        gpio_out: bool,
+        gpio_value: bool,
+    },
+    Generic {
+        cmd: String,
+    },
+}
+
+struct TwinSnap {
+    id: u64,
+    kind: InstrumentKind,
+    name: String,
+    manufacturer: String,
+    serial: String,
+    resource: String,
+    status: String,
+    status_color: Color32,
+    params: Vec<(String, String)>,
+    activity: String,
+    live: bool,
+    photo: Option<egui::TextureHandle>,
+    face: TwinFace,
+}
+
+fn latest_pair(
+    latest: &HashMap<(u64, String), Reading>,
+    id: u64,
+    key: &str,
+) -> Option<(f64, String)> {
+    latest.get(&(id, key.to_string())).map(|r| (r.value, r.unit.clone()))
+}
+
+fn twin_face_of(
+    device: &DeviceUi,
+    latest: &HashMap<(u64, String), Reading>,
+    wave: Option<&WaveformTrace>,
+) -> TwinFace {
+    let id = device.id;
+    match device.kind {
+        InstrumentKind::Oscilloscope => TwinFace::Scope {
+            channels: device.capabilities.channels.max(1).min(4),
+            channel_on: device.controls.scope_channel_on,
+            timebase: device.controls.scope_timebase,
+            trigger: format!(
+                "{} {}",
+                device.controls.trigger_source, device.controls.trigger_slope
+            ),
+            wave: downsample_wave_y(wave, 48),
+            meas: device
+                .controls
+                .scope_meas_results
+                .iter()
+                .flatten()
+                .next()
+                .cloned(),
+        },
+        InstrumentKind::DcSource => {
+            let n = device.capabilities.channels.max(1).min(4);
+            let mut rows = Vec::with_capacity(n as usize);
+            for i in 0..n as usize {
+                let ch = i + 1;
+                rows.push(TwinSourceCh {
+                    on: device.controls.source_outputs[i],
+                    set_v: device.controls.source_voltages[i],
+                    set_i: device.controls.source_currents[i],
+                    meas_v: latest_pair(latest, id, &format!("CH{ch} Voltage")),
+                    meas_i: latest_pair(latest, id, &format!("CH{ch} Current")),
+                    meas_w: latest_pair(latest, id, &format!("CH{ch} Power")),
+                });
+            }
+            TwinFace::DcSource {
+                channels: n,
+                rows,
+            }
+        }
+        InstrumentKind::ElectronicLoad => TwinFace::Load {
+            mode: device.controls.load_mode.clone(),
+            level: device.controls.load_level,
+            input: device.controls.load_input,
+            voltage: latest_pair(latest, id, "Voltage"),
+            current: latest_pair(latest, id, "Current"),
+            power: latest_pair(latest, id, "Power"),
+        },
+        InstrumentKind::Multimeter => TwinFace::Dmm {
+            function: device.controls.dmm_function.label().to_owned(),
+            unit: device.controls.dmm_function.unit().to_owned(),
+            autorange: device.controls.dmm_autorange,
+            reading: latest_pair(latest, id, device.controls.dmm_function.scpi())
+                .or_else(|| latest_pair(latest, id, "Reading"))
+                .or_else(|| {
+                    latest
+                        .iter()
+                        .find(|((did, _), _)| *did == id)
+                        .map(|(_, r)| (r.value, r.unit.clone()))
+                }),
+        },
+        InstrumentKind::DebugProbe => TwinFace::Probe {
+            chip: if device.controls.probe_chip.trim().is_empty() {
+                "AUTO".into()
+            } else {
+                device.controls.probe_chip.clone()
+            },
+            rtt: device.controls.probe_rtt_on,
+            rtt_ch: device.controls.probe_rtt_channel,
+            speed_khz: device.controls.probe_speed_khz,
+        },
+        InstrumentKind::UsbBridge => TwinFace::Bridge {
+            tab: device.controls.bridge_tab,
+            spi_hz: device.controls.bridge_spi_hz,
+            spi_mode: device.controls.bridge_spi_mode,
+            i2c_addr: device.controls.bridge_i2c_addr.clone(),
+            gpio_pin: device.controls.bridge_gpio_pin,
+            gpio_out: device.controls.bridge_gpio_out,
+            gpio_value: device.controls.bridge_gpio_value,
+        },
+        InstrumentKind::Generic => TwinFace::Generic {
+            cmd: device.controls.console.clone(),
+        },
+    }
+}
+
+fn downsample_wave_y(wave: Option<&WaveformTrace>, n: usize) -> Vec<f32> {
+    let Some(trace) = wave else {
+        return Vec::new();
+    };
+    if trace.y.is_empty() || n < 2 {
+        return Vec::new();
+    }
+    let len = trace.y.len();
+    let mut ymin = f64::INFINITY;
+    let mut ymax = f64::NEG_INFINITY;
+    for &y in trace.y.iter() {
+        ymin = ymin.min(y);
+        ymax = ymax.max(y);
+    }
+    let span = (ymax - ymin).max(1e-12);
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let idx = i * (len.saturating_sub(1)) / (n - 1);
+        out.push(((trace.y[idx] - ymin) / span) as f32);
+    }
+    out
+}
+
+fn twin_face_json(face: &TwinFace) -> serde_json::Value {
+    let meas = |p: &Option<(f64, String)>| {
+        p.as_ref()
+            .map(|(v, u)| serde_json::json!({ "value": v, "unit": u }))
+            .unwrap_or(serde_json::Value::Null)
+    };
+    match face {
+        TwinFace::Scope {
+            channels,
+            channel_on,
+            timebase,
+            trigger,
+            wave,
+            meas: scope_meas,
+        } => serde_json::json!({
+            "type": "oscilloscope",
+            "channels": channels,
+            "channel_on": channel_on,
+            "timebase_s": timebase,
+            "trigger": trigger,
+            "measure": scope_meas,
+            "wave": wave,
+        }),
+        TwinFace::DcSource { channels, rows } => serde_json::json!({
+            "type": "dc_source",
+            "channels": channels,
+            "rows": rows.iter().enumerate().map(|(i, r)| serde_json::json!({
+                "channel": i + 1,
+                "output": r.on,
+                "set_v": r.set_v,
+                "set_i": r.set_i,
+                "meas_v": meas(&r.meas_v),
+                "meas_i": meas(&r.meas_i),
+                "meas_w": meas(&r.meas_w),
+            })).collect::<Vec<_>>(),
+        }),
+        TwinFace::Load {
+            mode,
+            level,
+            input,
+            voltage,
+            current,
+            power,
+        } => serde_json::json!({
+            "type": "electronic_load",
+            "mode": mode,
+            "level": level,
+            "input": input,
+            "voltage": meas(voltage),
+            "current": meas(current),
+            "power": meas(power),
+        }),
+        TwinFace::Dmm {
+            function,
+            unit,
+            autorange,
+            reading,
+        } => serde_json::json!({
+            "type": "multimeter",
+            "function": function,
+            "unit": unit,
+            "autorange": autorange,
+            "reading": meas(reading),
+        }),
+        TwinFace::Probe {
+            chip,
+            rtt,
+            rtt_ch,
+            speed_khz,
+        } => serde_json::json!({
+            "type": "debug_probe",
+            "chip": chip,
+            "rtt": rtt,
+            "rtt_channel": rtt_ch,
+            "speed_khz": speed_khz,
+        }),
+        TwinFace::Bridge {
+            tab,
+            spi_hz,
+            spi_mode,
+            i2c_addr,
+            gpio_pin,
+            gpio_out,
+            gpio_value,
+        } => serde_json::json!({
+            "type": "usb_bridge",
+            "bus": match *tab { 1 => "i2c", 2 => "gpio", _ => "spi" },
+            "spi_hz": spi_hz,
+            "spi_mode": spi_mode,
+            "i2c_addr": i2c_addr,
+            "gpio_pin": gpio_pin,
+            "gpio_out": gpio_out,
+            "gpio_value": gpio_value,
+        }),
+        TwinFace::Generic { cmd } => serde_json::json!({
+            "type": "generic",
+            "scpi": cmd,
+        }),
+    }
+}
+
+fn twin_unit_size(face: &TwinFace) -> egui::Vec2 {
+    match face {
+        TwinFace::DcSource { channels, .. } => {
+            let n = (*channels as f32).max(1.0);
+            egui::vec2(248.0, 102.0 + n * 24.0 + 26.0)
+        }
+        TwinFace::Scope { .. } => egui::vec2(244.0, 154.0),
+        TwinFace::Dmm { .. } => egui::vec2(224.0, 138.0),
+        TwinFace::Load { .. } => egui::vec2(228.0, 146.0),
+        TwinFace::Probe { .. } | TwinFace::Bridge { .. } => egui::vec2(216.0, 132.0),
+        TwinFace::Generic { .. } => egui::vec2(204.0, 122.0),
+    }
+}
+
+fn paint_digital_twin_lab(
+    ui: &egui::Ui,
+    rect: Rect,
+    lang: Lang,
+    tokens: &Tokens,
+    hud: &HudTokens,
+    t: f32,
+    snaps: &[TwinSnap],
+    scanning: bool,
+) -> Option<u64> {
+    let painter = ui.painter_at(rect);
+    paint_twin_floor(&painter, rect, t);
+
+    let hub = Rect::from_center_size(
+        egui::pos2(rect.center().x, rect.bottom() - rect.height() * 0.18),
+        egui::vec2(132.0, 72.0),
+    );
+    paint_twin_hub(&painter, hub, hud, t, snaps.len(), scanning, lang);
+
+    if snaps.is_empty() {
+        painter.text(
+            egui::pos2(rect.center().x, rect.center().y - 12.0),
+            egui::Align2::CENTER_CENTER,
+            text(
+                lang,
+                "等待链路  ·  扫描并连接后，工位孪生将在此展开",
+                "AWAITING LINK  ·  scan and connect to populate the bench",
+            ),
+            egui::FontId::monospace(13.0),
+            hud.dim,
+        );
+        return None;
+    }
+
+    let n = snaps.len() as f32;
+    let scale = match snaps.len() {
+        0..=3 => 1.0,
+        4 => 0.92,
+        5 => 0.86,
+        _ => 0.78,
+    };
+    let rx = (rect.width() * 0.36).max(150.0);
+    let ry = (rect.height() * 0.30).max(96.0);
+    let origin = egui::pos2(rect.center().x, rect.center().y + rect.height() * 0.02);
+    let hub_top = egui::pos2(hub.center().x, hub.top());
+    let mut clicked = None;
+    for (i, snap) in snaps.iter().enumerate() {
+        let ang = -std::f32::consts::FRAC_PI_2
+            + (i as f32 + 0.5) * (std::f32::consts::TAU / n.max(1.0));
+        let size = twin_unit_size(&snap.face) * scale;
+        let mut center = egui::pos2(origin.x + rx * ang.cos(), origin.y + ry * ang.sin() * 0.72);
+        center.x = center.x.clamp(
+            rect.left() + size.x * 0.5 + 10.0,
+            rect.right() - size.x * 0.5 - 10.0,
+        );
+        center.y = center.y.clamp(
+            rect.top() + size.y * 0.5 + 8.0,
+            hub.top() - size.y * 0.45,
+        );
+        let card = Rect::from_center_size(center, size);
+        let card_bottom = egui::pos2(card.center().x, card.bottom());
+        paint_twin_link(&painter, hub_top, card_bottom, hud, t, i, snap.live);
+        paint_iso_twin_unit(&painter, card, snap, hud, tokens, t);
+        let hit = ui.interact(
+            card.expand(6.0),
+            ui.id().with(("twin-unit", snap.id)),
+            egui::Sense::click(),
+        );
+        if hit.hovered() {
+            painter.rect_stroke(
+                card.expand(4.0),
+                CornerRadius::same(6),
+                Stroke::new(1.6_f32, hud.cyan),
+                egui::StrokeKind::Outside,
+            );
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if hit.clicked() {
+            clicked = Some(snap.id);
+        }
+    }
+    clicked
+}
+
+fn paint_twin_floor(painter: &egui::Painter, rect: Rect, t: f32) {
+    let floor = Rect::from_min_max(
+        egui::pos2(rect.left() + 18.0, rect.top() + 8.0),
+        egui::pos2(rect.right() - 18.0, rect.bottom() - 8.0),
+    );
+    painter.rect_filled(
+        floor,
+        CornerRadius::same(10),
+        Color32::from_rgba_unmultiplied(4, 14, 22, 160),
+    );
+    let vanish = egui::pos2(floor.center().x, floor.top() + 10.0);
+    for i in 0..14 {
+        let x = floor.left() + floor.width() * (i as f32 / 13.0);
+        painter.line_segment(
+            [egui::pos2(x, floor.bottom()), vanish],
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 18)),
+        );
+    }
+    for i in 0..8 {
+        let k = i as f32 / 7.0;
+        let y = floor.bottom() - (floor.height() * 0.72) * (k * k);
+        let inset = 10.0 + k * floor.width() * 0.22;
+        painter.line_segment(
+            [
+                egui::pos2(floor.left() + inset, y),
+                egui::pos2(floor.right() - inset, y),
+            ],
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 22)),
+        );
+    }
+    let scan = floor.top() + (t * 36.0).rem_euclid(floor.height().max(1.0));
+    painter.line_segment(
+        [egui::pos2(floor.left(), scan), egui::pos2(floor.right(), scan)],
+        Stroke::new(1.1_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 28)),
+    );
+}
+
+fn paint_twin_hub(
+    painter: &egui::Painter,
+    rect: Rect,
+    hud: &HudTokens,
+    t: f32,
+    sessions: usize,
+    scanning: bool,
+    lang: Lang,
+) {
+    let pulse = 0.45 + 0.55 * (t * 2.6).sin().abs();
+    painter.circle_filled(
+        rect.center(),
+        46.0 + 4.0 * pulse,
+        Color32::from_rgba_unmultiplied(74, 227, 255, (18.0 + 22.0 * pulse) as u8),
+    );
+    painter.rect_filled(rect, CornerRadius::same(8), Color32::from_rgb(8, 22, 34));
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(8),
+        Stroke::new(1.4_f32, hud.cyan),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        egui::pos2(rect.center().x, rect.top() + 16.0),
+        egui::Align2::CENTER_CENTER,
+        "WIPARSE",
+        egui::FontId::monospace(12.0),
+        hud.cyan,
+    );
+    painter.text(
+        egui::pos2(rect.center().x, rect.center().y + 4.0),
+        egui::Align2::CENTER_CENTER,
+        text(lang, "工位核心", "STATION CORE"),
+        egui::FontId::monospace(10.0),
+        hud.dim,
+    );
+    painter.text(
+        egui::pos2(rect.center().x, rect.bottom() - 14.0),
+        egui::Align2::CENTER_CENTER,
+        if scanning {
+            text(lang, "扫描中…", "SCANNING…").to_owned()
+        } else {
+            format!("{sessions} LINK")
+        },
+        egui::FontId::monospace(10.0),
+        if scanning { hud.warn } else { hud.ok },
+    );
+}
+
+fn paint_twin_link(
+    painter: &egui::Painter,
+    from: egui::Pos2,
+    to: egui::Pos2,
+    hud: &HudTokens,
+    t: f32,
+    index: usize,
+    live: bool,
+) {
+    let mid = egui::pos2((from.x + to.x) * 0.5, (from.y + to.y) * 0.5 - 18.0);
+    painter.add(egui::Shape::line(
+        vec![from, mid, to],
+        Stroke::new(
+            1.2_f32,
+            if live {
+                Color32::from_rgba_unmultiplied(48, 209, 88, 140)
+            } else {
+                hud.line
+            },
+        ),
+    ));
+    let phase = (t * 0.55 + index as f32 * 0.17).rem_euclid(1.0);
+    let p = if phase < 0.5 {
+        from.lerp(mid, phase * 2.0)
+    } else {
+        mid.lerp(to, (phase - 0.5) * 2.0)
+    };
+    painter.circle_filled(
+        p,
+        if live { 3.4 } else { 2.2 },
+        if live { hud.ok } else { hud.cyan },
+    );
+}
+
+fn paint_iso_twin_unit(
+    painter: &egui::Painter,
+    rect: Rect,
+    snap: &TwinSnap,
+    hud: &HudTokens,
+    tokens: &Tokens,
+    t: f32,
+) {
+    let depth = 10.0;
+    let front = Rect::from_min_max(
+        egui::pos2(rect.left(), rect.top() + depth),
+        egui::pos2(rect.right() - depth, rect.bottom()),
+    );
+    let top = [
+        egui::pos2(front.left(), front.top()),
+        egui::pos2(front.left() + depth, front.top() - depth),
+        egui::pos2(front.right() + depth, front.top() - depth),
+        egui::pos2(front.right(), front.top()),
+    ];
+    let side = [
+        egui::pos2(front.right(), front.top()),
+        egui::pos2(front.right() + depth, front.top() - depth),
+        egui::pos2(front.right() + depth, front.bottom() - depth),
+        egui::pos2(front.right(), front.bottom()),
+    ];
+    let (top_fill, side_fill, face_fill) = twin_chassis_colors(snap.kind);
+    painter.add(egui::Shape::convex_polygon(
+        top.to_vec(),
+        top_fill,
+        Stroke::new(1.0_f32, hud.line),
+    ));
+    painter.add(egui::Shape::convex_polygon(
+        side.to_vec(),
+        side_fill,
+        Stroke::new(1.0_f32, hud.line),
+    ));
+    painter.rect_filled(front, CornerRadius::ZERO, face_fill);
+    painter.rect_stroke(
+        front,
+        CornerRadius::ZERO,
+        Stroke::new(1.0_f32, hud.line),
+        egui::StrokeKind::Inside,
+    );
+    if let Some(tex) = &snap.photo {
+        let stamp = Rect::from_min_size(
+            egui::pos2(top[1].x + 4.0, top[1].y + 2.0),
+            egui::vec2(28.0, 18.0),
+        );
+        painter.image(
+            tex.id(),
+            stamp,
+            Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+    }
+
+    let header = Rect::from_min_size(front.min, egui::vec2(front.width(), 18.0));
+    painter.text(
+        egui::pos2(header.left() + 8.0, header.center().y),
+        egui::Align2::LEFT_CENTER,
+        format!("{}  {}", kind_icon(snap.kind), truncate_chars(&snap.name, 16)),
+        egui::FontId::monospace(10.0),
+        tokens.text_primary,
+    );
+    painter.text(
+        egui::pos2(header.right() - 8.0, header.center().y),
+        egui::Align2::RIGHT_CENTER,
+        &snap.status,
+        egui::FontId::monospace(9.0),
+        snap.status_color,
+    );
+
+    let body = Rect::from_min_max(
+        egui::pos2(front.left() + 6.0, front.top() + 20.0),
+        egui::pos2(front.right() - 6.0, front.bottom() - 4.0),
+    );
+    paint_twin_face(painter, body, snap, hud, t);
+
+    if snap.live {
+        let pulse = 0.4 + 0.6 * (t * 4.0).sin().abs();
+        painter.rect_filled(
+            Rect::from_min_size(front.min, egui::vec2(3.0, front.height())),
+            CornerRadius::ZERO,
+            Color32::from_rgba_unmultiplied(
+                hud.ok.r(),
+                hud.ok.g(),
+                hud.ok.b(),
+                (80.0 + 140.0 * pulse) as u8,
+            ),
+        );
+    }
+    let _ = (&snap.manufacturer, &snap.activity, &snap.params, &snap.serial, &snap.resource);
+}
+
+fn twin_chassis_colors(kind: InstrumentKind) -> (Color32, Color32, Color32) {
+    match kind {
+        InstrumentKind::DcSource => (
+            Color32::from_rgb(28, 32, 36),
+            Color32::from_rgb(16, 18, 22),
+            Color32::from_rgb(18, 20, 24),
+        ),
+        InstrumentKind::Oscilloscope => (
+            Color32::from_rgb(10, 36, 52),
+            Color32::from_rgb(6, 22, 34),
+            Color32::from_rgb(5, 12, 20),
+        ),
+        InstrumentKind::ElectronicLoad => (
+            Color32::from_rgb(36, 24, 16),
+            Color32::from_rgb(22, 14, 10),
+            Color32::from_rgb(16, 12, 10),
+        ),
+        InstrumentKind::Multimeter => (
+            Color32::from_rgb(42, 36, 18),
+            Color32::from_rgb(26, 22, 12),
+            Color32::from_rgb(20, 18, 10),
+        ),
+        InstrumentKind::DebugProbe => (
+            Color32::from_rgb(18, 40, 32),
+            Color32::from_rgb(10, 24, 20),
+            Color32::from_rgb(8, 16, 14),
+        ),
+        InstrumentKind::UsbBridge => (
+            Color32::from_rgb(16, 32, 24),
+            Color32::from_rgb(10, 20, 16),
+            Color32::from_rgb(8, 14, 12),
+        ),
+        InstrumentKind::Generic => (
+            Color32::from_rgb(10, 36, 52),
+            Color32::from_rgb(6, 22, 34),
+            Color32::from_rgb(5, 12, 20),
+        ),
+    }
+}
+
+fn paint_twin_face(
+    painter: &egui::Painter,
+    rect: Rect,
+    snap: &TwinSnap,
+    hud: &HudTokens,
+    t: f32,
+) {
+    match &snap.face {
+        TwinFace::DcSource { channels, rows } => {
+            paint_face_dc_source(painter, rect, *channels, rows, hud, snap.live, t);
+        }
+        TwinFace::Scope {
+            channels,
+            channel_on,
+            timebase,
+            trigger,
+            wave,
+            meas,
+        } => {
+            paint_face_scope(
+                painter,
+                rect,
+                *channels,
+                *channel_on,
+                *timebase,
+                trigger,
+                wave,
+                meas.as_deref(),
+                hud,
+                snap.live,
+                t,
+            );
+        }
+        TwinFace::Load {
+            mode,
+            level,
+            input,
+            voltage,
+            current,
+            power,
+        } => {
+            paint_face_load(
+                painter,
+                rect,
+                mode,
+                *level,
+                *input,
+                voltage.as_ref(),
+                current.as_ref(),
+                power.as_ref(),
+                hud,
+                snap.live,
+                t,
+            );
+        }
+        TwinFace::Dmm {
+            function,
+            unit,
+            autorange,
+            reading,
+        } => {
+            paint_face_dmm(
+                painter,
+                rect,
+                function,
+                unit,
+                *autorange,
+                reading.as_ref(),
+                hud,
+                snap.live,
+                t,
+            );
+        }
+        TwinFace::Probe {
+            chip,
+            rtt,
+            rtt_ch,
+            speed_khz,
+        } => {
+            paint_face_probe(painter, rect, chip, *rtt, *rtt_ch, *speed_khz, hud, t);
+        }
+        TwinFace::Bridge {
+            tab,
+            spi_hz,
+            spi_mode,
+            i2c_addr,
+            gpio_pin,
+            gpio_out,
+            gpio_value,
+        } => {
+            paint_face_bridge(
+                painter,
+                rect,
+                *tab,
+                *spi_hz,
+                *spi_mode,
+                i2c_addr,
+                *gpio_pin,
+                *gpio_out,
+                *gpio_value,
+                hud,
+                t,
+            );
+        }
+        TwinFace::Generic { cmd } => {
+            paint_lcd_panel(painter, rect.shrink2(egui::vec2(0.0, 6.0)), LcdTint::Green);
+            painter.text(
+                egui::pos2(rect.left() + 8.0, rect.top() + 10.0),
+                egui::Align2::LEFT_TOP,
+                "SCPI",
+                egui::FontId::monospace(9.0),
+                lcd_dim(LcdTint::Green),
+            );
+            painter.text(
+                egui::pos2(rect.left() + 8.0, rect.center().y + 4.0),
+                egui::Align2::LEFT_CENTER,
+                truncate_chars(cmd, 22),
+                egui::FontId::monospace(11.0),
+                lcd_lit(LcdTint::Green),
+            );
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum LcdTint {
+    Amber,
+    Green,
+    Scope,
+}
+
+fn lcd_lit(tint: LcdTint) -> Color32 {
+    match tint {
+        LcdTint::Amber => Color32::from_rgb(0xFF, 0xC2, 0x4A),
+        LcdTint::Green => Color32::from_rgb(0x5C, 0xFF, 0x8A),
+        LcdTint::Scope => Color32::from_rgb(0x4A, 0xE3, 0xFF),
+    }
+}
+
+fn lcd_dim(tint: LcdTint) -> Color32 {
+    match tint {
+        LcdTint::Amber => Color32::from_rgba_unmultiplied(0xFF, 0xC2, 0x4A, 120),
+        LcdTint::Green => Color32::from_rgba_unmultiplied(0x5C, 0xFF, 0x8A, 120),
+        LcdTint::Scope => Color32::from_rgba_unmultiplied(0x4A, 0xE3, 0xFF, 120),
+    }
+}
+
+fn lcd_fill(tint: LcdTint) -> Color32 {
+    match tint {
+        LcdTint::Amber => Color32::from_rgb(18, 14, 6),
+        LcdTint::Green => Color32::from_rgb(6, 20, 12),
+        LcdTint::Scope => Color32::from_rgb(4, 16, 24),
+    }
+}
+
+fn paint_lcd_panel(painter: &egui::Painter, rect: Rect, tint: LcdTint) {
+    painter.rect_filled(rect, CornerRadius::same(2), lcd_fill(tint));
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(2),
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(20, 20, 16, 180)),
+        egui::StrokeKind::Inside,
+    );
+    let glass = Rect::from_min_max(
+        egui::pos2(rect.left() + 1.0, rect.top() + 1.0),
+        egui::pos2(rect.right() - 1.0, rect.top() + 5.0),
+    );
+    painter.rect_filled(
+        glass,
+        CornerRadius::same(1),
+        Color32::from_rgba_unmultiplied(255, 255, 255, 12),
+    );
+}
+
+fn paint_face_dc_source(
+    painter: &egui::Painter,
+    rect: Rect,
+    channels: u8,
+    rows: &[TwinSourceCh],
+    hud: &HudTokens,
+    live: bool,
+    t: f32,
+) {
+    let jack_h = 22.0;
+    let lcd = Rect::from_min_max(
+        rect.min,
+        egui::pos2(rect.right(), rect.bottom() - jack_h),
+    );
+    paint_lcd_panel(painter, lcd, LcdTint::Amber);
+    let n = channels.max(1) as usize;
+    let row_h = ((lcd.height() - 4.0) / n as f32).clamp(16.0, 24.0);
+    for (i, row) in rows.iter().take(n).enumerate() {
+        let y = lcd.top() + 4.0 + i as f32 * row_h;
+        let (v, i_val, measured) = match (row.meas_v.as_ref(), row.meas_i.as_ref()) {
+            (Some((v, _)), Some((a, _))) => (*v, *a, true),
+            _ => (row.set_v, row.set_i, false),
+        };
+        let watts = row.meas_w.as_ref().map(|(w, _)| *w).unwrap_or(v * i_val);
+        let tag = if measured {
+            if live {
+                "MEAS"
+            } else {
+                "HOLD"
+            }
+        } else {
+            "SET"
+        };
+        let color = if row.on {
+            lcd_lit(LcdTint::Amber)
+        } else {
+            lcd_dim(LcdTint::Amber)
+        };
+        painter.text(
+            egui::pos2(lcd.left() + 6.0, y + 2.0),
+            egui::Align2::LEFT_TOP,
+            format!("CH{}", i + 1),
+            egui::FontId::monospace(10.0),
+            color,
+        );
+        painter.text(
+            egui::pos2(lcd.left() + 34.0, y + 2.0),
+            egui::Align2::LEFT_TOP,
+            format!("{v:6.3}V  {i_val:5.3}A  {watts:5.2}W"),
+            egui::FontId::monospace(10.0),
+            color,
+        );
+        painter.text(
+            egui::pos2(lcd.right() - 6.0, y + 2.0),
+            egui::Align2::RIGHT_TOP,
+            if row.on {
+                format!("ON {tag}")
+            } else {
+                format!("OFF")
+            },
+            egui::FontId::monospace(10.0),
+            if row.on { hud.ok } else { lcd_dim(LcdTint::Amber) },
+        );
+    }
+    if live {
+        let scan = lcd.top() + (t * 22.0).rem_euclid(lcd.height().max(1.0));
+        painter.line_segment(
+            [egui::pos2(lcd.left() + 2.0, scan), egui::pos2(lcd.right() - 2.0, scan)],
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 194, 74, 28)),
+        );
+    }
+    let jack_area = Rect::from_min_max(
+        egui::pos2(rect.left(), lcd.bottom() + 2.0),
+        rect.max,
+    );
+    let slot_w = jack_area.width() / n as f32;
+    for i in 0..n {
+        let cx = jack_area.left() + slot_w * (i as f32 + 0.5);
+        let cy = jack_area.center().y;
+        let on = rows.get(i).map(|r| r.on).unwrap_or(false);
+        painter.circle_filled(egui::pos2(cx - 7.0, cy), 4.2, Color32::from_rgb(176, 42, 42));
+        painter.circle_filled(egui::pos2(cx + 7.0, cy), 4.2, Color32::from_rgb(28, 28, 30));
+        painter.circle_stroke(
+            egui::pos2(cx - 7.0, cy),
+            4.2,
+            Stroke::new(1.0_f32, Color32::from_rgb(90, 20, 20)),
+        );
+        painter.circle_stroke(
+            egui::pos2(cx + 7.0, cy),
+            4.2,
+            Stroke::new(1.0_f32, Color32::from_rgb(60, 60, 64)),
+        );
+        let led = if on { hud.ok } else { Color32::from_rgb(32, 40, 32) };
+        painter.circle_filled(egui::pos2(cx, cy - 8.0), 2.2, led);
+        painter.text(
+            egui::pos2(cx, jack_area.bottom() - 1.0),
+            egui::Align2::CENTER_BOTTOM,
+            format!("{}", i + 1),
+            egui::FontId::monospace(8.0),
+            hud.dim,
+        );
+    }
+}
+
+const SCOPE_CH_COLORS: [Color32; 4] = [
+    Color32::from_rgb(0xFF, 0xD6, 0x0A),
+    Color32::from_rgb(0x4A, 0xE3, 0xFF),
+    Color32::from_rgb(0xFF, 0x6B, 0xC9),
+    Color32::from_rgb(0x30, 0xD1, 0x58),
+];
+
+fn paint_face_scope(
+    painter: &egui::Painter,
+    rect: Rect,
+    channels: u8,
+    channel_on: [bool; 4],
+    timebase: f64,
+    trigger: &str,
+    wave: &[f32],
+    meas: Option<&str>,
+    hud: &HudTokens,
+    live: bool,
+    t: f32,
+) {
+    let n = channels.max(1).min(4) as usize;
+    let knobs_w = 28.0;
+    let screen = Rect::from_min_max(
+        rect.min,
+        egui::pos2(rect.right() - knobs_w, rect.bottom()),
+    );
+    paint_lcd_panel(painter, screen, LcdTint::Scope);
+    for g in 1..4 {
+        let x = screen.left() + screen.width() * (g as f32 / 4.0);
+        painter.line_segment(
+            [egui::pos2(x, screen.top() + 2.0), egui::pos2(x, screen.bottom() - 2.0)],
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 28)),
+        );
+        let y = screen.top() + screen.height() * (g as f32 / 4.0);
+        painter.line_segment(
+            [egui::pos2(screen.left() + 2.0, y), egui::pos2(screen.right() - 2.0, y)],
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 28)),
+        );
+    }
+    let mut pts = Vec::new();
+    if wave.len() >= 2 {
+        for (i, y01) in wave.iter().enumerate() {
+            let x = screen.left() + 3.0 + (screen.width() - 6.0) * (i as f32 / (wave.len() - 1) as f32);
+            let y = screen.bottom() - 4.0 - (screen.height() - 8.0) * y01;
+            pts.push(egui::pos2(x, y));
+        }
+    } else {
+        let amp = if live { 0.32 } else { 0.08 };
+        for i in 0..36 {
+            let k = i as f32 / 35.0;
+            let x = screen.left() + 3.0 + (screen.width() - 6.0) * k;
+            let y = screen.center().y
+                + (t * 3.2 + k * 8.0).sin() * screen.height() * amp;
+            pts.push(egui::pos2(x, y));
+        }
+    }
+    let wave_color = SCOPE_CH_COLORS
+        .iter()
+        .enumerate()
+        .find(|(i, _)| *i < n && channel_on[*i])
+        .map(|(_, c)| *c)
+        .unwrap_or(lcd_lit(LcdTint::Scope));
+    painter.add(egui::Shape::line(pts, Stroke::new(1.4_f32, wave_color)));
+    painter.text(
+        egui::pos2(screen.left() + 6.0, screen.top() + 4.0),
+        egui::Align2::LEFT_TOP,
+        fmt_timebase(timebase),
+        egui::FontId::monospace(9.0),
+        lcd_dim(LcdTint::Scope),
+    );
+    painter.text(
+        egui::pos2(screen.right() - 6.0, screen.top() + 4.0),
+        egui::Align2::RIGHT_TOP,
+        truncate_chars(trigger, 10),
+        egui::FontId::monospace(9.0),
+        lcd_dim(LcdTint::Scope),
+    );
+    if let Some(meas) = meas {
+        painter.text(
+            egui::pos2(screen.left() + 6.0, screen.bottom() - 4.0),
+            egui::Align2::LEFT_BOTTOM,
+            truncate_chars(meas, 18),
+            egui::FontId::monospace(9.0),
+            lcd_lit(LcdTint::Scope),
+        );
+    }
+    let knob_col = Rect::from_min_max(egui::pos2(screen.right() + 4.0, rect.top()), rect.max);
+    for i in 0..n {
+        let y = knob_col.top() + 10.0 + i as f32 * 18.0;
+        let on = channel_on.get(i).copied().unwrap_or(false);
+        let color = if on { SCOPE_CH_COLORS[i] } else { Color32::from_rgb(40, 48, 52) };
+        painter.circle_filled(egui::pos2(knob_col.center().x, y), 5.4, color);
+        painter.circle_stroke(
+            egui::pos2(knob_col.center().x, y),
+            5.4,
+            Stroke::new(1.0_f32, hud.line),
+        );
+        painter.text(
+            egui::pos2(knob_col.center().x, y + 8.0),
+            egui::Align2::CENTER_TOP,
+            format!("{}", i + 1),
+            egui::FontId::monospace(7.0),
+            if on { SCOPE_CH_COLORS[i] } else { hud.dim },
+        );
+    }
+}
+
+fn paint_face_load(
+    painter: &egui::Painter,
+    rect: Rect,
+    mode: &str,
+    level: f64,
+    input: bool,
+    voltage: Option<&(f64, String)>,
+    current: Option<&(f64, String)>,
+    power: Option<&(f64, String)>,
+    hud: &HudTokens,
+    live: bool,
+    t: f32,
+) {
+    let lcd = Rect::from_min_max(rect.min, egui::pos2(rect.right() - 36.0, rect.bottom()));
+    paint_lcd_panel(painter, lcd, LcdTint::Amber);
+    let color = if input {
+        lcd_lit(LcdTint::Amber)
+    } else {
+        lcd_dim(LcdTint::Amber)
+    };
+    painter.text(
+        egui::pos2(lcd.left() + 8.0, lcd.top() + 6.0),
+        egui::Align2::LEFT_TOP,
+        format!("{}  LVL {:.4}  {}", mode, level, if input { "SINK" } else { "OPEN" }),
+        egui::FontId::monospace(10.0),
+        color,
+    );
+    let v = voltage
+        .map(|(v, _)| format!("{v:7.3} V"))
+        .unwrap_or_else(|| "  —.--- V".into());
+    let a = current
+        .map(|(a, _)| format!("{a:7.3} A"))
+        .unwrap_or_else(|| "  —.--- A".into());
+    let w = power
+        .map(|(w, _)| format!("{w:7.2} W"))
+        .unwrap_or_else(|| "  —.--- W".into());
+    painter.text(
+        egui::pos2(lcd.left() + 8.0, lcd.center().y - 2.0),
+        egui::Align2::LEFT_CENTER,
+        format!("{v}   {a}"),
+        egui::FontId::monospace(13.0),
+        color,
+    );
+    painter.text(
+        egui::pos2(lcd.left() + 8.0, lcd.bottom() - 8.0),
+        egui::Align2::LEFT_BOTTOM,
+        if live { format!("{w}  MEAS") } else { w },
+        egui::FontId::monospace(11.0),
+        color,
+    );
+    if live {
+        let scan = lcd.top() + (t * 18.0).rem_euclid(lcd.height().max(1.0));
+        painter.line_segment(
+            [egui::pos2(lcd.left() + 2.0, scan), egui::pos2(lcd.right() - 2.0, scan)],
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 194, 74, 24)),
+        );
+    }
+    let sink = Rect::from_min_max(egui::pos2(lcd.right() + 4.0, rect.top() + 8.0), rect.max);
+    painter.line_segment(
+        [egui::pos2(sink.center().x, sink.top()), egui::pos2(sink.center().x, sink.bottom() - 10.0)],
+        Stroke::new(1.4_f32, hud.cyan),
+    );
+    painter.line_segment(
+        [
+            egui::pos2(sink.center().x - 10.0, sink.center().y),
+            egui::pos2(sink.center().x + 10.0, sink.center().y),
+        ],
+        Stroke::new(1.4_f32, hud.cyan),
+    );
+    painter.circle_filled(
+        egui::pos2(sink.center().x, sink.bottom() - 6.0),
+        4.0,
+        if input { hud.ok } else { Color32::from_rgb(40, 40, 40) },
+    );
+}
+
+fn paint_face_dmm(
+    painter: &egui::Painter,
+    rect: Rect,
+    function: &str,
+    unit: &str,
+    autorange: bool,
+    reading: Option<&(f64, String)>,
+    hud: &HudTokens,
+    live: bool,
+    t: f32,
+) {
+    let lcd = Rect::from_min_max(rect.min, egui::pos2(rect.right() - 34.0, rect.bottom()));
+    paint_lcd_panel(painter, lcd, LcdTint::Green);
+    painter.text(
+        egui::pos2(lcd.left() + 8.0, lcd.top() + 5.0),
+        egui::Align2::LEFT_TOP,
+        format!(
+            "{function}  {}  {}",
+            if autorange { "AUTO" } else { "MAN" },
+            if live { "MEAS" } else { "HOLD" }
+        ),
+        egui::FontId::monospace(9.0),
+        lcd_dim(LcdTint::Green),
+    );
+    let (digits, shown_unit) = if let Some((v, u)) = reading {
+        (fmt_dmm_digits(*v), u.clone())
+    } else {
+        ("------".into(), unit.to_owned())
+    };
+    let blink = if live {
+        0.75 + 0.25 * (t * 2.0).sin()
+    } else {
+        1.0
+    };
+    let mut color = lcd_lit(LcdTint::Green);
+    color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), (220.0 * blink) as u8);
+    painter.text(
+        egui::pos2(lcd.left() + 10.0, lcd.center().y + 6.0),
+        egui::Align2::LEFT_CENTER,
+        digits,
+        egui::FontId::monospace(22.0),
+        color,
+    );
+    painter.text(
+        egui::pos2(lcd.right() - 8.0, lcd.bottom() - 8.0),
+        egui::Align2::RIGHT_BOTTOM,
+        shown_unit,
+        egui::FontId::monospace(12.0),
+        lcd_lit(LcdTint::Green),
+    );
+    let knob_c = egui::pos2(rect.right() - 16.0, rect.center().y);
+    painter.circle_filled(knob_c, 12.0, Color32::from_rgb(28, 24, 12));
+    painter.circle_stroke(knob_c, 12.0, Stroke::new(1.2_f32, hud.line));
+    let ang: f32 = match function {
+        "DC V" => -1.2,
+        "AC V" => -0.5,
+        "DC A" => 0.2,
+        "AC A" => 0.8,
+        "Ω" => 1.4,
+        _ => 2.0,
+    };
+    painter.line_segment(
+        [
+            knob_c,
+            egui::pos2(knob_c.x + ang.cos() * 9.0, knob_c.y + ang.sin() * 9.0),
+        ],
+        Stroke::new(1.6_f32, lcd_lit(LcdTint::Amber)),
+    );
+}
+
+fn paint_face_probe(
+    painter: &egui::Painter,
+    rect: Rect,
+    chip: &str,
+    rtt: bool,
+    rtt_ch: u32,
+    speed_khz: u32,
+    hud: &HudTokens,
+    t: f32,
+) {
+    let lcd = Rect::from_min_max(rect.min, egui::pos2(rect.right() - 52.0, rect.bottom()));
+    paint_lcd_panel(painter, lcd, LcdTint::Green);
+    painter.text(
+        egui::pos2(lcd.left() + 8.0, lcd.top() + 6.0),
+        egui::Align2::LEFT_TOP,
+        format!("TGT  {}", truncate_chars(chip, 14)),
+        egui::FontId::monospace(11.0),
+        lcd_lit(LcdTint::Green),
+    );
+    painter.text(
+        egui::pos2(lcd.left() + 8.0, lcd.center().y + 4.0),
+        egui::Align2::LEFT_CENTER,
+        format!("{speed_khz} kHz"),
+        egui::FontId::monospace(12.0),
+        lcd_lit(LcdTint::Green),
+    );
+    painter.text(
+        egui::pos2(lcd.left() + 8.0, lcd.bottom() - 8.0),
+        egui::Align2::LEFT_BOTTOM,
+        if rtt {
+            format!("RTT CH{rtt_ch}")
+        } else {
+            "RTT OFF".into()
+        },
+        egui::FontId::monospace(10.0),
+        if rtt { hud.ok } else { lcd_dim(LcdTint::Green) },
+    );
+    let header = Rect::from_min_max(egui::pos2(lcd.right() + 6.0, rect.top() + 6.0), rect.max);
+    let labels = ["SWDIO", "SWCLK", "GND", "VTref"];
+    for (i, label) in labels.iter().enumerate() {
+        let y = header.top() + 8.0 + i as f32 * 16.0;
+        let pulse = if rtt {
+            0.45 + 0.55 * (t * 5.0 + i as f32).sin().abs()
+        } else {
+            0.25
+        };
+        painter.line_segment(
+            [egui::pos2(header.left(), y), egui::pos2(header.right() - 4.0, y)],
+            Stroke::new(
+                1.2_f32,
+                Color32::from_rgba_unmultiplied(hud.cyan.r(), hud.cyan.g(), hud.cyan.b(), (80.0 + 140.0 * pulse) as u8),
+            ),
+        );
+        painter.circle_filled(
+            egui::pos2(header.right() - 4.0, y),
+            2.4,
+            hud.cyan,
+        );
+        painter.text(
+            egui::pos2(header.left(), y - 7.0),
+            egui::Align2::LEFT_BOTTOM,
+            *label,
+            egui::FontId::monospace(7.0),
+            hud.dim,
+        );
+    }
+}
+
+fn paint_face_bridge(
+    painter: &egui::Painter,
+    rect: Rect,
+    tab: u8,
+    spi_hz: u32,
+    spi_mode: u8,
+    i2c_addr: &str,
+    gpio_pin: u8,
+    gpio_out: bool,
+    gpio_value: bool,
+    hud: &HudTokens,
+    t: f32,
+) {
+    let lcd = Rect::from_min_max(rect.min, egui::pos2(rect.right(), rect.bottom() - 28.0));
+    paint_lcd_panel(painter, lcd, LcdTint::Green);
+    let bus = match tab {
+        1 => "I2C",
+        2 => "GPIO",
+        _ => "SPI",
+    };
+    painter.text(
+        egui::pos2(lcd.left() + 8.0, lcd.top() + 6.0),
+        egui::Align2::LEFT_TOP,
+        format!("FT4222  {bus}"),
+        egui::FontId::monospace(11.0),
+        lcd_lit(LcdTint::Green),
+    );
+    let detail = match tab {
+        1 => format!("ADDR 0x{i2c_addr}"),
+        2 => format!(
+            "P{gpio_pin} {} {}",
+            if gpio_out { "OUT" } else { "IN" },
+            if gpio_value { "1" } else { "0" }
+        ),
+        _ => format!("MODE {spi_mode}  {spi_hz} Hz"),
+    };
+    painter.text(
+        egui::pos2(lcd.left() + 8.0, lcd.center().y + 6.0),
+        egui::Align2::LEFT_CENTER,
+        detail,
+        egui::FontId::monospace(12.0),
+        lcd_lit(LcdTint::Green),
+    );
+    let buses = ["SPI", "I2C", "GPIO"];
+    let slot_w = rect.width() / 3.0;
+    for (i, label) in buses.iter().enumerate() {
+        let cx = rect.left() + slot_w * (i as f32 + 0.5);
+        let y = rect.bottom() - 12.0;
+        let on = tab as usize == i;
+        painter.circle_filled(
+            egui::pos2(cx - 14.0, y),
+            3.2,
+            if on { hud.ok } else { Color32::from_rgb(40, 48, 40) },
+        );
+        painter.text(
+            egui::pos2(cx - 8.0, y),
+            egui::Align2::LEFT_CENTER,
+            *label,
+            egui::FontId::monospace(9.0),
+            if on { hud.cyan } else { hud.dim },
+        );
+        if on {
+            let pulse = 0.4 + 0.6 * (t * 3.4).sin().abs();
+            painter.circle_filled(
+                egui::pos2(cx - 14.0, y),
+                3.2 + pulse,
+                Color32::from_rgba_unmultiplied(hud.ok.r(), hud.ok.g(), hud.ok.b(), 80),
+            );
+        }
+    }
+}
+
+fn fmt_timebase(s: f64) -> String {
+    if s >= 1.0 {
+        format!("{s:.3}s/div")
+    } else if s >= 1e-3 {
+        format!("{:.3}ms/div", s * 1e3)
+    } else if s >= 1e-6 {
+        format!("{:.1}µs/div", s * 1e6)
+    } else {
+        format!("{:.0}ns/div", s * 1e9)
+    }
+}
+
+fn fmt_dmm_digits(v: f64) -> String {
+    let a = v.abs();
+    let s = if a >= 1000.0 {
+        format!("{v:8.2}")
+    } else if a >= 100.0 {
+        format!("{v:8.3}")
+    } else if a >= 10.0 {
+        format!("{v:8.4}")
+    } else {
+        format!("{v:8.5}")
+    };
+    s
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    let count = s.chars().count();
+    if count <= max {
+        s.to_owned()
+    } else {
+        format!("{}…", s.chars().take(max.saturating_sub(1)).collect::<String>())
+    }
+}
+
+fn overview_type_card(
+    ui: &mut egui::Ui,
+    lang: Lang,
+    tokens: &Tokens,
+    selected: bool,
+    sessions: usize,
+) -> bool {
+    let mut clicked = false;
+    let frame = Frame::NONE
+        .fill(if selected {
+            Color32::from_rgba_unmultiplied(0x07, 0x18, 0x24, 255)
+        } else {
+            tokens.panel_bg
+        })
+        .stroke(Stroke::new(
+            if selected { 2.0_f32 } else { 1.0_f32 },
+            if selected {
+                Color32::from_rgb(0x4A, 0xE3, 0xFF)
+            } else {
+                tokens.border
+            },
+        ))
+        .corner_radius(CornerRadius::same(7))
+        .inner_margin(Margin::symmetric(11, 9))
+        .show(ui, |ui| {
+            ui.set_min_width(CARD_PANEL_WIDTH);
+            ui.set_max_width(CARD_PANEL_WIDTH);
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(CARD_ICON_COLUMN_WIDTH, 0.0),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        let (icon_rect, _) =
+                            ui.allocate_exact_size(egui::vec2(36.0, 28.0), egui::Sense::hover());
+                        paint_mesh_icon(ui.painter(), icon_rect, selected);
+                    },
+                );
+                ui.vertical(|ui| {
+                    if ui
+                        .selectable_label(
+                            selected,
+                            RichText::new(text(lang, "设备总览", "Control Mesh")).strong(),
+                        )
+                        .clicked()
+                    {
+                        clicked = true;
+                    }
+                    ui.label(
+                        RichText::new(format!(
+                            "{} · {sessions}",
+                            text(lang, "已连接会话", "Live sessions")
+                        ))
+                        .small()
+                        .color(if sessions > 0 {
+                            Color32::from_rgb(0x4A, 0xE3, 0xFF)
+                        } else {
+                            tokens.text_muted
+                        }),
+                    );
+                    ui.label(
+                        RichText::new(text(
+                            lang,
+                            "全部设备与控制流",
+                            "All devices and control flow",
+                        ))
+                        .small()
+                        .color(tokens.text_muted),
+                    );
+                });
+            });
+        });
+    let bg = ui.interact(
+        frame.response.rect,
+        ui.id().with("overview-type-card"),
+        egui::Sense::click(),
+    );
+    if bg.clicked() {
+        clicked = true;
+    }
+    if bg.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    clicked
+}
+
+#[allow(dead_code)]
+fn overview_device_tile(
+    ui: &mut egui::Ui,
+    lang: Lang,
+    tokens: &Tokens,
+    hud: &HudTokens,
+    t: f32,
+    tile_w: f32,
+    tile_h: f32,
+    device: &DeviceUi,
+    busy_device: Option<u64>,
+    busy_label: &str,
+    latest: &HashMap<(u64, String), Reading>,
+    photo: Option<&egui::TextureHandle>,
+) -> bool {
+    let (status, status_color) =
+        overview_runtime_status(lang, device, busy_device, busy_label);
+    let params = overview_param_lines(lang, device, latest);
+    let mut opened = false;
+    let frame = Frame::NONE
+        .fill(Color32::from_rgb(0x05, 0x0C, 0x14))
+        .stroke(Stroke::new(1.0_f32, hud.line))
+        .corner_radius(CornerRadius::same(6))
+        .inner_margin(Margin::same(10))
+        .show(ui, |ui| {
+            ui.set_width(tile_w - 12.0);
+            ui.set_min_height(tile_h - 12.0);
+            ui.horizontal(|ui| {
+                let glyph = ui.allocate_exact_size(egui::vec2(84.0, 72.0), egui::Sense::hover());
+                if let Some(tex) = photo {
+                    let img = egui::Image::from_texture(tex)
+                        .fit_to_exact_size(egui::vec2(84.0, 72.0))
+                        .corner_radius(CornerRadius::same(4));
+                    ui.put(glyph.0, img);
+                } else {
+                    paint_device_glyph(ui.painter(), glyph.0, device.kind, hud, t);
+                }
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(kind_icon(device.kind))
+                                .small()
+                                .monospace()
+                                .color(hud.cyan),
+                        );
+                        hud_chip(ui, hud, status, status_color);
+                    });
+                    let name = if device.identity.model.trim().is_empty() {
+                        instrument_name(lang, device.kind).to_owned()
+                    } else {
+                        device.identity.model.clone()
+                    };
+                    ui.label(RichText::new(name).strong().color(tokens.text_primary).size(14.0));
+                    ui.label(
+                        RichText::new(&device.identity.manufacturer)
+                            .small()
+                            .color(hud.dim),
+                    );
+                });
+            });
+            ui.add_space(4.0);
+            let serial = if device.identity.serial.trim().is_empty() {
+                short_resource(&device.resource)
+            } else {
+                format!("SN {}", device.identity.serial)
+            };
+            ui.label(
+                RichText::new(serial)
+                    .small()
+                    .monospace()
+                    .color(hud.dim),
+            );
+            ui.label(
+                RichText::new(short_resource(&device.resource))
+                    .small()
+                    .monospace()
+                    .color(Color32::from_rgba_unmultiplied(74, 227, 255, 90)),
+            );
+            ui.add_space(6.0);
+            for (k, v) in params.iter().take(4) {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(k)
+                            .small()
+                            .monospace()
+                            .color(hud.dim),
+                    );
+                    ui.label(
+                        RichText::new(v)
+                            .small()
+                            .monospace()
+                            .color(hud.cyan),
+                    );
+                });
+            }
+            if !device.last_activity.is_empty() {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(format!("▶ {}", device.last_activity))
+                        .small()
+                        .monospace()
+                        .color(status_color),
+                );
+            }
+        });
+    let hit = ui.interact(
+        frame.response.rect,
+        ui.id().with(("overview-tile", device.id)),
+        egui::Sense::click(),
+    );
+    if hit.hovered() {
+        ui.painter().rect_stroke(
+            frame.response.rect,
+            CornerRadius::same(6),
+            Stroke::new(1.6_f32, hud.cyan),
+            egui::StrokeKind::Outside,
+        );
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    if device.acquiring && !device.paused {
+        let pulse = 0.35 + 0.65 * (t * 4.2).sin().abs();
+        let edge = Rect::from_min_size(
+            frame.response.rect.min,
+            egui::vec2(3.0, frame.response.rect.height()),
+        );
+        ui.painter().rect_filled(
+            edge,
+            CornerRadius::ZERO,
+            Color32::from_rgba_unmultiplied(
+                hud.ok.r(),
+                hud.ok.g(),
+                hud.ok.b(),
+                (70.0 + 140.0 * pulse) as u8,
+            ),
+        );
+    }
+    if hit.clicked() {
+        opened = true;
+    }
+    opened
+}
+
+fn overview_runtime_status(
+    lang: Lang,
+    device: &DeviceUi,
+    busy_device: Option<u64>,
+    busy_label: &str,
+) -> (String, Color32) {
+    if busy_device == Some(device.id) {
+        let label = if busy_label.trim().is_empty() {
+            text(lang, "作业中", "BUSY").to_owned()
+        } else {
+            busy_label.to_owned()
+        };
+        return (label, Color32::from_rgb(0xFF, 0xD6, 0x0A));
+    }
+    if device.acquiring && device.paused {
+        return (text(lang, "保持", "HOLD").into(), Color32::from_rgb(0xFF, 0x9F, 0x0A));
+    }
+    if device.acquiring {
+        return (text(lang, "采集", "LIVE").into(), Color32::from_rgb(0x30, 0xD1, 0x58));
+    }
+    if device.controls.probe_rtt_on {
+        return ("RTT".into(), Color32::from_rgb(0x4A, 0xE3, 0xFF));
+    }
+    if device.controls.source_outputs.iter().any(|on| *on) {
+        return (text(lang, "输出开", "OUTPUT").into(), Color32::from_rgb(0x30, 0xD1, 0x58));
+    }
+    if device.controls.load_input {
+        return (text(lang, "带载", "SINK").into(), Color32::from_rgb(0x30, 0xD1, 0x58));
+    }
+    (text(lang, "待机", "STANDBY").into(), Color32::from_rgb(0x7A, 0xC8, 0xE0))
+}
+
+fn overview_status_key(device: &DeviceUi, busy_device: Option<u64>) -> &'static str {
+    if busy_device == Some(device.id) {
+        "busy"
+    } else if device.acquiring && device.paused {
+        "hold"
+    } else if device.acquiring {
+        "live"
+    } else if device.controls.probe_rtt_on {
+        "rtt"
+    } else if device.controls.source_outputs.iter().any(|on| *on) {
+        "output"
+    } else if device.controls.load_input {
+        "sink"
+    } else {
+        "standby"
+    }
+}
+
+fn overview_param_lines(
+    lang: Lang,
+    device: &DeviceUi,
+    latest: &HashMap<(u64, String), Reading>,
+) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let id = device.id;
+    let fmt = |r: &Reading| format!("{:.4} {}", r.value, r.unit);
+    match device.kind {
+        InstrumentKind::Oscilloscope => {
+            let ch: String = (0..4)
+                .filter(|&i| device.controls.scope_channel_on[i])
+                .map(|i| format!("CH{}", i + 1))
+                .collect::<Vec<_>>()
+                .join(" ");
+            out.push((
+                text(lang, "通道", "CH").into(),
+                if ch.is_empty() { "—".into() } else { ch },
+            ));
+            out.push((
+                "s/div".into(),
+                format!("{:.3e}", device.controls.scope_timebase),
+            ));
+            out.push((
+                text(lang, "触发", "TRG").into(),
+                format!(
+                    "{} {} {:.3}V",
+                    device.controls.trigger_source,
+                    device.controls.trigger_slope,
+                    device.controls.trigger_level
+                ),
+            ));
+            if let Some(meas) = device.controls.scope_meas_results.iter().flatten().next() {
+                out.push((text(lang, "测量", "MEAS").into(), meas.clone()));
+            }
+        }
+        InstrumentKind::DcSource => {
+            for i in 0..device.capabilities.channels.max(1).min(4) as usize {
+                let ch = i + 1;
+                let on = if device.controls.source_outputs[i] {
+                    "ON"
+                } else {
+                    "OFF"
+                };
+                let v = latest_pair(latest, id, &format!("CH{ch} Voltage"))
+                    .map(|(v, _)| v)
+                    .unwrap_or(device.controls.source_voltages[i]);
+                let a = latest_pair(latest, id, &format!("CH{ch} Current"))
+                    .map(|(a, _)| a)
+                    .unwrap_or(device.controls.source_currents[i]);
+                out.push((format!("CH{ch}"), format!("{v:.3} V  {a:.3} A  {on}")));
+            }
+        }
+        InstrumentKind::ElectronicLoad => {
+            out.push((
+                text(lang, "模式", "MODE").into(),
+                device.controls.load_mode.clone(),
+            ));
+            out.push((
+                text(lang, "电平", "LVL").into(),
+                format!("{:.4}", device.controls.load_level),
+            ));
+            out.push((
+                text(lang, "输入", "INP").into(),
+                if device.controls.load_input {
+                    "ON".into()
+                } else {
+                    "OFF".into()
+                },
+            ));
+        }
+        InstrumentKind::Multimeter => {
+            out.push((
+                text(lang, "功能", "FUNC").into(),
+                device.controls.dmm_function.label().into(),
+            ));
+            if let Some((_, r)) = latest.iter().find(|((did, _), _)| *did == id) {
+                out.push((text(lang, "读数", "READ").into(), fmt(r)));
+            }
+        }
+        InstrumentKind::DebugProbe => {
+            out.push((
+                text(lang, "目标", "TGT").into(),
+                if device.controls.probe_chip.trim().is_empty() {
+                    "DP / AUTO".into()
+                } else {
+                    device.controls.probe_chip.clone()
+                },
+            ));
+            out.push((
+                "RTT".into(),
+                if device.controls.probe_rtt_on {
+                    format!("CH{}", device.controls.probe_rtt_channel)
+                } else {
+                    "OFF".into()
+                },
+            ));
+            if !device.controls.probe_flash_path.is_empty() {
+                out.push((
+                    text(lang, "烧录", "FW").into(),
+                    device.controls.probe_flash_path.clone(),
+                ));
+            }
+        }
+        InstrumentKind::UsbBridge => {
+            let mode = match device.controls.bridge_tab {
+                1 => "I2C",
+                2 => "GPIO",
+                _ => "SPI",
+            };
+            out.push((text(lang, "总线", "BUS").into(), mode.into()));
+            if device.controls.bridge_tab == 0 {
+                out.push((
+                    "SPI".into(),
+                    format!(
+                        "m{} {} Hz",
+                        device.controls.bridge_spi_mode, device.controls.bridge_spi_hz
+                    ),
+                ));
+            } else if device.controls.bridge_tab == 1 {
+                out.push((
+                    "I2C".into(),
+                    format!("0x{}", device.controls.bridge_i2c_addr),
+                ));
+            } else {
+                out.push((
+                    "GPIO".into(),
+                    format!("P{}", device.controls.bridge_gpio_pin),
+                ));
+            }
+        }
+        InstrumentKind::Generic => {
+            out.push(("SCPI".into(), device.controls.console.clone()));
+        }
+    }
+    for ((did, ch), reading) in latest {
+        if *did != id || out.len() >= 4 {
+            continue;
+        }
+        if out.iter().any(|(k, _)| k == ch) {
+            continue;
+        }
+        out.push((ch.clone(), fmt(reading)));
+    }
+    out
+}
+
+fn paint_device_glyph(
+    painter: &egui::Painter,
+    rect: Rect,
+    kind: InstrumentKind,
+    hud: &HudTokens,
+    t: f32,
+) {
+    let r = rect.shrink(4.0);
+    painter.rect_filled(
+        r,
+        CornerRadius::same(4),
+        Color32::from_rgba_unmultiplied(10, 28, 40, 180),
+    );
+    painter.rect_stroke(
+        r,
+        CornerRadius::same(4),
+        Stroke::new(1.0_f32, hud.line),
+        egui::StrokeKind::Inside,
+    );
+    let c = r.center();
+    let glow = 0.35 + 0.25 * (t * 2.4).sin();
+    let accent = Color32::from_rgba_unmultiplied(
+        hud.cyan.r(),
+        hud.cyan.g(),
+        hud.cyan.b(),
+        (90.0 + 120.0 * glow) as u8,
+    );
+    let stroke = Stroke::new(1.4_f32, hud.cyan);
+    match kind {
+        InstrumentKind::Oscilloscope => {
+            let screen = Rect::from_min_max(
+                egui::pos2(r.left() + 8.0, r.top() + 8.0),
+                egui::pos2(r.right() - 22.0, r.bottom() - 10.0),
+            );
+            painter.rect_filled(screen, CornerRadius::same(2), Color32::from_rgb(4, 18, 28));
+            painter.rect_stroke(screen, CornerRadius::same(2), stroke, egui::StrokeKind::Inside);
+            let mut pts = Vec::new();
+            for i in 0..24 {
+                let x = screen.left() + screen.width() * (i as f32 / 23.0);
+                let y = screen.center().y
+                    + (t * 4.0 + i as f32 * 0.45).sin() * screen.height() * 0.28;
+                pts.push(egui::pos2(x, y));
+            }
+            painter.add(egui::Shape::line(pts, Stroke::new(1.2_f32, accent)));
+            for i in 0..3 {
+                painter.circle_filled(
+                    egui::pos2(r.right() - 11.0, r.top() + 16.0 + i as f32 * 14.0),
+                    4.0,
+                    hud.line,
+                );
+            }
+        }
+        InstrumentKind::DcSource => {
+            for i in 0..3 {
+                let y = r.top() + 14.0 + i as f32 * 16.0;
+                let bar = Rect::from_min_size(egui::pos2(r.left() + 10.0, y), egui::vec2(r.width() * 0.62, 9.0));
+                painter.rect_filled(bar, CornerRadius::same(1), Color32::from_rgb(8, 32, 44));
+                painter.rect_filled(
+                    Rect::from_min_size(
+                        bar.min,
+                        egui::vec2(bar.width() * (0.35 + 0.15 * i as f32), bar.height()),
+                    ),
+                    CornerRadius::same(1),
+                    accent,
+                );
+                painter.circle_filled(egui::pos2(r.right() - 14.0, y + 4.5), 4.0, hud.ok);
+            }
+        }
+        InstrumentKind::ElectronicLoad => {
+            let top = egui::pos2(c.x, r.top() + 10.0);
+            let mid = egui::pos2(c.x, c.y + 4.0);
+            painter.line_segment([top, mid], stroke);
+            painter.line_segment(
+                [egui::pos2(c.x - 18.0, mid.y), egui::pos2(c.x + 18.0, mid.y)],
+                stroke,
+            );
+            painter.add(egui::Shape::line(
+                vec![
+                    egui::pos2(c.x - 10.0, mid.y),
+                    egui::pos2(c.x - 4.0, mid.y + 10.0),
+                    egui::pos2(c.x + 4.0, mid.y - 2.0),
+                    egui::pos2(c.x + 10.0, mid.y + 16.0),
+                ],
+                Stroke::new(1.6_f32, accent),
+            ));
+        }
+        InstrumentKind::Multimeter => {
+            let face = Rect::from_center_size(c, egui::vec2(r.width() - 18.0, 28.0));
+            painter.rect_filled(face, CornerRadius::same(2), Color32::from_rgb(4, 20, 16));
+            painter.rect_stroke(face, CornerRadius::same(2), stroke, egui::StrokeKind::Inside);
+            painter.text(
+                face.center(),
+                egui::Align2::CENTER_CENTER,
+                "3.300",
+                egui::FontId::monospace(13.0),
+                hud.ok,
+            );
+        }
+        InstrumentKind::DebugProbe => {
+            let body = Rect::from_center_size(
+                egui::pos2(c.x - 6.0, c.y),
+                egui::vec2(40.0, 22.0),
+            );
+            painter.rect_filled(body, CornerRadius::same(3), Color32::from_rgb(12, 36, 52));
+            painter.rect_stroke(body, CornerRadius::same(3), stroke, egui::StrokeKind::Inside);
+            for i in 0..4 {
+                let y = body.top() + 5.0 + i as f32 * 4.0;
+                painter.line_segment(
+                    [egui::pos2(body.right(), y), egui::pos2(r.right() - 8.0, y)],
+                    Stroke::new(1.0_f32, accent),
+                );
+            }
+            painter.rect_filled(
+                Rect::from_min_size(egui::pos2(body.left() - 10.0, body.top() + 4.0), egui::vec2(10.0, 14.0)),
+                CornerRadius::same(1),
+                hud.cyan,
+            );
+        }
+        InstrumentKind::UsbBridge => {
+            let chip = Rect::from_center_size(c, egui::vec2(36.0, 28.0));
+            painter.rect_filled(chip, CornerRadius::same(2), Color32::from_rgb(12, 28, 20));
+            painter.rect_stroke(chip, CornerRadius::same(2), stroke, egui::StrokeKind::Inside);
+            for i in 0..4 {
+                let y = chip.top() + 5.0 + i as f32 * 6.0;
+                painter.line_segment(
+                    [egui::pos2(chip.left() - 10.0, y), egui::pos2(chip.left(), y)],
+                    Stroke::new(1.1_f32, accent),
+                );
+                painter.line_segment(
+                    [egui::pos2(chip.right(), y), egui::pos2(chip.right() + 10.0, y)],
+                    Stroke::new(1.1_f32, accent),
+                );
+            }
+        }
+        InstrumentKind::Generic => {
+            painter.text(
+                c,
+                egui::Align2::CENTER_CENTER,
+                "SCPI",
+                egui::FontId::monospace(12.0),
+                hud.cyan,
+            );
+        }
+    }
+}
+
+fn paint_mesh_icon(painter: &egui::Painter, rect: Rect, selected: bool) {
+    let cyan = Color32::from_rgb(0x4A, 0xE3, 0xFF);
+    let dim = Color32::from_rgba_unmultiplied(0x4A, 0xE3, 0xFF, if selected { 200 } else { 110 });
+    let nodes = [
+        egui::pos2(rect.left() + 8.0, rect.center().y),
+        egui::pos2(rect.center().x + 2.0, rect.top() + 6.0),
+        egui::pos2(rect.center().x + 2.0, rect.bottom() - 6.0),
+        egui::pos2(rect.right() - 6.0, rect.center().y),
+    ];
+    for (a, b) in [(0, 1), (0, 2), (1, 3), (2, 3)] {
+        painter.line_segment([nodes[a], nodes[b]], Stroke::new(1.1_f32, dim));
+    }
+    for (i, p) in nodes.iter().enumerate() {
+        painter.circle_filled(*p, if i == 0 { 3.4 } else { 2.6 }, cyan);
+    }
+}
+
+fn sanitize_photo_stem(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    trimmed
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect()
 }
 
 fn short_resource(resource: &str) -> String {
@@ -5547,6 +8894,13 @@ fn publish_instrument_event(bus: &crate::backend::EventBus, event: &Event) {
             bus.publish(
                 "instrument.command_done",
                 serde_json::json!({ "device_id": id, "job_id": job_id, "response": response }),
+                None,
+            );
+        }
+        Event::SessionOutput { id, text } => {
+            bus.publish(
+                "instrument.output",
+                serde_json::json!({ "device_id": id, "text": text }),
                 None,
             );
         }

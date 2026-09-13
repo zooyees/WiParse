@@ -54,14 +54,14 @@ pub fn tr(lang: Lang, key: &str) -> String {
         (Lang::Zh, "about.notes_section") => "本版更新",
         (Lang::En, "about.notes_section") => "What's New",
         (Lang::Zh, "about.notes") => "\
-• Testing Hub：左侧「插件 | 市场」分段，可浏览/安装本机或远程目录\n\
-• 本机 127.0.0.1 市场可明文 HTTP；搜索/刷新与分段控件不再重叠\n\
-• 打包同步 dist 日常副本，并产出 Windows 市场演示包\n\
+• 设备总览：数字孪生前面板；直流电源 LCD 按真实通道显示 V/A/W\n\
+• 调试探针（J-Link/ST-Link/DAP）与 FT4222 USB 桥；发现列表可连接全部\n\
+• CLI / MCP：instrument.overview，以及 probe / bridge 命令\n\
 详细记录见 docs/CHANGELOG.md",
         (Lang::En, "about.notes") => "\
-• Testing Hub: Plugins | Market segment; browse and install from a local or remote catalog\n\
-• Loopback HTTP marketplace works without extra flags; search/refresh no longer overlap\n\
-• Packaging refreshes dist/ and ships a Windows marketplace demo zip\n\
+• Device overview digital twin; DC source LCD follows real channels (V/A/W)\n\
+• Debug probes (J-Link/ST-Link/DAP) and FT4222 USB bridge; Connect All\n\
+• CLI / MCP: instrument.overview plus probe / bridge commands\n\
 Details: docs/CHANGELOG.md",
         (Lang::Zh, "about.close") => "关闭",
         (Lang::En, "about.close") => "Close",
@@ -107,6 +107,10 @@ Details: docs/CHANGELOG.md",
         (Lang::En, "tool.tektronix_scope.name") => "Tektronix Scope",
         (Lang::Zh, "tool.instrument_control.name") => "仪表控制",
         (Lang::En, "tool.instrument_control.name") => "Instrument Control",
+        (Lang::Zh, "instrument.debug_probe") => "调试探针",
+        (Lang::En, "instrument.debug_probe") => "Debug Probe",
+        (Lang::Zh, "instrument.usb_bridge") => "USB 桥 (FT4222)",
+        (Lang::En, "instrument.usb_bridge") => "USB Bridge (FT4222)",
         (Lang::Zh, "tool.waveform_analysis.name") => "波形分析",
         (Lang::En, "tool.waveform_analysis.name") => "Waveform Analysis",
         (Lang::Zh, "tool.data_analysis.name") => "数据分析",

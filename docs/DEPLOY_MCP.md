@@ -126,6 +126,11 @@ Agent 习惯：`wiparse_ui`（`op=show` `tab=serial`）→ `wiparse_select`（�
 | 切到串口页 | `show` | `tab=serial` |
 | 切到计算器 | `show` | `tab=calculator` |
 | 切到仪表 | `show` | `tab=instruments` |
+| 设备总览 LCD | `instrument.overview` | — |
+| 连接全部发现设备 | `instrument.connect_all` | — |
+| 打开总览画面 | `instrument.select` | `params={ "overview": true }` |
+| 探针状态 | `instrument.command` | `params={ "device_id": 1, "command": "ProbeStatus" }` |
+| 电源读数 | `instrument.measure` | `params={ "device_id": 1 }` |
 | 切到波形 | `show` | `tab=waveform` |
 | 计算器填参 | `calc.set` | `params={ "card":"lc", "fields":{ "inductance":"10", "capacitance":"100" } }` |
 | 打开波形文件 | `wave.open` | `params={ "path":"D:/waves/scope.csv" }` |
@@ -148,7 +153,7 @@ cd D:\software\WiParse
 
 把 zip 里的 `mcp\wiparse` **整个覆盖**到现有安装目录（与 `WiParse.exe` 相对路径为 `mcp\wiparse`），然后执行第 2 步的 `setup-mcp.cmd`，并**完全退出 Cursor**。
 
-GUI 必须是 **1.1.6+**（含 DDSSS、`instrument.waveform_source` 与阻塞式闭环仪表步骤）。旧 GUI 配新 MCP 会缺方法；只换 MCP 不换 GUI 时，`wiparse_ui` 的 `wave.bus` / `instrument.waveform_source` 会报 unknown method。
+GUI 必须是 **1.1.12+**（含 `instrument.overview`、探针/桥命令与设备总览 LCD）。旧 GUI 配新 MCP 会缺方法；只换 MCP 不换 GUI 时，`wiparse_ui` 的 `instrument.overview` / `wave.bus` / `instrument.waveform_source` 会报 unknown method。
 
 若 Cursor 仍只显示 4～5 个工具：配置已写入但进程没重载，请杀掉所有 Cursor 进程再开。
 
@@ -161,7 +166,7 @@ GUI 必须是 **1.1.6+**（含 DDSSS、`instrument.waveform_source` 与阻塞式
 | Cursor 里没有 wiparse | 确认 mcp.json 已写、路径存在；完全退出 Cursor |
 | 只有旧工具、没有 `wiparse_ui` | 覆盖了旧 `mcp\wiparse` 后必须完全重启 Cursor；确认 `dist\index.js` 来自 1.1.6 zip |
 | `GUI API down` / connect failed | 先开 `WiParse.exe`；或检查 `WIPARSE_URL` 是否与 `WIPARSE_API_BIND` 一致 |
-| `unknown method: ui.show` / `instrument.waveform_source` / `ui.wave.bus` | GUI 太旧，换成 zip 里的 `WiParse.exe`（1.1.6+） |
+| `unknown method: ui.show` / `instrument.overview` / `instrument.waveform_source` / `ui.wave.bus` | GUI 太旧，换成 zip 里的 `WiParse.exe`（1.1.12+） |
 | `Cannot find module @modelcontextprotocol/sdk` | 在 `mcp\wiparse` 跑 `npm install --omit=dev`，或改用带 `node_modules` 的 zip |
 | `node` 不是内部命令 / Cursor 起不来 MCP | `command` 改成 `C:/Program Files/nodejs/node.exe`（或 `where.exe node` 的路径） |
 | 选口失败、监控已开 | 先在 GUI 停监控，或让 Agent 调 stop 再 `wiparse_select` |

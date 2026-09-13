@@ -6,6 +6,31 @@
 
 ---
 
+## 1.1.12 — 2026-09-13
+
+仪表控制增加调试探针 / FT4222 与 **设备总览** 数字孪生（前面板 LCD 跟实测走）。CLI / MCP 可读取同一套状态。界面标签不变。
+
+### 仪表控制
+
+- 扫描合并 USB VID/PID：J-Link / ST-Link / CMSIS-DAP（`debug_probe`）与 FT4222H（`usb_bridge`），地址形如 `probe://jlink/serial=…`、`bridge://ft4222/serial=…`。
+- 探针（probe-rs USB，**不捆绑** `JLinkARM.dll`）：Halt / Run / 复位、寄存器、擦除、速度、内存、HEX/BIN/ELF 烧录、RTT。ST-Link 被 Cube 独占时提示 WinUSB。
+- FT4222：无 DLL 仍可识别；SPI/I2C/GPIO 需 `LibFT4222.dll`（exe 旁或 `vendor/ftdi`，`scripts/sync-ftdi-dlls.ps1`）。
+- 左侧 **设备总览**：数字孪生工位。直流电源按真实通道画 LCD（设定或实测 V/A/W + 端子灯）；示波器 / 负载 / 万用表 / 探针 / 桥同步前面板。发现列表 **连接全部**。
+- `instrument.command` 含 `Probe*` / `Bridge*`；Hub `filter.kind = debug_probe | usb_bridge`。调试模式提供 DEMO 工作区。
+
+### CLI / HTTP / MCP
+
+- CLI：`wiparse probe` / `wiparse bridge` / `ui instrument connect-all` / `ui instrument overview`；`ui instrument list --kind`；`ui instrument select --overview`。
+- HTTP：`instrument.overview`（孪生 LCD JSON）；`instrument.list` 含 `status` / `readings`；`ui.instrument.select` 支持 `overview` / `kind`。
+- MCP `wiparse_ui`：`op=instrument.overview`；`instrument.command` 可发 Probe\* / Bridge\*。GUI 1.1.12+。
+
+### 兼容性
+
+- 配置键仍为 `test_tool`。GUI 主标签与 1.1.11 相同。
+- 未连接探针 / 桥时行为与 1.1.11 相同。FTDI DLL 仍不进 git。
+
+---
+
 ## 1.1.11 — 2026-09-12
 
 Testing Hub 插件市场可在应用内浏览/安装；Hub 布局简化并消除控件重叠。界面仍为原标签（串口 / 仪表 / 波形 / 数据 / 集成测试 / 报告 / 计算器）。

@@ -32,3 +32,9 @@ dist/wiparse-linux-marketplace-demo/
 dist/wiparse-linux-marketplace-demo.tar.gz
 dist/wiparse-win-marketplace-demo/
 dist/wiparse-win-marketplace-demo.zip
+
+# FTDI redistributable DLLs (not in git; copy next to WiParse.exe)
+vendor/ftdi/*.dll
+vendor/ftdi/*.DLL
+dist/*.dll
+dist/vendor/

@@ -1,6 +1,7 @@
 //! WiParse CLI — JSON envelope compatible with Python WiParseCLI.
 
 mod attach;
+mod hw;
 mod output;
 
 use clap::{Parser, Subcommand};
@@ -86,6 +87,12 @@ enum Commands {
     /// VISA oscilloscope shortcuts (local). GUI instruments: api invoke instrument.*.
     #[command(subcommand, arg_required_else_help = true)]
     Scope(ScopeCmd),
+    /// Debug probe (J-Link / ST-Link / CMSIS-DAP). Prefers GUI session; `--local` is one-shot.
+    #[command(subcommand, arg_required_else_help = true)]
+    Probe(ProbeCmd),
+    /// FT4222 USB-SPI/I2C/GPIO. Prefers GUI session; `--local` is one-shot.
+    #[command(subcommand, arg_required_else_help = true)]
+    Bridge(BridgeCmd),
     /// Drive the running WiParse.exe UI (tabs, panels, inputs). Requires GUI.
     #[command(subcommand, arg_required_else_help = true)]
     Ui(UiCmd),
@@ -314,6 +321,234 @@ enum ScopeCmd {
 }
 
 #[derive(Subcommand, Debug)]
+enum ProbeCmd {
+    /// List J-Link / ST-Link / CMSIS-DAP (GUI: connected + scan cache; --local: USB).
+    List,
+    Connect {
+        #[arg(long)]
+        resource: String,
+        #[arg(long)]
+        chip: Option<String>,
+    },
+    Halt {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        chip: Option<String>,
+        #[arg(long)]
+        demo: bool,
+    },
+    Run {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        chip: Option<String>,
+        #[arg(long)]
+        demo: bool,
+    },
+    Reset {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        chip: Option<String>,
+        #[arg(long)]
+        hardware: bool,
+        #[arg(long)]
+        demo: bool,
+    },
+    Status {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        chip: Option<String>,
+        #[arg(long)]
+        demo: bool,
+    },
+    Regs {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        chip: Option<String>,
+        #[arg(long)]
+        demo: bool,
+    },
+    Flash {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        chip: Option<String>,
+        #[arg(long)]
+        path: String,
+        #[arg(long)]
+        verify: bool,
+        #[arg(long)]
+        demo: bool,
+    },
+    #[command(name = "mem-read")]
+    MemRead {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        chip: Option<String>,
+        #[arg(long)]
+        address: String,
+        #[arg(long, default_value_t = 64)]
+        len: u32,
+        #[arg(long)]
+        demo: bool,
+    },
+    #[command(name = "mem-write")]
+    MemWrite {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        chip: Option<String>,
+        #[arg(long)]
+        address: String,
+        #[arg(long)]
+        hex: String,
+        #[arg(long)]
+        demo: bool,
+    },
+        Erase {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        chip: Option<String>,
+        #[arg(long)]
+        demo: bool,
+    },
+    Speed {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        chip: Option<String>,
+        #[arg(long, default_value_t = 4_000)]
+        khz: u32,
+        #[arg(long)]
+        demo: bool,
+    },
+    #[command(name = "rtt-start")]
+    RttStart {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        chip: Option<String>,
+        #[arg(long, default_value_t = 0)]
+        channel: u32,
+        #[arg(long)]
+        demo: bool,
+    },
+    #[command(name = "rtt-stop")]
+    RttStop {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        chip: Option<String>,
+        #[arg(long)]
+        demo: bool,
+    },
+    #[command(name = "rtt-read")]
+    RttRead {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        chip: Option<String>,
+        #[arg(long)]
+        demo: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum BridgeCmd {
+    List,
+    Connect {
+        #[arg(long)]
+        resource: String,
+    },
+    Info {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        demo: bool,
+    },
+    Spi {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long, default_value_t = 0)]
+        mode: u8,
+        #[arg(long, default_value_t = 1_000_000)]
+        clock_hz: u32,
+        #[arg(long, default_value = "")]
+        write: String,
+        #[arg(long, default_value_t = 4)]
+        read_len: u32,
+        #[arg(long)]
+        demo: bool,
+    },
+    I2c {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        addr: String,
+        #[arg(long, default_value = "")]
+        write: String,
+        #[arg(long, default_value_t = 0)]
+        read_len: u32,
+        #[arg(long, default_value_t = 100_000)]
+        clock_hz: u32,
+        #[arg(long)]
+        demo: bool,
+    },
+    Gpio {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long, default_value_t = 0)]
+        pin: u8,
+        #[arg(long)]
+        output: Option<bool>,
+        #[arg(long)]
+        high: Option<bool>,
+        #[arg(long)]
+        demo: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 enum UiCmd {
     /// Snapshot active tab, panels, serial, instruments, waveform, data analysis, calculator.
     State,
@@ -482,12 +717,25 @@ enum UiCalcCmd {
 
 #[derive(Subcommand, Debug)]
 enum UiInstrumentCmd {
+    /// Open a device console, a type card, or the digital-twin overview.
     Select {
         #[arg(long)]
-        id: u64,
+        id: Option<u64>,
+        /// Show 设备总览 (digital twin bench).
+        #[arg(long)]
+        overview: bool,
+        /// Instrument kind (`oscilloscope`, `dc_source`, `debug_probe`, …) or `overview`.
+        #[arg(long)]
+        kind: Option<String>,
     },
     Scan,
-    List,
+    /// Connected sessions + discovered resources (optional `--kind` filter).
+    List {
+        #[arg(long)]
+        kind: Option<String>,
+    },
+    /// Digital-twin snapshot: LCD/channel live state for every session.
+    Overview,
     Connect {
         #[arg(long)]
         resource: String,
@@ -537,6 +785,9 @@ enum UiInstrumentCmd {
         #[arg(long = "json")]
         command_json: Option<String>,
     },
+    /// Connect every discovered instrument that is not already open.
+    #[command(name = "connect-all")]
+    ConnectAll,
 }
 
 fn opts(cli: &Cli) -> OutputOptions {
@@ -876,15 +1127,31 @@ fn map_to_invoke(cli: &Cli) -> Option<(String, serde_json::Value)> {
             let fields: serde_json::Value = serde_json::from_str(params).unwrap_or_else(|_| json!({}));
             Some(("ui.calc.set".into(), json!({ "card": card, "fields": fields })))
         }
-        Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::Select { id })) => Some((
-            "ui.instrument.select".into(),
-            json!({ "device_id": id }),
-        )),
+        Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::Select { id, overview, kind })) => {
+            let mut p = json!({});
+            if let Some(id) = id {
+                p["device_id"] = json!(id);
+            }
+            if *overview {
+                p["overview"] = json!(true);
+            }
+            if let Some(kind) = kind {
+                p["kind"] = json!(kind);
+            }
+            Some(("ui.instrument.select".into(), p))
+        }
         Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::Scan)) => {
             Some(("instrument.scan".into(), json!({})))
         }
-        Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::List)) => {
-            Some(("instrument.list".into(), json!({})))
+        Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::List { kind })) => {
+            let mut p = json!({});
+            if let Some(kind) = kind {
+                p["kind"] = json!(kind);
+            }
+            Some(("instrument.list".into(), p))
+        }
+        Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::Overview)) => {
+            Some(("instrument.overview".into(), json!({})))
         }
         Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::Connect { resource, kind })) => Some((
             "instrument.connect".into(),
@@ -948,6 +1215,11 @@ fn map_to_invoke(cli: &Cli) -> Option<(String, serde_json::Value)> {
                 json!({ "device_id": id, "command": command }),
             ))
         }
+        Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::ConnectAll)) => {
+            Some(("instrument.connect_all".into(), json!({})))
+        }
+        Commands::Probe(cmd) => map_probe_gui(cmd),
+        Commands::Bridge(cmd) => map_bridge_gui(cmd),
         _ => None,
     }
 }
@@ -1420,6 +1692,8 @@ fn run(cli: &Cli, _o: &OutputOptions) -> Result<(String, serde_json::Value), (St
                 .map_err(|e| ("scope.wave".into(), e.to_string()))?;
             Ok(("scope.wave".into(), data))
         }
+        Commands::Probe(cmd) => local_probe(cmd),
+        Commands::Bridge(cmd) => local_bridge(cmd),
     }
 }
 
@@ -1450,4 +1724,397 @@ fn parse_many<'a>(lines: impl Iterator<Item = &'a str>, limit: Option<usize>) ->
         }
     }
     serde_json::json!({ "qi": out, "metrics": metrics, "qi_count": out.len(), "metrics_count": metrics.len() })
+}
+
+fn map_probe_gui(cmd: &ProbeCmd) -> Option<(String, serde_json::Value)> {
+    match cmd {
+        ProbeCmd::List => Some(("instrument.list".into(), json!({ "kind": "debug_probe" }))),
+        ProbeCmd::Connect { resource, chip: _ } => Some((
+            "instrument.connect".into(),
+            json!({ "resource": resource, "kind": "debug_probe" }),
+        )),
+        ProbeCmd::Halt { id, .. } => gui_dev_cmd(*id, json!("ProbeHalt")),
+        ProbeCmd::Run { id, .. } => gui_dev_cmd(*id, json!("ProbeRun")),
+        ProbeCmd::Reset { id, hardware, .. } => gui_dev_cmd(
+            *id,
+            json!({ "ProbeReset": { "hardware": hardware } }),
+        ),
+        ProbeCmd::Status { id, .. } => gui_dev_cmd(*id, json!("ProbeStatus")),
+        ProbeCmd::Regs { id, .. } => gui_dev_cmd(*id, json!("ProbeRegs")),
+        ProbeCmd::Flash {
+            id, path, verify, ..
+        } => gui_dev_cmd(
+            *id,
+            json!({ "ProbeFlash": { "path": path, "verify": verify } }),
+        ),
+        ProbeCmd::MemRead {
+            id, address, len, ..
+        } => gui_dev_cmd(
+            *id,
+            json!({ "ProbeMemRead": { "address": address, "len": len } }),
+        ),
+        ProbeCmd::MemWrite {
+            id, address, hex, ..
+        } => gui_dev_cmd(
+            *id,
+            json!({ "ProbeMemWrite": { "address": address, "data_hex": hex } }),
+        ),
+        ProbeCmd::Erase { id, .. } => gui_dev_cmd(*id, json!("ProbeErase")),
+        ProbeCmd::Speed { id, khz, .. } => {
+            gui_dev_cmd(*id, json!({ "ProbeSpeed": { "khz": khz } }))
+        }
+        ProbeCmd::RttStart { id, channel, .. } => gui_dev_cmd(
+            *id,
+            json!({ "ProbeRttStart": { "up_channel": channel } }),
+        ),
+        ProbeCmd::RttStop { id, .. } => gui_dev_cmd(*id, json!("ProbeRttStop")),
+        ProbeCmd::RttRead { id, .. } => gui_dev_cmd(*id, json!("ProbeRttRead")),
+    }
+}
+
+fn map_bridge_gui(cmd: &BridgeCmd) -> Option<(String, serde_json::Value)> {
+    match cmd {
+        BridgeCmd::List => Some(("instrument.list".into(), json!({ "kind": "usb_bridge" }))),
+        BridgeCmd::Connect { resource } => Some((
+            "instrument.connect".into(),
+            json!({ "resource": resource, "kind": "usb_bridge" }),
+        )),
+        BridgeCmd::Info { id, .. } => gui_dev_cmd(*id, json!("BridgeInfo")),
+        BridgeCmd::Spi {
+            id,
+            mode,
+            clock_hz,
+            write,
+            read_len,
+            ..
+        } => gui_dev_cmd(
+            *id,
+            json!({
+                "BridgeSpi": {
+                    "mode": mode,
+                    "clock_hz": clock_hz,
+                    "write_hex": write,
+                    "read_len": read_len
+                }
+            }),
+        ),
+        BridgeCmd::I2c {
+            id,
+            addr,
+            write,
+            read_len,
+            clock_hz,
+            ..
+        } => gui_dev_cmd(
+            *id,
+            json!({
+                "BridgeI2c": {
+                    "addr": addr,
+                    "write_hex": write,
+                    "read_len": read_len,
+                    "clock_hz": clock_hz
+                }
+            }),
+        ),
+        BridgeCmd::Gpio {
+            id,
+            pin,
+            output,
+            high,
+            ..
+        } => gui_dev_cmd(
+            *id,
+            json!({ "BridgeGpio": { "pin": pin, "dir": output, "value": high } }),
+        ),
+    }
+}
+
+fn gui_dev_cmd(id: Option<u64>, command: serde_json::Value) -> Option<(String, serde_json::Value)> {
+    Some((
+        "instrument.command".into(),
+        json!({ "device_id": id?, "command": command }),
+    ))
+}
+
+fn local_probe(cmd: &ProbeCmd) -> Result<(String, serde_json::Value), (String, String)> {
+    use wiparse_core::instrument::ControlCommand;
+    match cmd {
+        ProbeCmd::List => Ok(("probe.list".into(), hw::list_probes())),
+        ProbeCmd::Connect { .. } => Err((
+            "probe.connect".into(),
+            "connect keeps a session in WiParse.exe; drop --local".into(),
+        )),
+        other => {
+            let (command, resource, chip, demo, name) = match other {
+                ProbeCmd::Halt {
+                    resource,
+                    chip,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::ProbeHalt,
+                    resource,
+                    chip,
+                    *demo,
+                    "probe.halt",
+                ),
+                ProbeCmd::Run {
+                    resource,
+                    chip,
+                    demo,
+                    ..
+                } => (ControlCommand::ProbeRun, resource, chip, *demo, "probe.run"),
+                ProbeCmd::Reset {
+                    resource,
+                    chip,
+                    hardware,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::ProbeReset {
+                        hardware: *hardware,
+                    },
+                    resource,
+                    chip,
+                    *demo,
+                    "probe.reset",
+                ),
+                ProbeCmd::Status {
+                    resource,
+                    chip,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::ProbeStatus,
+                    resource,
+                    chip,
+                    *demo,
+                    "probe.status",
+                ),
+                ProbeCmd::Regs {
+                    resource,
+                    chip,
+                    demo,
+                    ..
+                } => (ControlCommand::ProbeRegs, resource, chip, *demo, "probe.regs"),
+                ProbeCmd::Flash {
+                    resource,
+                    chip,
+                    path,
+                    verify,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::ProbeFlash {
+                        path: path.clone(),
+                        verify: *verify,
+                        base_address: None,
+                    },
+                    resource,
+                    chip,
+                    *demo,
+                    "probe.flash",
+                ),
+                ProbeCmd::MemRead {
+                    resource,
+                    chip,
+                    address,
+                    len,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::ProbeMemRead {
+                        address: address.clone(),
+                        len: *len,
+                    },
+                    resource,
+                    chip,
+                    *demo,
+                    "probe.mem-read",
+                ),
+                ProbeCmd::MemWrite {
+                    resource,
+                    chip,
+                    address,
+                    hex,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::ProbeMemWrite {
+                        address: address.clone(),
+                        data_hex: hex.clone(),
+                    },
+                    resource,
+                    chip,
+                    *demo,
+                    "probe.mem-write",
+                ),
+                ProbeCmd::Erase {
+                    resource,
+                    chip,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::ProbeErase,
+                    resource,
+                    chip,
+                    *demo,
+                    "probe.erase",
+                ),
+                ProbeCmd::Speed {
+                    resource,
+                    chip,
+                    khz,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::ProbeSpeed { khz: *khz },
+                    resource,
+                    chip,
+                    *demo,
+                    "probe.speed",
+                ),
+                ProbeCmd::RttStart {
+                    resource,
+                    chip,
+                    channel,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::ProbeRttStart {
+                        up_channel: *channel,
+                    },
+                    resource,
+                    chip,
+                    *demo,
+                    "probe.rtt-start",
+                ),
+                ProbeCmd::RttStop {
+                    resource,
+                    chip,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::ProbeRttStop,
+                    resource,
+                    chip,
+                    *demo,
+                    "probe.rtt-stop",
+                ),
+                ProbeCmd::RttRead {
+                    resource,
+                    chip,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::ProbeRttRead,
+                    resource,
+                    chip,
+                    *demo,
+                    "probe.rtt-read",
+                ),
+                ProbeCmd::List | ProbeCmd::Connect { .. } => unreachable!(),
+            };
+            let data = if demo {
+                hw::demo_probe(command).map_err(|e| (name.into(), e))?
+            } else {
+                let resource = resource.as_ref().ok_or_else(|| {
+                    (
+                        name.to_string(),
+                        "--local needs --resource (or --demo)".to_string(),
+                    )
+                })?;
+                hw::probe_exec(resource, chip.as_deref(), command)
+                    .map_err(|e| (name.into(), e))?
+            };
+            Ok((name.into(), data))
+        }
+    }
+}
+
+fn local_bridge(cmd: &BridgeCmd) -> Result<(String, serde_json::Value), (String, String)> {
+    use wiparse_core::instrument::ControlCommand;
+    match cmd {
+        BridgeCmd::List => Ok(("bridge.list".into(), hw::list_bridges())),
+        BridgeCmd::Connect { .. } => Err((
+            "bridge.connect".into(),
+            "connect keeps a session in WiParse.exe; drop --local".into(),
+        )),
+        other => {
+            let (command, resource, demo, name) = match other {
+                BridgeCmd::Info {
+                    resource, demo, ..
+                } => (ControlCommand::BridgeInfo, resource, *demo, "bridge.info"),
+                BridgeCmd::Spi {
+                    resource,
+                    mode,
+                    clock_hz,
+                    write,
+                    read_len,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::BridgeSpi {
+                        mode: *mode,
+                        clock_hz: *clock_hz,
+                        cs: 0,
+                        write_hex: write.clone(),
+                        read_len: *read_len,
+                    },
+                    resource,
+                    *demo,
+                    "bridge.spi",
+                ),
+                BridgeCmd::I2c {
+                    resource,
+                    addr,
+                    write,
+                    read_len,
+                    clock_hz,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::BridgeI2c {
+                        addr: addr.clone(),
+                        write_hex: write.clone(),
+                        read_len: *read_len,
+                        clock_hz: *clock_hz,
+                    },
+                    resource,
+                    *demo,
+                    "bridge.i2c",
+                ),
+                BridgeCmd::Gpio {
+                    resource,
+                    pin,
+                    output,
+                    high,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::BridgeGpio {
+                        pin: *pin,
+                        dir: *output,
+                        value: *high,
+                    },
+                    resource,
+                    *demo,
+                    "bridge.gpio",
+                ),
+                BridgeCmd::List | BridgeCmd::Connect { .. } => unreachable!(),
+            };
+            let data = if demo {
+                hw::demo_bridge(command).map_err(|e| (name.into(), e))?
+            } else {
+                let resource = resource.as_ref().ok_or_else(|| {
+                    (
+                        name.to_string(),
+                        "--local needs --resource (or --demo)".to_string(),
+                    )
+                })?;
+                hw::bridge_exec(resource, command).map_err(|e| (name.into(), e))?
+            };
+            Ok((name.into(), data))
+        }
+    }
 }

@@ -26,6 +26,8 @@ pub enum InstrumentKind {
     DcSource,
     ElectronicLoad,
     Multimeter,
+    DebugProbe,
+    UsbBridge,
     Generic,
 }
 
@@ -36,6 +38,8 @@ impl InstrumentKind {
             Self::DcSource => "DC Source",
             Self::ElectronicLoad => "Electronic Load",
             Self::Multimeter => "Multimeter",
+            Self::DebugProbe => "Debug Probe",
+            Self::UsbBridge => "USB Bridge",
             Self::Generic => "Generic SCPI",
         }
     }
@@ -309,16 +313,26 @@ pub fn list_resources_with_library(
 }
 
 /// Discover VISA resources and classify each by probing `*IDN?`.
-///
-/// Classification uses [`detect_profile`] so USB/LAN results can be routed to the
-/// matching instrument card (scope / source / load / DMM).
+/// USB debug probes / FT4222 are merged in from VID/PID enumeration.
 pub fn discover_resources_with_library(
     library: Option<&str>,
     timeout_ms: u32,
 ) -> Result<Vec<ResourceInfo>, InstrumentError> {
-    let mut resources = list_resources_with_library(library)?;
+    let usb = crate::usb::discover_usb_instruments();
+    let visa = list_resources_with_library(library);
+    let mut resources = match visa {
+        Ok(list) => list,
+        Err(error) if usb.is_empty() => return Err(error),
+        Err(error) => {
+            tracing::warn!("VISA scan failed, USB devices still listed: {error}");
+            Vec::new()
+        }
+    };
     let probe_timeout = timeout_ms.clamp(500, 10_000);
     for resource in &mut resources {
+        if crate::usb::is_usb_session_address(&resource.address) {
+            continue;
+        }
         match ScpiSession::open_with_library(&resource.address, probe_timeout, library) {
             Ok(mut session) => match session.identify() {
                 Ok(identity) => {
@@ -340,6 +354,11 @@ pub fn discover_resources_with_library(
             }
         }
     }
+    for item in usb {
+        if !resources.iter().any(|r| r.address == item.address) {
+            resources.push(item);
+        }
+    }
     resources.sort_by(|a, b| {
         kind_rank(a.kind)
             .cmp(&kind_rank(b.kind))
@@ -354,8 +373,10 @@ fn kind_rank(kind: Option<InstrumentKind>) -> u8 {
         Some(InstrumentKind::DcSource) => 1,
         Some(InstrumentKind::ElectronicLoad) => 2,
         Some(InstrumentKind::Multimeter) => 3,
-        Some(InstrumentKind::Generic) => 4,
-        None => 5,
+        Some(InstrumentKind::DebugProbe) => 4,
+        Some(InstrumentKind::UsbBridge) => 5,
+        Some(InstrumentKind::Generic) => 6,
+        None => 7,
     }
 }
 
@@ -428,6 +449,8 @@ impl DemoTransport {
                 "Keysight Technologies,34461A,DEMO001,A.03.00-02.40".into()
             }
             InstrumentKind::Generic => "WiParse,GENERIC-DEMO,DEMO001,1.0".into(),
+            InstrumentKind::DebugProbe => "SEGGER,J-Link,DEMO001,demo".into(),
+            InstrumentKind::UsbBridge => "FTDI,FT4222H,DEMO001,demo".into(),
         };
         Self {
             kind,

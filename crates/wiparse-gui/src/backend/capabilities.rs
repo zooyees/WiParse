@@ -75,9 +75,22 @@ fn method_catalog() -> Vec<Value> {
         json!({"method": "scope.wave", "params": {"index": 0, "channel": "CH1", "points": 10000}}),
         json!({"method": "instrument.scan", "params": {}, "stateful": true}),
         json!({"method": "instrument.list", "params": {}, "stateful": true}),
+        json!({"method": "instrument.overview", "params": {}, "stateful": true}),
         json!({"method": "instrument.connect", "params": {"resource": "TCPIP0::...", "kind": "oscilloscope"}, "stateful": true}),
+        json!({"method": "instrument.connect_all", "params": {}, "stateful": true}),
         json!({"method": "instrument.disconnect", "params": {"device_id": 1}, "stateful": true}),
         json!({"method": "instrument.command", "params": {"device_id": 1, "command": {"RawQuery": "*IDN?"}}, "stateful": true}),
+        json!({"method": "instrument.command", "params": {"device_id": 1, "command": "ProbeStatus"}, "stateful": true}),
+        json!({"method": "instrument.command", "params": {"device_id": 1, "command": "ProbeRegs"}, "stateful": true}),
+        json!({"method": "instrument.command", "params": {"device_id": 1, "command": "ProbeErase"}, "stateful": true}),
+        json!({"method": "instrument.command", "params": {"device_id": 2, "command": "BridgeInfo"}, "stateful": true}),
+        json!({"method": "instrument.command", "params": {"device_id": 1, "command": {"ProbeFlash": {"path": "firmware.hex", "verify": true}}}, "stateful": true}),
+        json!({"method": "instrument.command", "params": {"device_id": 1, "command": {"ProbeMemRead": {"address": "08000000", "len": 64}}}, "stateful": true}),
+        json!({"method": "instrument.command", "params": {"device_id": 1, "command": {"ProbeSpeed": {"khz": 4000}}}, "stateful": true}),
+        json!({"method": "instrument.command", "params": {"device_id": 1, "command": {"ProbeRttStart": {"up_channel": 0}}}, "stateful": true}),
+        json!({"method": "ui.instrument.select", "params": {"overview": true}, "stateful": true}),
+        json!({"method": "instrument.command", "params": {"device_id": 2, "command": {"BridgeSpi": {"mode": 0, "clock_hz": 1000000, "write_hex": "9F", "read_len": 4}}}, "stateful": true}),
+        json!({"method": "instrument.command", "params": {"device_id": 2, "command": {"BridgeI2c": {"addr": "50", "write_hex": "00", "read_len": 2}}}, "stateful": true}),
         json!({"method": "instrument.measure", "params": {"device_id": 1}, "stateful": true}),
         json!({"method": "instrument.capture", "params": {"device_id": 1}, "stateful": true}),
         json!({"method": "instrument.waveform", "params": {"device_id": 1, "channel": 1, "points": 1000}, "stateful": true}),
@@ -127,7 +140,9 @@ pub fn is_stateful(method: &str) -> bool {
             | "serial.read"
             | "instrument.scan"
             | "instrument.list"
+            | "instrument.overview"
             | "instrument.connect"
+            | "instrument.connect_all"
             | "instrument.disconnect"
             | "instrument.command"
             | "instrument.measure"

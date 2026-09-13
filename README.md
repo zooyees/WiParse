@@ -2,9 +2,9 @@
 
 **[中文](#中文)** · **[English](#english)**
 
-无线充电（Qi）测试与工位工具。当前版本 **1.1.11**（以工作区 `Cargo.toml` 的 `workspace.package.version` 为准）。
+无线充电（Qi）测试与工位工具。当前版本 **1.1.12**（以工作区 `Cargo.toml` 的 `workspace.package.version` 为准）。
 
-Wireless charging (Qi) lab and station utility. Current version **1.1.11**.
+Wireless charging (Qi) lab and station utility. Current version **1.1.12**.
 
 许可：**Proprietary**。本仓库不是通用示波器软件，也不是面向公网的服务。
 
@@ -32,6 +32,7 @@ WiParse 面向 **Qi 无线充电研发台、产线工位和闭环测试**：把�
 
 - 看清 ASK / FSK 报文，并按 Qi 包名做协议解析（例如 ID / CE / RP，而不是把某个 header 写死进引擎）。
 - 在报文出现的上升沿停示波器、截图、读取波形源文件（ISF），形成可复查的证据包。
+- 在仪表页 **设备总览** 里看数字孪生工位：电源按真实通道画 LCD（实测 V/A/W），示波器 / 负载 / 万用表 / 探针 / FT4222 同步前面板状态。
 - 离线打开 Tek / Rigol 波形，做 I2C / SPI / UART / I2S / **DDSSS** 总线解码。
 - 用 Node 插件把“预检 / 运行 / 停止”做成产线配方，而不是把示波器型号写进 GUI。
 
@@ -52,7 +53,7 @@ WiParse 面向 **Qi 无线充电研发台、产线工位和闭环测试**：把�
 #### 运行环境
 
 - **主平台：Windows x64**（MSVC 链接器；日常产物为 `dist\WiParse.exe` / `dist\WiParse-CLI.exe`）。
-- 仪表：本机需可用的 **VISA**（NI-VISA / TekVISA 等）；支持示波器、直流电源、电子负载、万用表及通用 SCPI。
+- 仪表：本机需可用的 **VISA**（NI-VISA / TekVISA 等）；支持示波器、直流电源、电子负载、万用表、通用 SCPI，以及 USB 调试探针（J-Link / ST-Link / CMSIS-DAP）与 FT4222 桥。
 - Testing Hub / MCP：需要 **Node.js 18+**。
 - 语言：界面中/英；设置菜单可切换，配置键 `ui.language`。
 - 主题：深色 / 浅色，`ui.theme`。
@@ -112,15 +113,19 @@ GUI 顶栏标签（设置菜单可显隐各页）：
 | 种类 | 能力（依仪器 profile） |
 |------|------------------------|
 | 示波器 | 连接、通道、停止采集、截图 PNG、CURVe 波形、**读取波形源文件（ISF）** |
-| 直流电源 | 输出、保护 |
+| 直流电源 | 多通道输出 / 保护；总览 LCD 按识别通道数显示设定或实测 V/A/W |
 | 电子负载 | 模式与测量 |
 | 万用表 | 功能 / 量程 / NPLC |
+| 调试探针 | J-Link / ST-Link / CMSIS-DAP（probe-rs USB，**无需** JLinkARM.dll）：Halt/Run/复位、寄存器、擦除、速度、烧录、内存、RTT |
+| USB 桥 | FT4222 SPI/I2C/GPIO。扫描不需 DLL；事务从 exe 旁 / `vendor/ftdi` 加载 `LibFT4222.dll` |
 | 通用 SCPI | 原始命令（查询以 `?` 结尾） |
+
+左侧 **设备总览** 为默认落地页：数字孪生工位（WIPARSE 核心 + 各仪器前面板）。发现列表可 **连接全部**。点击孪生机箱进入该种类控制台。实物图可放 `{save_dir}/device_photos/{序列号或型号}.png|.jpg`。
 
 截图默认目录 `apps.instruments.save_dir` / Tek 兼容键 `apps.tektronix_scope.save_dir`。  
 闭环保存 ISF 用 **`waveform_source_dir`**，与波形分析页的浏览器目录 **`waveform_browser_dir` 分开**，空字符串不会回退去改分析页路径。
 
-调试模式（`ui.debug_mode`）可显示全部仪表卡片（含演示连接），便于无硬件时看布局。
+调试模式（`ui.debug_mode`）可显示全部仪表卡片（含演示连接），便于无硬件时看布局。FTDI DLL 搜索：exe 旁 → `vendor/ftdi` → `WIPARSE_FTDI_DIR`；**不要**捆绑 `JLinkARM.dll`。
 
 #### 4.3 波形分析
 
@@ -176,7 +181,7 @@ Node 插件宿主。左侧 **插件 | 市场** 分段：
 2. 双击安装目录或仓库里的 `dist\WiParse.exe`。
 3. 设置：语言、主题、要显示的面板。
 4. **串口工具**：选端口与波特率 → 开始监控。
-5. **仪表控制**：扫描 / 连接示波器或其它 VISA 设备。
+5. **仪表控制**：扫描，需要时点 **连接全部**；在 **设备总览** 查看孪生面板，或点类型卡片进入控制台。
 6. 需要插件时打开 **集成测试**；需要本机市场时先起市场服务（见第 7 节）。
 
 健康检查（GUI 必须已开）：
@@ -222,6 +227,12 @@ cargo build -p wiparse-gui
 .\dist\WiParse-CLI.exe serial start --port COM3 --baud 2000000
 .\dist\WiParse-CLI.exe serial read --port COM3 --max-logs 50
 .\dist\WiParse-CLI.exe serial stop
+
+# GUI 已开：仪表总览 / 探针
+.\dist\WiParse-CLI.exe ui instrument overview
+.\dist\WiParse-CLI.exe ui instrument connect-all
+.\dist\WiParse-CLI.exe probe list
+.\dist\WiParse-CLI.exe bridge list
 
 # 无 GUI
 .\dist\WiParse-CLI.exe --local ports
@@ -349,6 +360,7 @@ MCP 工具：`wiparse_brief`、`wiparse_select`、`wiparse_test`、`wiparse_send
 | `WIPARSE_DATA_ROOT` | 插件数据根 |
 | `WIPARSE_MARKETPLACE_URL` | 覆盖市场目录地址 |
 | `WIPARSE_MARKETPLACE_ALLOW_HTTP` | 允许非回环明文 HTTP（仅调试） |
+| `WIPARSE_FTDI_DIR` | 可选，FT4222 `LibFT4222.dll` / `ftd2xx.dll` 目录 |
 | `PYVISA_LIBRARY` | 可选，VISA 库路径（与仪器栈相关） |
 
 ### 10. 仓库结构
@@ -363,7 +375,8 @@ WiParse-R/
 ├── services/
 │   └── testing-hub-marketplace/
 ├── mcp/wiparse/          # MCP（需 GUI HTTP）
-├── scripts/              # 播种/部署市场、打包演示
+├── vendor/ftdi/          # FTDI 运行库说明（DLL 不进 git）
+├── scripts/              # 播种/部署市场、打包演示、sync-ftdi-dlls.ps1
 ├── packaging/update/     # 在线更新安装与发布脚本
 ├── docs/                 # 变更、CLI、部署、工位、示例计划
 ├── third_party/winit/    # Win11 DPI 拖动补丁（crates-io patch）
@@ -411,9 +424,9 @@ The long-lived process is **`WiParse.exe`**. It owns the serial port and VISA de
 
 ### 2. Scope
 
-**In scope:** Qi ASK/FSK decode and LiveBrief; scope stop / screenshot / ISF on a rising-edge wait; Tek/Rigol waveforms with I2C, SPI, UART, I2S, and **DDSSS** (Qi Draft 5); Node Testing Hub plugins; directory-style station deploy (no MSI); Cursor MCP.
+**In scope:** Qi ASK/FSK decode and LiveBrief; scope stop / screenshot / ISF on a rising-edge wait; digital-twin **instrument overview** (per-device LCD); Tek/Rigol waveforms with I2C, SPI, UART, I2S, and **DDSSS** (Qi Draft 5); Node Testing Hub plugins; directory-style station deploy (no MSI); Cursor MCP.
 
-**Environment:** Windows x64 primary; VISA for instruments; Node.js 18+ for Hub and MCP; UI zh/en, dark/light.
+**Environment:** Windows x64 primary; VISA for bench instruments plus USB debug probes (J-Link / ST-Link / CMSIS-DAP via probe-rs) and FT4222; Node.js 18+ for Hub and MCP; UI zh/en, dark/light.
 
 **Out of scope:** public internet services (API is localhost-only); general-purpose DAQ; in-app HTML/PDF engines; MCP without a running GUI; plaintext HTTP marketplaces except loopback (or `WIPARSE_MARKETPLACE_ALLOW_HTTP`).
 
@@ -444,7 +457,7 @@ Tabs: **Serial Tool** · **Instrument Control** · **Waveform Analysis** · **Da
 | Panel | What it does |
 |-------|----------------|
 | Serial | COM monitor, filters, ASK/FSK click-to-parse, LiveBrief, large-file virtualization |
-| Instruments | VISA cards by kind (scope / DC source / load / DMM / generic SCPI). Scope: stop, PNG, CURVe, **waveform source (ISF)**. `waveform_source_dir` is separate from the analysis browser dir |
+| Instruments | Cards by kind (scope / DC source / load / DMM / debug probe / FT4222 / generic SCPI). Default **device overview** twin with live LCD (PSU channels show measured V/A/W). Connect-all on the discovery list. Scope: stop, PNG, CURVe, **waveform source (ISF)**. `waveform_source_dir` is separate from the analysis browser dir |
 | Waveform | Offline ISF / Tek WFM / CSV / Rigol WFM; pan/cursors; bus decode including DDSSS |
 | Data analysis | Frame header + up to 8 filter series from Live serial or files; WIDA cache + LOD |
 | Testing Hub | Plugins \| Market; `preflight` / `run` / `stop`; generic `device` params (no scope type hardcoded in the GUI) |
@@ -520,7 +533,7 @@ MCP tools: `wiparse_brief`, `wiparse_select`, `wiparse_test`, `wiparse_send`, `w
 
 ### 9. Config and environment
 
-See `config.default.json` for `ui`, `serial`, `apps.instruments`, `apps.test_tool.marketplace`, and `update`. Important variables: `WIPARSE_API_BIND`, `WIPARSE_URL`, `WIPARSE_CONFIG` / `WCM_CONFIG`, `WIPARSE_PROJECT_ROOT`, `WIPARSE_CLI`, `WIPARSE_DATA_ROOT`, `WIPARSE_MARKETPLACE_URL`, `WIPARSE_MARKETPLACE_ALLOW_HTTP`.
+See `config.default.json` for `ui`, `serial`, `apps.instruments`, `apps.test_tool.marketplace`, and `update`. Important variables: `WIPARSE_API_BIND`, `WIPARSE_URL`, `WIPARSE_CONFIG` / `WCM_CONFIG`, `WIPARSE_PROJECT_ROOT`, `WIPARSE_CLI`, `WIPARSE_DATA_ROOT`, `WIPARSE_MARKETPLACE_URL`, `WIPARSE_MARKETPLACE_ALLOW_HTTP`, `WIPARSE_FTDI_DIR`.
 
 ### 10. Layout
 
@@ -530,7 +543,8 @@ WiParse-R/
 ├── test-tools/      plugins + marketplace client
 ├── services/        marketplace server
 ├── mcp/wiparse/     MCP
-├── scripts/         seed / deploy / package demo
+├── vendor/ftdi/     FTDI DLL notes (binaries not in git)
+├── scripts/         seed / deploy / package demo / sync-ftdi-dlls.ps1
 ├── docs/            changelog, CLI, deploy, examples
 └── dist/            shipped binaries (explicit sync)
 ```

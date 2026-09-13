@@ -100,8 +100,8 @@ Copy-Item target\release\wiparse.exe     dist\WiParse-CLI.exe -Force
 - `serial.monitor.start` / `stop` / `status`（`serial.status` 为 status 别名）
 - `serial.select`（只改口/波特率，不打开；监控已开时需先 stop）
 - `serial.send` / `serial.read`（需先 `monitor.start`；停着时读缓冲用 `log.lines.get`）
-- `instrument.*`（含 `instrument.waveform_source`）、`log.tabs.list`、`log.lines.get`、`log.brief`、`system.ui.state`
-- `ui.show` / `ui.panels` / `ui.prefs` / `ui.serial.*` / `ui.wave.*`（`ui.wave.bus` 支持 `kind=ddsss`） / `ui.calc.*` / `ui.instrument.select`
+- `instrument.*`（含 `instrument.overview` / `instrument.connect_all` / `instrument.waveform_source`）、`log.tabs.list`、`log.lines.get`、`log.brief`、`system.ui.state`
+- `ui.show` / `ui.panels` / `ui.prefs` / `ui.serial.*` / `ui.wave.*`（`ui.wave.bus` 支持 `kind=ddsss`） / `ui.calc.*` / `ui.instrument.select`（`overview` / `kind` / `device_id`）
 - `test.start` / `status` / `abort` / `pack`（闭环执行器 + 证据包）
 
 无状态方法（parse / session / scope / wave 等）可在 API 线程直接执行。
@@ -160,7 +160,7 @@ $env:WIPARSE_URL = "http://127.0.0.1:7878"
 
 ## 6. MCP（E：直连 HTTP）
 
-`mcp/wiparse` 六个工具（紧凑 JSON，HTTP）：`wiparse_brief`、`wiparse_select`、`wiparse_test`、`wiparse_send`、`wiparse_report_pack`、`wiparse_ui`。不要把 `serial.txt` 或 ISF 点列读进模型。`wiparse_ui` 的 `op=instrument.waveform_source` 只返回路径/字节数。
+`mcp/wiparse` 六个工具（紧凑 JSON，HTTP）：`wiparse_brief`、`wiparse_select`、`wiparse_test`、`wiparse_send`、`wiparse_report_pack`、`wiparse_ui`。不要把 `serial.txt` 或 ISF 点列读进模型。`wiparse_ui` 的 `op=instrument.overview` 返回孪生面板状态（无波形点列）；`op=instrument.waveform_source` 只返回路径/字节数。
 
 闭环计划与工位步骤见 [`WORKSTATION_CLOSED_LOOP.md`](WORKSTATION_CLOSED_LOOP.md)。
 

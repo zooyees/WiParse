@@ -41,15 +41,17 @@ wiparse
 ├── session (list | show)
 ├── wave    (live | session | export)
 ├── scope   (list | shot | wave)  # 本地 VISA 示波器
+├── probe   (list | connect | halt | run | reset | status | regs | flash | mem-read | mem-write | erase | speed | rtt-start | rtt-stop | rtt-read)
+├── bridge  (list | connect | info | spi | i2c | gpio)
 └── ui      # 需 GUI：切页 / 面板 / 参数
     ├── state | show | panels | prefs
     ├── serial (open | close | clear | filter | tab | name | browser)
     ├── wave   (open | close | select | browser | bus | cursor | fit)
     ├── calc   (get | set)
-    └── instrument (select | scan | list | connect | disconnect | measure | capture | waveform | waveform-source | command)
+    └── instrument (select | scan | list | overview | connect | connect-all | disconnect | measure | capture | waveform | waveform-source | command)
 ```
 
-仪表页也可用 `wiparse ui instrument ...`；复杂 SCPI/控件仍可用 `api invoke instrument.command`。
+仪表页也可用 `wiparse ui instrument ...`；复杂 SCPI/控件仍可用 `api invoke instrument.command`。`instrument.overview` 返回数字孪生面板数据（电源通道 LCD 的 V/A/W、示波器通道、DMM 读数等）。
 
 ---
 
@@ -146,12 +148,33 @@ wiparse ui calc set --card lc --params "{\"inductance\":\"10\",\"capacitance\":\
 
 wiparse ui instrument scan
 wiparse ui instrument list
+wiparse ui instrument list --kind dc_source
+wiparse ui instrument overview
 wiparse ui instrument connect --resource "TCPIP0::192.168.1.1::INSTR" --kind oscilloscope
 wiparse ui instrument select --id 1
+wiparse ui instrument select --overview
+wiparse ui instrument select --kind dc_source
 wiparse ui instrument measure --id 1
 wiparse ui instrument capture --id 1
 wiparse ui instrument waveform --id 1 --channel 1 --points 10000
 wiparse ui instrument command --id 1 --query "*IDN?"
+wiparse ui instrument connect-all
+
+wiparse probe list
+wiparse probe connect --resource "probe://jlink/serial=..."
+wiparse probe halt --id 1
+wiparse probe status --id 1
+wiparse probe speed --id 1 --khz 4000
+wiparse probe rtt-start --id 1 --channel 0
+wiparse probe flash --id 1 --path firmware.hex --verify
+wiparse --local probe list
+wiparse --local probe halt --resource "probe://jlink/serial=..." --chip STM32F103C8
+wiparse --local probe status --demo
+
+wiparse bridge list
+wiparse bridge spi --id 2 --write 9F --read-len 4
+wiparse --local bridge list
+wiparse --local bridge spi --resource "bridge://ft4222/serial=..." --write 9F --demo
 ```
 
 串口监控仍用 `serial start/stop/select/send`。仪表读写也可用 `api invoke instrument.*`。

@@ -6,7 +6,7 @@ import { apiHealth, apiInvoke, defaultApiUrl } from "./http.js";
 
 const server = new McpServer({
   name: "wiparse",
-  version: "1.1.7",
+  version: "1.1.12",
 });
 
 function compact(body: unknown) {
@@ -127,7 +127,9 @@ const UI_METHODS = {
   "instrument.select": "ui.instrument.select",
   "instrument.scan": "instrument.scan",
   "instrument.list": "instrument.list",
+  "instrument.overview": "instrument.overview",
   "instrument.connect": "instrument.connect",
+  "instrument.connect_all": "instrument.connect_all",
   "instrument.disconnect": "instrument.disconnect",
   "instrument.measure": "instrument.measure",
   "instrument.capture": "instrument.capture",
@@ -138,7 +140,7 @@ const UI_METHODS = {
 
 server.tool(
   "wiparse_ui",
-  "Drive the running WiParse.exe UI: switch tabs, panels, prefs, serial log, waveform (including DDSSS bus decode), data analysis, test report, test tool plugins, calculator, instruments. GUI 1.1.7+.",
+  "Drive WiParse.exe: tabs, panels, serial/wave/calc, and instruments. Poll instrument.overview for digital-twin LCD (DC source channels V/A/W, scope, DMM, load, probe, FT4222). instrument.command accepts ProbeHalt/ProbeRun/ProbeReset/ProbeStatus/ProbeRegs/ProbeErase/ProbeSpeed/ProbeFlash/ProbeMemRead/ProbeMemWrite/ProbeRttStart/ProbeRttStop/ProbeRttRead and BridgeInfo/BridgeSpi/BridgeI2c/BridgeGpio. GUI 1.1.12+.",
   {
     op: z.enum([
       "state",
@@ -164,7 +166,9 @@ server.tool(
       "instrument.select",
       "instrument.scan",
       "instrument.list",
+      "instrument.overview",
       "instrument.connect",
+      "instrument.connect_all",
       "instrument.disconnect",
       "instrument.measure",
       "instrument.capture",
@@ -184,7 +188,12 @@ server.tool(
       ])
       .optional()
       .describe("For op=show; also accepted inside params.tab"),
-    params: z.record(z.unknown()).optional(),
+    params: z
+      .record(z.unknown())
+      .optional()
+      .describe(
+        "Op params. instrument.overview: {}. instrument.list: optional kind (oscilloscope|dc_source|electronic_load|multimeter|debug_probe|usb_bridge). instrument.select: device_id and/or overview=true and/or kind. instrument.connect_all: {}. instrument.command: {device_id, command} e.g. ProbeStatus or {ProbeSpeed:{khz:4000}} or {BridgeSpi:{mode:0,clock_hz:1000000,write_hex:\"9F\",read_len:4}}.",
+      ),
   },
   async ({ op, tab, params }) => {
     const method = UI_METHODS[op];

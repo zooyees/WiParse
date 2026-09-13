@@ -135,7 +135,7 @@ export default async function run(ctx) { /* ... */ }
 
 `device` ? `fills` ????`device_id`?`resource`?`kind`?`model`?`manufacturer`?`serial`???? `identity.model`??
 
-?? kind ? GUI `instrument.list` ???snake_case??`oscilloscope`?`dc_source`?`electronic_load`?`multimeter`?`generic`???? `scope` / `psu` / `dmm` ??????
+Wire `kind` matches GUI `instrument.list` snake_case: `oscilloscope`, `dc_source`, `electronic_load`, `multimeter`, `debug_probe`, `usb_bridge`, `generic`. Aliases `scope` / `psu` / `dmm` still work.
 
 `preflight_only` ?????????? lifecycle?
 

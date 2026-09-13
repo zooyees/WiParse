@@ -2964,6 +2964,8 @@ fn normalize_kind(s: &str) -> String {
         "psu" | "dcsource" | "dc_source" | "source" | "power" => "dc_source".into(),
         "load" | "electronic_load" | "eload" => "electronic_load".into(),
         "dmm" | "multimeter" | "meter" => "multimeter".into(),
+        "probe" | "jlink" | "stlink" | "cmsis_dap" | "dap" | "debug_probe" => "debug_probe".into(),
+        "bridge" | "ft4222" | "usb_bridge" => "usb_bridge".into(),
         other => other.to_string(),
     }
 }

@@ -90,6 +90,8 @@ fn snapshot(host: &UiHost<'_>) -> Value {
         "instruments": {
             "devices": host.instruments.device_count(),
             "selected_id": host.instruments.selected_device_id(),
+            "overview_open": host.instruments.overview_open(),
+            "scanning": host.instruments.is_scanning(),
         },
         "waveform": host.waveform.api_snapshot(),
         "data_analysis": host.data_analysis.api_snapshot(),

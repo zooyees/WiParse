@@ -20,6 +20,8 @@ crossbeam-channel = { workspace = true }
 rayon = { workspace = true }
 libloading = "0.8"
 memmap2 = "0.9"
+nusb = "0.1.12"
+probe-rs = { version = "0.27", default-features = false, features = ["builtin-targets"] }
 sha2 = "0.10"
 ureq = { version = "2", default-features = false, features = ["json", "tls"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
