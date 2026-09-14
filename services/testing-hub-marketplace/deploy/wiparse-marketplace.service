@@ -1,0 +1,29 @@
+[Unit]
+Description=WiParse Testing Hub marketplace (catalog + plugin zips)
+Documentation=https://github.com/windlink/WiParse-R
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wiparse
+Group=wiparse
+WorkingDirectory=/opt/wiparse-marketplace
+EnvironmentFile=/etc/wiparse-marketplace/env
+# HOST / PORT / MARKETPLACE_DATA_DIR / MARKETPLACE_PUBLISH_TOKENS come from EnvironmentFile.
+ExecStart=/usr/bin/node /opt/wiparse-marketplace/src/index.mjs
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/wiparse-marketplace
+LimitNOFILE=65535
+
+# Publish is JSON + base64 zip; raise if you ship large artifacts
+# (also raise nginx client_max_body_size).
+# Environment=NODE_OPTIONS=--max-old-space-size=512
+
+[Install]
+WantedBy=multi-user.target

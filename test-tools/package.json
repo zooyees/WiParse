@@ -13,7 +13,7 @@
     "run": "node runner.mjs",
     "example": "node runner.mjs --plugin example-smoke",
     "marketplace": "node marketplace.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs lib/*.test.mjs"
   },
   "engines": {
     "node": ">=18"

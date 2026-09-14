@@ -36,6 +36,8 @@ const RUNNER_SPLIT_GAP: f32 = 8.0;
 const CONFIG_FRAC: f32 = 0.42;
 const CONFIG_MIN_W: f32 = 300.0;
 const OUTPUT_MIN_W: f32 = 260.0;
+/// Taller row for `type: json` / `type: text` Hub params (trigger recipes, etc.).
+const JSON_PARAM_H: f32 = 148.0;
 
 /// Live instrument row for generic `type: device` params. Hub does not
 /// special-case oscilloscopes — plugins filter with `filter.kind`.
@@ -94,6 +96,10 @@ struct PluginParam {
     /// `type: enum` choices: (value, label, label_zh).
     options: Vec<(String, String, String)>,
     hidden: bool,
+    /// Opaque folding title from plugin.json; Hub does not interpret the name.
+    group: String,
+    group_zh: String,
+    advanced: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -134,17 +140,18 @@ struct RunningJob {
     last_status_mtime: Option<std::time::SystemTime>,
     /// After Stop: force-kill child once this instant is reached (graceful window).
     kill_after: Option<Instant>,
+    /// Run-scoped overlay JSON; deleted when the job ends. Not written to station.json.
+    overlay_file: Option<PathBuf>,
 }
 
-/// Compact HUD state (mirrors scope-serial-monitor hud.ps1).
+/// Compact HUD from the plugin status envelope (`step` / `hint` only).
 #[derive(Debug, Clone, Default)]
 struct LoopHud {
     step: String,
     hint: String,
     cycle: Option<u64>,
-    trigger: String,
     elapsed_s: Option<u64>,
-    filename: String,
+    extras: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -365,9 +372,15 @@ impl TestToolPanel {
         if let Some(extra) = params.get("args").and_then(|v| v.as_str()) {
             self.extra_args = extra.to_owned();
         }
-        if let Some(pf) = params.get("preflight_only").and_then(|v| v.as_bool()) {
-            self.preflight_only = pf;
-        }
+        self.preflight_only = if let Some(life) = params.get("lifecycle").and_then(|v| v.as_str()) {
+            life.eq_ignore_ascii_case("preflight")
+        } else if let Some(pf) = params.get("preflight").and_then(|v| v.as_bool()) {
+            pf
+        } else if let Some(pf) = params.get("preflight_only").and_then(|v| v.as_bool()) {
+            pf
+        } else {
+            false
+        };
         match self.start_selected(Lang::En) {
             Ok(()) => ok("ui.test_tool.run", self.api_snapshot()),
             Err(e) => err("ui.test_tool.run", &e),
@@ -591,6 +604,7 @@ impl TestToolPanel {
                         .map(|r| r.id.clone())
                         .collect();
                     let mut pick: Option<String> = None;
+                    let mut uninstall_id: Option<String> = None;
                     egui::ScrollArea::vertical()
                         .id_salt("test_tool_plugins")
                         .max_height(list_h)
@@ -646,14 +660,35 @@ impl TestToolPanel {
                                 })
                                 .inner;
                                 if resp.clicked() {
-                                    pick = Some(id);
+                                    pick = Some(id.clone());
                                 }
+                                let is_market = p.source == "marketplace";
+                                resp.context_menu(|ui| {
+                                    if is_market {
+                                        if ui
+                                            .button(tr(lang, "test_tool.market_uninstall"))
+                                            .clicked()
+                                        {
+                                            uninstall_id = Some(id.clone());
+                                            ui.close_menu();
+                                        }
+                                    } else {
+                                        ui.label(
+                                            RichText::new(tr(lang, "test_tool.uninstall_bundled"))
+                                                .size(ui_theme::FONT_CAPTION)
+                                                .color(tokens.text_muted),
+                                        );
+                                    }
+                                });
                                 resp.on_hover_text(tooltip);
                             }
                         });
                     if let Some(id) = pick {
                         self.select_plugin(id);
                         ui.ctx().request_repaint();
+                    }
+                    if let Some(id) = uninstall_id {
+                        self.uninstall_marketplace_plugin(&id, lang);
                     }
                 }
             });
@@ -732,14 +767,26 @@ impl TestToolPanel {
         };
         let pre_lbl = tr(lang, "test_tool.preflight");
         let clear_lbl = tr(lang, "test_tool.clear_log");
+        let un_lbl = tr(lang, "test_tool.market_uninstall");
+        let can_uninstall = sel_idx
+            .map(|i| self.plugins[i].source == "marketplace")
+            .unwrap_or(false)
+            && !running
+            && !self.catalog_busy;
         let run_w = text_btn_w(ui, &run_lbl);
         let pre_w = if running { 0.0 } else { text_btn_w(ui, &pre_lbl) };
+        let un_w = if can_uninstall {
+            text_btn_w(ui, &un_lbl)
+        } else {
+            0.0
+        };
         let clear_w = text_btn_w(ui, &clear_lbl);
         let gap = 6.0;
         let cluster_w = run_w
             + clear_w
             + gap
-            + if pre_w > 0.0 { pre_w + gap } else { 0.0 };
+            + if pre_w > 0.0 { pre_w + gap } else { 0.0 }
+            + if un_w > 0.0 { un_w + gap } else { 0.0 };
 
         let row_w = ui.available_width().max(cluster_w + 80.0);
         let row_h = ui_theme::CTRL_H;
@@ -800,6 +847,7 @@ impl TestToolPanel {
         let mut pre_clicked = false;
         let mut stop_clicked = false;
         let mut clear_clicked = false;
+        let mut uninstall_clicked = false;
         place_in_rect(
             ui,
             btn_rect,
@@ -833,6 +881,17 @@ impl TestToolPanel {
                     )
                     .on_hover_text(tr(lang, "test_tool.preflight_help"))
                     .clicked();
+                    if can_uninstall {
+                        uninstall_clicked = ui_theme::ghost_btn_sized_enabled(
+                            ui,
+                            tokens,
+                            un_lbl,
+                            egui::vec2(un_w, row_h),
+                            true,
+                        )
+                        .on_hover_text(tr(lang, "test_tool.uninstall_help"))
+                        .clicked();
+                    }
                 }
                 clear_clicked = ui_theme::secondary_btn_sized(
                     ui,
@@ -866,6 +925,10 @@ impl TestToolPanel {
             if let Err(e) = self.start_selected(lang) {
                 self.append_log(LogKind::System, &format!("ERROR: {e}\n"));
                 self.status = e;
+            }
+        } else if uninstall_clicked {
+            if let Some(id) = self.selected.clone() {
+                self.uninstall_marketplace_plugin(&id, lang);
             }
         }
     }
@@ -905,6 +968,11 @@ impl TestToolPanel {
             return;
         }
 
+        let (param_groups, advanced_idxs) = {
+            let plugin = &self.plugins[sel_idx];
+            grouped_visible_params(plugin, &param_idxs, lang)
+        };
+
         // Same CTRL_H row as the Output header so the two columns line up.
         let cap_w = ui.available_width();
         let (cap, _) =
@@ -927,17 +995,68 @@ impl TestToolPanel {
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
-                // Preserve plugin.json order; widgets sit in a pre-computed row rect.
-                for &pi in &param_idxs {
-                    self.paint_param_field(
-                        ui,
-                        lang,
-                        tokens,
-                        sel_idx,
-                        pi,
-                        label_w,
-                        &mut pending_param,
-                    );
+                // Groups are opaque titles from plugin.json; order follows first occurrence.
+                for (title, idxs) in &param_groups {
+                    if title.is_empty() {
+                        for &pi in idxs {
+                            self.paint_param_field(
+                                ui,
+                                lang,
+                                tokens,
+                                sel_idx,
+                                pi,
+                                label_w,
+                                &mut pending_param,
+                            );
+                        }
+                    } else {
+                        egui::CollapsingHeader::new(
+                            RichText::new(title)
+                                .size(ui_theme::FONT_CAPTION)
+                                .strong()
+                                .color(tokens.text_muted),
+                        )
+                        .id_salt(format!("hub_pg_{sel_idx}_{title}"))
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
+                            for &pi in idxs {
+                                self.paint_param_field(
+                                    ui,
+                                    lang,
+                                    tokens,
+                                    sel_idx,
+                                    pi,
+                                    label_w,
+                                    &mut pending_param,
+                                );
+                            }
+                        });
+                    }
+                }
+                if !advanced_idxs.is_empty() {
+                    egui::CollapsingHeader::new(
+                        RichText::new(tr(lang, "test_tool.param_advanced"))
+                            .size(ui_theme::FONT_CAPTION)
+                            .strong()
+                            .color(tokens.text_muted),
+                    )
+                    .id_salt(format!("hub_pg_{sel_idx}_advanced"))
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
+                        for &pi in &advanced_idxs {
+                            self.paint_param_field(
+                                ui,
+                                lang,
+                                tokens,
+                                sel_idx,
+                                pi,
+                                label_w,
+                                &mut pending_param,
+                            );
+                        }
+                    });
                 }
             });
         if let Some(name) = pending_param {
@@ -1110,6 +1229,9 @@ impl TestToolPanel {
         let is_device = type_name == "device";
         let is_enum = type_name == "enum";
         let is_serial = type_name == "serial_port" || type_name == "serial";
+        let is_json = type_name == "json";
+        let is_text = type_name == "text";
+        let multiline = is_json || is_text;
         let filter_kind = self.device_filter_kind(p);
         let options = p.options.clone();
 
@@ -1121,7 +1243,11 @@ impl TestToolPanel {
         // `available_width` inside a horizontal layout — item_spacing makes
         // that arithmetic drift and wraps a second empty control.
         let row_w = ui.available_width().max(120.0);
-        let row_h = ui_theme::CTRL_H;
+        let row_h = if multiline {
+            JSON_PARAM_H
+        } else {
+            ui_theme::CTRL_H
+        };
         let (row, _) = ui.allocate_exact_size(egui::vec2(row_w, row_h), egui::Sense::hover());
         let gap = PARAM_GAP_X;
         let label_w = label_w.min((row_w * 0.45).max(LABEL_COL_MIN));
@@ -1147,9 +1273,19 @@ impl TestToolPanel {
         );
 
         let painter = ui.painter_at(label_rect);
+        let label_pos = if multiline {
+            egui::pos2(label_rect.min.x, label_rect.min.y + 8.0)
+        } else {
+            egui::pos2(label_rect.min.x, label_rect.center().y)
+        };
+        let label_align = if multiline {
+            Align2::LEFT_TOP
+        } else {
+            Align2::LEFT_CENTER
+        };
         painter.text(
-            egui::pos2(label_rect.min.x, label_rect.center().y),
-            Align2::LEFT_CENTER,
+            label_pos,
+            label_align,
             &label,
             FontId::proportional(ui_theme::FONT_CAPTION),
             tokens.text_muted,
@@ -1332,6 +1468,13 @@ impl TestToolPanel {
                 self.param_touched.insert(name.clone());
             }
             hover_resp = Some(resp);
+        } else if multiline {
+            let entry = self.param_values.entry(name.clone()).or_default();
+            let resp = hub_text_edit_multiline(ui, field_rect, entry, &hint, is_json);
+            if resp.changed() {
+                self.param_touched.insert(name.clone());
+            }
+            hover_resp = Some(resp);
         } else {
             let entry = self.param_values.entry(name.clone()).or_default();
             let resp = hub_text_edit(ui, field_rect, entry, &hint);
@@ -1495,25 +1638,10 @@ impl TestToolPanel {
         (w + 4.0).clamp(LABEL_COL_MIN, LABEL_COL_MAX)
     }
 
-    /// Compact status pill in the header (theme-aware; replaces the giant Idle bar).
+    /// Compact status pill in the header (theme-aware; Hub-owned idle/running/stopped).
     fn paint_status_chip(&self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
-        let step = if self.loop_hud.step.is_empty() {
-            if self.job.is_some() {
-                "armed"
-            } else {
-                "idle"
-            }
-        } else {
-            self.loop_hud.step.as_str()
-        };
-        let (dot, label) = match step {
-            "wait" => (tokens.success, tr(lang, "test_tool.hud_wait")),
-            "processing" => (tokens.warning, tr(lang, "test_tool.hud_processing")),
-            "captured" => (tokens.accent, tr(lang, "test_tool.hud_captured")),
-            "stopped" => (tokens.stop_bg, tr(lang, "test_tool.hud_stopped")),
-            "armed" => (tokens.text_muted, tr(lang, "test_tool.hud_armed")),
-            _ => (tokens.text_muted, tr(lang, "test_tool.hud_idle")),
-        };
+        let dot = self.hud_strip_color(tokens);
+        let label = self.hud_label(lang);
         Frame::NONE
             .fill(tokens.input_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
@@ -1535,6 +1663,64 @@ impl TestToolPanel {
             });
     }
 
+    fn hud_strip_color(&self, tokens: &Tokens) -> egui::Color32 {
+        let step = self.loop_hud.step.trim().to_ascii_lowercase();
+        if step == "stopped" {
+            return tokens.stop_bg;
+        }
+        if matches!(step.as_str(), "fail" | "failed" | "error" | "fatal") {
+            return tokens.warning;
+        }
+        if self.job.is_some() {
+            return tokens.success;
+        }
+        tokens.text_muted
+    }
+
+    fn hud_label(&self, lang: Lang) -> String {
+        let hint = self.loop_hud.hint.trim();
+        if !hint.is_empty() {
+            return hint.to_owned();
+        }
+        let step = self.loop_hud.step.trim();
+        let step_l = step.to_ascii_lowercase();
+        if step == "stopped" {
+            return tr(lang, "test_tool.hud_stopped").to_owned();
+        }
+        if step == "idle" {
+            return tr(lang, "test_tool.hud_idle").to_owned();
+        }
+        if matches!(step_l.as_str(), "fail" | "failed" | "error" | "fatal") {
+            return tr(lang, "test_tool.status_fail").to_owned();
+        }
+        if step.is_empty() {
+            if self.job.is_some() {
+                return tr(lang, "test_tool.hud_running").to_owned();
+            }
+            return tr(lang, "test_tool.hud_idle").to_owned();
+        }
+        step.to_owned()
+    }
+
+    fn hud_meta_line(&self) -> String {
+        let mut meta = String::new();
+        if let Some(c) = self.loop_hud.cycle {
+            meta.push_str(&format!("#{c}"));
+        }
+        for (k, v) in &self.loop_hud.extras {
+            if !meta.is_empty() {
+                meta.push_str("  ");
+            }
+            meta.push_str(k);
+            meta.push('=');
+            meta.push_str(v);
+        }
+        if meta.chars().count() > 72 {
+            meta = meta.chars().take(69).collect::<String>() + "…";
+        }
+        meta
+    }
+
     fn paint_loop_hud(&self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
         let avail_w = ui.available_width();
         let (rect, _) =
@@ -1543,27 +1729,20 @@ impl TestToolPanel {
             return;
         }
 
-        let step = if self.loop_hud.step.is_empty() {
-            if self.job.is_some() {
-                "armed"
-            } else {
-                "idle"
-            }
-        } else {
-            self.loop_hud.step.as_str()
-        };
-
-        let strip_c = match step {
-            "wait" => tokens.success,
-            "processing" => tokens.warning,
-            "captured" => tokens.accent,
-            "stopped" => tokens.stop_bg,
-            "armed" => tokens.text_muted,
-            _ => tokens.divider,
-        };
+        let strip_c = self.hud_strip_color(tokens);
         let bg = tokens.input_bg;
         let fg = tokens.text_primary;
         let muted = tokens.text_muted;
+        let state = self.hud_label(lang);
+        let meta = self.hud_meta_line();
+        let elapsed = self
+            .loop_hud
+            .elapsed_s
+            .map(|s| {
+                let s = s.min(u64::from(u32::MAX));
+                format!("{:01}:{:02}", s / 60, s % 60)
+            })
+            .unwrap_or_default();
 
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, CornerRadius::same(5), bg);
@@ -1584,67 +1763,6 @@ impl TestToolPanel {
             },
             strip_c,
         );
-
-        let state = match step {
-            "wait" => tr(lang, "test_tool.hud_wait"),
-            "processing" => tr(lang, "test_tool.hud_processing"),
-            "captured" => tr(lang, "test_tool.hud_captured"),
-            "stopped" => tr(lang, "test_tool.hud_stopped"),
-            "armed" => tr(lang, "test_tool.hud_armed"),
-            _ => tr(lang, "test_tool.hud_idle"),
-        };
-
-        let mut meta = String::new();
-        match step {
-            "wait" => {
-                if let Some(c) = self.loop_hud.cycle {
-                    meta.push_str(&format!("#{c}"));
-                }
-                let trig = self.loop_hud.trigger.trim();
-                if !trig.is_empty() {
-                    if !meta.is_empty() {
-                        meta.push_str("  ");
-                    }
-                    meta.push_str(trig);
-                }
-            }
-            "processing" => {
-                if let Some(c) = self.loop_hud.cycle {
-                    meta.push_str(&format!("#{c}"));
-                }
-                let who = self.loop_hud.trigger.trim();
-                if !who.is_empty() {
-                    if !meta.is_empty() {
-                        meta.push_str("  ");
-                    }
-                    meta.push_str(who);
-                }
-            }
-            "captured" => {
-                if !self.loop_hud.filename.is_empty() {
-                    meta = self.loop_hud.filename.clone();
-                } else if matches!(lang, Lang::Zh) {
-                    meta = "下一轮".into();
-                } else {
-                    meta = "next".into();
-                }
-            }
-            "stopped" => {}
-            _ => {
-                meta = self.loop_hud.hint.clone();
-            }
-        }
-        if meta.chars().count() > 72 {
-            meta = meta.chars().take(69).collect::<String>() + "…";
-        }
-
-        let elapsed = match (step, self.loop_hud.elapsed_s) {
-            ("wait", Some(s)) => {
-                let s = s.min(u64::from(u32::MAX));
-                format!("{:01}:{:02}", s / 60, s % 60)
-            }
-            _ => String::new(),
-        };
 
         let inner = rect.shrink2(egui::vec2(10.0, 0.0));
         ui.scope_builder(
@@ -1684,20 +1802,10 @@ impl TestToolPanel {
     }
 
     fn apply_hud_to_status_bar(&mut self, lang: Lang) {
-        let step = if self.loop_hud.step.is_empty() {
+        if self.loop_hud.step.is_empty() && self.loop_hud.hint.is_empty() {
             return;
-        } else {
-            self.loop_hud.step.as_str()
-        };
-        let label = match step {
-            "wait" => tr(lang, "test_tool.hud_wait"),
-            "processing" => tr(lang, "test_tool.hud_processing"),
-            "captured" => tr(lang, "test_tool.hud_captured"),
-            "stopped" => tr(lang, "test_tool.hud_stopped"),
-            "armed" => tr(lang, "test_tool.hud_armed"),
-            "idle" => tr(lang, "test_tool.hud_idle"),
-            other => other.to_owned(),
-        };
+        }
+        let label = self.hud_label(lang);
         self.status = if let Some(c) = self.loop_hud.cycle {
             format!("{label} #{c}")
         } else {
@@ -1735,9 +1843,6 @@ impl TestToolPanel {
         for (name, default) in defaults {
             self.param_values.insert(name, default);
         }
-        if let Some(v) = self.param_values.get("preflight_only") {
-            self.preflight_only = is_truthy(v);
-        }
     }
 
     /// Overlay station.json values onto param_values (cached by mtime).
@@ -1757,9 +1862,6 @@ impl TestToolPanel {
             .collect();
         for (name, val) in overlays {
             self.param_values.insert(name, val);
-        }
-        if let Some(v) = self.param_values.get("preflight_only") {
-            self.preflight_only = is_truthy(v);
         }
     }
 
@@ -1963,23 +2065,64 @@ impl TestToolPanel {
         let Some(id) = self.catalog_selected.clone() else {
             return;
         };
-        let Some(row) = self.catalog.iter().find(|r| r.id == id).cloned() else {
+        self.uninstall_marketplace_plugin(&id, lang);
+    }
+
+    /// Uninstall a marketplace install. Bundled plugins stay on disk.
+    fn uninstall_marketplace_plugin(&mut self, id: &str, lang: Lang) {
+        if self.catalog_busy || self.market_job.is_some() {
             return;
-        };
-        let Some(version) = row.installed_version.clone() else {
+        }
+        if self.job.as_ref().is_some_and(|j| j.plugin_id == id) {
+            self.status = tr(lang, "test_tool.status_busy");
+            return;
+        }
+        let plugin = self.plugins.iter().find(|p| p.id == id);
+        if plugin.is_some_and(|p| p.source != "marketplace") {
+            self.status = tr(lang, "test_tool.uninstall_bundled").to_string();
+            self.append_log(
+                LogKind::System,
+                &format!("[hub] skip uninstall {id}: bundled plugin\n"),
+            );
+            return;
+        }
+        let installed = installed_map_from_registry(&self.resolve_marketplace_root());
+        let version = installed
+            .iter()
+            .find(|(i, _)| i == id)
+            .map(|(_, v)| v.clone())
+            .or_else(|| {
+                self.catalog
+                    .iter()
+                    .find(|r| r.id == id)
+                    .and_then(|r| r.installed_version.clone())
+            })
+            .or_else(|| plugin.map(|p| p.version.clone()));
+        let Some(version) = version.filter(|v| !v.trim().is_empty()) else {
+            self.status = tr(lang, "test_tool.market_not_installed").to_string();
             self.catalog_status = tr(lang, "test_tool.market_not_installed").to_string();
             return;
         };
         let node = self.node_path.trim().to_owned();
         let cli = marketplace_cli_path();
+        if !cli.is_file() {
+            self.status = format!("{} {}", tr(lang, "test_tool.market_missing_cli"), cli.display());
+            return;
+        }
         self.catalog_busy = true;
-        self.catalog_status = tr(lang, "test_tool.market_uninstalling")
-            .replace("{id}", &id)
+        let msg = tr(lang, "test_tool.market_uninstalling")
+            .replace("{id}", id)
             .replace("{version}", &version);
+        self.catalog_status = msg.clone();
+        self.status = msg;
+        self.append_log(
+            LogKind::System,
+            &format!("—— marketplace uninstall {id}@{version} ——\n"),
+        );
         self.market_job = Some(spawn_uninstall(
             node,
             cli,
-            id,
+            id.to_owned(),
             version,
             self.data_root_resolved(),
             self.resolve_marketplace_root().display().to_string(),
@@ -2076,6 +2219,7 @@ impl TestToolPanel {
                     self.catalog_status = tr(lang, "test_tool.market_uninstalled_ok")
                         .replace("{id}", &id)
                         .replace("{version}", &version);
+                    self.status = self.catalog_status.clone();
                     self.catalog_busy = false;
                     done = true;
                     self.refresh_plugins();
@@ -2457,74 +2601,55 @@ impl TestToolPanel {
     }
 
     fn build_plugin_args(&self) -> Vec<String> {
-        let mut out = Vec::new();
-        for (k, v) in &self.param_values {
-            if k == "preflight_only" {
+        split_args(self.extra_args.trim())
+    }
+
+    fn write_hub_overlay(&self, plugin: &PluginInfo) -> Result<Option<PathBuf>, String> {
+        let mut params = serde_json::Map::new();
+        for p in &plugin.params {
+            if p.name == "preflight_only" {
                 continue;
             }
-            if v.trim().is_empty() {
+            let Some(raw) = self.param_values.get(&p.name) else {
+                continue;
+            };
+            if raw.trim().is_empty() {
                 continue;
             }
-            out.push(format!("--{k}"));
-            out.push(v.clone());
+            params.insert(p.name.clone(), overlay_json_value(&p.type_name, raw));
         }
-        out.extend(split_args(self.extra_args.trim()));
-        out
+        if params.is_empty() {
+            return Ok(None);
+        }
+        let body = serde_json::json!({ "params": serde_json::Value::Object(params) });
+        let path = std::env::temp_dir().join(format!(
+            "wiparse-hub-overlay-{}-{}.json",
+            plugin.id,
+            std::process::id()
+        ));
+        let text = serde_json::to_string_pretty(&body).map_err(|e| e.to_string())?;
+        fs::write(&path, text).map_err(|e| format!("overlay write: {e}"))?;
+        Ok(Some(path))
     }
 
     fn resolve_runtime_paths(&self) -> (Option<PathBuf>, Option<PathBuf>) {
         let Some(p) = self.selected_plugin() else {
             return (None, None);
         };
-        let station = load_station_json(p);
-        let mut stop = station_get(&station, "paths.stop_file").map(PathBuf::from);
-        let mut status = station_get(&station, "paths.status_file").map(PathBuf::from);
-
+        let mut station = load_station_json(p);
+        apply_param_overlays_to_station(&mut station, p, &self.param_values);
         let data_root = if self.data_root.trim().is_empty() {
-            project_path("")
+            project_path("").display().to_string()
         } else {
-            PathBuf::from(self.data_root.trim())
+            self.data_root.trim().to_owned()
         };
-        let product = self
-            .param_values
-            .get("product")
-            .cloned()
-            .or_else(|| station_get(&station, "station.product"))
-            .unwrap_or_default();
-        let expand = |s: &str| -> PathBuf {
-            let t = s
-                .replace("{data_root}", &data_root.display().to_string())
-                .replace("{product}", &product)
-                .replace("{plugin_dir}", &p.dir.display().to_string());
-            let pb = PathBuf::from(t);
-            if pb.is_absolute() {
-                pb
-            } else {
-                p.dir.join(pb)
-            }
-        };
-        if let Some(ref s) = stop {
-            let raw = s.display().to_string();
-            stop = Some(expand(&raw));
-        }
-        if let Some(ref s) = status {
-            let raw = s.display().to_string();
-            status = Some(expand(&raw));
-        }
-
-        // Keep status HUD beside ISF dir when the form overrides isf_dir (or always
-        // prefer isf_dir/_loop_status.json after expansion — matches plugin-contract).
-        let isf_raw = self
-            .param_values
-            .get("isf_dir")
-            .filter(|s| !s.trim().is_empty())
-            .cloned()
-            .or_else(|| station_get(&station, "paths.isf_dir"));
-        if let Some(isf) = isf_raw {
-            let isf_path = expand(&isf);
-            status = Some(isf_path.join("_loop_status.json"));
-        }
-
+        let plugin_dir = p.dir.display().to_string();
+        let project = hub_project_id();
+        inject_default_layout_paths(&mut station);
+        expand_station_templates(&mut station, &data_root, &plugin_dir, &project, &p.id);
+        let stop = station_get(&station, "paths.stop_file").map(|s| abs_plugin_path(&s, &p.dir));
+        let status =
+            station_get(&station, "paths.status_file").map(|s| abs_plugin_path(&s, &p.dir));
         (stop, status)
     }
 
@@ -2586,10 +2711,18 @@ impl TestToolPanel {
         };
         args.push("--data-root".into());
         args.push(data_root);
+        args.push("--project".into());
+        args.push(hub_project_id());
         args.push("--plugins-root".into());
         args.push(self.plugins_dir.trim().to_owned());
         args.push("--marketplace-dir".into());
         args.push(self.resolve_marketplace_root().display().to_string());
+
+        let overlay_file = self.write_hub_overlay(&plugin)?;
+        if let Some(ref p) = overlay_file {
+            args.push("--overlay".into());
+            args.push(p.display().to_string());
+        }
 
         let extra = self.build_plugin_args();
         if !extra.is_empty() {
@@ -2621,9 +2754,15 @@ impl TestToolPanel {
             .stderr(Stdio::piped())
             .stdin(Stdio::null());
         hide_console_window(&mut child);
-        let mut child = child
-            .spawn()
-            .map_err(|e| format!("{}: {e}", tr(lang, "test_tool.status_spawn_err")))?;
+        let mut child = match child.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                if let Some(ref p) = overlay_file {
+                    let _ = fs::remove_file(p);
+                }
+                return Err(format!("{}: {e}", tr(lang, "test_tool.status_spawn_err")));
+            }
+        };
 
         let (tx, rx) = mpsc::channel::<LogLine>();
         if let Some(out) = child.stdout.take() {
@@ -2661,6 +2800,7 @@ impl TestToolPanel {
             last_status_read: Instant::now() - Duration::from_secs(1),
             last_status_mtime: None,
             kill_after: None,
+            overlay_file,
         });
         self.status = format!("{} · {}", tr(lang, "test_tool.status_running"), plugin.id);
         Ok(())
@@ -2735,63 +2875,15 @@ impl TestToolPanel {
                 .is_some();
             if !stopping {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                let step = v
-                    .get("step")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_owned();
-                let hint = v
-                    .get("hint")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_owned();
-                let cycle = v.get("cycle").and_then(|x| x.as_u64());
-                let elapsed_s = v
-                    .get("elapsed_s")
-                    .and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)));
-                let filename = v
-                    .get("filename")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_owned();
-                let mut trigger = v
-                    .get("trigger")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_owned();
-                if trigger.is_empty() {
-                    if let Some(arr) = v.get("triggers").and_then(|x| x.as_array()) {
-                        let labels: Vec<String> = arr
-                            .iter()
-                            .filter_map(|t| {
-                                if let Some(s) = t.as_str() {
-                                    Some(s.to_owned())
-                                } else if let Some(l) = t.get("label").and_then(|x| x.as_str()) {
-                                    Some(l.to_owned())
-                                } else {
-                                    t.get("id").and_then(|x| x.as_str()).map(|s| s.to_owned())
-                                }
-                            })
-                            .take(4)
-                            .collect();
-                        trigger = labels.join("  ");
-                    }
-                }
-                if !hint.is_empty() {
-                    self.loop_hint = if let Some(c) = cycle {
-                        format!("[{step} #{c}] {hint}")
+                let hud = parse_loop_hud(&v);
+                if !hud.hint.is_empty() {
+                    self.loop_hint = if let Some(c) = hud.cycle {
+                        format!("[{} #{c}] {}", hud.step, hud.hint)
                     } else {
-                        format!("[{step}] {hint}")
+                        format!("[{}] {}", hud.step, hud.hint)
                     };
                 }
-                self.loop_hud = LoopHud {
-                    step,
-                    hint,
-                    cycle,
-                    trigger,
-                    elapsed_s,
-                    filename,
-                };
+                self.loop_hud = hud;
                 self.apply_hud_to_status_bar(lang);
             }
             }
@@ -2799,7 +2891,9 @@ impl TestToolPanel {
 
         if let Some(e) = wait_err {
             self.append_log(LogKind::System, &format!("wait error: {e}\n"));
-            self.job = None;
+            if let Some(job) = self.job.take() {
+                drop_overlay_file(job.overlay_file.as_deref());
+            }
             self.loop_hud = LoopHud {
                 step: "stopped".into(),
                 ..LoopHud::default()
@@ -2809,12 +2903,14 @@ impl TestToolPanel {
         }
 
         if let Some((id, status)) = finished {
-            self.job = None;
+            if let Some(job) = self.job.take() {
+                drop_overlay_file(job.overlay_file.as_deref());
+            }
             let code = status.code().unwrap_or(-1);
             if status.success() {
                 self.append_log(LogKind::System, &format!("—— done {id} (exit 0) ——\n"));
                 self.status = format!("{} · {}", tr(lang, "test_tool.status_ok"), id);
-                // Preflight / short runs never enter a capture cycle — do not show "captured".
+                // Short runs that never wrote a HUD step stay idle.
                 if matches!(self.loop_hud.step.as_str(), "" | "armed") {
                     self.loop_hud = LoopHud {
                         step: "idle".into(),
@@ -2876,6 +2972,8 @@ impl TestToolPanel {
                         "stop".into(),
                         "--data-root".into(),
                         data_root,
+                        "--project".into(),
+                        hub_project_id(),
                         "--plugins-root".into(),
                         plugins_dir,
                         "--marketplace-dir".into(),
@@ -2937,6 +3035,7 @@ impl Drop for TestToolPanel {
     fn drop(&mut self) {
         // Panel teardown: no more poll frames — force-kill immediately.
         if let Some(mut job) = self.job.take() {
+            drop_overlay_file(job.overlay_file.as_deref());
             if let Some(ref stop) = job.stop_file {
                 let _ = fs::write(stop, b"host exit\n");
             }
@@ -3098,6 +3197,35 @@ fn hub_text_edit(
                 egui::TextEdit::singleline(text)
                     .desired_width(rect.width())
                     .clip_text(true)
+                    .hint_text(hint),
+            )
+        },
+    )
+}
+
+fn hub_text_edit_multiline(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    text: &mut String,
+    hint: &str,
+    monospace: bool,
+) -> egui::Response {
+    place_in_rect(
+        ui,
+        rect,
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            let font = if monospace {
+                FontId::monospace(ui_theme::FONT_CAPTION)
+            } else {
+                FontId::proportional(ui_theme::FONT_CAPTION)
+            };
+            ui.add_sized(
+                rect.size(),
+                egui::TextEdit::multiline(text)
+                    .font(font)
+                    .desired_width(rect.width())
+                    .desired_rows(8)
                     .hint_text(hint),
             )
         },
@@ -3461,6 +3589,17 @@ fn read_plugin_info(path: &Path) -> Option<PluginInfo> {
                         fills: parse_fills(p),
                         options: parse_options(p),
                         hidden: p.get("hidden").and_then(|x| x.as_bool()).unwrap_or(false),
+                        group: p
+                            .get("group")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_owned(),
+                        group_zh: p
+                            .get("group_zh")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_owned(),
+                        advanced: p.get("advanced").and_then(|x| x.as_bool()).unwrap_or(false),
                     })
                 })
                 .collect()
@@ -3526,8 +3665,301 @@ fn station_get(v: &serde_json::Value, dotted: &str) -> Option<String> {
         serde_json::Value::String(s) => Some(s.clone()),
         serde_json::Value::Number(n) => Some(n.to_string()),
         serde_json::Value::Bool(b) => Some(b.to_string()),
-        _ => None,
+        serde_json::Value::Null => None,
+        other => serde_json::to_string_pretty(other).ok(),
     }
+}
+
+fn station_set(v: &mut serde_json::Value, dotted: &str, val: serde_json::Value) {
+    if !v.is_object() {
+        *v = serde_json::json!({});
+    }
+    let parts: Vec<&str> = dotted.split('.').filter(|s| !s.is_empty()).collect();
+    if parts.is_empty() {
+        return;
+    }
+    let mut cur = v;
+    for (i, part) in parts.iter().enumerate() {
+        if i + 1 == parts.len() {
+            if let Some(obj) = cur.as_object_mut() {
+                obj.insert((*part).to_string(), val);
+            }
+            return;
+        }
+        let obj = match cur.as_object_mut() {
+            Some(o) => o,
+            None => return,
+        };
+        let next = obj
+            .entry((*part).to_string())
+            .or_insert_with(|| serde_json::json!({}));
+        if !next.is_object() {
+            *next = serde_json::json!({});
+        }
+        cur = next;
+    }
+}
+
+fn overlay_json_value(type_name: &str, raw: &str) -> serde_json::Value {
+    match type_name.trim().to_ascii_lowercase().as_str() {
+        "boolean" | "bool" => serde_json::Value::Bool(is_truthy(raw)),
+        "number" | "device" => {
+            if let Ok(n) = raw.trim().parse::<i64>() {
+                serde_json::json!(n)
+            } else if let Ok(n) = raw.trim().parse::<f64>() {
+                serde_json::json!(n)
+            } else {
+                serde_json::Value::String(raw.to_owned())
+            }
+        }
+        "json" => serde_json::from_str(raw)
+            .unwrap_or_else(|_| serde_json::Value::String(raw.to_owned())),
+        _ => serde_json::Value::String(raw.to_owned()),
+    }
+}
+
+fn apply_param_overlays_to_station(
+    station: &mut serde_json::Value,
+    plugin: &PluginInfo,
+    values: &HashMap<String, String>,
+) {
+    for param in &plugin.params {
+        if param.path.is_empty() {
+            continue;
+        }
+        let Some(raw) = values.get(&param.name) else {
+            continue;
+        };
+        if raw.trim().is_empty() {
+            continue;
+        }
+        station_set(
+            station,
+            &param.path,
+            overlay_json_value(&param.type_name, raw),
+        );
+    }
+}
+
+fn expand_braces(s: &str, vars: &HashMap<String, String>) -> String {
+    let mut out = s.to_string();
+    for (k, v) in vars {
+        if k == "stamp" {
+            continue;
+        }
+        out = out.replace(&format!("{{{k}}}"), v);
+    }
+    out
+}
+
+fn walk_expand_strings(v: &mut serde_json::Value, vars: &HashMap<String, String>) {
+    match v {
+        serde_json::Value::String(s) => *s = expand_braces(s, vars),
+        serde_json::Value::Array(a) => {
+            for x in a {
+                walk_expand_strings(x, vars);
+            }
+        }
+        serde_json::Value::Object(o) => {
+            for x in o.values_mut() {
+                walk_expand_strings(x, vars);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn hub_project_id() -> String {
+    std::env::var("WIPARSE_PROJECT")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "default".into())
+}
+
+fn inject_default_layout_paths(station: &mut serde_json::Value) {
+    let Some(obj) = station.as_object_mut() else {
+        return;
+    };
+    let paths = obj
+        .entry("paths")
+        .or_insert_with(|| serde_json::json!({}));
+    let Some(map) = paths.as_object_mut() else {
+        return;
+    };
+    let set = |map: &mut serde_json::Map<String, serde_json::Value>, key: &str, val: &str| {
+        let empty = map
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true);
+        if empty {
+            map.insert(key.to_string(), serde_json::Value::String(val.to_string()));
+        }
+    };
+    set(map, "test_dir", "{data_root}/projects/{project}/tests/{test_id}");
+    set(map, "lock_file", "{test_dir}/run.lock");
+    set(map, "stop_file", "{test_dir}/run.stop");
+    set(map, "status_file", "{test_dir}/status.json");
+}
+
+fn expand_station_templates(
+    station: &mut serde_json::Value,
+    data_root: &str,
+    plugin_dir: &str,
+    project: &str,
+    test_id: &str,
+) {
+    let product = station_get(station, "station.product").unwrap_or_default();
+    let file_prefix = station_get(station, "paths.file_prefix").unwrap_or_default();
+    let test_dir = PathBuf::from(data_root)
+        .join("projects")
+        .join(project)
+        .join("tests")
+        .join(test_id);
+    let mut vars = HashMap::new();
+    vars.insert("data_root".into(), data_root.to_owned());
+    vars.insert("product".into(), product);
+    vars.insert("plugin_dir".into(), plugin_dir.to_owned());
+    vars.insert("file_prefix".into(), file_prefix);
+    vars.insert("project".into(), project.to_owned());
+    vars.insert("project_id".into(), project.to_owned());
+    vars.insert("test_id".into(), test_id.to_owned());
+    vars.insert("plugin_id".into(), test_id.to_owned());
+    vars.insert("test_dir".into(), test_dir.to_string_lossy().into_owned());
+    walk_expand_strings(station, &vars);
+    let path_pairs: Vec<(String, String)> = station
+        .get("paths")
+        .and_then(|x| x.as_object())
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| {
+                    v.as_str()
+                        .filter(|s| !s.is_empty() && !s.contains('{'))
+                        .map(|s| (k.clone(), s.to_owned()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    for (k, v) in path_pairs {
+        vars.insert(k, v);
+    }
+    walk_expand_strings(station, &vars);
+}
+
+fn abs_plugin_path(raw: &str, plugin_dir: &Path) -> PathBuf {
+    let pb = PathBuf::from(raw);
+    if pb.is_absolute() {
+        pb
+    } else {
+        plugin_dir.join(pb)
+    }
+}
+
+fn drop_overlay_file(path: Option<&Path>) {
+    if let Some(p) = path {
+        let _ = fs::remove_file(p);
+    }
+}
+
+const HUD_SKIP_KEYS: &[&str] = &[
+    "step",
+    "hint",
+    "cycle",
+    "elapsed_s",
+    "ok",
+    "lifecycle",
+    "type",
+    "ts",
+    "timestamp",
+    "trigger",
+    "filename",
+    "triggers",
+    "sop",
+    "station",
+    "suggested_params",
+    "suggested_params_policy",
+    "checks",
+    "artifacts",
+    "error",
+    "plugin",
+    "session",
+    "wiparse",
+];
+
+fn parse_loop_hud(v: &serde_json::Value) -> LoopHud {
+    let step = v
+        .get("step")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let hint = v
+        .get("hint")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let cycle = v.get("cycle").and_then(|x| x.as_u64());
+    let elapsed_s = v
+        .get("elapsed_s")
+        .and_then(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)));
+    let mut extras = Vec::new();
+    if let Some(obj) = v.as_object() {
+        for (k, val) in obj {
+            if HUD_SKIP_KEYS.contains(&k.as_str()) {
+                continue;
+            }
+            let s = match val {
+                serde_json::Value::String(s) if !s.is_empty() => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::Bool(b) => b.to_string(),
+                _ => continue,
+            };
+            extras.push((k.clone(), s));
+            if extras.len() >= 6 {
+                break;
+            }
+        }
+    }
+    LoopHud {
+        step,
+        hint,
+        cycle,
+        elapsed_s,
+        extras,
+    }
+}
+
+fn grouped_visible_params(
+    plugin: &PluginInfo,
+    idxs: &[usize],
+    lang: Lang,
+) -> (Vec<(String, Vec<usize>)>, Vec<usize>) {
+    let mut groups: Vec<(String, String, Vec<usize>)> = Vec::new();
+    let mut advanced = Vec::new();
+    for &i in idxs {
+        let Some(p) = plugin.params.get(i) else {
+            continue;
+        };
+        if p.advanced {
+            advanced.push(i);
+            continue;
+        }
+        let id = p.group.clone();
+        let title = if matches!(lang, Lang::Zh) && !p.group_zh.is_empty() {
+            p.group_zh.clone()
+        } else if !p.group.is_empty() {
+            p.group.clone()
+        } else {
+            String::new()
+        };
+        if let Some((_, _, v)) = groups.iter_mut().find(|(g, _, _)| *g == id) {
+            v.push(i);
+        } else {
+            groups.push((id, title, vec![i]));
+        }
+    }
+    let groups = groups.into_iter().map(|(_, title, v)| (title, v)).collect();
+    (groups, advanced)
 }
 
 fn json_to_string(v: Option<&serde_json::Value>) -> String {

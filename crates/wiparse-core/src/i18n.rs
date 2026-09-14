@@ -54,14 +54,14 @@ pub fn tr(lang: Lang, key: &str) -> String {
         (Lang::Zh, "about.notes_section") => "本版更新",
         (Lang::En, "about.notes_section") => "What's New",
         (Lang::Zh, "about.notes") => "\
-• 设备总览：数字孪生前面板；直流电源 LCD 按真实通道显示 V/A/W\n\
-• 调试探针（J-Link/ST-Link/DAP）与 FT4222 USB 桥；发现列表可连接全部\n\
-• CLI / MCP：instrument.overview，以及 probe / bridge 命令\n\
+• Testing Hub：市场插件可在插件列表卸载（右键或标题栏）\n\
+• 插件 overlay / HUD 信封 / 可选 isf_dir；预检只走 lifecycle\n\
+• 行触发为通用 json 参数，Hub 不内置 ASK\n\
 详细记录见 docs/CHANGELOG.md",
         (Lang::En, "about.notes") => "\
-• Device overview digital twin; DC source LCD follows real channels (V/A/W)\n\
-• Debug probes (J-Link/ST-Link/DAP) and FT4222 USB bridge; Connect All\n\
-• CLI / MCP: instrument.overview plus probe / bridge commands\n\
+• Testing Hub: uninstall marketplace plugins from the plugin list\n\
+• Overlay / HUD envelope / optional isf_dir; preflight via lifecycle only\n\
+• Line triggers are generic json params; Hub does not hard-code ASK\n\
 Details: docs/CHANGELOG.md",
         (Lang::Zh, "about.close") => "关闭",
         (Lang::En, "about.close") => "Close",
@@ -196,6 +196,10 @@ Details: docs/CHANGELOG.md",
         (Lang::En, "test_tool.market_reinstall") => "Reinstall",
         (Lang::Zh, "test_tool.market_uninstall") => "卸载",
         (Lang::En, "test_tool.market_uninstall") => "Uninstall",
+        (Lang::Zh, "test_tool.uninstall_bundled") => "捆绑插件不能卸载",
+        (Lang::En, "test_tool.uninstall_bundled") => "Bundled plugins cannot be uninstalled",
+        (Lang::Zh, "test_tool.uninstall_help") => "卸载本机已安装的市场插件；捆绑插件会重新出现",
+        (Lang::En, "test_tool.uninstall_help") => "Remove this marketplace install. Bundled copy remains if present.",
         (Lang::Zh, "test_tool.market_no_url") => "请填写市场地址",
         (Lang::En, "test_tool.market_no_url") => "Set marketplace URL",
         (Lang::Zh, "test_tool.market_not_installed") => "尚未安装该插件",
@@ -280,6 +284,10 @@ Details: docs/CHANGELOG.md",
         (Lang::En, "test_tool.hud_armed") => "Ready",
         (Lang::Zh, "test_tool.hud_idle") => "空闲",
         (Lang::En, "test_tool.hud_idle") => "Idle",
+        (Lang::Zh, "test_tool.hud_running") => "运行中",
+        (Lang::En, "test_tool.hud_running") => "Running",
+        (Lang::Zh, "test_tool.param_advanced") => "高级参数",
+        (Lang::En, "test_tool.param_advanced") => "Advanced parameters",
         (Lang::Zh, "test_tool.preflight") => "预检",
         (Lang::En, "test_tool.preflight") => "Preflight",
         (Lang::Zh, "test_tool.preflight_only") => "仅预检（不启动循环）",

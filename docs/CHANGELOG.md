@@ -6,6 +6,42 @@
 
 ---
 
+## 1.1.13 — 2026-09-15
+
+Testing Hub 把「行触发条件」做成通用 `json` 参数；示波器/串口监控插件不再把 ASK 写进平台。市场安装的插件可在插件列表卸载。
+
+### Testing Hub / 插件契约
+
+- Hub 表单经 `--overlay` 文件下发（不写回 `station.json`），避免大 JSON 塞进 argv。
+- HUD 只读 `step` / `hint` / `cycle` / `elapsed_s`，不再把插件 step 译成「监控/已抓到」。
+- `paths.isf_dir` 改为可选；Hub 只展开 `status_file` / `stop_file`。
+- 预检只走 `--lifecycle preflight`；`params[].group` / `advanced` 折叠。
+- **卸载**：市场安装的插件可在插件列表标题栏或右键菜单卸载；捆绑插件不可卸。市场详情页原有卸载仍然有效。
+
+- 新参数类型：`json`（多行 JSON）、`text`（多行文本）。Hub 仍不识别 ASK / 示波器语义。
+- `station.json` 里的对象/数组会 pretty-print 进表单；`--name` 覆盖经 `applyParamPaths` 解析后写回 station。
+- 通用行匹配库：`test-tools/lib/line-triggers.mjs`（`regex` / `contains`、`unless`、上升沿）。
+
+- 项目落盘：`{data_root}/projects/{project}/tests/{plugin.id}/`；`run` 使用 `runs/{stamp}/artifacts/`。runner 增加 `--project` / `--stamp`，结束时写 `run.json`。
+- `plugin.json` 可声明 `outputs[]`（`view`: wave / log / report / external）。`artifacts` 规范成 `items[]`，路径必须在本次 `run_dir` 内。
+- `colocateStatusWithIsf` 不再覆盖已声明 `status_file`；缺省 HUD 在 `test_dir/status.json`。
+- `preflight` / `stop` 不分配 stamp、不创建 `runs/`。禁止新 run 写入 `plugin_dir`、`instrument_data/`、`test report/`。
+
+### 示波器/串口监控
+
+- `scope-serial-monitor` **v0.5.0**：表单可改 `serial_triggers.items` 与 **上升沿触发**。Hub 覆盖后循环不再用磁盘 `station.json` 冲掉表单。
+- `station.json` 里的 ASK 2 / timeout 仅为出厂配方，改表单或改 JSON 即可换规则。
+- 写盘改到 `projects/default/tests/scope-serial-monitor/runs/<stamp>/artifacts/{waves,reports,shots,docs}`；锁/停/HUD 在 `test_dir`。会话 stamp 使用 `ctx.stamp`。
+
+### 兼容性
+
+- 配置键仍为 `test_tool`。未声明 `json` 参数的旧插件行为不变。
+- 旧 GUI 把 `json` 当成单行字符串仍可跑（挤）；多行编辑需本版界面。
+- 旧 `instrument_data/` 与 `test report/` 文件不搬家；报告树（P1）只扫 `projects/`。
+- 本机 `--project` 默认 `default`（可用 `WIPARSE_PROJECT`）。测试报告页项目 Combo 仍属 P1。
+
+---
+
 ## 1.1.12 — 2026-09-13
 
 仪表控制增加调试探针 / FT4222 与 **设备总览** 数字孪生（前面板 LCD 跟实测走）。CLI / MCP 可读取同一套状态。界面标签不变。

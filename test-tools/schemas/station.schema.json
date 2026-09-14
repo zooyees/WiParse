@@ -27,7 +27,7 @@
     "timing": { "type": "object" },
     "paths": {
       "type": "object",
-      "required": ["file_prefix", "isf_dir", "report_dir"],
+      "additionalProperties": { "type": "string" },
       "properties": {
         "file_prefix": { "type": "string", "minLength": 1 },
         "isf_dir": { "type": "string", "minLength": 1 },
@@ -35,7 +35,12 @@
         "lock_file": { "type": "string" },
         "stop_file": { "type": "string" },
         "status_file": { "type": "string" },
-        "summary_md": { "type": "string" }
+        "summary_md": { "type": "string" },
+        "test_dir": { "type": "string" },
+        "run_dir": { "type": "string" },
+        "artifacts_dir": { "type": "string" },
+        "shot_dir": { "type": "string" },
+        "docs_dir": { "type": "string" }
       }
     },
     "serial_triggers": { "type": "object" },

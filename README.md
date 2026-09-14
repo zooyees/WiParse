@@ -2,9 +2,9 @@
 
 **[中文](#中文)** · **[English](#english)**
 
-无线充电（Qi）测试与工位工具。当前版本 **1.1.12**（以工作区 `Cargo.toml` 的 `workspace.package.version` 为准）。
+无线充电（Qi）测试与工位工具。当前版本 **1.1.13**（以工作区 `Cargo.toml` 的 `workspace.package.version` 为准）。
 
-Wireless charging (Qi) lab and station utility. Current version **1.1.12**.
+Wireless charging (Qi) lab and station utility. Current version **1.1.13**.
 
 许可：**Proprietary**。本仓库不是通用示波器软件，也不是面向公网的服务。
 
@@ -299,7 +299,7 @@ node runner.mjs --plugin scope-serial-monitor --lifecycle run -- --file_prefix M
 node runner.mjs --plugin scope-serial-monitor --lifecycle stop
 ```
 
-GUI：**集成测试** → 选插件 → 改参数 → 预检 / 运行 / 停止。
+GUI：**集成测试** → 选插件 → 改参数 → 预检 / 运行 / 停止。市场安装的插件可在标题栏或右键 **卸载**（捆绑插件不能卸）。
 
 环境变量：`WIPARSE_CLI`、`WIPARSE_URL`、`WIPARSE_DATA_ROOT`、`WIPARSE_MARKETPLACE_URL`。
 
@@ -313,7 +313,7 @@ GUI：**集成测试** → 选插件 → 改参数 → 预检 / 运行 / 停止�
 
 然后：GUI → **集成测试** → **市场** → 展开 **服务器** 确认 URL → 刷新 → 安装。安装目录默认在数据根下的 `marketplace`。
 
-市场 HTTP API 与发布格式见 [`services/testing-hub-marketplace/README.md`](services/testing-hub-marketplace/README.md)。
+市场 HTTP API 与发布格式见 [`services/testing-hub-marketplace/README.md`](services/testing-hub-marketplace/README.md)。阿里云公网部署见 [`docs/DEPLOY_MARKETPLACE.md`](docs/DEPLOY_MARKETPLACE.md)。
 
 ### 8. 工位闭环与自动化
 
@@ -398,7 +398,7 @@ WiParse-R/
 | [`test-tools/PLUGIN_SPEC.md`](test-tools/PLUGIN_SPEC.md) | 插件契约（给开发者 / 其它 AI） |
 | [`test-tools/README.md`](test-tools/README.md) | runner 与市场客户端 |
 | [`mcp/wiparse/README.md`](mcp/wiparse/README.md) | MCP 工具约定 |
-| [`docs/MDO3014_SCPI命令手册.md`](docs/MDO3014_SCPI命令手册.md) | MDO3014 SCPI 参考（仪器手册摘录） |
+| [`docs/MDO3014_SCPI命令手册.md`](docs/MDO3014_SCPI命令手册.md) | **077-1498**：3 Series MDO（MDO32/34/34E）。MDO3014 属 MDO3000 / 077-1422，命令不完全互通 |
 
 ---
 
@@ -521,7 +521,7 @@ Local catalog:
 .\scripts\deploy-marketplace.ps1
 ```
 
-Then Testing Hub → **Market** → Server URL `http://127.0.0.1:8787` → Refresh → Install. Contract: [`test-tools/PLUGIN_SPEC.md`](test-tools/PLUGIN_SPEC.md).
+Then Testing Hub → **Market** → Server URL `http://127.0.0.1:8787` → Refresh → Install. Uninstall marketplace plugins from the plugin list (header or right-click); bundled plugins stay. Contract: [`test-tools/PLUGIN_SPEC.md`](test-tools/PLUGIN_SPEC.md). Aliyun / public HTTPS deploy: [`docs/DEPLOY_MARKETPLACE.md`](docs/DEPLOY_MARKETPLACE.md).
 
 ### 8. Station closed loop
 
@@ -558,6 +558,7 @@ WiParse-R/
 | [`docs/DEPLOY_API.md`](docs/DEPLOY_API.md) | Embedded API |
 | [`docs/DEPLOY_MCP.md`](docs/DEPLOY_MCP.md) | MCP on another PC |
 | [`docs/WORKSTATION_CLOSED_LOOP.md`](docs/WORKSTATION_CLOSED_LOOP.md) | Station wait / ISF |
+| [`docs/MDO3014_SCPI命令手册.md`](docs/MDO3014_SCPI命令手册.md) | 077-1498 = 3 Series MDO32/34/34E; MDO3014 is MDO3000 |
 | [`docs/UPDATE.md`](docs/UPDATE.md) | Online update |
 | [`test-tools/PLUGIN_SPEC.md`](test-tools/PLUGIN_SPEC.md) | Plugin contract |
 | [`mcp/wiparse/README.md`](mcp/wiparse/README.md) | MCP tools |

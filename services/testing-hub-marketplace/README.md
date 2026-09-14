@@ -3,6 +3,8 @@
 Cloud catalog and artifact API for WiParse Testing Hub plugins.  
 Paired with in-repo client: `test-tools/marketplace.mjs` and `wiparse_core::marketplace`.
 
+**阿里云 / 公网部署**（HTTPS、systemd、Nginx、发布与工位验收）：[`docs/DEPLOY_MARKETPLACE.md`](../../docs/DEPLOY_MARKETPLACE.md)。模板在 [`deploy/`](./deploy/)。
+
 ## Run
 
 ```bash

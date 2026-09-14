@@ -37,13 +37,16 @@
         "additionalProperties": true,
         "properties": {
           "name": { "type": "string", "minLength": 1 },
-          "type": { "type": "string", "enum": ["string", "number", "boolean", "path", "device", "enum", "serial_port"] },
+          "type": { "type": "string", "enum": ["string", "number", "boolean", "path", "device", "enum", "serial_port", "json", "text"] },
           "default": {},
           "path": { "type": "string" },
           "label": { "type": "string" },
           "label_zh": { "type": "string" },
           "help": { "type": "string" },
           "hidden": { "type": "boolean" },
+          "group": { "type": "string" },
+          "group_zh": { "type": "string" },
+          "advanced": { "type": "boolean" },
           "filter": {
             "type": "object",
             "properties": {
@@ -105,6 +108,33 @@
               "network.outbound"
             ]
           }
+        }
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+          },
+          "label": { "type": "string" },
+          "label_zh": { "type": "string" },
+          "view": {
+            "type": "string",
+            "enum": ["wave", "log", "report", "external"]
+          },
+          "dir": { "type": "string" },
+          "include": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "always": { "type": "boolean" }
         }
       }
     }

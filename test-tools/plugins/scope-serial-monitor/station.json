@@ -34,13 +34,13 @@
     "shot_timeout_ms": 90000
   },
   "paths": {
-    "isf_dir": "{data_root}/instrument_data/{product}",
-    "report_dir": "{data_root}/test report/{product}",
+    "isf_dir": "{artifacts_dir}/waves",
+    "report_dir": "{artifacts_dir}/reports",
     "file_prefix": "ScopeSerial",
-    "lock_file": "{plugin_dir}/run.lock",
-    "stop_file": "{plugin_dir}/run.stop",
-    "status_file": "{data_root}/instrument_data/{product}/_loop_status.json",
-    "summary_md": "{data_root}/test report/{product}/{file_prefix}_summary_{stamp}.md"
+    "lock_file": "{test_dir}/run.lock",
+    "stop_file": "{test_dir}/run.stop",
+    "status_file": "{test_dir}/status.json",
+    "summary_md": "{artifacts_dir}/reports/{file_prefix}_summary_{stamp}.md"
   },
   "serial_triggers": {
     "mode": "first_match",

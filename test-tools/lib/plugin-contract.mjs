@@ -30,6 +30,40 @@ export const SANDBOX_PERMISSIONS = Object.freeze([
 
 export const MARKETPLACE_CHANNELS = Object.freeze(["stable", "beta", "internal"]);
 
+export const PARAM_TYPES = Object.freeze([
+  "string",
+  "number",
+  "boolean",
+  "path",
+  "device",
+  "enum",
+  "serial_port",
+  "json",
+  "text",
+]);
+
+export const OUTPUT_VIEWS = Object.freeze(["wave", "log", "report", "external"]);
+
+const ARTIFACT_SKIP_KEYS = new Set([
+  "stop_file",
+  "lock_file",
+  "status_file",
+]);
+
+const LAYOUT_PATH_KEYS = Object.freeze([
+  "lock_file",
+  "stop_file",
+  "status_file",
+  "isf_dir",
+  "report_dir",
+  "test_dir",
+  "run_dir",
+  "artifacts_dir",
+  "summary_md",
+  "shot_dir",
+  "docs_dir",
+]);
+
 export function projectRoot() {
   return path.resolve(__dirname, "..", "..");
 }
@@ -82,6 +116,16 @@ function coerceParam(type, raw) {
     const n = Number(raw);
     return Number.isFinite(n) ? n : raw;
   }
+  if (t === "json") {
+    if (typeof raw === "object") return raw;
+    const s = String(raw).trim();
+    if (!s) return raw;
+    try {
+      return JSON.parse(s);
+    } catch {
+      return raw;
+    }
+  }
   return String(raw);
 }
 
@@ -114,11 +158,10 @@ export function applyParamPaths(config, paramDefs, args) {
 function expandString(s, vars) {
   if (typeof s !== "string") return s;
   let out = s.replace(/\{(\w+)\}/g, (m, key) => {
-    if (key === "stamp") return m;
-    if (Object.prototype.hasOwnProperty.call(vars, key) && vars[key] != null) {
-      return String(vars[key]);
-    }
-    return m;
+    if (!Object.prototype.hasOwnProperty.call(vars, key)) return m;
+    const val = vars[key];
+    if (val == null || val === "") return m;
+    return String(val);
   });
   if (/^[A-Za-z]:[\\/]/.test(out) || out.startsWith("\\\\") || path.isAbsolute(out)) {
     out = path.normalize(out);
@@ -139,7 +182,99 @@ function walkExpand(node, vars) {
   return node;
 }
 
-export function expandTemplates(config, { dataRoot, pluginDir } = {}) {
+export function makeStamp(d = new Date()) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+export function sanitizeId(raw, fallback = "default") {
+  const s = String(raw ?? "").trim();
+  if (/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(s)) return s;
+  return fallback;
+}
+
+/**
+ * Canonical project layout. `stamp` / `run_dir` / `artifacts_dir` exist only for lifecycle=run.
+ */
+export function resolveProjectLayout({
+  dataRoot,
+  project,
+  testId,
+  stamp,
+  lifecycle,
+} = {}) {
+  const root = dataRoot || resolveDataRoot();
+  const projectId = sanitizeId(project || process.env.WIPARSE_PROJECT, "default");
+  const test_id = String(testId || "").trim();
+  const test_dir = path.join(root, "projects", projectId, "tests", test_id);
+  const stampVal = lifecycle === "run" && stamp ? String(stamp) : "";
+  const run_dir = stampVal ? path.join(test_dir, "runs", stampVal) : "";
+  const artifacts_dir = run_dir ? path.join(run_dir, "artifacts") : "";
+  return {
+    project: projectId,
+    project_id: projectId,
+    test_id,
+    plugin_id: test_id,
+    stamp: stampVal,
+    test_dir,
+    run_dir,
+    artifacts_dir,
+  };
+}
+
+export function injectDefaultPathTemplates(config, { hasRunDir } = {}) {
+  if (!config.paths || typeof config.paths !== "object") config.paths = {};
+  const p = config.paths;
+  const set = (k, v) => {
+    if (p[k] == null || String(p[k]).trim() === "") p[k] = v;
+  };
+  set("test_dir", "{data_root}/projects/{project}/tests/{test_id}");
+  if (hasRunDir) {
+    set("run_dir", "{test_dir}/runs/{stamp}");
+    set("artifacts_dir", "{run_dir}/artifacts");
+  }
+  set("lock_file", "{test_dir}/run.lock");
+  set("stop_file", "{test_dir}/run.stop");
+  set("status_file", "{test_dir}/status.json");
+  return config;
+}
+
+export function ensureProjectScaffold(layout) {
+  if (!layout?.test_dir) return null;
+  const projectDir = path.resolve(layout.test_dir, "..", "..");
+  fs.mkdirSync(layout.test_dir, { recursive: true });
+  const pj = path.join(projectDir, "project.json");
+  if (!fs.existsSync(pj)) {
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(
+      pj,
+      `${JSON.stringify(
+        {
+          schema: "wiparse.project/v1",
+          id: layout.project,
+          name: layout.project,
+          tests: [],
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+  }
+  return pj;
+}
+
+function layoutTemplateVars(layout) {
+  if (!layout) return {};
+  const vars = {};
+  for (const [k, v] of Object.entries(layout)) {
+    if (v == null || v === "") continue;
+    vars[k] = v;
+  }
+  return vars;
+}
+
+export function expandTemplates(config, { dataRoot, pluginDir, layout } = {}) {
   const product = config?.station?.product || "";
   const file_prefix = config?.paths?.file_prefix || "";
   const vars = {
@@ -147,20 +282,153 @@ export function expandTemplates(config, { dataRoot, pluginDir } = {}) {
     product,
     file_prefix,
     plugin_dir: pluginDir || "",
+    ...layoutTemplateVars(layout),
   };
-  return walkExpand(config, vars);
+  let out = walkExpand(config, vars);
+  const pathVars = { ...vars };
+  if (out.paths && typeof out.paths === "object") {
+    for (const [k, v] of Object.entries(out.paths)) {
+      if (typeof v === "string" && v && !v.includes("{")) pathVars[k] = v;
+    }
+  }
+  out = walkExpand(out, pathVars);
+  return out;
 }
 
 /**
- * Keep HUD/status next to waveform ISF dir so overrides of isf_dir remain operable.
- * Call after template expansion / param merge.
+ * HUD lives in test_dir. Never overwrite an explicit status_file.
+ * Legacy fallback: if neither status_file nor test_dir is set, park next to isf_dir.
  */
 export function colocateStatusWithIsf(config) {
   if (!config?.paths || typeof config.paths !== "object") return config;
+  const existing = config.paths.status_file;
+  if (typeof existing === "string" && existing.trim()) return config;
+  const testDir = config.paths.test_dir;
+  if (typeof testDir === "string" && testDir.trim() && !testDir.includes("{")) {
+    config.paths.status_file = path.join(testDir, "status.json");
+    return config;
+  }
   const isf = config.paths.isf_dir;
-  if (typeof isf !== "string" || !isf.trim()) return config;
-  config.paths.status_file = path.join(isf, "_loop_status.json");
+  if (typeof isf === "string" && isf.trim() && !isf.includes("{")) {
+    config.paths.status_file = path.join(isf, "_loop_status.json");
+  }
   return config;
+}
+
+export function loadOverlayFile(file) {
+  if (!file) return {};
+  const p = String(file).trim();
+  if (!p || !fs.existsSync(p)) return {};
+  const raw = JSON.parse(fs.readFileSync(p, "utf8"));
+  if (raw && typeof raw === "object" && !Array.isArray(raw) && raw.params && typeof raw.params === "object") {
+    return raw.params;
+  }
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw;
+  return {};
+}
+
+export function isPathInside(child, parent) {
+  if (!child || !parent) return false;
+  const rel = path.relative(path.resolve(parent), path.resolve(child));
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+function matchSimpleGlob(name, pattern) {
+  const n = String(name || "");
+  const g = String(pattern || "*");
+  if (g === "*") return true;
+  if (g.startsWith("*.") && !g.slice(2).includes("*")) {
+    return n.toLowerCase().endsWith(g.slice(1).toLowerCase());
+  }
+  return n === g;
+}
+
+function viewForOutput(outputs, id) {
+  const hit = (outputs || []).find((o) => o && o.id === id);
+  return hit?.view || undefined;
+}
+
+/**
+ * Normalize plugin artifacts (map or items[]) → `{ items: [{ output, path, view? }] }`.
+ * Paths outside `runDir` are dropped. `stop_file` / lock / status are never artifacts.
+ */
+export function normalizeArtifacts(raw, { runDir, outputs } = {}) {
+  const items = [];
+  const push = (output, pathStr, view) => {
+    if (!pathStr || ARTIFACT_SKIP_KEYS.has(String(output))) return;
+    const abs = path.resolve(String(pathStr));
+    if (runDir && !isPathInside(abs, runDir)) return;
+    items.push({
+      output: output ? String(output) : undefined,
+      path: abs,
+      view: view || viewForOutput(outputs, output),
+    });
+  };
+  if (raw == null) return { items };
+  if (Array.isArray(raw)) {
+    for (const x of raw) {
+      if (typeof x === "string") push(undefined, x);
+      else if (x && typeof x === "object") push(x.output, x.path, x.view);
+    }
+    return { items };
+  }
+  if (typeof raw !== "object") return { items };
+  if (Array.isArray(raw.items)) {
+    return normalizeArtifacts(raw.items, { runDir, outputs });
+  }
+  for (const [output, val] of Object.entries(raw)) {
+    const list = Array.isArray(val) ? val : [val];
+    for (const x of list) {
+      if (typeof x === "string") push(output, x);
+      else if (x && typeof x === "object") push(output, x.path, x.view);
+    }
+  }
+  return { items };
+}
+
+export function collectOutputFiles(outputs, vars = {}) {
+  const map = {};
+  for (const o of outputs || []) {
+    if (!o?.id) continue;
+    const dir = expandString(o.dir || `{artifacts_dir}/${o.id}`, vars);
+    if (!dir || dir.includes("{") || !fs.existsSync(dir)) continue;
+    const include = Array.isArray(o.include) && o.include.length ? o.include : ["*"];
+    const files = [];
+    for (const name of fs.readdirSync(dir)) {
+      if (!include.some((g) => matchSimpleGlob(name, g))) continue;
+      const abs = path.join(dir, name);
+      try {
+        if (fs.statSync(abs).isFile()) files.push(abs);
+      } catch {
+        /* skip */
+      }
+    }
+    if (files.length) map[o.id] = files;
+  }
+  return map;
+}
+
+export function writeRunJson(layout, plugin, result) {
+  if (!layout?.run_dir) return null;
+  fs.mkdirSync(layout.run_dir, { recursive: true });
+  const artifacts = normalizeArtifacts(result?.artifacts, {
+    runDir: layout.run_dir,
+    outputs: plugin?.outputs,
+  });
+  const doc = {
+    schema: "wiparse.run/v1",
+    plugin: plugin?.id,
+    project: layout.project,
+    stamp: layout.stamp,
+    ok: result?.ok !== false,
+    lifecycle: result?.lifecycle || "run",
+    session: result?.session || layout.stamp,
+    ended: new Date().toISOString(),
+    artifacts,
+  };
+  const dest = path.join(layout.run_dir, "run.json");
+  fs.writeFileSync(dest, `${JSON.stringify(doc, null, 2)}\n`, "utf8");
+  return dest;
 }
 
 export function sanitizeFilePrefix(raw) {
@@ -277,8 +545,27 @@ export function validatePluginManifest(raw) {
         if (!p.name || typeof p.name !== "string") {
           errors.push(`params[${i}].name: required`);
         }
-        if (p.type != null && !["string", "number", "boolean", "path", "device", "enum", "serial_port"].includes(p.type)) {
+        if (p.type != null && !PARAM_TYPES.includes(p.type)) {
           errors.push(`params[${i}].type: invalid`);
+        }
+      });
+    }
+  }
+  if (raw.outputs != null) {
+    if (!Array.isArray(raw.outputs)) errors.push("outputs: must be array");
+    else {
+      raw.outputs.forEach((o, i) => {
+        if (!o || typeof o !== "object") {
+          errors.push(`outputs[${i}]: must be object`);
+          return;
+        }
+        if (!o.id || typeof o.id !== "string") {
+          errors.push(`outputs[${i}].id: required`);
+        } else if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(o.id)) {
+          errors.push(`outputs[${i}].id: must match [a-zA-Z0-9][a-zA-Z0-9._-]*`);
+        }
+        if (o.view != null && !OUTPUT_VIEWS.includes(o.view)) {
+          errors.push(`outputs[${i}].view: must be ${OUTPUT_VIEWS.join("|")}`);
         }
       });
     }
@@ -325,9 +612,9 @@ export function validateStationConfig(raw) {
   }
   if (!raw.paths || typeof raw.paths !== "object") errors.push("paths: required object");
   else {
-    for (const key of ["file_prefix", "isf_dir", "report_dir"]) {
-      if (!raw.paths[key] || typeof raw.paths[key] !== "string") {
-        errors.push(`paths.${key}: required string`);
+    for (const [key, val] of Object.entries(raw.paths)) {
+      if (val != null && typeof val !== "string") {
+        errors.push(`paths.${key}: must be string`);
       }
     }
   }
@@ -388,8 +675,8 @@ export function normalizeResult(raw, lifecycle = "run") {
   if (raw.step != null) out.step = String(raw.step);
   if (raw.error != null) out.error = String(raw.error);
   if (Array.isArray(raw.checks)) out.checks = raw.checks;
-  if (raw.artifacts != null && typeof raw.artifacts === "object") {
-    out.artifacts = raw.artifacts;
+  if (raw.artifacts != null) {
+    out.artifacts = normalizeArtifacts(raw.artifacts);
   }
   // Pass through useful extras without breaking contract
   for (const key of [
@@ -512,20 +799,30 @@ export function loadStationConfig(ctx) {
   const args = mergeArgs(ctx.plugin?.params, ctx.args || {});
   let config = applyParamPaths(raw, ctx.plugin?.params, args);
   const dataRoot = resolveDataRoot(ctx.dataRoot || args.data_root);
-  config = expandTemplates(config, { dataRoot, pluginDir });
+  const layout =
+    ctx.layout ||
+    resolveProjectLayout({
+      dataRoot,
+      project: ctx.project || args.project,
+      testId: ctx.plugin?.id,
+      stamp: ctx.stamp,
+      lifecycle: ctx.lifecycle || "run",
+    });
+  injectDefaultPathTemplates(config, { hasRunDir: Boolean(layout.run_dir) });
+  config = expandTemplates(config, { dataRoot, pluginDir, layout });
   colocateStatusWithIsf(config);
 
   if (config.paths) {
-    for (const key of ["lock_file", "stop_file", "status_file", "isf_dir", "report_dir"]) {
+    for (const key of LAYOUT_PATH_KEYS) {
       const v = config.paths[key];
-      if (typeof v === "string" && v && !path.isAbsolute(v)) {
+      if (typeof v === "string" && v && !v.includes("{") && !path.isAbsolute(v)) {
         config.paths[key] = path.resolve(pluginDir, v);
       }
     }
     colocateSummaryWithReport(config);
   }
 
-  return { config, args, configPath, dataRoot };
+  return { config, args, configPath, dataRoot, layout };
 }
 
 /**
@@ -542,6 +839,8 @@ export default {
   PLUGIN_TYPES,
   SANDBOX_PERMISSIONS,
   MARKETPLACE_CHANNELS,
+  PARAM_TYPES,
+  OUTPUT_VIEWS,
   projectRoot,
   resolveDataRoot,
   truthy,
@@ -549,9 +848,19 @@ export default {
   getByPath,
   mergeArgs,
   applyParamPaths,
+  makeStamp,
+  sanitizeId,
+  resolveProjectLayout,
+  injectDefaultPathTemplates,
+  ensureProjectScaffold,
   expandTemplates,
   colocateStatusWithIsf,
   colocateSummaryWithReport,
+  loadOverlayFile,
+  isPathInside,
+  normalizeArtifacts,
+  collectOutputFiles,
+  writeRunJson,
   sanitizeFilePrefix,
   resolveConfigPath,
   parseSemver,

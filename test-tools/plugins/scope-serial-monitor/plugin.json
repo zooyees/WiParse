@@ -3,21 +3,57 @@
   "name": "Scope & Serial Monitor",
   "name_zh": "示波器/串口监控",
   "type": "capture_loop",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "entry": "index.mjs",
   "config": "station.json",
-  "description": "Serial rising-edge → scope stop → shot/ISF/PDF → resume. Instrument identity is a Hub param; Preflight auto-fills the connected device.",
+  "description": "Configurable line triggers (JSON) → scope stop → shot/ISF/PDF → resume. Writes under projects/{project}/tests/scope-serial-monitor/runs/{stamp}/.",
   "capabilities": ["preflight", "run", "stop"],
   "engines": {
     "node": ">=18",
-    "wiparse": ">=1.1.10"
+    "wiparse": ">=1.1.13"
   },
+  "outputs": [
+    {
+      "id": "waves",
+      "label": "Waveform sources",
+      "label_zh": "波形源文件",
+      "view": "wave",
+      "dir": "{artifacts_dir}/waves",
+      "include": ["*.isf", "*.wfm", "*.csv"]
+    },
+    {
+      "id": "reports",
+      "label": "Test report",
+      "label_zh": "测试报告",
+      "view": "report",
+      "dir": "{artifacts_dir}/reports",
+      "include": ["*.md"]
+    },
+    {
+      "id": "shots",
+      "label": "Screenshots",
+      "label_zh": "截图",
+      "view": "external",
+      "dir": "{artifacts_dir}/shots",
+      "include": ["*.png"]
+    },
+    {
+      "id": "docs",
+      "label": "HTML / PDF",
+      "label_zh": "HTML / PDF",
+      "view": "external",
+      "dir": "{artifacts_dir}/docs",
+      "include": ["*.html", "*.pdf", "*.json", "*.jsonl"]
+    }
+  ],
   "params": [
     {
       "name": "file_prefix",
       "type": "string",
       "path": "paths.file_prefix",
       "default": "ScopeSerial",
+      "group": "paths",
+      "group_zh": "路径",
       "label": "Report name / prefix",
       "label_zh": "报告名称/前缀",
       "help": "Prefix for ISF, PDF, PNG, and the summary Markdown (e.g. MyLot → MyLot_summary_*.md)"
@@ -34,6 +70,8 @@
         "scope_kind": "kind"
       },
       "default": "",
+      "group": "instrument",
+      "group_zh": "仪器",
       "label": "Instrument",
       "label_zh": "仪器",
       "help": "Pick a connected instrument, or leave Auto and click Preflight to fill from the live list."
@@ -43,6 +81,8 @@
       "type": "enum",
       "path": "scope.kind",
       "default": "oscilloscope",
+      "group": "instrument",
+      "group_zh": "仪器",
       "label": "Instrument kind",
       "label_zh": "仪器类型",
       "help": "Filters the instrument picker. Changing kind does not require Hub code changes.",
@@ -59,6 +99,8 @@
       "type": "string",
       "path": "scope.model",
       "default": "",
+      "group": "instrument",
+      "group_zh": "仪器",
       "label": "Model",
       "label_zh": "型号",
       "help": "Optional. Empty = accept any model of this kind. Preflight fills from *IDN?."
@@ -68,6 +110,8 @@
       "type": "string",
       "path": "scope.resource",
       "default": "",
+      "group": "instrument",
+      "group_zh": "仪器",
       "label": "VISA resource",
       "label_zh": "VISA 资源",
       "help": "Optional. Empty = use the connected device. Used to reconnect if the session dropped."
@@ -76,34 +120,65 @@
       "name": "isf_dir",
       "type": "path",
       "path": "paths.isf_dir",
-      "default": "{data_root}/instrument_data/{product}",
+      "default": "{artifacts_dir}/waves",
+      "group": "paths",
+      "group_zh": "路径",
+      "advanced": true,
       "label": "ISF directory",
       "label_zh": "波形源文件目录",
-      "help": "Where .isf waveform sources are saved"
+      "help": "Must stay under this run's artifacts. Default: {artifacts_dir}/waves"
     },
     {
       "name": "report_dir",
       "type": "path",
       "path": "paths.report_dir",
-      "default": "{data_root}/test report/{product}",
+      "default": "{artifacts_dir}/reports",
+      "group": "paths",
+      "group_zh": "路径",
+      "advanced": true,
       "label": "Report directory",
       "label_zh": "报告保存目录",
-      "help": "PDF / HTML / summary MD directory"
+      "help": "Markdown summary. Default: {artifacts_dir}/reports"
     },
     {
       "name": "product",
       "type": "string",
       "path": "station.product",
       "default": "ScopeSerial",
+      "group": "paths",
+      "group_zh": "路径",
       "label": "Product",
       "label_zh": "产品名",
-      "help": "Used in path templates as {product}"
+      "help": "Shown in the report body only. Folder tree uses project / plugin id, not {product}."
+    },
+    {
+      "name": "rising_edge",
+      "type": "boolean",
+      "path": "serial_triggers.rising_edge",
+      "default": "true",
+      "group": "triggers",
+      "group_zh": "触发",
+      "label": "Rising edge",
+      "label_zh": "上升沿触发",
+      "help": "Fire once when a rule goes inactive→active. Off = every matching line captures."
+    },
+    {
+      "name": "triggers",
+      "type": "json",
+      "path": "serial_triggers.items",
+      "group": "triggers",
+      "group_zh": "触发",
+      "label": "Line triggers",
+      "label_zh": "串口触发条件",
+      "help": "JSON array of line rules. Hub does not hard-code ASK/timeout. Each item: id, enabled, type (regex|contains), pattern, flags, unless[], note. Disable a rule with enabled:false."
     },
     {
       "name": "port",
       "type": "serial_port",
       "path": "serial.port",
       "default": "COM7",
+      "group": "serial",
+      "group_zh": "串口",
       "label": "Serial port",
       "label_zh": "串口",
       "help": "COM port for live monitor"
@@ -113,6 +188,8 @@
       "type": "number",
       "path": "serial.baud",
       "default": "2000000",
+      "group": "serial",
+      "group_zh": "串口",
       "label": "Baud",
       "label_zh": "波特率"
     },
@@ -121,6 +198,7 @@
       "type": "string",
       "path": "gui.api",
       "default": "http://127.0.0.1:7878",
+      "advanced": true,
       "label": "GUI API",
       "label_zh": "GUI API 地址"
     },
@@ -128,9 +206,10 @@
       "name": "preflight_only",
       "type": "boolean",
       "default": "false",
+      "hidden": true,
       "label": "Preflight only",
       "label_zh": "仅预检",
-      "help": "Run checks and exit without starting the loop"
+      "help": "CLI compat: --preflight_only true. Hub uses the Preflight button (--lifecycle preflight)."
     }
   ]
 }

@@ -15,15 +15,23 @@ import { createHttpClient, resolveCliPath } from "./lib/wiparse-sdk.mjs";
 import {
   LIFECYCLES,
   checkEngines,
+  collectOutputFiles,
+  ensureProjectScaffold,
+  loadOverlayFile,
   loadStationConfig,
+  makeStamp,
   mergeArgs,
+  normalizeArtifacts,
   normalizeResult,
   requestStop,
   resolveConfigPath,
   resolveDataRoot,
   resolveLifecycle,
+  resolveProjectLayout,
+  sanitizeId,
   truthy,
   validatePluginManifest,
+  writeRunJson,
 } from "./lib/plugin-contract.mjs";
 import {
   resolveMarketplaceRoot,
@@ -46,6 +54,9 @@ function parseArgs(argv) {
     skipValidate: false,
     marketplaceDir: null,
     pluginsRoot: null,
+    overlay: null,
+    project: null,
+    stamp: null,
     passthrough: [],
   };
   let i = 0;
@@ -77,6 +88,12 @@ function parseArgs(argv) {
       out.marketplaceDir = argv[++i];
     } else if ((a === "--plugins-root" || a === "--plugins_root") && argv[i + 1]) {
       out.pluginsRoot = argv[++i];
+    } else if (a === "--overlay" && argv[i + 1]) {
+      out.overlay = argv[++i];
+    } else if (a === "--project" && argv[i + 1]) {
+      out.project = argv[++i];
+    } else if (a === "--stamp" && argv[i + 1]) {
+      out.stamp = argv[++i];
     } else if (a === "--help" || a === "-h") {
       out.help = true;
     } else {
@@ -222,14 +239,17 @@ function printHelp() {
   node runner.mjs --list [--type smoke] [--json]
   node runner.mjs --plugin <id> [--lifecycle preflight|run|stop]
                   [--cli path] [--url url] [--data-root dir]
+                  [--project id] [--stamp yyyyMMdd_HHmmss]
+                  [--overlay file.json]
                   [--marketplace-dir dir] [--plugins-root dir]
                   [-- --port COM3]
 
 Lifecycle:
-  preflight  Validate config / host / instruments (no long loop)
+  preflight  Validate config / host / instruments (no stamp, no runs/)
   run        Start plugin (default; --preflight_only true → preflight)
-  stop       Request graceful stop via paths.stop_file
+  stop       Request graceful stop via paths.stop_file (no new run)
 
+Writes (run only): {data_root}/projects/{project}/tests/{plugin}/runs/{stamp}/run.json
 Plugins root: ${PLUGINS_ROOT}
 Marketplace active installs override bundled ids when present.
 See PLUGIN_SPEC.md
@@ -367,7 +387,11 @@ async function main() {
   }
 
   const cliPath = resolveCliPath(opts.cli);
-  const args = mergeArgs(plugin.params, parsePassthrough(opts.passthrough));
+  const overlay = loadOverlayFile(opts.overlay);
+  const args = mergeArgs(plugin.params, {
+    ...parsePassthrough(opts.passthrough),
+    ...overlay,
+  });
   const dataRoot = resolveDataRoot(opts.dataRoot || args.data_root);
   const configPath = resolveConfigPath(plugin.dir, plugin);
   const url =
@@ -404,6 +428,27 @@ async function main() {
     process.exit(2);
   }
 
+  const project = sanitizeId(opts.project || process.env.WIPARSE_PROJECT, "default");
+  const stamp =
+    lifecycle === "run"
+      ? String(opts.stamp || process.env.WIPARSE_STAMP || makeStamp())
+      : "";
+  const layout = resolveProjectLayout({
+    dataRoot,
+    project,
+    testId: plugin.id,
+    stamp,
+    lifecycle,
+  });
+  try {
+    ensureProjectScaffold(layout);
+    if (lifecycle === "run" && layout.artifacts_dir) {
+      fs.mkdirSync(layout.artifacts_dir, { recursive: true });
+    }
+  } catch (e) {
+    console.error(`[runner] layout: ${e.message || e}`);
+  }
+
   const log = (stream, text) => {
     if (stream === "info") process.stdout.write(text);
     else if (stream === "stderr") process.stderr.write(text);
@@ -423,10 +468,13 @@ async function main() {
     configPath: fs.existsSync(configPath) ? configPath : undefined,
     lifecycle,
     preflightOnly: lifecycle === "preflight" || truthy(args.preflight_only),
+    project,
+    stamp,
+    layout,
   };
 
   console.log(
-    `[runner] plugin=${plugin.id} lifecycle=${lifecycle} type=${plugin.type} source=${plugin.source || "bundled"} data_root=${dataRoot}`
+    `[runner] plugin=${plugin.id} lifecycle=${lifecycle} type=${plugin.type} source=${plugin.source || "bundled"} data_root=${dataRoot} project=${project}${stamp ? ` stamp=${stamp}` : ""}`
   );
 
   try {
@@ -436,6 +484,22 @@ async function main() {
     }
     const raw = await dispatchLifecycle(mod, ctx, lifecycle);
     const result = normalizeResult(raw, lifecycle);
+    if (lifecycle === "run" && layout.run_dir) {
+      const collected =
+        plugin.outputs && (!result.artifacts || !result.artifacts.items?.length)
+          ? collectOutputFiles(plugin.outputs, {
+              artifacts_dir: layout.artifacts_dir,
+              run_dir: layout.run_dir,
+            })
+          : null;
+      result.artifacts = normalizeArtifacts(collected || result.artifacts, {
+        runDir: layout.run_dir,
+        outputs: plugin.outputs,
+      });
+      if (!result.session) result.session = layout.stamp;
+      const runJson = writeRunJson(layout, plugin, result);
+      if (runJson) result.run_json = runJson;
+    }
     const bits = [
       result.ok === false ? "FAIL" : "ok",
       `lifecycle=${result.lifecycle || lifecycle}`,
@@ -443,6 +507,7 @@ async function main() {
     if (result.step) bits.push(`step=${result.step}`);
     if (result.error) bits.push(`error=${result.error}`);
     if (result.summary_md) bits.push(`md=${result.summary_md}`);
+    if (result.run_json) bits.push(`run_json=${result.run_json}`);
     console.log(`[runner] ${bits.join(" ")}`);
     if (Array.isArray(result.checks)) {
       for (const c of result.checks) {
@@ -451,14 +516,17 @@ async function main() {
         console.log(`  ${mark} ${c?.id || "check"}${detail}`);
       }
     }
+    const envelope = {
+      type: "wiparse.plugin_result",
+    };
     if (result.suggested_params && typeof result.suggested_params === "object") {
-      console.log(
-        `[runner] result ${JSON.stringify({
-          type: "wiparse.plugin_result",
-          suggested_params: result.suggested_params,
-          suggested_params_policy: result.suggested_params_policy || "untouched",
-        })}`
-      );
+      envelope.suggested_params = result.suggested_params;
+      envelope.suggested_params_policy = result.suggested_params_policy || "untouched";
+    }
+    if (result.session) envelope.session = result.session;
+    if (result.artifacts) envelope.artifacts = result.artifacts;
+    if (envelope.suggested_params || envelope.artifacts || envelope.session) {
+      console.log(`[runner] result ${JSON.stringify(envelope)}`);
     }
     if (result.ok === false) process.exit(1);
   } catch (e) {

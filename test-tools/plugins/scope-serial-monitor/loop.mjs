@@ -16,6 +16,11 @@ import {
   pickInstrument,
   suggestedParamsFromInstrument,
 } from "../../lib/plugin-contract.mjs";
+import {
+  createLineClassifier,
+  resolveTriggerBlock,
+  triggerSpecPath,
+} from "../../lib/line-triggers.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -26,6 +31,8 @@ let cfgPath = path.join(here, "station.json");
 let api = "";
 let outDir = "";
 let reportDir = "";
+let shotDir = "";
+let docsDir = "";
 let stopFile = "";
 let statusFile = "";
 let hintFile = "";
@@ -45,8 +52,10 @@ let preflightOnly = false;
 let externalLog;
 /** Rising-edge latch: fire only on false→true per trigger id. */
 let risingEdge = true;
-/** @type {Map<string, boolean>} */
-const edgeHigh = new Map();
+/** When Hub/CLI overlays `triggers`, do not reload items from disk. */
+let pinTriggers = false;
+/** @type {ReturnType<typeof createLineClassifier> | null} */
+let classifier = null;
 /** Honor station.interlocks.hold_serial_off_during_capture (default true). */
 let holdSerialOffEnabled = true;
 /** @type {{ url: string, health: Function, invoke: Function } | null} */
@@ -70,121 +79,46 @@ function log(stream, text) {
 }
 
 
-function sanitizeTriggerId(id) {
-  const s = String(id || "").trim();
-  if (!s) throw new Error("trigger id 不能为空");
-  return s.replace(/[^\w.-]+/g, "_");
-}
-
-function rawTriggerItems(block) {
-  if (!block) return [];
-  if (Array.isArray(block)) return block;
-  if (Array.isArray(block.items)) return block.items;
-  return Object.entries(block)
-    .filter(([, v]) => v && typeof v === "object" && (v.pattern || v.regex || v.text))
-    .map(([key, v]) => ({ id: v.id || key, ...v, pattern: v.pattern || v.regex || v.text }));
-}
-
-function compilePredicate(spec, fallbackType = "regex", fallbackFlags = "") {
-  const type = String(spec.type || fallbackType || "regex").toLowerCase();
-  const pattern = spec.pattern ?? spec.regex ?? spec.text;
-  if (pattern == null || String(pattern) === "") throw new Error("需要 pattern");
-  if (type === "regex") {
-    const re = new RegExp(String(pattern), spec.flags ?? fallbackFlags ?? "");
-    return (line) => re.test(line);
-  }
-  if (type === "contains") {
-    const cs = spec.case_sensitive === true;
-    const needle = cs ? String(pattern) : String(pattern).toLowerCase();
-    return (line) => {
-      const hay = cs ? line : line.toLowerCase();
-      return hay.includes(needle);
-    };
-  }
-  throw new Error(`type 只能是 regex 或 contains，收到 ${type}`);
-}
-
-function listUnless(raw) {
-  const out = [];
-  const add = (item, flags) => {
-    if (item == null || item === "") return;
-    if (typeof item === "string") out.push({ type: "regex", pattern: item, flags: flags || "" });
-    else if (typeof item === "object") out.push(item);
-  };
-  if (Array.isArray(raw.unless)) raw.unless.forEach((x) => add(x, raw.exclude_flags));
-  if (Array.isArray(raw.except)) raw.except.forEach((x) => add(x, raw.exclude_flags));
-  if (raw.exclude != null && raw.exclude !== "") {
-    if (Array.isArray(raw.exclude)) raw.exclude.forEach((x) => add(x, raw.exclude_flags));
-    else add(raw.exclude, raw.exclude_flags);
-  }
-  return out;
-}
-
-function compileTrigger(raw, index) {
-  if (raw.enabled === false) return null;
-  const id = sanitizeTriggerId(raw.id || `T${index + 1}`);
-  const label = String(raw.label || id);
-  const type = String(raw.type || "regex").toLowerCase();
-  const pattern = raw.pattern ?? raw.regex ?? raw.text;
-  if (pattern == null || String(pattern) === "") throw new Error(`trigger ${id}: 需要 pattern`);
-  const include = compilePredicate({ ...raw, type, pattern }, type, raw.flags || "");
-  const unlessSpecs = listUnless(raw);
-  const unless = unlessSpecs.map((u, i) => {
-    try {
-      return {
-        id: u.id || `unless_${i + 1}`,
-        label: u.label || u.pattern || u.text || `unless_${i + 1}`,
-        type: u.type || "regex",
-        pattern: String(u.pattern ?? u.regex ?? u.text ?? ""),
-        test: compilePredicate(u, "regex", u.flags || raw.exclude_flags || ""),
-      };
-    } catch (e) {
-      throw new Error(`trigger ${id} unless[${i}]: ${e.message || e}`);
-    }
-  });
-  const match = (line) => include(line) && !unless.some((u) => u.test(line));
-  return {
-    id,
-    label,
-    type,
-    pattern: String(pattern),
-    flags: raw.flags || "",
-    unless: unless.map((u) => ({ id: u.id, label: u.label, type: u.type, pattern: u.pattern })),
-    note: raw.note || "",
-    match,
-  };
-}
-
-function triggerSpecPath(data = cfg) {
-  const block = data.serial_triggers || data.triggers;
-  if (block?.file) return path.resolve(here, block.file);
-  return cfgPath;
-}
-
 let compiledTriggers = [];
-let triggerStamp = "";
+let triggerStamp = '';
+
+function currentTriggerBlock() {
+  return resolveTriggerBlock(cfg, { configPath: cfgPath, pluginDir: here });
+}
+
+function rebuildClassifier(block) {
+  risingEdge = cfg?.serial_triggers?.rising_edge !== false;
+  classifier = createLineClassifier(block, { risingEdge });
+  compiledTriggers = classifier.compiled;
+  return compiledTriggers;
+}
 
 function loadTriggersFromDisk() {
-  const specPath = triggerSpecPath();
-  const data = JSON.parse(fs.readFileSync(specPath, "utf8"));
-  const block = specPath === cfgPath ? (data.serial_triggers || data.triggers) : data;
-  const items = rawTriggerItems(block);
-  const compiled = [];
-  for (let i = 0; i < items.length; i++) {
-    const one = compileTrigger(items[i], i);
-    if (one) compiled.push(one);
+  if (!pinTriggers && cfgPath && fs.existsSync(cfgPath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+      const diskBlock = data.serial_triggers || data.triggers;
+      if (diskBlock && typeof diskBlock === "object") {
+        cfg.serial_triggers = { ...(cfg.serial_triggers || {}), ...diskBlock };
+      }
+    } catch {
+      /* keep in-memory block */
+    }
   }
-  if (!compiled.length) throw new Error("serial_triggers.items 没有已启用的条件");
-  const st = fs.statSync(specPath);
-  compiledTriggers = compiled;
+  const block = currentTriggerBlock();
+  const specPath = triggerSpecPath(block, { configPath: cfgPath, pluginDir: here }) || cfgPath;
+  const compiled = rebuildClassifier(block);
+  const st = fs.existsSync(specPath) ? fs.statSync(specPath) : { mtimeMs: 0 };
   triggerStamp = `${specPath}|${st.mtimeMs}|${compiled.map((t) => t.id).join(",")}`;
   return compiled;
 }
 
 function refreshTriggers(force = false) {
+  if (pinTriggers && !force) return compiledTriggers;
   try {
-    const specPath = triggerSpecPath();
-    const st = fs.statSync(specPath);
+    const block = currentTriggerBlock();
+    const specPath = triggerSpecPath(block, { configPath: cfgPath, pluginDir: here }) || cfgPath;
+    const st = fs.existsSync(specPath) ? fs.statSync(specPath) : { mtimeMs: 0 };
     const stamp = `${specPath}|${st.mtimeMs}`;
     if (!force && compiledTriggers.length && triggerStamp.startsWith(stamp)) return compiledTriggers;
     const prev = compiledTriggers.slice();
@@ -203,25 +137,11 @@ function refreshTriggers(force = false) {
 }
 
 function triggerLabels() {
-  return compiledTriggers.map((t) => t.label).join(" / ") || "(无)";
+  return classifier?.labels() || compiledTriggers.map((t) => t.label).join(' / ') || '(无)';
 }
 
 function classify(line) {
-  if (!risingEdge) {
-    for (const t of compiledTriggers) {
-      if (t.match(line)) return t.id;
-    }
-    return null;
-  }
-  // Industrial rising-edge: fire once when a trigger goes inactive→active.
-  let fired = null;
-  for (const t of compiledTriggers) {
-    const on = t.match(line);
-    const was = edgeHigh.get(t.id) === true;
-    if (on && !was && fired == null) fired = t.id;
-    edgeHigh.set(t.id, on);
-  }
-  return fired;
+  return classifier ? classifier.classify(line) : null;
 }
 
 function stamp(d = new Date()) {
@@ -624,14 +544,14 @@ function appendSessionBanner(scopeInfo) {
 function mdRelPath(fromFile, target) {
   if (!target) return "";
   const rel = path.relative(path.dirname(fromFile), target);
-  if (!rel || rel.startsWith("..")) return "";
+  if (!rel) return "";
   return rel.split(path.sep).join("/");
 }
 
 function materializeScreenshot(src, trigger, recStamp) {
   if (!src) return null;
-  fs.mkdirSync(reportDir, { recursive: true });
-  const dest = path.join(reportDir, `${prefix}_${trigger}_${recStamp}.png`);
+  fs.mkdirSync(shotDir || reportDir, { recursive: true });
+  const dest = path.join(shotDir || reportDir, `${prefix}_${trigger}_${recStamp}.png`);
   return copyIfExists(src, dest);
 }
 
@@ -687,14 +607,14 @@ ${ctx}
 }
 
 function writePdfReport(rec) {
-  fs.mkdirSync(reportDir, { recursive: true });
+  fs.mkdirSync(docsDir || reportDir, { recursive: true });
   const base = `${prefix}_${rec.trigger}_${rec.stamp}`;
-  const htmlPath = path.join(reportDir, `${base}.html`);
-  const pdfPath = path.join(reportDir, `${base}.pdf`);
-  const jsonPath = path.join(reportDir, `${base}.json`);
+  const htmlPath = path.join(docsDir || reportDir, `${base}.html`);
+  const pdfPath = path.join(docsDir || reportDir, `${base}.pdf`);
+  const jsonPath = path.join(docsDir || reportDir, `${base}.json`);
   const shotDest = rec.screenshotSrc
-    ? copyIfExists(rec.screenshotSrc, path.join(reportDir, `${base}.png`))
-    : null;
+    ? copyIfExists(rec.screenshotSrc, path.join(shotDir || reportDir, `${base}.png`))
+    : rec.screenshot || null;
   const shotUri = shotDest ? pathToFileURL(shotDest).href : "";
   const ctx = (rec.context || []).map((l) => {
     const mark = l === rec.line ? " class=\"hit\"" : "";
@@ -747,7 +667,7 @@ ${shotUri ? `<img src="${shotUri}" alt="scope">` : "<p>无截图</p>"}
     htmlPath,
     pdfPath,
   }, null, 2), "utf8");
-  const indexPath = path.join(reportDir, "index.jsonl");
+  const indexPath = path.join(docsDir || reportDir, "index.jsonl");
   fs.appendFileSync(indexPath, JSON.stringify({
     sop: cfg.sop.id,
     rev: cfg.sop.rev,
@@ -806,14 +726,23 @@ async function preflight() {
   push("gui_version", cmpVer(ver, cfg.gui.min_version) >= 0, `${ver} (min ${cfg.gui.min_version})`);
   push("browser", Boolean(findBrowser()), findBrowser() || "Edge/Chrome missing");
   try {
-    fs.mkdirSync(outDir, { recursive: true });
-    fs.mkdirSync(reportDir, { recursive: true });
-    const probe = path.join(outDir, ".write_probe");
-    fs.writeFileSync(probe, "ok");
-    fs.unlinkSync(probe);
-    push("isf_dir", true, outDir);
-    push("report_dir", true, reportDir);
-    push("status_file", true, statusFile);
+    const canWrite = (dir, id) => {
+      if (typeof dir !== "string" || !dir.trim() || dir.includes("{")) {
+        push(id, true, "deferred until run (no stamp)");
+        return;
+      }
+      fs.mkdirSync(dir, { recursive: true });
+      const probe = path.join(dir, ".write_probe");
+      fs.writeFileSync(probe, "ok");
+      fs.unlinkSync(probe);
+      push(id, true, dir);
+    };
+    canWrite(cfg.paths?.test_dir, "test_dir");
+    if (!preflightOnly) {
+      canWrite(outDir, "isf_dir");
+      canWrite(reportDir, "report_dir");
+    }
+    push("status_file", Boolean(statusFile && !String(statusFile).includes("{")), statusFile);
   } catch (e) {
     push("dirs", false, String(e.message || e));
   }
@@ -901,18 +830,31 @@ function bindConfig(cfgInput, opts = {}) {
   api = String(cfg.gui?.api || "http://127.0.0.1:7878").replace(/\/$/, "");
   outDir = cfg.paths.isf_dir;
   reportDir = cfg.paths.report_dir;
+  shotDir =
+    cfg.paths.shot_dir ||
+    (cfg.paths.artifacts_dir && !String(cfg.paths.artifacts_dir).includes("{")
+      ? path.join(cfg.paths.artifacts_dir, "shots")
+      : reportDir);
+  docsDir =
+    cfg.paths.docs_dir ||
+    (cfg.paths.artifacts_dir && !String(cfg.paths.artifacts_dir).includes("{")
+      ? path.join(cfg.paths.artifacts_dir, "docs")
+      : reportDir);
   stopFile = cfg.paths.stop_file;
   statusFile = cfg.paths.status_file;
-  hintFile = path.join(path.dirname(statusFile), "_loop_hint.txt");
+  hintFile = statusFile
+    ? path.join(path.dirname(statusFile), "_loop_hint.txt")
+    : "";
   lockFile = cfg.paths.lock_file;
   prefix = cfg.paths.file_prefix;
-  sessionStamp = stamp();
+  sessionStamp = String(opts.stamp || "").trim() || stamp();
   summaryMd = (cfg.paths.summary_md || path.join(reportDir, `${prefix}_summary_{stamp}.md`)).replaceAll(
     "{stamp}",
     sessionStamp
   );
-  // After {stamp} expand, park the md in report_dir again (basename only).
-  summaryMd = path.join(reportDir, path.basename(summaryMd));
+  if (reportDir && !String(reportDir).includes("{")) {
+    summaryMd = path.join(reportDir, path.basename(summaryMd));
+  }
   port = cfg.serial.port;
   baud = cfg.serial.baud;
   delayS = cfg.timing.post_trigger_delay_s;
@@ -922,9 +864,10 @@ function bindConfig(cfgInput, opts = {}) {
   preflightOnly = Boolean(opts.preflightOnly);
   externalLog = typeof opts.log === "function" ? opts.log : undefined;
   risingEdge = cfg.serial_triggers?.rising_edge !== false;
-  edgeHigh.clear();
+  pinTriggers = Boolean(opts.pinTriggers);
   holdSerialOffEnabled = cfg.interlocks?.hold_serial_off_during_capture !== false;
   http = createHttpClient({ url: api, log: externalLog });
+  rebuildClassifier(currentTriggerBlock());
 }
 
 /**
@@ -968,6 +911,8 @@ export async function runLoop(cfgInput, opts = {}) {
     if (fs.existsSync(stopFile)) fs.unlinkSync(stopFile);
     fs.mkdirSync(outDir, { recursive: true });
     fs.mkdirSync(reportDir, { recursive: true });
+    if (shotDir) fs.mkdirSync(shotDir, { recursive: true });
+    if (docsDir) fs.mkdirSync(docsDir, { recursive: true });
 
     if (cfg.interlocks?.never_test_start_during_capture !== false) {
       await invoke(
@@ -996,7 +941,7 @@ export async function runLoop(cfgInput, opts = {}) {
       scope_model: scope.identity?.model ?? null,
       rising_edge: risingEdge,
       triggers: compiledTriggers.map((t) => t.label),
-      trigger_spec: compiledTriggers.map((t) => ({
+      trigger_spec: classifier?.spec() || compiledTriggers.map((t) => ({
         id: t.id,
         label: t.label,
         type: t.type,
@@ -1057,7 +1002,7 @@ export async function runLoop(cfgInput, opts = {}) {
           filename,
           serial_monitoring: monitoring,
         });
-        const shotPath = path.join(reportDir, `${prefix}_${trigger}_${ts}.png`);
+        const shotPath = path.join(shotDir || reportDir, `${prefix}_${trigger}_${ts}.png`);
         const cap = await captureShotAndIsf(live.device_id, shotPath, filename);
         saved = cap.isfPath;
         shot = cap.shotFile;
@@ -1189,21 +1134,22 @@ if (isDirect) {
     argConfig || process.env.WIPARSE_STATION_CONFIG || path.join(here, "station.json"),
   );
   import("../../lib/plugin-contract.mjs")
-    .then(({ expandTemplates, resolveDataRoot, projectRoot, colocateStatusWithIsf, colocateSummaryWithReport }) => {
-      const loaded = JSON.parse(fs.readFileSync(pth, "utf8"));
-      const dataRoot = resolveDataRoot(process.env.WIPARSE_DATA_ROOT || projectRoot());
-      const config = expandTemplates(loaded, { dataRoot, pluginDir: here });
-      colocateStatusWithIsf(config);
-      for (const key of ["lock_file", "stop_file", "status_file", "isf_dir", "report_dir"]) {
-        const v = config.paths?.[key];
-        if (typeof v === "string" && v && !path.isAbsolute(v)) {
-          config.paths[key] = path.resolve(here, v);
-        }
-      }
-      colocateSummaryWithReport(config);
-      return runLoop(config, {
+    .then(({ loadStationConfig, makeStamp }) => {
+      const lifecycle = process.argv.includes("--preflight") ? "preflight" : "run";
+      const stamp = process.env.WIPARSE_STAMP || (lifecycle === "run" ? makeStamp() : "");
+      const { config, configPath, layout } = loadStationConfig({
+        plugin: { id: "scope-serial-monitor", dir: here, params: [] },
+        pluginDir: here,
+        args: {},
+        dataRoot: process.env.WIPARSE_DATA_ROOT,
         configPath: pth,
-        preflightOnly: process.argv.includes("--preflight"),
+        lifecycle,
+        stamp,
+      });
+      return runLoop(config, {
+        configPath,
+        preflightOnly: lifecycle === "preflight",
+        stamp: layout.stamp || stamp,
       });
     })
     .then((r) => {
