@@ -1,9 +1,14 @@
 ﻿<#
 .SYNOPSIS
-  Stop scope-serial-monitor via runner.mjs (writes expanded stop_file).
+  Stop scope-serial-monitor via runner.mjs (writes {test_dir}/run.stop).
+  Prefer: wiparse ui test-tool stop
+  Test case dir is sanitize(file_prefix), not plugin id.
 #>
 param(
   [string]$DataRoot = "",
+  [string]$Project = "",
+  [string]$FilePrefix = "",
+  [string]$TestId = "",
   [string]$NodeExe = "",
   [int]$WaitSeconds = 30
 )
@@ -37,19 +42,55 @@ function Get-LoopProcesses {
   }
 }
 
+function Get-SanitizedTestId {
+  param([string]$Raw, [string]$Fallback)
+  if (-not $Raw) { return $Fallback }
+  $slug = ($Raw.Trim() -replace "\s+", "_")
+  $slug = $slug -replace "[^a-zA-Z0-9._-]+", "_"
+  $slug = $slug -replace "^[^a-zA-Z0-9]+", ""
+  $slug = $slug -replace "[._-]+$", ""
+  if ($slug -match "^[a-zA-Z0-9][a-zA-Z0-9._-]*$") { return $slug }
+  return $Fallback
+}
+
+function Get-DefaultFilePrefix {
+  $station = Join-Path $pluginDir "station.json"
+  if (Test-Path -LiteralPath $station) {
+    try {
+      $j = Get-Content -LiteralPath $station -Raw -Encoding UTF8 | ConvertFrom-Json
+      if ($j.paths.file_prefix) { return [string]$j.paths.file_prefix }
+    } catch {}
+  }
+  return "ScopeSerial"
+}
+
 if (-not $DataRoot) {
   if ($env:WIPARSE_DATA_ROOT) { $DataRoot = $env:WIPARSE_DATA_ROOT }
   else { $DataRoot = $repoRoot }
 }
+if (-not $Project) {
+  if ($env:WIPARSE_PROJECT) { $Project = $env:WIPARSE_PROJECT }
+  else { $Project = "default" }
+}
+if (-not $FilePrefix) {
+  if ($env:WIPARSE_TEST_ID) { $FilePrefix = $env:WIPARSE_TEST_ID }
+  else { $FilePrefix = Get-DefaultFilePrefix }
+}
+if (-not $TestId) {
+  $TestId = Get-SanitizedTestId -Raw $FilePrefix -Fallback $pluginId
+}
 
+$testDir = Join-Path $DataRoot ("projects\" + $Project + "\tests\" + $TestId)
+$env:WIPARSE_PROJECT = $Project
+$env:WIPARSE_TEST_ID = $TestId
 $node = Find-Node -Hint $NodeExe
 if (Test-Path -LiteralPath $runner) {
-  Write-Host "Requesting graceful stop via runner..."
-  & $node $runner --plugin $pluginId --lifecycle stop --data-root $DataRoot
+  Write-Host ("Requesting graceful stop via runner (test_id={0})..." -f $TestId)
+  & $node $runner --plugin $pluginId --lifecycle stop --data-root $DataRoot --project $Project --test-id $TestId -- --file_prefix $FilePrefix
 } else {
-  # Fallback: write plugin-local stop file (templates not expanded).
-  $stopFile = Join-Path $pluginDir "run.stop"
-  New-Item -ItemType File -Force -Path $stopFile | Out-Null
+  $stopFile = Join-Path $testDir "run.stop"
+  New-Item -ItemType Directory -Force -Path $testDir | Out-Null
+  Set-Content -LiteralPath $stopFile -Value "host stop" -Encoding utf8
   Write-Host "Wrote $stopFile (runner.mjs missing)"
 }
 
@@ -64,11 +105,11 @@ foreach ($proc in @(Get-LoopProcesses)) {
   Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
 }
 
-$lock = Join-Path $pluginDir "run.lock"
+$lock = Join-Path $testDir "run.lock"
 if (Test-Path -LiteralPath $lock) {
   Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue
 }
-$stopLocal = Join-Path $pluginDir "run.stop"
+$stopLocal = Join-Path $testDir "run.stop"
 if (Test-Path -LiteralPath $stopLocal) {
   Remove-Item -LiteralPath $stopLocal -Force -ErrorAction SilentlyContinue
 }

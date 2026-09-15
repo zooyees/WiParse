@@ -1,12 +1,23 @@
-# Tektronix 3 Series MDO（含 MDO3014）SCPI 控制指令手册（中文整理）
+# Tektronix 3 Series MDO SCPI 控制指令手册（中文整理）
 
-> **来源**：`docs/3-MDO-Oscilloscope-Programmer-Manual-077149800.pdf`（Tektronix *3 Series MDO Oscilloscopes Programmer Manual*，文档号 077-1498-00）
+> **来源**：`docs/3-MDO-Oscilloscope-Programmer-Manual-077149800.pdf`（Tektronix *3 Series MDO Oscilloscopes Programmer Manual*，文档号 **077-1498-00**）
+>
+> **型号归属（不要混用）**
+>
+> | 系列 | `*IDN?` 型号 | 程序员手册 | 与本文件 |
+> |------|----------------|------------|----------|
+> | **3 Series MDO** | `MDO32` / `MDO34` / `MDO34E` | **077-1498**（本文件来源） | 适用 |
+> | **MDO3000** | `MDO3014` 等「MDO + 四位数字」 | **077-1422**（另一本） | **命令不完全互通** |
+>
+> 文件名仍含 `MDO3014` 是历史误标。MDO3014 是 MDO3000，**不能**按本手册的 `E:/` `C:/` 盘符去改 MDO34。3 Series 是 Linux 文件系统；泰克社区也明确 DPO3014/MDO3014 程序不能假定在 MDO34 上完整可用。
 >
 > **整理方式**：按手册 **Command Groups** 功能分组表提取全部指令；功能说明译为中文；Syntax 保留手册原文（SCPI 大写为最短合法缩写）。
 >
 > **翻译说明**：P0 优先分组（文件系统、硬拷贝、水平、数学等）为完整中文；其余分组为短语机译，必要时保留英文关键词并以 `【设置/查询】` 等标签标明类型。个别超长指令名可能因 PDF 换行被截断，请以手册正文 Syntax 为准。
 >
-> **用途**：支撑 WiParse 将 MDO3014 全量遥控能力接入 **PC GUI** 与 **CLI/AI**。
+> **WiParse 产品入口（1.1.12+）**：仪表页 / `instrument.capture`（HARDCopy PNG）/ `instrument.waveform_source`（**CURVe 组装 ISF**）。不要用机内 `SAVe:WAVEform` + `FILESystem:READFile` 作为 3 Series 热路径。旧 CLI `scope shot` 已废弃，仅修到能写出合法 PNG。
+>
+> **用途**：支撑 WiParse 将 **3 Series MDO（MDO32/34/34E）** 遥控能力接入 PC GUI 与 CLI/AI；MDO3014 仍走同一套泰克驱动，但盘符/部分 SCPI 以 077-1422 为准。
 
 ## 1. 阅读约定
 
@@ -18,12 +29,12 @@
 | 指令名以 `?` 结尾 | 查询（Query） |
 | `CH<x>` / `REF<x>` / `MEAS<x>` / `MATH[1]` | 通道/参考/测量/数学波形占位符 |
 
-## 2. WiParse 集成优先级（MDO3014）
+## 2. WiParse 集成优先级（3 Series MDO / 共用泰克驱动）
 
 | 优先级 | 分组 | 典型 CLI / GUI 用途 |
 |--------|------|---------------------|
-| P0 | Hard Copy / Save and Recall | `scope shot` 截屏 PNG、保存/加载 setup |
-| P0 | Waveform Transfer | `CURVe?` + `DATa:SOUrce` / `WFMOutpre` 数值波形 |
+| P0 | Hard Copy / Save and Recall | `instrument.capture` 截屏 PNG（`scope shot` 已废弃） |
+| P0 | Waveform Transfer | `instrument.waveform_source`：`CURVe?` + `WFMOutpre` 组装 ISF |
 | P0 | Horizontal / Vertical / Acquisition | 时基、通道开关/伏格、RUN/STOP |
 | P0 | File System | 远程读写文件、工作目录 |
 | P1 | Trigger | 边沿等触发源、耦合、电平 |
@@ -1457,10 +1468,11 @@
 
 | WiParse 现状 | 手册指令 | 说明 |
 |--------------|----------|------|
-| `scope shot` / HARDCopy PNG | `SAVe:IMAGe:*` / `HARDCopy` 组 | 已实现截屏 |
-| `scope wave`（规划中） | `DATa:SOUrce`、`CURVe?`、`WFMOutpre:*` | 数值波形导出 |
-| 连接/`*IDN?` | Miscellaneous / Configuration | 识别 TEKTRONIX,MDO3014 |
-| 文件系统（规划中） | `FILESystem:*` | CWD、读写、挂载网络盘 |
+| `instrument.capture` / HARDCopy PNG | `SAVe:IMAGe:*` / `HARDCopy` 组 | 产品截屏；剥 IEEE 块后校验 PNG 魔数 |
+| `scope shot`（**deprecated**） | 同上 | 旧 CLI/旧泰克页；勿用于验收 3 Series |
+| `instrument.waveform_source` | `DATa:SOUrce`、`CURVe?`、`WFMOutpre:*` | **CURVe 组装 ISF**，不是机内 E:/ 源文件 |
+| 连接/`*IDN?` | Miscellaneous / Configuration | `TEKTRONIX,MDO34` / `MDO34E` / `MDO3014` |
+| 3 Series 不要走的路径 | `SAVe:WAVEform` + `FILESystem:READFile` `E:/` `C:/` | MDO3000 遗留；接上会满超时 |
 
 ## 修订记录
 

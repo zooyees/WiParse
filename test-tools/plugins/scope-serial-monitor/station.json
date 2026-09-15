@@ -14,7 +14,7 @@
   },
   "gui": {
     "api": "http://127.0.0.1:7878",
-    "min_version": "1.1.10"
+    "min_version": "1.1.16"
   },
   "serial": {
     "port": "COM7",
@@ -34,8 +34,11 @@
     "shot_timeout_ms": 90000
   },
   "paths": {
+    "test_dir": "{data_root}/projects/{project}/tests/{test_id}",
     "isf_dir": "{artifacts_dir}/waves",
     "report_dir": "{artifacts_dir}/reports",
+    "shot_dir": "{artifacts_dir}/shots",
+    "docs_dir": "{artifacts_dir}/docs",
     "file_prefix": "ScopeSerial",
     "lock_file": "{test_dir}/run.lock",
     "stop_file": "{test_dir}/run.stop",

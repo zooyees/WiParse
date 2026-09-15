@@ -18,9 +18,12 @@ use wiparse_core::brief::{IngestResult, LiveBrief};
 use wiparse_core::config::{load_config, save_config, AppConfig};
 use wiparse_core::evidence::{evidence_root, EvidencePack};
 use wiparse_core::i18n::{tr, tr_fmt, tr_monitoring, Lang};
-use wiparse_core::log::{build_file_store_worker, FileBuildEvent, LogStore};
+use wiparse_core::log::{build_file_store_worker, live_abs_page, FileBuildEvent, LogStore};
 use wiparse_core::paths::project_path;
-use wiparse_core::serial::{list_ports, CapturedEvent, SerialSession};
+use wiparse_core::serial::{
+    kick_wifi_uart_discovery, list_ports, refresh_ports, wifi_uart_discovery_pending, CapturedEvent,
+    PortInfo, SerialSession,
+};
 use wiparse_core::testrun::{decode_hex, RunVerdict, TestDriver, TestPlan, TickAction};
 
 /// One subfolder under the log browser root that contains `.txt` files.
@@ -49,7 +52,7 @@ struct PendingFileLoad {
 }
 
 pub struct SerialToolPanel {
-    ports: Vec<String>,
+    ports: Vec<PortInfo>,
     selected_port: usize,
     baud: String,
     baud_options: Vec<String>,
@@ -88,6 +91,8 @@ pub struct SerialToolPanel {
     live_test: Option<LiveTest>,
     last_pack: Option<serde_json::Value>,
     pending_scope: Vec<String>,
+    /// Last observed WiFi UART discovery thread state (merge when it finishes).
+    wifi_scan_pending: bool,
 }
 
 struct LiveTest {
@@ -119,11 +124,7 @@ pub enum TestInstrumentJob {
 
 impl SerialToolPanel {
     pub fn new(cfg: &AppConfig, lang: Lang) -> Self {
-        let ports = list_ports()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|p| p.device)
-            .collect();
+        let ports = list_ports().unwrap_or_default();
         let baud_options = if cfg.serial.default_baudrates.is_empty() {
             vec!["115200".into(), "1000000".into(), "2000000".into()]
         } else {
@@ -177,6 +178,7 @@ impl SerialToolPanel {
             live_test: None,
             last_pack: None,
             pending_scope: Vec::new(),
+            wifi_scan_pending: wifi_uart_discovery_pending(),
         };
         panel.restore_open_log_files(&cfg.log_monitor.open_log_files);
         panel.refresh_log_browser();
@@ -235,7 +237,7 @@ impl SerialToolPanel {
 
     /// Returns the tab index for `path`, reusing an existing tab when the same
     /// file is already open.
-    fn open_path(&mut self, path: PathBuf) -> Option<usize> {
+    pub(crate) fn open_path(&mut self, path: PathBuf) -> Option<usize> {
         if !path.is_file() {
             return None;
         }
@@ -257,28 +259,96 @@ impl SerialToolPanel {
         Some(tab_idx)
     }
 
+    /// Open a log file and switch to its tab (report jump / API).
+    pub(crate) fn open_path_and_show(&mut self, path: PathBuf) -> Option<usize> {
+        let tab_idx = self.open_path(path)?;
+        self.activate_tab(tab_idx);
+        self.persist_open_log_files();
+        Some(tab_idx)
+    }
+
     fn refresh_ports(&mut self, lang: Lang) {
-        self.ports = list_ports()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|p| p.device)
-            .collect();
-        if self.selected_port >= self.ports.len() {
+        let current = self
+            .ports
+            .get(self.selected_port)
+            .map(|p| p.device.clone());
+        self.ports = refresh_ports().unwrap_or_default();
+        if let Some(cur) = current {
+            if let Some(idx) = self.ports.iter().position(|p| p.device == cur) {
+                self.selected_port = idx;
+            } else if self.monitoring {
+                self.ports.insert(0, PortInfo::from_device(cur));
+                self.selected_port = 0;
+            } else {
+                self.selected_port = 0;
+            }
+        } else if self.selected_port >= self.ports.len() {
             self.selected_port = 0;
         }
+        self.wifi_scan_pending = wifi_uart_discovery_pending();
         self.status = if self.monitoring {
             let port = self
                 .ports
                 .get(self.selected_port)
-                .map(|s| s.as_str())
-                .unwrap_or("?");
+                .map(|p| p.compact_label())
+                .unwrap_or_else(|| "?".into());
             let baud: u32 = self.baud.parse().unwrap_or(0);
-            tr_monitoring(lang, port, baud)
+            tr_monitoring(lang, &port, baud)
         } else if self.ports.is_empty() {
             tr(lang, "status.port_none")
         } else {
             tr_fmt(lang, "status.ports_count", self.ports.len())
         };
+    }
+
+    fn merge_discovered_ports(&mut self) {
+        let current = self
+            .ports
+            .get(self.selected_port)
+            .map(|p| p.device.clone());
+        let fresh = list_ports().unwrap_or_default();
+        let same = fresh.len() == self.ports.len()
+            && fresh
+                .iter()
+                .zip(self.ports.iter())
+                .all(|(a, b)| a.device == b.device && a.label == b.label);
+        if same {
+            return;
+        }
+        self.ports = fresh;
+        if let Some(cur) = current {
+            if let Some(idx) = self.ports.iter().position(|p| p.device == cur) {
+                self.selected_port = idx;
+            } else if self.selected_port >= self.ports.len() {
+                self.selected_port = 0;
+            }
+        } else if self.selected_port >= self.ports.len() {
+            self.selected_port = 0;
+        }
+    }
+
+    fn poll_wifi_ports(&mut self, ctx: &egui::Context) {
+        let pending = wifi_uart_discovery_pending();
+        if self.wifi_scan_pending && !pending {
+            self.merge_discovered_ports();
+        }
+        if !pending && !self.monitoring && !self.ports.iter().any(|p| p.transport == "wifi") {
+            kick_wifi_uart_discovery();
+        }
+        let pending = wifi_uart_discovery_pending();
+        self.wifi_scan_pending = pending;
+        if pending {
+            ctx.request_repaint_after(Duration::from_millis(200));
+        }
+    }
+
+    fn ensure_listed_device(&mut self, device: &str) {
+        if let Some(idx) = self.ports.iter().position(|p| p.device == device) {
+            self.selected_port = idx;
+        } else {
+            self.ports.insert(0, PortInfo::from_device(device.to_owned()));
+            self.selected_port = 0;
+        }
     }
 
     fn live_path(&self) -> PathBuf {
@@ -518,12 +588,7 @@ impl SerialToolPanel {
 
     fn apply_port_baud(&mut self, port_override: Option<String>, baud_override: Option<u32>) {
         if let Some(ref p) = port_override {
-            if let Some(idx) = self.ports.iter().position(|x| x == p) {
-                self.selected_port = idx;
-            } else {
-                self.ports.insert(0, p.clone());
-                self.selected_port = 0;
-            }
+            self.ensure_listed_device(p);
         }
         if let Some(b) = baud_override {
             self.baud = b.to_string();
@@ -556,7 +621,7 @@ impl SerialToolPanel {
             let port = self
                 .ports
                 .get(self.selected_port)
-                .cloned()
+                .map(|p| p.device.clone())
                 .unwrap_or_default();
             let baud: u32 = self.baud.parse().unwrap_or(0);
             return Ok((port, baud));
@@ -565,18 +630,13 @@ impl SerialToolPanel {
             return Err(tr(lang, "status.create_failed").into());
         }
         if let Some(ref p) = port_override {
-            if let Some(idx) = self.ports.iter().position(|x| x == p) {
-                self.selected_port = idx;
-            } else {
-                self.ports.insert(0, p.clone());
-                self.selected_port = 0;
-            }
+            self.ensure_listed_device(p);
         }
         if let Some(b) = baud_override {
             self.baud = b.to_string();
             self.baud_custom = !self.baud_options.iter().any(|x| x == &self.baud);
         }
-        let Some(port) = self.ports.get(self.selected_port).cloned() else {
+        let Some(port) = self.ports.get(self.selected_port).map(|p| p.device.clone()) else {
             self.status = tr(lang, "status.port_none");
             return Err(self.status.clone());
         };
@@ -606,7 +666,12 @@ impl SerialToolPanel {
         self.rx = Some(rx);
         self.write_tx = Some(write_tx);
         self.monitoring = true;
-        self.status = tr_monitoring(lang, &port, baud);
+        let status_port = self
+            .ports
+            .get(self.selected_port)
+            .map(|p| p.compact_label())
+            .unwrap_or_else(|| port.clone());
+        self.status = tr_monitoring(lang, &status_port, baud);
         if let Some(live) = self.tabs.get_mut(0) {
             live.title = self.live_name.clone();
         }
@@ -657,8 +722,10 @@ impl SerialToolPanel {
         let Some(tab) = self.tabs.get(tab_id) else {
             return err("log.lines.get", "tab not found");
         };
-        let total = tab.line_count();
-        let lines = tab.lines_slice(from, limit);
+        let dropped = tab.dropped();
+        let window = tab.line_count();
+        let page = live_abs_page(dropped, window, from, limit);
+        let lines = tab.lines_slice(page.window_from, page.take);
         ok(
             "log.lines.get",
             serde_json::json!({
@@ -666,7 +733,11 @@ impl SerialToolPanel {
                 "from_row": from,
                 "lines": lines,
                 "count": lines.len(),
-                "total": total,
+                "total": page.total_abs,
+                "dropped": dropped,
+                "window": window,
+                "next_row": page.next_abs,
+                "truncated": page.truncated,
             }),
         )
     }
@@ -678,21 +749,32 @@ impl SerialToolPanel {
             .unwrap_or_default()
     }
 
-    /// Total lines in the live tab (tab 0).
+    /// Total lines in the live tab (tab 0) — current FIFO window length.
     pub fn live_line_count(&self) -> usize {
         self.tabs.first().map(|t| t.line_count()).unwrap_or(0)
     }
 
-    /// Live tab lines in `[from, from+limit)`.
+    /// Live FIFO evictions since last clear.
+    pub fn live_dropped(&self) -> usize {
+        self.tabs.first().map(|t| t.dropped()).unwrap_or(0)
+    }
+
+    /// Next absolute live sequence (`dropped + window`).
+    pub fn live_abs_len(&self) -> usize {
+        self.live_dropped().saturating_add(self.live_line_count())
+    }
+
+    /// Live tab lines from an absolute session row.
     pub fn live_lines_since(&self, from: usize, limit: usize) -> Vec<String> {
-        self.tabs
-            .first()
-            .map(|t| t.lines_slice(from, limit))
-            .unwrap_or_default()
+        let Some(tab) = self.tabs.first() else {
+            return Vec::new();
+        };
+        let page = live_abs_page(tab.dropped(), tab.line_count(), from, limit);
+        tab.lines_slice(page.window_from, page.take)
     }
 
     pub fn current_port_baud(&self) -> (Option<String>, u32) {
-        let port = self.ports.get(self.selected_port).cloned();
+        let port = self.ports.get(self.selected_port).map(|p| p.device.clone());
         let baud = self.baud.parse().unwrap_or(0);
         (port, baud)
     }
@@ -1631,6 +1713,7 @@ impl SerialToolPanel {
 
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
         self.last_lang = lang;
+        self.poll_wifi_ports(ui.ctx());
         // Events are drained from app::update so backlog clears even when this tab is hidden.
         let dropped = ui.ctx().input(|i| i.raw.dropped_files.clone());
         if !dropped.is_empty() {
@@ -1638,19 +1721,21 @@ impl SerialToolPanel {
         }
 
         // Python log_panel: fixed left sidebar + content (must force top-down
-        // layouts — parent horizontal_top would otherwise stack every control in a row).
-        // Fixed sidebar (+25% vs original 172). Cards leave 1px inset so Inside strokes show.
-        let sidebar_w = 172.0 * 1.25; // 215
+        // layouts). Independent max_rects so ComboBox selected_text cannot leak
+        // width into the parent and open a gap beside the card.
+        let sidebar_w: f32 = 172.0 * 1.25; // 215
         let avail_h = ui.available_height();
-        let avail_w = ui.available_width();
         const SIDE_MAIN_GAP: f32 = 4.0;
 
-        ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = SIDE_MAIN_GAP;
-            // ── Left sidebar: serial controls + log browser (two groups) ──
-            // Exact allocation so expanding the tree cannot push the main pane right.
-            let (side_rect, _) =
-                ui.allocate_exact_size(egui::vec2(sidebar_w, avail_h), egui::Sense::hover());
+        let full = ui.available_rect_before_wrap();
+        let _ = ui.allocate_exact_size(full.size(), egui::Sense::hover());
+        let side_w = sidebar_w.min(full.width());
+        let side_rect = egui::Rect::from_min_size(full.min, egui::vec2(side_w, full.height()));
+        let content_rect = egui::Rect::from_min_max(
+            egui::pos2((side_rect.max.x + SIDE_MAIN_GAP).min(full.max.x), full.min.y),
+            full.max,
+        );
+        {
             // 1px left/right padding so card borders are never clipped by the allocate edge.
             const SIDE_PAD: f32 = 1.0;
             let side_inner = egui::Rect::from_min_max(
@@ -1663,8 +1748,8 @@ impl SerialToolPanel {
                     .layout(egui::Layout::top_down(egui::Align::Min)),
                 |ui| {
                     let card_w = side_inner.width();
-                    ui.set_min_size(side_inner.size());
-                    ui.set_max_size(side_inner.size());
+                    ui.set_max_width(card_w);
+                    ui.set_min_width(card_w);
                     ui.set_clip_rect(side_rect.intersect(ui.clip_rect()));
                     const CARD_MARGIN_X: i8 = 8;
                     let inner_w = (card_w - f32::from(CARD_MARGIN_X) * 2.0).max(1.0);
@@ -1683,23 +1768,38 @@ impl SerialToolPanel {
                             let port_text = self
                                 .ports
                                 .get(self.selected_port)
-                                .cloned()
+                                .map(|p| p.compact_label())
                                 .unwrap_or_else(|| tr(lang, "status.port_none"));
+                            let port_hover = self
+                                .ports
+                                .get(self.selected_port)
+                                .map(|p| p.display_label().to_owned())
+                                .unwrap_or_else(|| port_text.clone());
                             egui::ComboBox::from_id_salt("serial_port")
                                 .width(ctrl_w)
+                                .truncate()
                                 .selected_text(port_text)
                                 .show_ui(ui, |ui| {
+                                    ui.set_min_width(ctrl_w);
                                     if self.ports.is_empty() {
                                         ui.label(tr(lang, "status.port_none"));
                                     }
                                     for (i, p) in self.ports.iter().enumerate() {
-                                        ui.selectable_value(&mut self.selected_port, i, p);
+                                        ui.selectable_value(
+                                            &mut self.selected_port,
+                                            i,
+                                            p.display_label(),
+                                        );
                                     }
-                                    ui.separator();
-                                    if ui.button(tr(lang, "btn.refresh_ports")).clicked() {
-                                        self.refresh_ports(lang);
-                                    }
-                                });
+                                })
+                                .response
+                                .on_hover_text(port_hover);
+
+                            if ui_theme::secondary_button(ui, t, tr(lang, "btn.refresh_ports"))
+                                .clicked()
+                            {
+                                self.refresh_ports(lang);
+                            }
 
                             let baud_display = if self.baud_custom {
                                 format!(
@@ -1716,6 +1816,7 @@ impl SerialToolPanel {
                             };
                             egui::ComboBox::from_id_salt("serial_baud")
                                 .width(ctrl_w)
+                                .truncate()
                                 .selected_text(baud_display)
                                 .show_ui(ui, |ui| {
                                     for b in self.baud_options.clone() {
@@ -2023,12 +2124,13 @@ impl SerialToolPanel {
             ); // end sidebar scope_builder
 
             // ── Right: file tabs + LogTabPage ─────────────────────────
-            // Gap already applied via item_spacing (SIDE_MAIN_GAP).
-            let content_w = (avail_w - sidebar_w - SIDE_MAIN_GAP).max(200.0);
-            ui.allocate_ui_with_layout(
-                egui::vec2(content_w, avail_h),
-                egui::Layout::top_down(egui::Align::Min),
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(content_rect)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
                 |ui| {
+                    ui.set_max_width(content_rect.width());
+                    ui.set_clip_rect(content_rect.intersect(ui.clip_rect()));
                     Frame::NONE
                         .fill(t.header_bg)
                         .inner_margin(Margin::symmetric(10, 6))
@@ -2400,7 +2502,7 @@ impl SerialToolPanel {
                         });
                 },
             );
-        });
+        }
     }
 
     pub fn on_exit(&mut self) {
@@ -2740,7 +2842,7 @@ fn serial_worker(
             return;
         }
     };
-    let _ = tx.send(SerialEvent::Status(format!("open {port}")));
+    let _ = tx.send(SerialEvent::Status(format!("open {}", session.device)));
     let mut last_stamp = Local::now().naive_local() - chrono::Duration::milliseconds(1);
     while !stop.load(Ordering::SeqCst) {
         while let Ok(bytes) = write_rx.try_recv() {

@@ -89,6 +89,12 @@ pub fn parse_ieee_block(raw: &[u8]) -> &[u8] {
     &block[start..end]
 }
 
+/// HARDCopy payload: strip `#N…` if present, then require PNG magic.
+pub fn extract_png(raw: &[u8]) -> Option<&[u8]> {
+    let data = parse_ieee_block(raw);
+    data.starts_with(b"\x89PNG").then_some(data)
+}
+
 /// Uniform index decimation — strict time order, no min→max diagonals across buckets.
 /// Best for zoomed polyline plots (square waves, digital edges).
 pub fn decimate_uniform_index(x: &[f64], y: &[f64], max_points: usize) -> Vec<[f64; 2]> {
@@ -247,6 +253,18 @@ mod tests {
         assert_eq!(ieee_block_header_offset(&png), None);
         assert_eq!(parse_ieee_block(&png), png.as_slice());
         assert!(!ieee_block_complete(&png));
+        assert_eq!(extract_png(&png), Some(png.as_slice()));
+    }
+
+    #[test]
+    fn extract_png_strips_ieee_header() {
+        let png = b"\x89PNG\r\n\x1a\nXXXX";
+        let len = png.len().to_string();
+        let mut raw = format!("#{}{}", len.len(), len).into_bytes();
+        raw.extend_from_slice(png);
+        assert_eq!(extract_png(&raw), Some(png.as_slice()));
+        assert_eq!(extract_png(png), Some(png.as_slice()));
+        assert!(extract_png(b"#14\x01\x02\x03\x04").is_none());
     }
 
     #[test]

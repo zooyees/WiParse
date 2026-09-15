@@ -134,6 +134,10 @@ Agent 习惯：`wiparse_ui`（`op=show` `tab=serial`）→ `wiparse_select`（�
 | 切到波形 | `show` | `tab=waveform` |
 | 计算器填参 | `calc.set` | `params={ "card":"lc", "fields":{ "inductance":"10", "capacitance":"100" } }` |
 | 打开波形文件 | `wave.open` | `params={ "path":"D:/waves/scope.csv" }` |
+| 项目列表 | `project.list` | — |
+| 切项目 | `project.select` | `params={ "id":"default" }` |
+| 打开报告产物 | `report.open` | `params={ "path":".../artifacts/reports/run.md" }`（路径须在当前项目 jail 内；不回传正文） |
+| 运行 Hub 插件 | `test_tool.run` | `params={ "id":"scope-serial-monitor" }`；预检加 `"preflight": true` |
 
 示例计划在包内 `docs\examples\qi_pt_smoke.json`。
 

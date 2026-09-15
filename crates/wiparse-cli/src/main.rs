@@ -93,6 +93,9 @@ enum Commands {
     /// FT4222 USB-SPI/I2C/GPIO. Prefers GUI session; `--local` is one-shot.
     #[command(subcommand, arg_required_else_help = true)]
     Bridge(BridgeCmd),
+    /// WiParse-dongle (DAP + UART + I2C). Prefers GUI session; `--local` is one-shot.
+    #[command(subcommand, arg_required_else_help = true)]
+    Dongle(DongleCmd),
     /// Drive the running WiParse.exe UI (tabs, panels, inputs). Requires GUI.
     #[command(subcommand, arg_required_else_help = true)]
     Ui(UiCmd),
@@ -549,6 +552,132 @@ enum BridgeCmd {
 }
 
 #[derive(Subcommand, Debug)]
+enum DongleCmd {
+    List,
+    Connect {
+        #[arg(long)]
+        resource: String,
+    },
+    Info {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        demo: bool,
+    },
+    Scan {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        demo: bool,
+    },
+    Ping {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        addr: String,
+        #[arg(long)]
+        demo: bool,
+    },
+    Recover {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        demo: bool,
+    },
+    Write {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        addr: String,
+        #[arg(long, default_value = "")]
+        data: String,
+        #[arg(long)]
+        demo: bool,
+    },
+    Read {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        addr: String,
+        #[arg(long, default_value_t = 1)]
+        len: u32,
+        #[arg(long)]
+        demo: bool,
+    },
+    #[command(name = "writeread")]
+    WriteRead {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        addr: String,
+        #[arg(long, default_value = "")]
+        data: String,
+        #[arg(long, default_value_t = 1)]
+        len: u32,
+        #[arg(long)]
+        demo: bool,
+    },
+    #[command(name = "uart-open")]
+    UartOpen {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long, default_value_t = 115_200)]
+        baud: u32,
+        #[arg(long, default_value = "")]
+        com: String,
+        #[arg(long)]
+        demo: bool,
+    },
+    #[command(name = "uart-write")]
+    UartWrite {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        data: String,
+        #[arg(long, default_value_t = true)]
+        hex: bool,
+        #[arg(long)]
+        demo: bool,
+    },
+    #[command(name = "uart-read")]
+    UartRead {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        demo: bool,
+    },
+    #[command(name = "uart-close")]
+    UartClose {
+        #[arg(long)]
+        id: Option<u64>,
+        #[arg(long)]
+        resource: Option<String>,
+        #[arg(long)]
+        demo: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 enum UiCmd {
     /// Snapshot active tab, panels, serial, instruments, waveform, data analysis, calculator.
     State,
@@ -591,6 +720,12 @@ enum UiCmd {
     Calc(UiCalcCmd),
     #[command(subcommand, arg_required_else_help = true)]
     Instrument(UiInstrumentCmd),
+    #[command(subcommand, arg_required_else_help = true)]
+    Project(UiProjectCmd),
+    #[command(subcommand, arg_required_else_help = true)]
+    Report(UiReportCmd),
+    #[command(name = "test-tool", subcommand, arg_required_else_help = true)]
+    TestTool(UiTestToolCmd),
 }
 
 #[derive(Subcommand, Debug)]
@@ -788,6 +923,58 @@ enum UiInstrumentCmd {
     /// Connect every discovered instrument that is not already open.
     #[command(name = "connect-all")]
     ConnectAll,
+}
+
+#[derive(Subcommand, Debug)]
+enum UiProjectCmd {
+    List,
+    Select {
+        #[arg(long)]
+        id: String,
+    },
+    Create {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        name: Option<String>,
+    },
+    #[command(name = "add-test")]
+    AddTest {
+        #[arg(long)]
+        id: String,
+    },
+    #[command(name = "remove-test")]
+    RemoveTest {
+        #[arg(long)]
+        id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum UiReportCmd {
+    /// Open a project artifact (path must be inside the active project jail).
+    Open {
+        #[arg(long)]
+        path: PathBuf,
+        #[arg(long)]
+        view: Option<String>,
+        #[arg(long)]
+        overlay: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum UiTestToolCmd {
+    Run {
+        #[arg(long)]
+        id: String,
+        #[arg(long, num_args = 1, value_parser = clap::builder::BoolishValueParser::new())]
+        preflight: Option<bool>,
+        /// JSON object merged into Hub overlay params, e.g. `{"port":"COM7"}`.
+        #[arg(long)]
+        params: Option<String>,
+    },
+    Stop,
 }
 
 fn opts(cli: &Cli) -> OutputOptions {
@@ -1218,8 +1405,61 @@ fn map_to_invoke(cli: &Cli) -> Option<(String, serde_json::Value)> {
         Commands::Ui(UiCmd::Instrument(UiInstrumentCmd::ConnectAll)) => {
             Some(("instrument.connect_all".into(), json!({})))
         }
+        Commands::Ui(UiCmd::Project(UiProjectCmd::List)) => {
+            Some(("ui.project.list".into(), json!({})))
+        }
+        Commands::Ui(UiCmd::Project(UiProjectCmd::Select { id })) => {
+            Some(("ui.project.select".into(), json!({ "id": id })))
+        }
+        Commands::Ui(UiCmd::Project(UiProjectCmd::Create { id, name })) => {
+            let mut p = json!({ "id": id });
+            if let Some(n) = name {
+                p["name"] = json!(n);
+            }
+            Some(("ui.project.create".into(), p))
+        }
+        Commands::Ui(UiCmd::Project(UiProjectCmd::AddTest { id })) => {
+            Some(("ui.project.add_test".into(), json!({ "id": id })))
+        }
+        Commands::Ui(UiCmd::Project(UiProjectCmd::RemoveTest { id })) => {
+            Some(("ui.project.remove_test".into(), json!({ "id": id })))
+        }
+        Commands::Ui(UiCmd::Report(UiReportCmd::Open {
+            path,
+            view,
+            overlay,
+        })) => {
+            let mut p = json!({
+                "path": path.display().to_string(),
+                "overlay": overlay,
+            });
+            if let Some(v) = view {
+                p["view"] = json!(v);
+            }
+            Some(("ui.report.open".into(), p))
+        }
+        Commands::Ui(UiCmd::TestTool(UiTestToolCmd::Run {
+            id,
+            preflight,
+            params,
+        })) => {
+            let mut p = json!({ "id": id });
+            if let Some(v) = preflight {
+                p["preflight"] = json!(v);
+            }
+            if let Some(raw) = params {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
+                    p["params"] = v;
+                }
+            }
+            Some(("ui.test_tool.run".into(), p))
+        }
+        Commands::Ui(UiCmd::TestTool(UiTestToolCmd::Stop)) => {
+            Some(("ui.test_tool.stop".into(), json!({})))
+        }
         Commands::Probe(cmd) => map_probe_gui(cmd),
         Commands::Bridge(cmd) => map_bridge_gui(cmd),
+        Commands::Dongle(cmd) => map_dongle_gui(cmd),
         _ => None,
     }
 }
@@ -1694,6 +1934,7 @@ fn run(cli: &Cli, _o: &OutputOptions) -> Result<(String, serde_json::Value), (St
         }
         Commands::Probe(cmd) => local_probe(cmd),
         Commands::Bridge(cmd) => local_bridge(cmd),
+        Commands::Dongle(cmd) => local_dongle(cmd),
     }
 }
 
@@ -1826,6 +2067,49 @@ fn map_bridge_gui(cmd: &BridgeCmd) -> Option<(String, serde_json::Value)> {
             *id,
             json!({ "BridgeGpio": { "pin": pin, "dir": output, "value": high } }),
         ),
+    }
+}
+
+fn map_dongle_gui(cmd: &DongleCmd) -> Option<(String, serde_json::Value)> {
+    match cmd {
+        DongleCmd::List => Some(("instrument.list".into(), json!({ "kind": "wiparse_dongle" }))),
+        DongleCmd::Connect { resource } => Some((
+            "instrument.connect".into(),
+            json!({ "resource": resource, "kind": "wiparse_dongle" }),
+        )),
+        DongleCmd::Info { id, .. } => gui_dev_cmd(*id, json!("DongleInfo")),
+        DongleCmd::Scan { id, .. } => gui_dev_cmd(*id, json!("DongleI2cScan")),
+        DongleCmd::Ping { id, addr, .. } => {
+            gui_dev_cmd(*id, json!({ "DongleI2cPing": { "addr": addr } }))
+        }
+        DongleCmd::Recover { id, .. } => gui_dev_cmd(*id, json!("DongleI2cRecover")),
+        DongleCmd::Write { id, addr, data, .. } => gui_dev_cmd(
+            *id,
+            json!({ "DongleI2cWrite": { "addr": addr, "data_hex": data } }),
+        ),
+        DongleCmd::Read { id, addr, len, .. } => gui_dev_cmd(
+            *id,
+            json!({ "DongleI2cRead": { "addr": addr, "len": len } }),
+        ),
+        DongleCmd::WriteRead {
+            id, addr, data, len, ..
+        } => gui_dev_cmd(
+            *id,
+            json!({
+                "DongleI2cWriteRead": { "addr": addr, "data_hex": data, "len": len }
+            }),
+        ),
+        DongleCmd::UartOpen { id, baud, com, .. } => gui_dev_cmd(
+            *id,
+            json!({
+                "DongleUartOpen": { "baud": baud, "com": com, "send_baud_cmd": true }
+            }),
+        ),
+        DongleCmd::UartWrite { id, data, hex, .. } => {
+            gui_dev_cmd(*id, json!({ "DongleUartWrite": { "data": data, "hex": hex } }))
+        }
+        DongleCmd::UartRead { id, .. } => gui_dev_cmd(*id, json!("DongleUartRead")),
+        DongleCmd::UartClose { id, .. } => gui_dev_cmd(*id, json!("DongleUartClose")),
     }
 }
 
@@ -2113,6 +2397,155 @@ fn local_bridge(cmd: &BridgeCmd) -> Result<(String, serde_json::Value), (String,
                     )
                 })?;
                 hw::bridge_exec(resource, command).map_err(|e| (name.into(), e))?
+            };
+            Ok((name.into(), data))
+        }
+    }
+}
+
+fn local_dongle(cmd: &DongleCmd) -> Result<(String, serde_json::Value), (String, String)> {
+    use wiparse_core::instrument::ControlCommand;
+    match cmd {
+        DongleCmd::List => Ok(("dongle.list".into(), hw::list_dongles())),
+        DongleCmd::Connect { .. } => Err((
+            "dongle.connect".into(),
+            "connect keeps a session in WiParse.exe; drop --local".into(),
+        )),
+        other => {
+            let (command, resource, demo, name) = match other {
+                DongleCmd::Info {
+                    resource, demo, ..
+                } => (ControlCommand::DongleInfo, resource, *demo, "dongle.info"),
+                DongleCmd::Scan {
+                    resource, demo, ..
+                } => (ControlCommand::DongleI2cScan, resource, *demo, "dongle.scan"),
+                DongleCmd::Ping {
+                    resource,
+                    addr,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::DongleI2cPing { addr: addr.clone() },
+                    resource,
+                    *demo,
+                    "dongle.ping",
+                ),
+                DongleCmd::Recover {
+                    resource, demo, ..
+                } => (
+                    ControlCommand::DongleI2cRecover,
+                    resource,
+                    *demo,
+                    "dongle.recover",
+                ),
+                DongleCmd::Write {
+                    resource,
+                    addr,
+                    data,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::DongleI2cWrite {
+                        addr: addr.clone(),
+                        data_hex: data.clone(),
+                    },
+                    resource,
+                    *demo,
+                    "dongle.write",
+                ),
+                DongleCmd::Read {
+                    resource,
+                    addr,
+                    len,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::DongleI2cRead {
+                        addr: addr.clone(),
+                        len: *len,
+                    },
+                    resource,
+                    *demo,
+                    "dongle.read",
+                ),
+                DongleCmd::WriteRead {
+                    resource,
+                    addr,
+                    data,
+                    len,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::DongleI2cWriteRead {
+                        addr: addr.clone(),
+                        data_hex: data.clone(),
+                        len: *len,
+                    },
+                    resource,
+                    *demo,
+                    "dongle.writeread",
+                ),
+                DongleCmd::UartOpen {
+                    resource,
+                    baud,
+                    com,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::DongleUartOpen {
+                        host: String::new(),
+                        port: 0,
+                        baud: *baud,
+                        com: com.clone(),
+                        send_baud_cmd: true,
+                    },
+                    resource,
+                    *demo,
+                    "dongle.uart-open",
+                ),
+                DongleCmd::UartWrite {
+                    resource,
+                    data,
+                    hex,
+                    demo,
+                    ..
+                } => (
+                    ControlCommand::DongleUartWrite {
+                        data: data.clone(),
+                        hex: *hex,
+                    },
+                    resource,
+                    *demo,
+                    "dongle.uart-write",
+                ),
+                DongleCmd::UartRead {
+                    resource, demo, ..
+                } => (
+                    ControlCommand::DongleUartRead,
+                    resource,
+                    *demo,
+                    "dongle.uart-read",
+                ),
+                DongleCmd::UartClose {
+                    resource, demo, ..
+                } => (
+                    ControlCommand::DongleUartClose,
+                    resource,
+                    *demo,
+                    "dongle.uart-close",
+                ),
+                DongleCmd::List | DongleCmd::Connect { .. } => unreachable!(),
+            };
+            let data = if demo {
+                hw::demo_dongle(command).map_err(|e| (name.into(), e))?
+            } else {
+                let resource = resource.as_ref().ok_or_else(|| {
+                    (
+                        name.to_string(),
+                        "--local needs --resource (or --demo)".to_string(),
+                    )
+                })?;
+                hw::dongle_exec(resource, command).map_err(|e| (name.into(), e))?
             };
             Ok((name.into(), data))
         }

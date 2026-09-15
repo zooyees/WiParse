@@ -84,11 +84,19 @@ fn method_catalog() -> Vec<Value> {
         json!({"method": "instrument.command", "params": {"device_id": 1, "command": "ProbeRegs"}, "stateful": true}),
         json!({"method": "instrument.command", "params": {"device_id": 1, "command": "ProbeErase"}, "stateful": true}),
         json!({"method": "instrument.command", "params": {"device_id": 2, "command": "BridgeInfo"}, "stateful": true}),
+        json!({"method": "instrument.command", "params": {"device_id": 3, "command": "DongleInfo"}, "stateful": true}),
+        json!({"method": "instrument.command", "params": {"device_id": 3, "command": "DongleI2cScan"}, "stateful": true}),
         json!({"method": "instrument.command", "params": {"device_id": 1, "command": {"ProbeFlash": {"path": "firmware.hex", "verify": true}}}, "stateful": true}),
         json!({"method": "instrument.command", "params": {"device_id": 1, "command": {"ProbeMemRead": {"address": "08000000", "len": 64}}}, "stateful": true}),
         json!({"method": "instrument.command", "params": {"device_id": 1, "command": {"ProbeSpeed": {"khz": 4000}}}, "stateful": true}),
         json!({"method": "instrument.command", "params": {"device_id": 1, "command": {"ProbeRttStart": {"up_channel": 0}}}, "stateful": true}),
         json!({"method": "ui.instrument.select", "params": {"overview": true}, "stateful": true}),
+        json!({"method": "ui.report.open", "params": {"path": "D:/data/projects/default/tests/example-smoke/runs/x/artifacts/logs/hub.log"}, "stateful": true}),
+        json!({"method": "ui.project.list", "params": {}, "stateful": true}),
+        json!({"method": "ui.project.select", "params": {"id": "default"}, "stateful": true}),
+        json!({"method": "ui.project.create", "params": {"id": "lot-1", "name": "Lot 1"}, "stateful": true}),
+        json!({"method": "ui.project.add_test", "params": {"id": "example-smoke"}, "stateful": true}),
+        json!({"method": "ui.project.remove_test", "params": {"id": "example-smoke"}, "stateful": true}),
         json!({"method": "instrument.command", "params": {"device_id": 2, "command": {"BridgeSpi": {"mode": 0, "clock_hz": 1000000, "write_hex": "9F", "read_len": 4}}}, "stateful": true}),
         json!({"method": "instrument.command", "params": {"device_id": 2, "command": {"BridgeI2c": {"addr": "50", "write_hex": "00", "read_len": 2}}}, "stateful": true}),
         json!({"method": "instrument.measure", "params": {"device_id": 1}, "stateful": true}),
@@ -132,6 +140,16 @@ pub fn is_stateful(method: &str) -> bool {
             | "ui.calc.get"
             | "ui.calc.set"
             | "ui.instrument.select"
+            | "ui.report.browser"
+            | "ui.report.open"
+            | "ui.project.list"
+            | "ui.project.select"
+            | "ui.project.create"
+            | "ui.project.add_test"
+            | "ui.project.remove_test"
+            | "ui.test_tool.browser"
+            | "ui.test_tool.run"
+            | "ui.test_tool.stop"
             | "serial.monitor.start"
             | "serial.monitor.stop"
             | "serial.monitor.status"

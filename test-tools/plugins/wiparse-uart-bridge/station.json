@@ -1,0 +1,59 @@
+{
+  "sop": {
+    "id": "WI-UART-001",
+    "rev": "A",
+    "title": "UART 透传桥",
+    "effective": "2026-09-15"
+  },
+  "station": {
+    "id": "STATION-UART",
+    "name": "UART Bridge",
+    "product": "WiparseUart"
+  },
+  "gui": {
+    "api": "http://127.0.0.1:7878",
+    "min_version": "1.1.14"
+  },
+  "channel": {
+    "transport": "auto",
+    "host": "dap.local",
+    "tcp_port": 1234,
+    "vid": "C251",
+    "pid": "F01A",
+    "fallback_host": "192.168.137.123",
+    "usb_mi": 1,
+    "usb_name": "",
+    "out_ep": "02",
+    "in_ep": "83",
+    "cdc_if": 1,
+    "send_baud_cmd": true,
+    "connect_timeout_ms": 4000
+  },
+  "serial": {
+    "port": "",
+    "baud": 115200,
+    "data_bits": "8",
+    "parity": "none",
+    "stop_bits": "1",
+    "dtr": true,
+    "rts": false
+  },
+  "run": {
+    "op": "capture",
+    "duration_s": 10,
+    "send_text": "",
+    "send_hex": "",
+    "expect_contains": "",
+    "timestamp": true,
+    "recipe": []
+  },
+  "paths": {
+    "file_prefix": "WiparseUart",
+    "lock_file": "{test_dir}/run.lock",
+    "stop_file": "{test_dir}/run.stop",
+    "status_file": "{test_dir}/status.json",
+    "logs_dir": "{artifacts_dir}/logs",
+    "report_dir": "{artifacts_dir}/reports",
+    "summary_md": "{artifacts_dir}/reports/{file_prefix}_{stamp}.md"
+  }
+}

@@ -15,6 +15,9 @@ import {
   normalizeArtifacts,
   makeStamp,
   writeRunJson,
+  ensureTestInProject,
+  loadStationConfig,
+  sanitizeTestId,
 } from "./plugin-contract.mjs";
 import fs from "node:fs";
 import os from "node:os";
@@ -73,6 +76,19 @@ test("scope-serial-monitor plugin.json validates", () => {
   );
   const check = validatePluginManifest(raw);
   assert.equal(check.ok, true, check.errors?.join("; "));
+  assert.equal(raw.version, "0.6.0");
+  assert.equal(raw.engines?.wiparse, ">=1.1.16");
+  assert.ok(!String(raw.description || "").includes("tests/scope-serial-monitor"));
+  const station = JSON.parse(
+    fs.readFileSync(
+      path.join(here, "..", "plugins", "scope-serial-monitor", "station.json"),
+      "utf8"
+    )
+  );
+  const stationCheck = validateStationConfig(station);
+  assert.equal(stationCheck.ok, true, stationCheck.errors?.join("; "));
+  assert.equal(station.gui?.min_version, "1.1.16");
+  assert.ok(String(station.paths?.test_dir || "").includes("{test_id}"));
   assert.equal(raw.params.some((p) => p.type === "device"), true);
   assert.equal(raw.params.some((p) => p.type === "json" && p.name === "triggers"), true);
   assert.ok(Array.isArray(raw.outputs) && raw.outputs.some((o) => o.id === "waves"));
@@ -277,4 +293,65 @@ test("writeRunJson lands under runs/stamp", () => {
   assert.equal(doc.schema, "wiparse.run/v1");
   assert.equal(doc.plugin, "scope-serial-monitor");
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("ensureTestInProject appends only the running plugin", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wiparse-proj-"));
+  const layout = resolveProjectLayout({
+    dataRoot: root,
+    project: "lot1",
+    testId: "example-smoke",
+    stamp: makeStamp(),
+    lifecycle: "run",
+  });
+  ensureTestInProject(layout, "example-smoke");
+  ensureTestInProject(layout, "example-smoke");
+  const doc = JSON.parse(fs.readFileSync(path.join(root, "projects", "lot1", "project.json"), "utf8"));
+  assert.equal(doc.tests.length, 1);
+  assert.equal(doc.tests[0].id, "example-smoke");
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("ensureTestInProject uses report-name test_id with plugin_id", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wiparse-proj-"));
+  const layout = resolveProjectLayout({
+    dataRoot: root,
+    project: "lot1",
+    testId: "ScopeSerial",
+    pluginId: "example-smoke",
+    stamp: makeStamp(),
+    lifecycle: "run",
+  });
+  ensureTestInProject(layout, "example-smoke", { name: "ScopeSerial" });
+  const doc = JSON.parse(fs.readFileSync(path.join(root, "projects", "lot1", "project.json"), "utf8"));
+  assert.equal(doc.tests.length, 1);
+  assert.equal(doc.tests[0].id, "ScopeSerial");
+  assert.equal(doc.tests[0].plugin_id, "example-smoke");
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("loadStationConfig derives test_id from file_prefix when layout is omitted", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wiparse-layout-"));
+  const pluginDir = fs.mkdtempSync(path.join(os.tmpdir(), "wiparse-plugin-"));
+  fs.writeFileSync(
+    path.join(pluginDir, "station.json"),
+    JSON.stringify({
+      gui: { api: "http://127.0.0.1:7878" },
+      paths: { file_prefix: "ScopeSerial" },
+    })
+  );
+  const { layout, config } = loadStationConfig({
+    plugin: { id: "scope-serial-monitor", dir: pluginDir, params: [] },
+    pluginDir,
+    args: {},
+    dataRoot: root,
+    project: "default",
+    lifecycle: "preflight",
+  });
+  assert.equal(layout.test_id, "ScopeSerial");
+  assert.equal(layout.plugin_id, "scope-serial-monitor");
+  assert.ok(String(config.paths.test_dir).endsWith(`${path.sep}ScopeSerial`));
+  assert.equal(sanitizeTestId("mpp25w test", "scope-serial-monitor"), "mpp25w_test");
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.rmSync(pluginDir, { recursive: true, force: true });
 });

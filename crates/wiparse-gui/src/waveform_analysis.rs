@@ -371,6 +371,51 @@ impl WaveformAnalysisPanel {
         );
     }
 
+    /// Plot + toolbar + measurements for the Test Report right pane (no file browser).
+    pub fn ui_embedded(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        self.poll_pending_loads(lang);
+        self.poll_pending_viewport();
+        self.poll_pending_bus_decode();
+        if self.bus_decode_dirty && self.schedule_bus_decode() {
+            self.bus_decode_dirty = false;
+        }
+        let avail = ui.available_size();
+        let (full, _) = ui.allocate_exact_size(avail, egui::Sense::hover());
+        if !full.is_positive() {
+            return;
+        }
+        let meas_h = 96.0;
+        let toolbar_rect =
+            egui::Rect::from_min_size(full.min, egui::vec2(full.width(), TOOLBAR_H));
+        let plot_top = full.min.y + TOOLBAR_H + PANEL_GAP;
+        let plot_h = (full.max.y - plot_top - meas_h - PANEL_GAP).max(80.0);
+        let plot_rect = egui::Rect::from_min_size(
+            egui::pos2(full.min.x, plot_top),
+            egui::vec2(full.width(), plot_h),
+        );
+        let meas_rect = egui::Rect::from_min_size(
+            egui::pos2(full.min.x, plot_rect.max.y + PANEL_GAP),
+            egui::vec2(full.width(), meas_h),
+        );
+        panel_in_rect(ui, toolbar_rect, |ui| {
+            self.toolbar(ui, lang, tokens);
+        });
+        card_in_rect(
+            ui,
+            plot_rect,
+            tokens,
+            &t(lang, "波形图", "Plot"),
+            |ui| self.plot_area(ui, lang, tokens),
+        );
+        card_in_rect(
+            ui,
+            meas_rect,
+            tokens,
+            &t(lang, "测量", "Measurements"),
+            |ui| self.measures_panel(ui, lang, tokens),
+        );
+    }
+
     fn toolbar(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
         Frame::NONE
             .fill(tokens.surface_bg)
@@ -3649,6 +3694,21 @@ impl WaveformAnalysisPanel {
                 );
                 Err(err)
             }
+        }
+    }
+
+    /// Report-tree open: click replaces the current document; Ctrl/Cmd overlays.
+    pub fn open_path_maybe_overlay(
+        &mut self,
+        path: &Path,
+        lang: Lang,
+        overlay: bool,
+    ) -> Result<(), String> {
+        if overlay {
+            self.open_path(path, lang)
+        } else {
+            self.open_browser_file(path, lang);
+            Ok(())
         }
     }
 

@@ -10,36 +10,43 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 use wiparse_core::config::AppConfig;
 use wiparse_core::i18n::{tr, Lang};
-use wiparse_core::paths::project_path;
+use wiparse_core::project::{
+    add_test, add_test_entry, ensure_project, index_project, list_projects, path_in_project_jail,
+    remove_test, sanitize_id, test_ref_from_report, tree_snapshot, ArtifactView, IndexedGroup,
+    IndexedProject, PluginMeta, ProjectDoc,
+};
+use crate::waveform_analysis::WaveformAnalysisPanel;
 
 const SIDE_W: f32 = 300.0;
 const PANEL_GAP: f32 = 8.0;
 const CARD_MARGIN_X: i8 = 10;
+const TREE_ROW_H: f32 = 22.0;
+const TREE_INDENT: f32 = 14.0;
 const MAX_PREVIEW_CHARS: usize = 400_000;
 const MAX_MD_IMAGE_EDGE: u32 = 1600;
-const ROOT_FOLDER_KEY: &str = "__root__";
 
-#[derive(Debug, Clone)]
-struct ReportEntry {
-    name: String,
-    path: PathBuf,
-    size: u64,
-    mtime: Option<SystemTime>,
-}
-
-#[derive(Debug, Clone)]
-struct ReportFolder {
-    name: String,
-    files: Vec<ReportEntry>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReportAction {
+    None,
+    Open {
+        path: PathBuf,
+        view: ArtifactView,
+        overlay: bool,
+    },
+    GoHub,
+    ProjectChanged(String),
 }
 
 #[derive(Debug, Clone)]
 enum PreviewKind {
     /// Parsed once on open — paint is O(blocks), not re-parse each frame.
     Markdown(std::sync::Arc<MdDoc>),
+    Text(std::sync::Arc<String>),
+    Image,
+    Wave,
     EmptyHint(String),
 }
 
@@ -64,89 +71,111 @@ enum MdBlock {
 }
 
 pub struct TestReportPanel {
-    browser_dir: String,
-    scanned_dir: String,
-    folders: Vec<ReportFolder>,
+    project_id: String,
+    new_project_id: String,
+    projects: Vec<ProjectDoc>,
+    index: IndexedProject,
     selected: Option<PathBuf>,
     preview_title: String,
     preview: Option<PreviewKind>,
     status: String,
-    /// Defer folder dialog to end-of-frame to avoid egui/rfd re-entrancy freezes.
-    pending_pick_dir: bool,
     /// Textures for `![alt](path)` relative to the open report file.
     image_textures: HashMap<PathBuf, Option<egui::TextureHandle>>,
+    add_test_open: bool,
+    new_project_open: bool,
+    index_dirty: bool,
+    last_index_at: Option<Instant>,
+    seen_hub_epoch: u64,
 }
 
 impl TestReportPanel {
     pub fn new(cfg: &AppConfig) -> Self {
-        let mut browser_dir = cfg.apps.test_report.browser_dir.clone();
-        if browser_dir.trim().is_empty() {
-            browser_dir = project_path("evidence").display().to_string();
-        }
-        let mut panel = Self {
-            browser_dir,
-            scanned_dir: String::new(),
-            folders: Vec::new(),
+        let project_id = sanitize_id(&cfg.apps.project.active_id, "default");
+        Self {
+            project_id: project_id.clone(),
+            new_project_id: String::new(),
+            projects: Vec::new(),
+            index: IndexedProject {
+                id: project_id,
+                name: String::new(),
+                tests: Vec::new(),
+            },
             selected: None,
             preview_title: String::new(),
             preview: None,
             status: String::new(),
-            pending_pick_dir: false,
             image_textures: HashMap::new(),
-        };
-        panel.refresh_browser();
-        panel
+            add_test_open: false,
+            new_project_open: false,
+            index_dirty: true,
+            last_index_at: None,
+            seen_hub_epoch: 0,
+        }
     }
 
     pub fn status_text(&self) -> &str {
         &self.status
     }
 
-    fn report_count(&self) -> usize {
-        self.folders.iter().map(|f| f.files.len()).sum()
+    pub fn project_id(&self) -> &str {
+        &self.project_id
+    }
+
+    fn file_count(&self) -> usize {
+        self.index.tests.iter().map(|t| t.file_count()).sum()
     }
 
     pub fn api_snapshot(&self) -> serde_json::Value {
-        serde_json::json!({
-            "browser_dir": self.browser_dir,
-            "report_count": self.report_count(),
-            "folder_count": self.folders.len(),
-            "selected": self.selected.as_ref().map(|p| p.display().to_string()),
-            "status": self.status,
-        })
+        let mut tree = tree_snapshot(&self.index);
+        if let Some(obj) = tree.as_object_mut() {
+            obj.insert(
+                "selected".into(),
+                serde_json::json!(self.selected.as_ref().map(|p| p.display().to_string())),
+            );
+            obj.insert("status".into(), serde_json::json!(self.status));
+            obj.insert("file_count".into(), serde_json::json!(self.file_count()));
+        }
+        tree
     }
 
     pub fn api_set_browser_dir(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
-        use crate::backend::{invoke_err as err, invoke_ok as ok};
-        let dir = params
-            .get("dir")
-            .or_else(|| params.get("path"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
-        if dir.is_empty() {
-            return err("ui.report.browser", "missing dir");
-        }
-        self.browser_dir = dir.to_owned();
-        self.refresh_browser();
-        self.persist_browser_dir();
-        ok("ui.report.browser", self.api_snapshot())
+        use crate::backend::invoke_ok as ok;
+        let _ = params;
+        ok(
+            "ui.report.browser",
+            serde_json::json!({
+                "deprecated": true,
+                "hint": "use ui.project.select / ui.report.open",
+                "snapshot": self.api_snapshot(),
+            }),
+        )
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+    pub fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        data_root: &Path,
+        plugins: &[PluginMeta],
+        running_id: Option<&str>,
+        hub_project: &str,
+        hub_epoch: u64,
+        waveform: Option<&mut WaveformAnalysisPanel>,
+    ) -> ReportAction {
         if self.status.is_empty() {
             self.status = tr(lang, "report.status_ready");
         }
-
-        if self.pending_pick_dir {
-            self.pending_pick_dir = false;
-            self.run_pick_browser_dir();
+        if hub_project != self.project_id && wiparse_core::project::is_valid_id(hub_project) {
+            self.project_id = hub_project.to_owned();
+            self.index_dirty = true;
         }
+        self.maybe_rebuild(data_root, plugins, running_id.is_some(), hub_epoch);
 
         let avail = ui.available_size();
         let (full, _) = ui.allocate_exact_size(avail, egui::Sense::hover());
         if !full.is_positive() {
-            return;
+            return ReportAction::None;
         }
 
         let side_w = SIDE_W
@@ -160,11 +189,234 @@ impl TestReportPanel {
             egui::vec2(view_w, full.height()),
         );
 
-        panel_in_rect(ui, side_rect, |ui| self.browser_panel(ui, lang, tokens));
-        panel_in_rect(ui, view_rect, |ui| self.viewer_panel(ui, lang, tokens));
+        let mut action = ReportAction::None;
+        panel_in_rect(ui, side_rect, |ui| {
+            action = self.browser_panel(ui, lang, tokens, data_root, plugins, running_id);
+        });
+        let mut view_action = ReportAction::None;
+        panel_in_rect(ui, view_rect, |ui| {
+            view_action = self.viewer_panel(ui, lang, tokens, waveform);
+        });
+        if !matches!(view_action, ReportAction::None) {
+            view_action
+        } else {
+            action
+        }
     }
 
-    fn browser_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+    fn rebuild_index(&mut self, data_root: &Path, plugins: &[PluginMeta]) {
+        let doc = ensure_project(data_root, &self.project_id, None);
+        self.project_id = doc.id.clone();
+        self.refresh_project_list(data_root);
+        self.index = index_project(data_root, &doc, plugins);
+        self.index_dirty = false;
+        self.last_index_at = Some(Instant::now());
+    }
+
+    fn refresh_project_list(&mut self, data_root: &Path) {
+        self.projects = list_projects(data_root);
+        if !self.projects.iter().any(|p| p.id == self.project_id) {
+            self.projects.push(wiparse_core::project::ProjectDoc::new(
+                &self.project_id,
+                None,
+            ));
+            self.projects
+                .sort_by(|a, b| a.id.to_ascii_lowercase().cmp(&b.id.to_ascii_lowercase()));
+        }
+    }
+
+    fn maybe_rebuild(
+        &mut self,
+        data_root: &Path,
+        plugins: &[PluginMeta],
+        running: bool,
+        hub_epoch: u64,
+    ) {
+        if hub_epoch != self.seen_hub_epoch {
+            self.seen_hub_epoch = hub_epoch;
+            self.index_dirty = true;
+        }
+        let interval = if running {
+            Duration::from_millis(800)
+        } else {
+            Duration::from_millis(2500)
+        };
+        let stale = self
+            .last_index_at
+            .map(|t| t.elapsed() >= interval)
+            .unwrap_or(true);
+        if self.index_dirty || stale {
+            self.rebuild_index(data_root, plugins);
+        }
+    }
+
+    fn persist_project(&self) {
+        if let Ok(mut cfg) = wiparse_core::config::load_config() {
+            cfg.apps.project.active_id = self.project_id.clone();
+            let _ = wiparse_core::config::save_config(&cfg);
+        }
+    }
+
+    pub fn select_project(
+        &mut self,
+        data_root: &Path,
+        plugins: &[PluginMeta],
+        id: &str,
+    ) -> Result<String, String> {
+        let id = sanitize_id(id, "default");
+        ensure_project(data_root, &id, None);
+        self.project_id = id.clone();
+        self.persist_project();
+        self.rebuild_index(data_root, plugins);
+        Ok(id)
+    }
+
+    pub fn create_project(
+        &mut self,
+        data_root: &Path,
+        plugins: &[PluginMeta],
+        id: &str,
+        name: Option<&str>,
+    ) -> Result<String, String> {
+        let raw = id.trim();
+        if !wiparse_core::project::is_valid_id(raw) {
+            return Err("invalid project id".into());
+        }
+        let doc = ensure_project(data_root, raw, name);
+        self.project_id = doc.id.clone();
+        self.persist_project();
+        self.rebuild_index(data_root, plugins);
+        Ok(doc.id)
+    }
+
+    pub fn add_hub_test(
+        &mut self,
+        data_root: &Path,
+        plugins: &[PluginMeta],
+        test_id: &str,
+    ) -> Result<(), String> {
+        add_test(data_root, &self.project_id, test_id).map_err(|e| e.to_string())?;
+        self.index_dirty = true;
+        self.rebuild_index(data_root, plugins);
+        Ok(())
+    }
+
+    fn apply_open(
+        &mut self,
+        path: PathBuf,
+        view: ArtifactView,
+        overlay: bool,
+        lang: Lang,
+        action: &mut ReportAction,
+    ) {
+        self.selected = Some(path.clone());
+        self.preview_title = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        if is_markdown(&path) || view == ArtifactView::Report {
+            self.open_report(path, lang);
+            return;
+        }
+        if view == ArtifactView::Wave || is_wave_file(&path) {
+            self.preview = Some(PreviewKind::Wave);
+            self.status = format!(
+                "{} · {}",
+                tr(lang, "report.status_wave"),
+                self.preview_title
+            );
+            *action = ReportAction::Open {
+                path,
+                view: ArtifactView::Wave,
+                overlay,
+            };
+            return;
+        }
+        if view == ArtifactView::Log || is_text_file(&path) {
+            self.open_text(path, lang);
+            return;
+        }
+        if is_image_file(&path) {
+            self.image_textures.clear();
+            self.preview = Some(PreviewKind::Image);
+            self.status = format!(
+                "{} · {}",
+                tr(lang, "report.status_loaded"),
+                self.preview_title
+            );
+            return;
+        }
+        if view == ArtifactView::External {
+            if open_path_external(&path) {
+                self.preview = Some(PreviewKind::EmptyHint(tr(lang, "report.open_external")));
+                self.status = format!(
+                    "{} · {}",
+                    tr(lang, "report.open_external"),
+                    self.preview_title
+                );
+            } else {
+                self.status = tr(lang, "report.status_open_err").to_string();
+            }
+            return;
+        }
+        *action = ReportAction::Open {
+            path,
+            view,
+            overlay,
+        };
+    }
+
+    pub fn remove_hub_test(
+        &mut self,
+        data_root: &Path,
+        plugins: &[PluginMeta],
+        test_id: &str,
+    ) -> Result<(), String> {
+        remove_test(data_root, &self.project_id, test_id).map_err(|e| e.to_string())?;
+        self.index_dirty = true;
+        self.rebuild_index(data_root, plugins);
+        Ok(())
+    }
+
+    pub fn prepare_open(
+        &self,
+        data_root: &Path,
+        path: &Path,
+        view: Option<&str>,
+    ) -> Result<(PathBuf, ArtifactView), String> {
+        if !path_in_project_jail(data_root, &self.project_id, path) {
+            return Err("path outside project".into());
+        }
+        if !path.is_file() {
+            return Err("not a file".into());
+        }
+        let view = view
+            .map(ArtifactView::parse)
+            .unwrap_or_else(|| ArtifactView::from_filename(&path.display().to_string()));
+        Ok((path.to_path_buf(), view))
+    }
+
+    pub fn open_markdown(&mut self, path: PathBuf, lang: Lang) {
+        self.open_report(path, lang);
+    }
+
+    pub fn open_in_pane(&mut self, path: PathBuf, view: ArtifactView, overlay: bool, lang: Lang) {
+        let mut action = ReportAction::None;
+        self.apply_open(path, view, overlay, lang, &mut action);
+        let _ = action;
+    }
+
+    fn browser_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        data_root: &Path,
+        plugins: &[PluginMeta],
+        running_id: Option<&str>,
+    ) -> ReportAction {
+        self.refresh_project_list(data_root);
+        let mut action = ReportAction::None;
         let card_w = ui.available_width();
         let inner_w = (card_w - f32::from(CARD_MARGIN_X) * 2.0).max(80.0);
         Frame::NONE
@@ -175,43 +427,117 @@ impl TestReportPanel {
             .show(ui, |ui| {
                 ui.set_min_width(inner_w);
                 ui.set_max_width(inner_w);
-                ui.set_min_height(ui.available_height());
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
                 let ctrl_w = inner_w;
 
-                ui.label(
-                    RichText::new(tr(lang, "report.browser_dir"))
-                        .size(ui_theme::FONT_TITLE)
-                        .strong()
-                        .color(tokens.text_primary),
+                let cap = tr(lang, "report.project");
+                let cap_w = ui.fonts(|f| {
+                    f.layout_no_wrap(
+                        cap.clone(),
+                        FontId::proportional(ui_theme::FONT_CAPTION),
+                        tokens.text_muted,
+                    )
+                    .size()
+                    .x
+                }) + 8.0;
+                let (prow, _) = ui.allocate_exact_size(
+                    egui::vec2(ctrl_w, ui_theme::CTRL_H),
+                    egui::Sense::hover(),
                 );
-                let browser_edit = ui.add(
-                    egui::TextEdit::singleline(&mut self.browser_dir)
-                        .desired_width(ctrl_w)
-                        .hint_text(tr(lang, "report.browser_hint"))
-                        .margin(egui::vec2(6.0, 4.0)),
+                ui.painter_at(prow).text(
+                    egui::pos2(prow.min.x, prow.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    &cap,
+                    FontId::proportional(ui_theme::FONT_CAPTION),
+                    tokens.text_muted,
                 );
-                if browser_edit.lost_focus() {
-                    self.refresh_browser();
-                    self.persist_browser_dir();
+                let combo_rect = egui::Rect::from_min_max(
+                    egui::pos2(prow.min.x + cap_w, prow.min.y),
+                    prow.max,
+                );
+
+                let current_label = self
+                    .projects
+                    .iter()
+                    .find(|p| p.id == self.project_id)
+                    .map(|p| {
+                        if p.name != p.id {
+                            format!("{}  ({})", p.name, p.id)
+                        } else {
+                            p.name.clone()
+                        }
+                    })
+                    .unwrap_or_else(|| self.project_id.clone());
+                let mut picked = self.project_id.clone();
+                let projects = self.projects.clone();
+                ui.scope_builder(
+                    egui::UiBuilder::new()
+                        .max_rect(combo_rect)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                    |ui| {
+                        ui.spacing_mut().interact_size.y = ui_theme::CTRL_H;
+                        egui::ComboBox::from_id_salt("report_project")
+                            .selected_text(&current_label)
+                            .width(combo_rect.width().max(1.0))
+                            .height(280.0)
+                            .show_ui(ui, |ui| {
+                                for p in &projects {
+                                    let label = if p.name != p.id {
+                                        format!("{}  ({})", p.name, p.id)
+                                    } else {
+                                        p.name.clone()
+                                    };
+                                    ui.selectable_value(&mut picked, p.id.clone(), label);
+                                }
+                            });
+                    },
+                );
+                if picked != self.project_id {
+                    self.project_id = picked;
+                    self.persist_project();
+                    self.rebuild_index(data_root, plugins);
+                    action = ReportAction::ProjectChanged(self.project_id.clone());
+                }
+
+                if self.new_project_open {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        let edit_w = (ctrl_w - 70.0).max(80.0);
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.new_project_id)
+                                .desired_width(edit_w)
+                                .hint_text(tr(lang, "report.project_new_hint"))
+                                .margin(egui::vec2(6.0, 4.0)),
+                        );
+                        if ui_theme::secondary_btn_sized(
+                            ui,
+                            tokens,
+                            tr(lang, "report.project_new"),
+                            egui::vec2(64.0, ui_theme::CTRL_H),
+                        )
+                        .clicked()
+                        {
+                            let raw = self.new_project_id.trim().to_owned();
+                            if wiparse_core::project::is_valid_id(&raw) {
+                                let doc = ensure_project(data_root, &raw, Some(&raw));
+                                self.project_id = doc.id;
+                                self.new_project_id.clear();
+                                self.new_project_open = false;
+                                self.persist_project();
+                                self.rebuild_index(data_root, plugins);
+                                action = ReportAction::ProjectChanged(self.project_id.clone());
+                            } else {
+                                self.status = tr(lang, "report.project_id_invalid").to_string();
+                            }
+                        }
+                    });
                 }
 
                 let gap = 6.0;
-                let btn_w = ((ctrl_w - gap) * 0.5).max(48.0);
+                let btn_w = ((ctrl_w - gap * 2.0) / 3.0).max(40.0);
                 ui.horizontal(|ui| {
                     ui.set_max_width(ctrl_w);
                     ui.spacing_mut().item_spacing.x = gap;
-                    if ui_theme::secondary_btn_sized(
-                        ui,
-                        tokens,
-                        tr(lang, "btn.browse_dir"),
-                        egui::vec2(btn_w, ui_theme::CTRL_H),
-                    )
-                    .clicked()
-                    {
-                        self.pending_pick_dir = true;
-                        ui.ctx().request_repaint();
-                    }
                     if ui_theme::secondary_btn_sized(
                         ui,
                         tokens,
@@ -220,123 +546,263 @@ impl TestReportPanel {
                     )
                     .clicked()
                     {
-                        self.refresh_browser();
+                        self.index_dirty = true;
+                        self.rebuild_index(data_root, plugins);
+                    }
+                    if ui_theme::secondary_btn_sized(
+                        ui,
+                        tokens,
+                        tr(lang, "report.add_test"),
+                        egui::vec2(btn_w, ui_theme::CTRL_H),
+                    )
+                    .clicked()
+                    {
+                        self.add_test_open = !self.add_test_open;
+                    }
+                    if ui_theme::secondary_btn_sized(
+                        ui,
+                        tokens,
+                        tr(lang, "report.project_new"),
+                        egui::vec2(btn_w, ui_theme::CTRL_H),
+                    )
+                    .clicked()
+                    {
+                        self.new_project_open = !self.new_project_open;
                     }
                 });
 
-                self.ensure_browser_fresh();
-
-                let n = self.report_count();
-                if n > 0 {
-                    ui.label(
-                        RichText::new(format!(
-                            "{} · {}    {} · {}",
-                            tr(lang, "report.folder_count"),
-                            self.folders.len(),
-                            tr(lang, "report.count"),
-                            n
-                        ))
-                        .size(ui_theme::FONT_CAPTION)
-                        .color(tokens.text_muted),
-                    );
+                if self.add_test_open {
+                    let mut added: Option<wiparse_core::project::ProjectTestRef> = None;
+                    for p in plugins {
+                        let entry = test_ref_from_report(&p.id, &p.file_prefix, &p.name);
+                        if self.index.tests.iter().any(|t| t.id == entry.id) {
+                            continue;
+                        }
+                        let title = if entry.name.is_empty() {
+                            entry.id.as_str()
+                        } else {
+                            entry.name.as_str()
+                        };
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new(format!("+ {title}"))
+                                        .size(ui_theme::FONT_BODY)
+                                        .color(tokens.text_primary),
+                                )
+                                .fill(Color32::TRANSPARENT)
+                                .min_size(egui::vec2(ctrl_w, 22.0)),
+                            )
+                            .clicked()
+                        {
+                            added = Some(entry);
+                        }
+                    }
+                    if plugins.iter().all(|p| {
+                        let entry = test_ref_from_report(&p.id, &p.file_prefix, &p.name);
+                        self.index.tests.iter().any(|t| t.id == entry.id)
+                    }) {
+                        ui.label(
+                            RichText::new(tr(lang, "report.add_test_empty"))
+                                .size(ui_theme::FONT_CAPTION)
+                                .color(tokens.text_muted),
+                        );
+                    }
+                    if let Some(entry) = added {
+                        let shown = entry.display_name().to_owned();
+                        if add_test_entry(data_root, &self.project_id, entry).is_ok() {
+                            self.add_test_open = false;
+                            self.rebuild_index(data_root, plugins);
+                            self.status = format!("{} · {shown}", tr(lang, "report.add_test"));
+                        }
+                    }
                 }
 
-                if self.browser_dir.trim().is_empty() {
+                let results_n: usize = self.index.tests.iter().map(|t| t.results.len()).sum();
+                ui.label(
+                    RichText::new(format!(
+                        "{} {} · {} {}",
+                        self.index.tests.len(),
+                        tr(lang, "report.test_count"),
+                        results_n,
+                        tr(lang, "report.result_count"),
+                    ))
+                    .size(ui_theme::FONT_CAPTION)
+                    .color(tokens.text_muted),
+                );
+
+                if self.index.tests.is_empty() {
                     ui.label(
-                        RichText::new(tr(lang, "report.browser_hint"))
+                        RichText::new(tr(lang, "report.empty_tests"))
                             .size(ui_theme::FONT_CAPTION)
                             .color(tokens.text_muted),
                     );
-                } else if self.folders.is_empty() {
-                    ui.label(
-                        RichText::new(tr(lang, "report.browser_empty"))
-                            .size(ui_theme::FONT_CAPTION)
-                            .color(tokens.text_muted),
-                    );
+                    if ui_theme::secondary_btn_sized(
+                        ui,
+                        tokens,
+                        tr(lang, "report.go_hub"),
+                        egui::vec2(ctrl_w, ui_theme::CTRL_H),
+                    )
+                    .clicked()
+                    {
+                        action = ReportAction::GoHub;
+                    }
                 } else {
                     let list_h = ui.available_height().max(72.0);
-                    let mut open_path: Option<PathBuf> = None;
+                    let mut open_file: Option<(PathBuf, ArtifactView, bool)> = None;
+                    let mut remove_id: Option<String> = None;
                     let selected = self.selected.clone();
+                    let tests = self.index.tests.clone();
                     ui.spacing_mut().scroll.floating = false;
                     egui::ScrollArea::vertical()
-                        .id_salt("report_browser_folders")
+                        .id_salt("report_project_tests")
                         .max_height(list_h)
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            ui.set_width(ctrl_w);
-                            ui.spacing_mut().item_spacing.y = 2.0;
-                            for folder in &self.folders {
-                                let folder_label = if folder.name == ROOT_FOLDER_KEY {
-                                    tr(lang, "report.folder_root")
+                            ui.set_width(ui.available_width());
+                            ui.spacing_mut().item_spacing.y = 3.0;
+                            for test in &tests {
+                                let title = if !test.name.trim().is_empty() {
+                                    test.name.as_str()
                                 } else {
-                                    folder.name.clone()
+                                    test.id.as_str()
                                 };
-                                let header =
-                                    format!("{}  ({})", folder_label, folder.files.len());
-                                egui::CollapsingHeader::new(
-                                    RichText::new(header)
-                                        .size(ui_theme::FONT_BODY)
-                                        .strong()
-                                        .color(tokens.text_primary),
-                                )
-                                .id_salt(("report-folder", folder.name.as_str()))
-                                .default_open(self.folders.len() <= 3)
-                                .show(ui, |ui| {
-                                    ui.set_max_width(ctrl_w);
-                                    ui.spacing_mut().item_spacing.y = 1.0;
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            RichText::new(tr(lang, "report.col_name"))
-                                                .size(ui_theme::FONT_CAPTION)
-                                                .color(tokens.text_muted),
-                                        );
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                ui.label(
-                                                    RichText::new(tr(lang, "report.col_mtime"))
-                                                        .size(ui_theme::FONT_CAPTION)
-                                                        .color(tokens.text_muted),
-                                                );
-                                                ui.add_space(8.0);
-                                                ui.label(
-                                                    RichText::new(tr(lang, "report.col_size"))
-                                                        .size(ui_theme::FONT_CAPTION)
-                                                        .color(tokens.text_muted),
-                                                );
-                                            },
-                                        );
-                                    });
-                                    for file in &folder.files {
-                                        let is_sel = selected
-                                            .as_ref()
-                                            .is_some_and(|p| same_path(p, &file.path));
-                                        let row = file_row(
-                                            ui,
-                                            tokens,
-                                            ctrl_w,
-                                            &file.name,
-                                            &format_size(file.size),
-                                            &format_mtime(file.mtime),
-                                            is_sel,
-                                        );
-                                        if row.clicked() {
-                                            open_path = Some(file.path.clone());
-                                        }
-                                        row.on_hover_text(file.path.display().to_string());
+                                let running = running_id == Some(test.id.as_str())
+                                    || running_id == Some(test.plugin_id.as_str());
+                                let mut header = title.to_owned();
+                                if running {
+                                    header.push_str("  · ");
+                                    header.push_str(&tr(lang, "report.running"));
+                                }
+                                if !test.installed {
+                                    header.push_str("  · ");
+                                    header.push_str(&tr(lang, "report.missing_plugin"));
+                                } else if test.results.is_empty() {
+                                    header.push_str("  · 0");
+                                }
+                                let color = if test.installed {
+                                    tokens.text_primary
+                                } else {
+                                    tokens.text_muted
+                                };
+                                let (open, header_resp) = collapsing_row(
+                                    ui,
+                                    tokens,
+                                    ("report-test", test.id.as_str()),
+                                    &header,
+                                    running || !test.results.is_empty(),
+                                    0.0,
+                                    color,
+                                    ui_theme::FONT_BODY,
+                                );
+                                header_resp.context_menu(|ui| {
+                                    if ui.button(tr(lang, "report.remove_test")).clicked() {
+                                        remove_id = Some(test.id.clone());
+                                        ui.close_menu();
                                     }
                                 });
+                                if header_resp.double_clicked() {
+                                    if let Some(f) =
+                                        test.latest_report().or_else(|| test.latest_any())
+                                    {
+                                        open_file = Some((f.path.clone(), f.view, false));
+                                    }
+                                }
+                                if !open {
+                                    continue;
+                                }
+                                if !test.installed {
+                                    tree_hint_row(
+                                        ui,
+                                        tokens,
+                                        TREE_INDENT,
+                                        &tr(lang, "report.test_missing"),
+                                    );
+                                }
+                                if test.results.is_empty() {
+                                    tree_hint_row(
+                                        ui,
+                                        tokens,
+                                        TREE_INDENT,
+                                        &tr(lang, "report.test_no_runs"),
+                                    );
+                                    continue;
+                                }
+                                for (ri, result) in test.results.iter().enumerate() {
+                                    let mut rtitle = format_result_stamp(&result.stamp);
+                                    if let Some(ok) = result.ok {
+                                        rtitle.push_str("  ");
+                                        rtitle.push_str(&tr(
+                                            lang,
+                                            if ok {
+                                                "report.result_ok"
+                                            } else {
+                                                "report.result_fail"
+                                            },
+                                        ));
+                                    }
+                                    rtitle.push_str(&format!("  ({})", result.file_count()));
+                                    let (ropen, rresp) = collapsing_row(
+                                        ui,
+                                        tokens,
+                                        ("report-result", test.id.as_str(), result.stamp.as_str()),
+                                        &rtitle,
+                                        ri == 0,
+                                        TREE_INDENT,
+                                        tokens.text_primary,
+                                        ui_theme::FONT_CAPTION,
+                                    );
+                                    if rresp.double_clicked() {
+                                        if let Some(f) = result
+                                            .latest_report()
+                                            .or_else(|| result.latest_any())
+                                        {
+                                            open_file = Some((f.path.clone(), f.view, false));
+                                        }
+                                    }
+                                    if ropen {
+                                        paint_output_groups(
+                                            ui,
+                                            lang,
+                                            tokens,
+                                            &result.groups,
+                                            &selected,
+                                            &mut open_file,
+                                            &test.id,
+                                            &result.stamp,
+                                            TREE_INDENT * 2.0,
+                                        );
+                                    }
+                                }
                             }
                             ui.add_space(8.0);
                         });
-                    if let Some(path) = open_path {
-                        self.open_report(path, lang);
+                    if let Some(id) = remove_id {
+                        if self.remove_hub_test(data_root, plugins, &id).is_ok() {
+                            self.status = format!("{} · {id}", tr(lang, "report.remove_test"));
+                        }
+                    }
+                    if let Some((path, view, overlay)) = open_file {
+                        self.apply_open(path, view, overlay, lang, &mut action);
                     }
                 }
+                let rest = ui.available_height();
+                if rest > 1.0 {
+                    ui.allocate_exact_size(egui::vec2(inner_w, rest), egui::Sense::hover());
+                }
             });
+        action
     }
 
-    fn viewer_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+
+    fn viewer_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        mut waveform: Option<&mut WaveformAnalysisPanel>,
+    ) -> ReportAction {
+        let mut action = ReportAction::None;
         Frame::NONE
             .fill(tokens.surface_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
@@ -380,11 +846,26 @@ impl TestReportPanel {
 
                 let content_h = ui.available_height().max(40.0);
                 let mut open_ext = false;
+                let mut md_open: Option<(PathBuf, ArtifactView, bool)> = None;
                 let preview = self.preview.clone();
                 let base_dir = self
                     .selected
                     .as_ref()
                     .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+                let selected_path = self.selected.clone();
+                let ctrl_hint = tr(lang, "report.ctrl_open");
+                if matches!(preview, Some(PreviewKind::Wave)) {
+                    ui.set_min_height(content_h);
+                    if let Some(wave) = waveform.as_mut() {
+                        wave.ui_embedded(ui, lang, tokens);
+                    } else {
+                        ui.label(
+                            RichText::new(tr(lang, "report.status_wave"))
+                                .size(ui_theme::FONT_BODY)
+                                .color(tokens.text_muted),
+                        );
+                    }
+                } else {
                 Frame::NONE
                     .fill(tokens.canvas_bg)
                     .stroke(Stroke::new(1.0_f32, tokens.divider))
@@ -415,9 +896,35 @@ impl TestReportPanel {
                                             tokens,
                                             base_dir.as_deref(),
                                             &mut self.image_textures,
+                                            &mut md_open,
+                                            &ctrl_hint,
                                         );
                                     });
                             }
+                            Some(PreviewKind::Text(body)) => {
+                                egui::ScrollArea::both()
+                                    .id_salt("report_text_view")
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        ui.set_min_width((ui.available_width() - 4.0).max(80.0));
+                                        ui.label(
+                                            RichText::new(body.as_str())
+                                                .font(FontId::monospace(ui_theme::FONT_CAPTION))
+                                                .color(tokens.text_primary),
+                                        );
+                                    });
+                            }
+                            Some(PreviewKind::Image) => {
+                                if let Some(path) = selected_path.as_ref() {
+                                    paint_preview_image(
+                                        ui,
+                                        path,
+                                        tokens,
+                                        &mut self.image_textures,
+                                    );
+                                }
+                            }
+                            Some(PreviewKind::Wave) => {}
                             Some(PreviewKind::EmptyHint(note)) => {
                                 ui.vertical_centered(|ui| {
                                     ui.add_space(24.0);
@@ -441,147 +948,31 @@ impl TestReportPanel {
                             }
                         }
                     });
+                }
                 if open_ext {
                     self.open_external(lang);
                 }
+                if let Some((path, view, overlay)) = md_open {
+                    self.apply_open(path, view, overlay, lang, &mut action);
+                }
             });
+        action
     }
 
-    fn ensure_browser_fresh(&mut self) {
-        let cur = self.browser_dir.trim().to_owned();
-        if cur != self.scanned_dir {
-            self.refresh_browser();
-        }
-    }
-
-    /// First-level folders (and root) with `.md` files — same model as serial log browser.
-    fn refresh_browser(&mut self) {
-        let raw = self.browser_dir.trim().to_owned();
-        self.scanned_dir = raw.clone();
-        self.folders.clear();
-        if raw.is_empty() {
-            return;
-        }
-        let root = resolve_dir(&raw);
-        if !root.is_dir() {
-            return;
-        }
-
-        let mut folders = Vec::new();
-
-        if let Ok(entries) = fs::read_dir(&root) {
-            let mut root_files = Vec::new();
-            for ent in entries.flatten() {
-                let path = ent.path();
-                if path.is_file() && is_markdown(&path) {
-                    if let Some(file) = report_entry_from_path(&path) {
-                        root_files.push(file);
-                    }
-                }
+    fn open_text(&mut self, path: PathBuf, lang: Lang) {
+        match read_text_capped(&path) {
+            Ok(text) => {
+                self.preview = Some(PreviewKind::Text(std::sync::Arc::new(text)));
+                self.status = format!(
+                    "{} · {}",
+                    tr(lang, "report.status_loaded"),
+                    self.preview_title
+                );
             }
-            if !root_files.is_empty() {
-                root_files.sort_by(|a, b| {
-                    a.name
-                        .to_ascii_lowercase()
-                        .cmp(&b.name.to_ascii_lowercase())
-                });
-                folders.push(ReportFolder {
-                    name: ROOT_FOLDER_KEY.into(),
-                    files: root_files,
-                });
+            Err(e) => {
+                self.preview = Some(PreviewKind::EmptyHint(e.clone()));
+                self.status = format!("{}: {e}", tr(lang, "report.status_read_err"));
             }
-        }
-
-        if let Ok(entries) = fs::read_dir(&root) {
-            let mut subdirs: Vec<PathBuf> = entries
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| p.is_dir())
-                .collect();
-            subdirs.sort_by(|a, b| {
-                a.file_name()
-                    .map(|n| n.to_ascii_lowercase())
-                    .cmp(&b.file_name().map(|n| n.to_ascii_lowercase()))
-            });
-            for dir in subdirs {
-                let name_lc = dir
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_ascii_lowercase();
-                if matches!(
-                    name_lc.as_str(),
-                    "node_modules" | ".git" | "target" | "cache" | ".cache" | "dist"
-                ) {
-                    continue;
-                }
-                let Ok(files_iter) = fs::read_dir(&dir) else {
-                    continue;
-                };
-                let mut md_files = Vec::new();
-                for file in files_iter.flatten() {
-                    let path = file.path();
-                    if path.is_file() && is_markdown(&path) {
-                        if let Some(entry) = report_entry_from_path(&path) {
-                            md_files.push(entry);
-                        }
-                    }
-                }
-                if md_files.is_empty() {
-                    continue;
-                }
-                md_files.sort_by(|a, b| {
-                    a.name
-                        .to_ascii_lowercase()
-                        .cmp(&b.name.to_ascii_lowercase())
-                });
-                let name = dir
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| dir.display().to_string());
-                folders.push(ReportFolder {
-                    name,
-                    files: md_files,
-                });
-            }
-        }
-
-        folders.sort_by(|a, b| {
-            let a_root = a.name == ROOT_FOLDER_KEY;
-            let b_root = b.name == ROOT_FOLDER_KEY;
-            match (a_root, b_root) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a
-                    .name
-                    .to_ascii_lowercase()
-                    .cmp(&b.name.to_ascii_lowercase()),
-            }
-        });
-        self.folders = folders;
-    }
-
-    fn run_pick_browser_dir(&mut self) {
-        let start = resolve_dir(self.browser_dir.trim());
-        let mut dialog = rfd::FileDialog::new().set_title("Select report directory");
-        if start.is_dir() {
-            dialog = dialog.set_directory(&start);
-        }
-        let Some(path) = dialog.pick_folder() else {
-            return;
-        };
-        if !path.is_dir() {
-            return;
-        }
-        self.browser_dir = path.display().to_string();
-        self.refresh_browser();
-        self.persist_browser_dir();
-    }
-
-    fn persist_browser_dir(&self) {
-        if let Ok(mut cfg) = wiparse_core::config::load_config() {
-            cfg.apps.test_report.browser_dir = self.browser_dir.clone();
-            let _ = wiparse_core::config::save_config(&cfg);
         }
     }
 
@@ -645,16 +1036,233 @@ fn panel_in_rect(ui: &mut egui::Ui, rect: egui::Rect, add: impl FnOnce(&mut egui
     );
 }
 
+fn paint_output_groups(
+    ui: &mut egui::Ui,
+    lang: Lang,
+    tokens: &Tokens,
+    groups: &[IndexedGroup],
+    selected: &Option<PathBuf>,
+    open_file: &mut Option<(PathBuf, ArtifactView, bool)>,
+    name_prefix: &str,
+    stamp: &str,
+    indent: f32,
+) {
+    for group in groups {
+        if group.files.is_empty() {
+            continue;
+        }
+        let gtitle = if matches!(lang, Lang::Zh) && !group.label_zh.is_empty() {
+            group.label_zh.as_str()
+        } else {
+            group.label.as_str()
+        };
+        let collapsed = group_starts_collapsed(group);
+        let header = format!("{}  ({})", gtitle, group.files.len());
+        let (open, _) = collapsing_row(
+            ui,
+            tokens,
+            ("report-group", name_prefix, stamp, group.id.as_str()),
+            &header,
+            !collapsed,
+            indent,
+            tokens.text_muted,
+            ui_theme::FONT_CAPTION,
+        );
+        if !open {
+            continue;
+        }
+        for file in &group.files {
+            let is_sel = selected.as_ref().is_some_and(|p| same_path(p, &file.path));
+            let label = short_artifact_label(&file.name, name_prefix, stamp);
+            let row = file_row(
+                ui,
+                tokens,
+                &label,
+                type_badge(&file.name),
+                is_sel,
+                indent + TREE_INDENT,
+            );
+            let view = open_view_for_file(file.view, group.view, &file.name);
+            if row.clicked() {
+                let overlay = row.ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+                *open_file = Some((file.path.clone(), view, overlay));
+            }
+            row.context_menu(|ui| {
+                if ui.button(tr(lang, "report.open_external")).clicked() {
+                    let _ = open_path_external(&file.path);
+                    ui.close_menu();
+                }
+                if ui.button(tr(lang, "report.reveal")).clicked() {
+                    reveal_in_folder(&file.path);
+                    ui.close_menu();
+                }
+            });
+            row.on_hover_text(format!(
+                "{}\n{}  {}",
+                file.path.display(),
+                format_size(file.size),
+                format_mtime(file.mtime)
+            ));
+        }
+    }
+}
+
+fn group_starts_collapsed(group: &IndexedGroup) -> bool {
+    if group.id == "docs" || group.id == "_other" {
+        return true;
+    }
+    group.files.len() > 2
+        && group.files.iter().all(|f| {
+            matches!(
+                file_ext(&f.name).as_str(),
+                "html" | "htm" | "pdf" | "json" | "jsonl"
+            )
+        })
+}
+
+fn type_badge(name: &str) -> &'static str {
+    match file_ext(name).as_str() {
+        "md" | "markdown" => "MD",
+        "isf" => "ISF",
+        "wfm" => "WFM",
+        "csv" => "CSV",
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => "IMG",
+        "pdf" => "PDF",
+        "html" | "htm" => "WEB",
+        "txt" | "log" => "LOG",
+        "json" | "jsonl" => "JSON",
+        _ => "FILE",
+    }
+}
+
+/// Drop `{prefix}_` and `{YYYYMMDD}_HHMMSS` so `lot_timeout_20260915_143738.isf`
+/// becomes `timeout  14:37:38`.
+fn short_artifact_label(name: &str, prefix: &str, stamp: &str) -> String {
+    let ext = file_ext(name);
+    let stem = Path::new(name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(name);
+    let mut body = stem.to_owned();
+    if !prefix.is_empty() {
+        if let Some(rest) = body.strip_prefix(prefix) {
+            body = rest.trim_start_matches('_').to_owned();
+        }
+    }
+    if stamp.len() == 15 && stamp.as_bytes().get(8) == Some(&b'_') {
+        let date = &stamp[..8];
+        let token = format!("_{date}_");
+        if let Some(idx) = body.find(&token) {
+            let head = body[..idx].trim_end_matches('_').to_owned();
+            let after = &body[idx + token.len()..];
+            let hhmmss = if after.len() >= 6 && after.as_bytes()[..6].iter().all(u8::is_ascii_digit)
+            {
+                &after[..6]
+            } else {
+                &stamp[9..]
+            };
+            let nice = format!(
+                "{}:{}:{}",
+                &hhmmss[0..2],
+                &hhmmss[2..4],
+                &hhmmss[4..6]
+            );
+            return if head.is_empty() {
+                nice
+            } else {
+                format!("{head}  {nice}")
+            };
+        }
+    }
+    if body.is_empty() {
+        name.to_owned()
+    } else if ext.is_empty() {
+        body
+    } else {
+        format!("{body}.{ext}")
+    }
+}
+
+fn format_result_stamp(stamp: &str) -> String {
+    let full = wiparse_core::project::format_run_stamp(stamp);
+    if full.len() >= 19 && full.as_bytes().get(4) == Some(&b'-') {
+        full[5..].to_owned()
+    } else {
+        full
+    }
+}
+
+fn collapsing_row(
+    ui: &mut egui::Ui,
+    tokens: &Tokens,
+    id: impl std::hash::Hash,
+    title: &str,
+    default_open: bool,
+    indent: f32,
+    color: Color32,
+    font_size: f32,
+) -> (bool, egui::Response) {
+    let eid = ui.make_persistent_id(id);
+    let mut state =
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), eid, default_open);
+    let width = ui.available_width().max(40.0);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, TREE_ROW_H), egui::Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            CornerRadius::same(3),
+            tokens.accent_soft.gamma_multiply(0.45),
+        );
+    }
+    let y = rect.center().y;
+    let x = rect.min.x + indent + 2.0;
+    if resp.clicked() {
+        state.toggle(ui);
+    }
+    let open = state.is_open();
+    ui.painter().text(
+        egui::pos2(x, y),
+        egui::Align2::LEFT_CENTER,
+        if open { "▾" } else { "▸" },
+        FontId::proportional(ui_theme::FONT_CAPTION),
+        tokens.text_muted,
+    );
+    let text_x = x + 14.0;
+    let max_w = (rect.max.x - text_x - 6.0).max(16.0);
+    let max_chars = ((max_w / 6.6) as usize).max(4);
+    ui.painter().text(
+        egui::pos2(text_x, y),
+        egui::Align2::LEFT_CENTER,
+        elide_chars(title, max_chars),
+        FontId::proportional(font_size),
+        color,
+    );
+    state.store(ui.ctx());
+    (open, resp)
+}
+
+fn tree_hint_row(ui: &mut egui::Ui, tokens: &Tokens, indent: f32, text: &str) {
+    let width = ui.available_width().max(40.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, TREE_ROW_H), egui::Sense::hover());
+    ui.painter().text(
+        egui::pos2(rect.min.x + indent + 16.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        elide_chars(text, 36),
+        FontId::proportional(ui_theme::FONT_CAPTION),
+        tokens.text_muted,
+    );
+}
+
 fn file_row(
     ui: &mut egui::Ui,
     tokens: &Tokens,
-    width: f32,
     name: &str,
-    size: &str,
-    mtime: &str,
+    badge: &str,
     selected: bool,
+    indent: f32,
 ) -> egui::Response {
-    let row_h = 22.0_f32;
+    let row_h = 20.0_f32;
+    let width = ui.available_width().max(80.0);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::click());
     if selected {
         ui.painter().rect_filled(
@@ -670,19 +1278,23 @@ fn file_row(
         );
     }
     let y = rect.center().y;
+    let x = rect.min.x + indent;
     ui.painter().text(
-        egui::pos2(rect.min.x + 4.0, y),
+        egui::pos2(x + 4.0, y),
         egui::Align2::LEFT_CENTER,
-        elide_chars(name, 28),
-        FontId::proportional(ui_theme::FONT_BODY),
-        tokens.text_primary,
-    );
-    ui.painter().text(
-        egui::pos2(rect.max.x - 4.0, y),
-        egui::Align2::RIGHT_CENTER,
-        format!("{size}  {mtime}"),
+        badge,
         FontId::proportional(ui_theme::FONT_CAPTION),
         tokens.text_muted,
+    );
+    let text_x = x + 32.0;
+    let max_w = (rect.max.x - text_x - 4.0).max(16.0);
+    let max_chars = ((max_w / 6.6) as usize).max(4);
+    ui.painter().text(
+        egui::pos2(text_x, y),
+        egui::Align2::LEFT_CENTER,
+        elide_chars(name, max_chars),
+        FontId::proportional(ui_theme::FONT_BODY),
+        tokens.text_primary,
     );
     resp
 }
@@ -719,15 +1331,6 @@ fn format_mtime(mtime: Option<SystemTime>) -> String {
     dt.format("%m-%d %H:%M").to_string()
 }
 
-fn resolve_dir(raw: &str) -> PathBuf {
-    let p = PathBuf::from(raw);
-    if p.is_absolute() {
-        p
-    } else {
-        project_path(raw)
-    }
-}
-
 fn same_path(a: &Path, b: &Path) -> bool {
     let na = a.canonicalize().unwrap_or_else(|_| a.to_path_buf());
     let nb = b.canonicalize().unwrap_or_else(|_| b.to_path_buf());
@@ -735,26 +1338,74 @@ fn same_path(a: &Path, b: &Path) -> bool {
 }
 
 fn is_markdown(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| {
-            let e = e.to_ascii_lowercase();
-            e == "md" || e == "markdown"
-        })
-        .unwrap_or(false)
+    matches!(file_ext_path(path).as_str(), "md" | "markdown")
 }
 
-fn report_entry_from_path(path: &Path) -> Option<ReportEntry> {
-    let meta = fs::metadata(path).ok();
-    let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-    let mtime = meta.and_then(|m| m.modified().ok());
-    let name = path.file_name()?.to_string_lossy().into_owned();
-    Some(ReportEntry {
-        name,
-        path: path.to_path_buf(),
-        size,
-        mtime,
-    })
+fn is_wave_file(path: &Path) -> bool {
+    matches!(file_ext_path(path).as_str(), "isf" | "wfm" | "csv")
+}
+
+fn is_text_file(path: &Path) -> bool {
+    matches!(file_ext_path(path).as_str(), "txt" | "log")
+}
+
+fn is_image_file(path: &Path) -> bool {
+    matches!(
+        file_ext_path(path).as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp"
+    )
+}
+
+fn file_ext_path(path: &Path) -> String {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+}
+
+fn file_ext(name: &str) -> String {
+    Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+}
+
+/// Per-file open target. PNG/PDF/HTML never jump to wave/log; `.txt` follows the group.
+fn open_view_for_file(file_view: ArtifactView, group_view: ArtifactView, name: &str) -> ArtifactView {
+    match file_ext(name).as_str() {
+        "md" | "markdown" => ArtifactView::Report,
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "pdf" | "html" | "htm" | "svg" => {
+            ArtifactView::External
+        }
+        "isf" | "wfm" | "csv" => ArtifactView::Wave,
+        "log" => ArtifactView::Log,
+        "txt" => group_view,
+        _ => file_view,
+    }
+}
+
+fn reveal_in_folder(path: &Path) {
+    let s = path.to_string_lossy();
+    if s.contains('\n') || s.contains('\r') || s.contains('\0') {
+        return;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = Command::new("explorer")
+            .arg(format!("/select,{}", path.display()))
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("open").args(["-R"]).arg(path).spawn();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Some(dir) = path.parent() {
+            let _ = Command::new("xdg-open").arg(dir).spawn();
+        }
+    }
 }
 
 fn read_text_capped(path: &Path) -> Result<String, String> {
@@ -774,7 +1425,7 @@ fn read_text_capped(path: &Path) -> Result<String, String> {
     Ok(text)
 }
 
-fn open_path_external(path: &Path) -> bool {
+pub(crate) fn open_path_external(path: &Path) -> bool {
     // Prefer argv-separated launchers (no shell string interpolation).
     #[cfg(target_os = "windows")]
     {
@@ -977,6 +1628,8 @@ fn paint_md_doc(
     tokens: &Tokens,
     base_dir: Option<&Path>,
     textures: &mut HashMap<PathBuf, Option<egui::TextureHandle>>,
+    open: &mut Option<(PathBuf, ArtifactView, bool)>,
+    ctrl_hint: &str,
 ) {
     ui.spacing_mut().item_spacing.y = 2.0;
     let mut table_id = 0u32;
@@ -1133,13 +1786,13 @@ fn paint_md_doc(
             }
             MdBlock::Image { alt, src } => {
                 ui.add_space(6.0);
-                paint_md_image(ui, tokens, base_dir, textures, alt, src);
+                paint_md_image(ui, tokens, base_dir, textures, alt, src, open, ctrl_hint);
                 ui.add_space(4.0);
             }
             MdBlock::Table { rows } => {
                 table_id = table_id.wrapping_add(1);
                 ui.add_space(6.0);
-                paint_md_table(ui, tokens, table_id, rows);
+                paint_md_table(ui, tokens, table_id, rows, base_dir, open, ctrl_hint);
                 ui.add_space(6.0);
             }
             MdBlock::Rule => {
@@ -1211,34 +1864,192 @@ fn parse_image_line(trimmed: &str) -> Option<(String, String)> {
     Some((alt, src))
 }
 
+/// Collapse `.` / `..` without requiring the path to exist.
+fn lexical_normalize(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Reports live in `artifacts/reports/`; shots/waves/docs are siblings.
+/// Jail at `artifacts/` so `../shots/foo.png` works, while `../../` is blocked.
+fn md_asset_jail(base_dir: &Path) -> PathBuf {
+    match base_dir.parent() {
+        Some(parent) if parent.file_name().is_some_and(|n| n == "artifacts") => {
+            parent.to_path_buf()
+        }
+        _ => base_dir.to_path_buf(),
+    }
+}
+
+fn decode_md_src(s: &str) -> String {
+    let t = s
+        .trim()
+        .trim_matches(|c| matches!(c, '<' | '>' | '"' | '`'));
+    let mut t = t.replace("%20", " ");
+    if t.contains("\\\\") {
+        t = t.replace("\\\\", "\\");
+    }
+    t
+}
+
+fn has_artifact_ext(s: &str) -> bool {
+    matches!(
+        file_ext(s).as_str(),
+        "isf"
+            | "wfm"
+            | "csv"
+            | "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "bmp"
+            | "md"
+            | "markdown"
+            | "pdf"
+            | "html"
+            | "htm"
+            | "txt"
+            | "log"
+            | "json"
+            | "jsonl"
+    )
+}
+
+fn looks_like_local_file(s: &str) -> bool {
+    if s.is_empty() || s.contains('\n') || s.contains('\0') {
+        return false;
+    }
+    if s.starts_with("http://") || s.starts_with("https://") {
+        return false;
+    }
+    has_artifact_ext(s)
+        && (s.contains('/') || s.contains('\\') || s.starts_with('.') || Path::new(s).is_absolute())
+}
+
+fn file_ref_from_text(text: &str) -> Option<String> {
+    let t = text.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let chars: Vec<char> = t.chars().collect();
+    for (i, c) in chars.iter().enumerate() {
+        if *c == '[' {
+            if let Some((_, url, _)) = parse_md_link(&chars, i) {
+                let u = decode_md_src(&url);
+                if looks_like_local_file(&u) {
+                    return Some(u);
+                }
+            }
+        }
+    }
+    let stripped = decode_md_src(t);
+    if looks_like_local_file(&stripped) {
+        Some(stripped)
+    } else {
+        None
+    }
+}
+
+fn try_follow_md_ref(
+    resp: &egui::Response,
+    path: &Path,
+    open: &mut Option<(PathBuf, ArtifactView, bool)>,
+    hint: &str,
+) {
+    resp.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
+    resp.clone().on_hover_text(hint);
+    if !resp.clicked() {
+        return;
+    }
+    let ctrl = resp.ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+    if !ctrl {
+        return;
+    }
+    if !path.is_file() {
+        return;
+    }
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    let view = open_view_for_file(
+        ArtifactView::from_filename(name),
+        ArtifactView::from_filename(name),
+        name,
+    );
+    *open = Some((path.to_path_buf(), view, false));
+}
+
 fn resolve_md_asset(base_dir: Option<&Path>, src: &str) -> Option<PathBuf> {
     let raw = src.trim();
     if raw.is_empty() || raw.contains('\0') {
         return None;
     }
-    let stripped = raw.trim_matches(|c| c == '<' || c == '>' || c == '"');
+    let stripped = raw.trim_matches(|c| c == '<' || c == '>' || c == '"' || c == '`');
+    let stripped = decode_md_src(stripped);
+    if stripped.starts_with("http://") || stripped.starts_with("https://") {
+        return None;
+    }
     let raw = stripped
         .strip_prefix("file:///")
         .or_else(|| stripped.strip_prefix("file://"))
-        .unwrap_or(stripped);
+        .unwrap_or(&stripped);
     let p = PathBuf::from(raw);
-    let resolved = if p.is_absolute() {
+    let joined = if p.is_absolute() {
         p
     } else if let Some(base) = base_dir {
         base.join(&p)
     } else {
         p
     };
-    // Jail relative assets under the report directory when possible.
+    let resolved = lexical_normalize(&joined);
     if let Some(base) = base_dir {
-        let base_c = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
-        let res_c = resolved.canonicalize().unwrap_or(resolved.clone());
-        if !res_c.starts_with(&base_c) {
+        let jail = lexical_normalize(&md_asset_jail(base));
+        if !resolved.starts_with(&jail) {
             return None;
         }
-        return Some(res_c);
     }
-    Some(resolved)
+    Some(resolved.canonicalize().unwrap_or(resolved))
+}
+
+fn paint_preview_image(
+    ui: &mut egui::Ui,
+    path: &Path,
+    tokens: &Tokens,
+    textures: &mut HashMap<PathBuf, Option<egui::TextureHandle>>,
+) {
+    let key = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if !textures.contains_key(&key) {
+        let tex = load_md_texture(ui.ctx(), path);
+        textures.insert(key.clone(), tex);
+    }
+    let avail = ui.available_size();
+    if let Some(Some(tex)) = textures.get(&key) {
+        let size = tex.size_vec2();
+        let scale = (avail.x / size.x).min(avail.y / size.y).min(1.0).max(0.05);
+        let show = egui::vec2(size.x * scale, size.y * scale);
+        ui.centered_and_justified(|ui| {
+            ui.add(egui::Image::new(tex).fit_to_exact_size(show));
+        });
+    } else {
+        ui.centered_and_justified(|ui| {
+            ui.label(
+                RichText::new(path.display().to_string())
+                    .size(ui_theme::FONT_CAPTION)
+                    .color(tokens.text_muted),
+            );
+        });
+    }
 }
 
 fn load_md_texture(
@@ -1280,6 +2091,8 @@ fn paint_md_image(
     textures: &mut HashMap<PathBuf, Option<egui::TextureHandle>>,
     alt: &str,
     src: &str,
+    open: &mut Option<(PathBuf, ArtifactView, bool)>,
+    ctrl_hint: &str,
 ) {
     let Some(path) = resolve_md_asset(base_dir, src) else {
         ui.label(
@@ -1304,26 +2117,47 @@ fn paint_md_image(
             .corner_radius(CornerRadius::same(4))
             .inner_margin(Margin::same(4))
             .show(ui, |ui| {
-                ui.add(egui::Image::new(tex).fit_to_exact_size(show));
+                let resp = ui.add(
+                    egui::Image::new(tex)
+                        .fit_to_exact_size(show)
+                        .sense(egui::Sense::click()),
+                );
+                try_follow_md_ref(&resp, &path, open, ctrl_hint);
                 if !alt.is_empty() {
                     ui.add_space(2.0);
-                    ui.label(
-                        RichText::new(alt)
-                            .size(ui_theme::FONT_CAPTION)
-                            .color(tokens.text_muted),
+                    let cap = ui.add(
+                        egui::Label::new(
+                            RichText::new(alt)
+                                .size(ui_theme::FONT_CAPTION)
+                                .color(tokens.text_muted),
+                        )
+                        .sense(egui::Sense::click()),
                     );
+                    try_follow_md_ref(&cap, &path, open, ctrl_hint);
                 }
             });
     } else {
-        ui.label(
-            RichText::new(format!("[img missing] {alt}"))
-                .size(ui_theme::FONT_CAPTION)
-                .color(tokens.text_muted),
+        let resp = ui.add(
+            egui::Label::new(
+                RichText::new(format!("[img missing] {alt}"))
+                    .size(ui_theme::FONT_CAPTION)
+                    .color(tokens.text_muted),
+            )
+            .sense(egui::Sense::click()),
         );
+        try_follow_md_ref(&resp, &path, open, ctrl_hint);
     }
 }
 
-fn paint_md_table(ui: &mut egui::Ui, tokens: &Tokens, id: u32, rows: &[Vec<String>]) {
+fn paint_md_table(
+    ui: &mut egui::Ui,
+    tokens: &Tokens,
+    id: u32,
+    rows: &[Vec<String>],
+    base_dir: Option<&Path>,
+    open: &mut Option<(PathBuf, ArtifactView, bool)>,
+    ctrl_hint: &str,
+) {
     if rows.is_empty() {
         return;
     }
@@ -1391,6 +2225,27 @@ fn paint_md_table(ui: &mut egui::Ui, tokens: &Tokens, id: u32, rows: &[Vec<Strin
                                                 .strong()
                                                 .color(tokens.text_primary),
                                         );
+                                    } else if let Some(src) = file_ref_from_text(cell) {
+                                        let shown = Path::new(&src)
+                                            .file_name()
+                                            .map(|n| n.to_string_lossy().into_owned())
+                                            .filter(|n| !n.is_empty())
+                                            .unwrap_or_else(|| src.clone());
+                                        let resp = ui.add(
+                                            egui::Label::new(
+                                                RichText::new(shown)
+                                                    .size(ui_theme::FONT_BODY)
+                                                    .color(tokens.accent)
+                                                    .underline(),
+                                            )
+                                            .sense(egui::Sense::click())
+                                            .wrap(),
+                                        );
+                                        if let Some(path) = resolve_md_asset(base_dir, &src) {
+                                            try_follow_md_ref(&resp, &path, open, ctrl_hint);
+                                        } else {
+                                            resp.on_hover_text(src);
+                                        }
                                     } else {
                                         ui.add(
                                             egui::Label::new(md_inline_job(
@@ -1717,4 +2572,150 @@ fn parse_md_link(chars: &[char], start: usize) -> Option<(String, String, usize)
     }
     let url: String = chars[url_start..i].iter().collect();
     Some((label, url, i + 1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn png_never_jumps_to_wave() {
+        assert_eq!(
+            open_view_for_file(ArtifactView::Wave, ArtifactView::Wave, "shot.png"),
+            ArtifactView::External
+        );
+    }
+
+    #[test]
+    fn txt_follows_output_group() {
+        assert_eq!(
+            open_view_for_file(ArtifactView::Log, ArtifactView::Report, "notes.txt"),
+            ArtifactView::Report
+        );
+        assert_eq!(
+            open_view_for_file(ArtifactView::Log, ArtifactView::Log, "hub.txt"),
+            ArtifactView::Log
+        );
+    }
+
+    #[test]
+    fn markdown_stays_in_report() {
+        assert_eq!(
+            open_view_for_file(ArtifactView::External, ArtifactView::External, "run.md"),
+            ArtifactView::Report
+        );
+    }
+
+    #[test]
+    fn isf_opens_as_wave() {
+        assert_eq!(
+            open_view_for_file(ArtifactView::Wave, ArtifactView::Wave, "cap.isf"),
+            ArtifactView::Wave
+        );
+    }
+
+    #[test]
+    fn short_label_strips_prefix_and_stamp() {
+        assert_eq!(
+            short_artifact_label(
+                "tianshu_xinwei_mpp25w_timeout_20260915_143738.isf",
+                "tianshu_xinwei_mpp25w",
+                "20260915_143758",
+            ),
+            "timeout  14:37:38"
+        );
+        assert_eq!(
+            short_artifact_label(
+                "tianshu_xinwei_mpp25w_summary_20260915_143758.md",
+                "tianshu_xinwei_mpp25w",
+                "20260915_143758",
+            ),
+            "summary  14:37:58"
+        );
+        assert_eq!(short_artifact_label("index.jsonl", "lot", "20260915_143758"), "index.jsonl");
+    }
+
+    #[test]
+    fn result_stamp_drops_year() {
+        assert_eq!(format_result_stamp("20260915_143758"), "09-15 14:37:58");
+    }
+
+    #[test]
+    fn file_ref_from_backtick_windows_path() {
+        let s = "`D:\\\\data\\\\waves\\\\a.isf`";
+        assert_eq!(
+            file_ref_from_text(s).as_deref(),
+            Some(r"D:\data\waves\a.isf")
+        );
+    }
+
+    #[test]
+    fn file_ref_ignores_plain_words() {
+        assert!(file_ref_from_text("无").is_none());
+        assert!(file_ref_from_text("https://example.com/a.png").is_none());
+    }
+
+    fn with_tmp(f: impl FnOnce(&Path)) {
+        let dir = std::env::temp_dir().join(format!(
+            "wiparse-md-asset-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        f(&dir);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn md_image_from_reports_can_reach_sibling_shots() {
+        with_tmp(|root| {
+            let artifacts = root.join("artifacts");
+            let reports = artifacts.join("reports");
+            let shots = artifacts.join("shots");
+            fs::create_dir_all(&reports).unwrap();
+            fs::create_dir_all(&shots).unwrap();
+            let png = shots.join("wave.png");
+            fs::write(&png, b"x").unwrap();
+            let got = resolve_md_asset(Some(&reports), "../shots/wave.png").unwrap();
+            assert_eq!(got.canonicalize().unwrap(), png.canonicalize().unwrap());
+        });
+    }
+
+    #[test]
+    fn md_absolute_wave_under_artifacts() {
+        with_tmp(|root| {
+            let artifacts = root.join("artifacts");
+            let reports = artifacts.join("reports");
+            let waves = artifacts.join("waves");
+            fs::create_dir_all(&reports).unwrap();
+            fs::create_dir_all(&waves).unwrap();
+            let isf = waves.join("cap.isf");
+            fs::write(&isf, b"x").unwrap();
+            let got = resolve_md_asset(Some(&reports), isf.to_str().unwrap()).unwrap();
+            assert_eq!(got.canonicalize().unwrap(), isf.canonicalize().unwrap());
+        });
+    }
+
+    #[test]
+    fn md_image_cannot_escape_artifacts() {
+        with_tmp(|root| {
+            let reports = root.join("artifacts").join("reports");
+            fs::create_dir_all(&reports).unwrap();
+            fs::write(root.join("secret.png"), b"x").unwrap();
+            assert!(resolve_md_asset(Some(&reports), "../../secret.png").is_none());
+        });
+    }
+
+    #[test]
+    fn md_image_same_dir_still_works() {
+        with_tmp(|root| {
+            let png = root.join("inline.png");
+            fs::write(&png, b"x").unwrap();
+            let got = resolve_md_asset(Some(root), "inline.png").unwrap();
+            assert_eq!(got.canonicalize().unwrap(), png.canonicalize().unwrap());
+        });
+    }
 }

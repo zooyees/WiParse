@@ -6,7 +6,7 @@ import { apiHealth, apiInvoke, defaultApiUrl } from "./http.js";
 
 const server = new McpServer({
   name: "wiparse",
-  version: "1.1.12",
+  version: "1.1.16",
 });
 
 function compact(body: unknown) {
@@ -136,11 +136,21 @@ const UI_METHODS = {
   "instrument.waveform": "instrument.waveform",
   "instrument.waveform_source": "instrument.waveform_source",
   "instrument.command": "instrument.command",
+  "report.open": "ui.report.open",
+  "report.browser": "ui.report.browser",
+  "project.list": "ui.project.list",
+  "project.select": "ui.project.select",
+  "project.create": "ui.project.create",
+  "project.add_test": "ui.project.add_test",
+  "project.remove_test": "ui.project.remove_test",
+  "test_tool.run": "ui.test_tool.run",
+  "test_tool.stop": "ui.test_tool.stop",
+  "test_tool.browser": "ui.test_tool.browser",
 } as const;
 
 server.tool(
   "wiparse_ui",
-  "Drive WiParse.exe: tabs, panels, serial/wave/calc, and instruments. Poll instrument.overview for digital-twin LCD (DC source channels V/A/W, scope, DMM, load, probe, FT4222). instrument.command accepts ProbeHalt/ProbeRun/ProbeReset/ProbeStatus/ProbeRegs/ProbeErase/ProbeSpeed/ProbeFlash/ProbeMemRead/ProbeMemWrite/ProbeRttStart/ProbeRttStop/ProbeRttRead and BridgeInfo/BridgeSpi/BridgeI2c/BridgeGpio. GUI 1.1.12+.",
+  "Drive WiParse.exe: tabs, panels, serial/wave/calc, instruments, Testing Hub project, and Test Report. Poll instrument.overview for digital-twin LCD. report.open jumps to existing viewers (no file body). project.* shares apps.project.active_id with Hub. instrument.command accepts Probe*/Bridge*. GUI 1.1.16+; project/report ops need this GUI build.",
   {
     op: z.enum([
       "state",
@@ -175,6 +185,16 @@ server.tool(
       "instrument.waveform",
       "instrument.waveform_source",
       "instrument.command",
+      "report.open",
+      "report.browser",
+      "project.list",
+      "project.select",
+      "project.create",
+      "project.add_test",
+      "project.remove_test",
+      "test_tool.run",
+      "test_tool.stop",
+      "test_tool.browser",
     ]),
     tab: z
       .enum([
@@ -192,7 +212,7 @@ server.tool(
       .record(z.unknown())
       .optional()
       .describe(
-        "Op params. instrument.overview: {}. instrument.list: optional kind (oscilloscope|dc_source|electronic_load|multimeter|debug_probe|usb_bridge). instrument.select: device_id and/or overview=true and/or kind. instrument.connect_all: {}. instrument.command: {device_id, command} e.g. ProbeStatus or {ProbeSpeed:{khz:4000}} or {BridgeSpi:{mode:0,clock_hz:1000000,write_hex:\"9F\",read_len:4}}.",
+        "Op params. instrument.overview: {}. instrument.command: {device_id, command}. project.list: {}. project.select/create: {id} (+ name). project.add_test/remove_test: {id}. report.open: {path, view?, overlay?} — path must be under the active project; never dumps file bodies. test_tool.run: {id, preflight?, params?} (params overlay Hub form, e.g. {port, triggers}). test_tool.stop: {}.",
       ),
   },
   async ({ op, tab, params }) => {

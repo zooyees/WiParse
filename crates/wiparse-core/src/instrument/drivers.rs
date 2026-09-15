@@ -1,7 +1,7 @@
 //! Capability-driven SCPI drivers for common bench instruments.
 
 use super::{Capabilities, Identity, InstrumentError, InstrumentKind, ScpiSession, Transport};
-use crate::scope::binary::parse_ieee_block;
+use crate::scope::binary::{extract_png, parse_ieee_block};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
@@ -12,6 +12,8 @@ pub struct InstrumentProfile {
     pub voltage_limit: (f64, f64),
     pub current_limit: (f64, f64),
     pub power_limit: (f64, f64),
+    /// Set for Tektronix (and MDO* without a vendor string) oscilloscopes.
+    pub tek_family: Option<TekScopeFamily>,
 }
 
 impl InstrumentProfile {
@@ -39,7 +41,10 @@ impl InstrumentProfile {
                 capabilities.range_control = true;
                 capabilities.nplc_control = true;
             }
-            InstrumentKind::DebugProbe | InstrumentKind::UsbBridge | InstrumentKind::Generic => {}
+            InstrumentKind::DebugProbe
+            | InstrumentKind::UsbBridge
+            | InstrumentKind::WiparseDongle
+            | InstrumentKind::Generic => {}
         }
         Self {
             name: format!("{} {}", vendor.trim(), kind.label())
@@ -51,6 +56,7 @@ impl InstrumentProfile {
             voltage_limit: (0.0, 60.0),
             current_limit: (0.0, 20.0),
             power_limit: (0.0, 300.0),
+            tek_family: None,
         }
     }
 }
@@ -80,10 +86,70 @@ pub fn detect_profile(identity: &Identity, requested: Option<InstrumentKind>) ->
     {
         profile.capabilities.screenshot = true;
     }
+    if kind == InstrumentKind::Oscilloscope {
+        let family = tek_scope_family(&model);
+        if vendor.contains("TEKTRONIX") || family != TekScopeFamily::GenericTek {
+            profile.tek_family = Some(family);
+            profile.capabilities.channels = estimate_tek_scope_channels(&model);
+            profile.capabilities.screenshot = true;
+        }
+    }
     if kind == InstrumentKind::DcSource {
         profile.capabilities.channels = estimate_dc_source_channels(&model);
     }
     profile
+}
+
+/// Tektronix oscilloscope families that share one SCPI driver with small tweaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TekScopeFamily {
+    /// MDO3000 (MDO3014, MDO3024, …): `MDO` + four digits starting with 3.
+    Mdo3000,
+    /// 3 Series MDO: MDO32 / MDO34 / MDO34E / MDO36.
+    Series3,
+    #[default]
+    GenericTek,
+}
+
+/// Classify a Tek `*IDN?` model field. Unknown Tek models stay [`TekScopeFamily::GenericTek`].
+pub fn tek_scope_family(model: &str) -> TekScopeFamily {
+    let m: String = model
+        .to_uppercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    let Some(rest) = m.strip_prefix("MDO") else {
+        return TekScopeFamily::GenericTek;
+    };
+    for code in ["32", "34", "36"] {
+        if let Some(suffix) = rest.strip_prefix(code) {
+            if suffix.chars().all(|c| c.is_ascii_alphabetic()) {
+                return TekScopeFamily::Series3;
+            }
+        }
+    }
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.len() == 4 && digits.starts_with('3') {
+        return TekScopeFamily::Mdo3000;
+    }
+    TekScopeFamily::GenericTek
+}
+
+/// Analog channel count from the Tek model string (MDO32 = 2, otherwise 4).
+pub fn estimate_tek_scope_channels(model: &str) -> u8 {
+    let m: String = model
+        .to_uppercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    if tek_scope_family(&m) == TekScopeFamily::Series3 {
+        if let Some(rest) = m.strip_prefix("MDO") {
+            if rest.starts_with("32") {
+                return 2;
+            }
+        }
+    }
+    4
 }
 
 /// Infer DC supply channel count from the `*IDN?` model string.
@@ -168,6 +234,12 @@ pub fn classify_instrument_kind(vendor: &str, model: &str) -> InstrumentKind {
         || (vendor.contains("KEYSIGHT") && (model.starts_with("344") || model.starts_with("345")))
     {
         InstrumentKind::Multimeter
+    } else if vendor.contains("WIPARSE")
+        || model.contains("WIPARSE-DONGLE")
+        || model.contains("WIPARSE DONGLE")
+        || (vendor.contains("WIPARSE") && model.contains("CMSIS-DAP"))
+    {
+        InstrumentKind::WiparseDongle
     } else if vendor.contains("SEGGER")
         || model.contains("J-LINK")
         || model.contains("JLINK")
@@ -440,6 +512,14 @@ fn parse_f64_loose(text: &str) -> Option<f64> {
         .ok()
 }
 
+/// Tektronix returns `9.9E37` when a measurement is invalid / not computed.
+fn tek_meas_unusable(raw: &str) -> bool {
+    match parse_f64_loose(raw) {
+        Some(v) => !v.is_finite() || v.abs() >= 9.9e36,
+        None => true,
+    }
+}
+
 fn format_si_scaled(value: f64, steps: &[(&str, f64)]) -> String {
     // `steps` must be ordered from largest scale to smallest (GHz→Hz, s→ps).
     let abs = value.abs();
@@ -628,6 +708,67 @@ pub enum ControlCommand {
         value: Option<bool>,
     },
     BridgeInfo,
+    DongleInfo,
+    DongleSetLink {
+        #[serde(default)]
+        host: String,
+        #[serde(default)]
+        uart_port: u16,
+        #[serde(default)]
+        i2c_port: u16,
+    },
+    DongleI2cLine {
+        line: String,
+    },
+    DongleI2cScan,
+    DongleI2cPing {
+        addr: String,
+    },
+    DongleI2cRecover,
+    DongleI2cSpeed {
+        #[serde(default)]
+        hz: Option<u32>,
+    },
+    DongleI2cTimeout {
+        #[serde(default)]
+        ms: Option<u32>,
+    },
+    DongleI2cWrite {
+        addr: String,
+        #[serde(default)]
+        data_hex: String,
+    },
+    DongleI2cRead {
+        addr: String,
+        #[serde(default = "default_i2c_read_len")]
+        len: u32,
+    },
+    DongleI2cWriteRead {
+        addr: String,
+        #[serde(default)]
+        data_hex: String,
+        #[serde(default = "default_i2c_read_len")]
+        len: u32,
+    },
+    DongleUartOpen {
+        #[serde(default)]
+        host: String,
+        #[serde(default)]
+        port: u16,
+        #[serde(default = "default_uart_baud")]
+        baud: u32,
+        #[serde(default)]
+        com: String,
+        #[serde(default = "default_true")]
+        send_baud_cmd: bool,
+    },
+    DongleUartClose,
+    DongleUartWrite {
+        data: String,
+        #[serde(default)]
+        hex: bool,
+    },
+    DongleUartRead,
 }
 
 fn default_mem_len() -> u32 {
@@ -644,6 +785,18 @@ fn default_i2c_hz() -> u32 {
 
 fn default_probe_khz() -> u32 {
     4_000
+}
+
+fn default_i2c_read_len() -> u32 {
+    1
+}
+
+fn default_uart_baud() -> u32 {
+    115_200
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Accept `"ScopeStop"` (unit variant) and `{ "ScopeStop": null }` as well as
@@ -910,8 +1063,23 @@ impl InstrumentDevice {
             | BridgeSpi { .. }
             | BridgeI2c { .. }
             | BridgeGpio { .. }
-            | BridgeInfo => Err(InstrumentError::Unsupported(
-                "this command is for a debug probe or FT4222 session".into(),
+            | BridgeInfo
+            | DongleInfo
+            | DongleSetLink { .. }
+            | DongleI2cLine { .. }
+            | DongleI2cScan
+            | DongleI2cPing { .. }
+            | DongleI2cRecover
+            | DongleI2cSpeed { .. }
+            | DongleI2cTimeout { .. }
+            | DongleI2cWrite { .. }
+            | DongleI2cRead { .. }
+            | DongleI2cWriteRead { .. }
+            | DongleUartOpen { .. }
+            | DongleUartClose
+            | DongleUartWrite { .. }
+            | DongleUartRead => Err(InstrumentError::Unsupported(
+                "this command is for a debug probe, FT4222, or WiParse-dongle session".into(),
             )),
         };
         result
@@ -959,7 +1127,9 @@ impl InstrumentDevice {
                 value: self.session.query_f64("READ?")?,
                 unit: String::new(),
             }]),
-            InstrumentKind::DebugProbe | InstrumentKind::UsbBridge => Ok(Vec::new()),
+            InstrumentKind::DebugProbe
+            | InstrumentKind::UsbBridge
+            | InstrumentKind::WiparseDongle => Ok(Vec::new()),
         }
     }
 
@@ -978,14 +1148,19 @@ impl InstrumentDevice {
             let _ = self.session.write("SAVe:IMAGe:FILEFormat PNG");
             let _ = self.session.write("HARDCopy:INKSaver ON");
             let _ = self.session.write("SAVe:IMAGe:INKSaver ON");
+            // Write-only PORT hints (3 Series / USB-TMC). Never query PORT —
+            // missing command waits a full VISA timeout.
+            let _ = self.session.write("HARDCopy:PORT APPLication");
+            let _ = self.session.write("HARDCopy:PORT USB");
             self.session.write("HARDCopy STARt")?;
-            let data = parse_ieee_block(&self.session.read_raw()?).to_vec();
-            if data.starts_with(b"\x89PNG") {
-                return Ok(data);
-            }
-            Err(InstrumentError::Unsupported(
-                "Tektronix HARDCopy did not return a PNG".into(),
-            ))
+            let raw = self.session.read_raw()?;
+            extract_png(&raw)
+                .map(|d| d.to_vec())
+                .ok_or_else(|| {
+                    InstrumentError::Unsupported(
+                        "Tektronix HARDCopy did not return a PNG".into(),
+                    )
+                })
         } else if self.vendor_is("RIGOL") || self.vendor_is("SIGLENT") {
             self.session.write(":DISPLAY:DATA? ON,OFF,PNG")?;
             Ok(parse_ieee_block(&self.session.read_raw()?).to_vec())
@@ -1110,8 +1285,10 @@ impl InstrumentDevice {
     ) -> Result<(Vec<u8>, String), InstrumentError> {
         let channel = channel.clamp(1, 8);
         if self.vendor_is("TEKTRONIX") {
-            // Screen-aligned acquisition-density window. Filesystem+*OPC stalls
-            // on missing media.
+            // Product path: CURVe → host-assembled ISF at acquisition density
+            // across the on-screen span. Do **not** call
+            // `read_tek_*_via_filesystem*` here — 3 Series MDO has no E:/C:
+            // Windows media and those paths burn a full VISA timeout.
             let window = self.apply_tek_source_data_window(channel, None)?;
             let bytes = self
                 .read_tek_isf_via_curve_range(channel, window)
@@ -1523,7 +1700,11 @@ impl InstrumentDevice {
         "V".into()
     }
 
-    /// Tektronix: save waveform to scope disk, then `FILESystem:READFile`.
+    /// Legacy MDO3000 media export (`E:/` front USB, `C:/` internal).
+    ///
+    /// Not on the product waveform path. 3 Series MDO is Linux-based; wiring this
+    /// back as a CURVe failure fallback causes multi-second VISA timeouts.
+    #[allow(dead_code)]
     fn read_tek_waveform_via_filesystem(
         &mut self,
         channel: u8,
@@ -1581,6 +1762,8 @@ impl InstrumentDevice {
     }
 
     /// Filesystem export without gating query / *OPC? (fast fail on missing media).
+    /// Legacy MDO3000 only — do not reconnect on the Tek product path.
+    #[allow(dead_code)]
     fn read_tek_waveform_via_filesystem_fast(
         &mut self,
         channel: u8,
@@ -1634,6 +1817,7 @@ impl InstrumentDevice {
     }
 
     /// Select channel and request Tektronix screen-gated save/transfer.
+    #[allow(dead_code)]
     fn prepare_tek_screen_waveform(&mut self, channel: u8) -> Result<(), InstrumentError> {
         let channel = channel.clamp(1, 8);
         let _ = self.session.write("HEADer OFF");
@@ -1646,6 +1830,7 @@ impl InstrumentDevice {
     }
 
     /// Confirm `SAVe:WAVEform:GATIng SCREEN` took effect (MDO3000 supported path).
+    #[allow(dead_code)]
     fn ensure_tek_save_gating_screen(&mut self) -> Result<(), InstrumentError> {
         self.session.write("SAVe:WAVEform:GATIng SCREEN")?;
         let gating = self.session.query("SAVe:WAVEform:GATIng?")?;
@@ -1740,20 +1925,8 @@ impl InstrumentDevice {
             .session
             .query_f64_soft("HORizontal:SCAle?", 1_200, tmo)
             .unwrap_or(1e-6);
-        let zoom_on = self
-            .session
-            .query_soft("ZOOm:STATE?", 300, tmo)
-            .or_else(|| self.session.query_soft("ZOOm:ZOOM1:STATE?", 300, tmo))
-            .map(|s| scpi_on(&s))
-            .unwrap_or(false);
-        let scale = if zoom_on {
-            self.session
-                .query_f64_soft("ZOOm:ZOOM1:SCAle?", 400, tmo)
-                .filter(|v| v.is_finite() && *v > 0.0)
-                .unwrap_or(main_scale)
-        } else {
-            main_scale
-        };
+        let (zoom_on, zoom_scale, _) = self.tek_query_zoom_soft(main_scale, tmo);
+        let scale = if zoom_on { zoom_scale } else { main_scale };
 
         let srate = self
             .session
@@ -1827,8 +2000,8 @@ impl InstrumentDevice {
 
     /// Restrict `DATa:STARt`/`STOP` to the on-screen graticule (live plot / screen CSV).
     ///
-    /// MDO3014 / MDO3000 do **not** support `DATa:MODE SCREEN`. Delegates to
-    /// [`Self::apply_tek_source_data_window`] (sample-rate × screen span).
+    /// MDO3000 / 3 Series do **not** support `DATa:MODE SCREEN`. Delegates to
+    /// [`Self::apply_tek_source_data_window`] (sample-rate × screen span, WAVEView zoom).
     fn apply_tek_visible_data_window(
         &mut self,
         channel: u8,
@@ -1922,22 +2095,54 @@ impl InstrumentDevice {
         ))
     }
 
+    /// 3 Series WAVEView zoom, then MDO3000 `ZOOm:STATE`. Soft probes only.
+    fn tek_query_zoom_soft(&mut self, main_scale: f64, tmo: u32) -> (bool, f64, f64) {
+        let waveview_on = self
+            .session
+            .query_soft("DISplay:WAVEView1:ZOOM:STATE?", 350, tmo)
+            .map(|s| scpi_on(&s))
+            .unwrap_or(false);
+        if waveview_on {
+            let scale = self
+                .session
+                .query_f64_soft("DISplay:WAVEView1:ZOOM:ZOOM1:SCAle?", 400, tmo)
+                .or_else(|| self.session.query_f64_soft("ZOOM1:SCAle?", 400, tmo))
+                .filter(|v| v.is_finite() && *v > 0.0)
+                .unwrap_or(main_scale);
+            return (true, scale, 0.0);
+        }
+        let zoom_on = self
+            .session
+            .query_soft("ZOOm:STATE?", 300, tmo)
+            .or_else(|| self.session.query_soft("ZOOm:ZOOM1:STATE?", 300, tmo))
+            .map(|s| scpi_on(&s))
+            .unwrap_or(false);
+        if zoom_on {
+            let scale = self
+                .session
+                .query_f64_soft("ZOOm:ZOOM1:SCAle?", 400, tmo)
+                .filter(|v| v.is_finite() && *v > 0.0)
+                .unwrap_or(main_scale);
+            let trigpos = self
+                .session
+                .query_f64_soft("ZOOm:ZOOM1:TRIGPOS?", 400, tmo)
+                .unwrap_or(0.0);
+            (true, scale, trigpos)
+        } else {
+            (false, main_scale, 0.0)
+        }
+    }
+
     /// Visible graticule time span relative to the trigger (seconds). Soft only.
     fn tek_query_screen_time_window_soft(&mut self) -> Option<(f64, f64)> {
         let tmo = self.io_timeout_ms.max(1_000);
-        // One zoom probe only — cascading ZOOm:* misses used to burn ~1.5s each.
-        let zoom_on = self
-            .session
-            .query_soft("ZOOm:STATE?", 400, tmo)
-            .or_else(|| self.session.query_soft("ZOOm:ZOOM1:STATE?", 400, tmo))
-            .map(|s| scpi_on(&s))
-            .unwrap_or(false);
         let scale = self
             .session
             .query_f64_soft("HORizontal:SCAle?", 1_200, tmo)?;
         if !scale.is_finite() || scale <= 0.0 {
             return None;
         }
+        let (zoom_on, zoom_scale, zoom_trigpos) = self.tek_query_zoom_soft(scale, tmo);
         let delay_on = self
             .session
             .query_soft("HORizontal:DELay:MODe?", 400, tmo)
@@ -1956,19 +2161,6 @@ impl InstrumentDevice {
             self.session
                 .query_f64_soft("HORizontal:POSition?", 400, tmo)
                 .unwrap_or(50.0)
-        };
-        // Skip ZOOM1 scale/trigpos probes when zoom is off (each miss ≈ probe timeout).
-        let (zoom_scale, zoom_trigpos) = if zoom_on {
-            (
-                self.session
-                    .query_f64_soft("ZOOm:ZOOM1:SCAle?", 400, tmo)
-                    .unwrap_or(scale),
-                self.session
-                    .query_f64_soft("ZOOm:ZOOM1:TRIGPOS?", 400, tmo)
-                    .unwrap_or(0.0),
-            )
-        } else {
-            (scale, 0.0)
         };
         Some(tek_graticule_time_window(
             scale,
@@ -2093,6 +2285,8 @@ impl InstrumentDevice {
     }
 
     /// Tektronix: `SAVe:WAVEform` INTERNAL to scope disk, then `FILESystem:READFile`.
+    /// Legacy MDO3000 media path — not used by product CURVe capture.
+    #[allow(dead_code)]
     fn read_tek_isf_via_filesystem(&mut self, channel: u8) -> Result<Vec<u8>, InstrumentError> {
         self.read_tek_waveform_via_filesystem(channel, "isf")
     }
@@ -2696,24 +2890,61 @@ impl InstrumentDevice {
         let typ = meas_type.scpi();
         let tek = self.vendor_is("TEKTRONIX");
         let asian = self.vendor_is("RIGOL") || self.vendor_is("SIGLENT");
-        let session = self.require(InstrumentKind::Oscilloscope, "measure")?;
+        self.require(InstrumentKind::Oscilloscope, "measure")?;
         if tek {
-            session.write(&format!("MEASUrement:IMMed:SOUrce1 CH{channel}"))?;
-            session.write(&format!("MEASUrement:IMMed:TYPe {typ}"))?;
-            let raw = session.query("MEASUrement:IMMed:VALue?")?.trim().to_owned();
-            let units = session
-                .query("MEASUrement:IMMed:UNIts?")
-                .unwrap_or_default()
-                .trim()
-                .to_owned();
+            let tmo = self.io_timeout_ms.max(1_000);
+            let _ = self
+                .session
+                .write(&format!("MEASUrement:IMMed:SOUrce1 CH{channel}"));
+            let _ = self
+                .session
+                .write(&format!("MEASUrement:IMMed:TYPe {typ}"));
+            let immed = self
+                .session
+                .query_soft("MEASUrement:IMMed:VALue?", 800, tmo);
+            let (raw, units) = if immed.as_deref().is_some_and(|s| !tek_meas_unusable(s)) {
+                let units = self
+                    .session
+                    .query_soft("MEASUrement:IMMed:UNIts?", 400, tmo)
+                    .unwrap_or_default();
+                (immed.unwrap(), units)
+            } else {
+                let _ = self
+                    .session
+                    .write(&format!("MEASUrement:MEAS1:SOUrce1 CH{channel}"));
+                let _ = self
+                    .session
+                    .write(&format!("MEASUrement:MEAS1:TYPe {typ}"));
+                let _ = self.session.write("MEASUrement:MEAS1:STATE ON");
+                let raw = self
+                    .session
+                    .query_soft("MEASUrement:MEAS1:VALue?", 800, tmo)
+                    .ok_or_else(|| {
+                        InstrumentError::Unsupported(
+                            "Tek measurement IMMed/MEAS1 returned no value".into(),
+                        )
+                    })?;
+                if tek_meas_unusable(&raw) {
+                    return Err(InstrumentError::Unsupported(
+                        "Tek measurement IMMed/MEAS1 unusable".into(),
+                    ));
+                }
+                let units = self
+                    .session
+                    .query_soft("MEASUrement:MEAS1:UNIts?", 400, tmo)
+                    .unwrap_or_default();
+                (raw, units)
+            };
             let reading = format_scope_measure_payload(&raw, meas_type, &units);
             Ok(Some(format!(
                 "CH{channel} {}: {reading}",
                 meas_type.label()
             )))
         } else if asian {
-            session.write(&format!(":MEASure:ITEM {typ},CHANnel{channel}"))?;
-            let raw = session
+            self.session
+                .write(&format!(":MEASure:ITEM {typ},CHANnel{channel}"))?;
+            let raw = self
+                .session
                 .query(&format!(":MEASure:ITEM? {typ},CHANnel{channel}"))?
                 .trim()
                 .to_owned();
@@ -2723,9 +2954,15 @@ impl InstrumentDevice {
                 meas_type.label()
             )))
         } else {
-            session.write(&format!("MEASUREMENT:IMMED:SOURCE1 CH{channel}"))?;
-            session.write(&format!("MEASUREMENT:IMMED:TYPE {typ}"))?;
-            let raw = session.query("MEASUREMENT:IMMED:VALUE?")?.trim().to_owned();
+            self.session
+                .write(&format!("MEASUREMENT:IMMED:SOURCE1 CH{channel}"))?;
+            self.session
+                .write(&format!("MEASUREMENT:IMMED:TYPE {typ}"))?;
+            let raw = self
+                .session
+                .query("MEASUREMENT:IMMED:VALUE?")?
+                .trim()
+                .to_owned();
             let reading = format_scope_measure_payload(&raw, meas_type, "");
             Ok(Some(format!(
                 "CH{channel} {}: {reading}",
@@ -3270,6 +3507,14 @@ mod tests {
             parse_control_command(&serde_json::json!("BridgeInfo")).unwrap(),
             ControlCommand::BridgeInfo
         ));
+        assert!(matches!(
+            parse_control_command(&serde_json::json!("DongleI2cScan")).unwrap(),
+            ControlCommand::DongleI2cScan
+        ));
+        assert_eq!(
+            classify_instrument_kind("WIPARSE", "WIPARSE CMSIS-DAP"),
+            InstrumentKind::WiparseDongle
+        );
         let flash = parse_control_command(&serde_json::json!({
             "ProbeFlash": { "path": "app.hex", "verify": true }
         }))
@@ -3278,6 +3523,169 @@ mod tests {
             flash,
             ControlCommand::ProbeFlash { verify: true, .. }
         ));
+    }
+
+    #[test]
+    fn detects_tek_scope_families() {
+        let mdo34 = detect_profile(&Identity::parse("TEKTRONIX,MDO34,C0123,CF:91"), None);
+        assert_eq!(mdo34.kind, InstrumentKind::Oscilloscope);
+        assert_eq!(mdo34.tek_family, Some(TekScopeFamily::Series3));
+        assert_eq!(mdo34.capabilities.channels, 4);
+        assert!(mdo34.capabilities.screenshot);
+
+        let mdo34e = detect_profile(&Identity::parse("TEKTRONIX,MDO34E,C0123,v1"), None);
+        assert_eq!(mdo34e.kind, InstrumentKind::Oscilloscope);
+        assert_eq!(mdo34e.tek_family, Some(TekScopeFamily::Series3));
+        assert_eq!(mdo34e.capabilities.channels, 4);
+
+        let mdo32 = detect_profile(&Identity::parse("TEKTRONIX,MDO32,S1,fw"), None);
+        assert_eq!(mdo32.kind, InstrumentKind::Oscilloscope);
+        assert_eq!(mdo32.tek_family, Some(TekScopeFamily::Series3));
+        assert_eq!(mdo32.capabilities.channels, 2);
+
+        let mdo3014 = detect_profile(&Identity::parse("TEKTRONIX,MDO3014,1,2"), None);
+        assert_eq!(mdo3014.kind, InstrumentKind::Oscilloscope);
+        assert_eq!(mdo3014.tek_family, Some(TekScopeFamily::Mdo3000));
+        assert_eq!(mdo3014.capabilities.channels, 4);
+
+        let shifted = detect_profile(
+            &Identity::parse("TEKTRONIX,3 Series MDO,MDO34E,fw"),
+            None,
+        );
+        assert_eq!(shifted.kind, InstrumentKind::Oscilloscope);
+        assert_eq!(shifted.tek_family, Some(TekScopeFamily::GenericTek));
+
+        assert_eq!(
+            classify_instrument_kind("TEKTRONIX", "MDO34"),
+            InstrumentKind::Oscilloscope
+        );
+        assert_eq!(
+            classify_instrument_kind("TEKTRONIX", "MDO34E"),
+            InstrumentKind::Oscilloscope
+        );
+        assert_ne!(
+            classify_instrument_kind("TEKTRONIX", "MDO34"),
+            InstrumentKind::Multimeter
+        );
+        assert_eq!(
+            classify_instrument_kind("Keysight Technologies", "34461A"),
+            InstrumentKind::Multimeter
+        );
+    }
+
+    fn ieee_wrap(payload: &[u8]) -> Vec<u8> {
+        let len = payload.len().to_string();
+        let mut out = format!("#{}{}", len.len(), len).into_bytes();
+        out.extend_from_slice(payload);
+        out
+    }
+
+    const TINY_PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
+
+    #[test]
+    fn tek_hardcopy_strips_ieee_and_accepts_bare_png() {
+        for payload in [ieee_wrap(TINY_PNG), TINY_PNG.to_vec()] {
+            let writes = {
+                let mock = MockTransport::mapped([("*IDN?", "TEKTRONIX,MDO34,C0123,CF:91")])
+                    .with_raw_on("HARDCopy STARt", payload.clone());
+                let log = mock.write_log();
+                let mut scope = InstrumentDevice::from_transport(
+                    "MOCK",
+                    Box::new(mock),
+                    None,
+                )
+                .unwrap();
+                let png = scope.capture_scope_png().unwrap();
+                assert!(
+                    png.starts_with(b"\x89PNG"),
+                    "payload did not yield PNG magic"
+                );
+                let cmds = log.lock().unwrap().clone();
+                cmds
+            };
+            assert!(
+                writes.iter().any(|c| c.eq_ignore_ascii_case("HARDCopy:PORT APPLication"))
+            );
+            assert!(writes.iter().any(|c| c.eq_ignore_ascii_case("HARDCopy:PORT USB")));
+            assert!(
+                !writes.iter().any(|c| c.contains("HARDCopy:PORT?")),
+                "must not query HARDCopy:PORT"
+            );
+        }
+    }
+
+    fn tek_window_mock(extra: &[(&str, &str)]) -> MockTransport {
+        let mut items: Vec<(&str, &str)> = vec![
+            ("*IDN?", "TEKTRONIX,MDO34,C0123,CF:91"),
+            ("HORizontal:RECOrdlength?", "10000000"),
+            ("HORizontal:SCAle?", "0.001"),
+            ("HORizontal:SAMPLERate?", "1e9"),
+            ("WFMOutpre:XZEro?", "-0.005"),
+            ("WFMOutpre:PT_Off?", "0"),
+            ("WFMOutpre:XINcr?", "1e-9"),
+            ("HORizontal:DELay:MODe?", "1"),
+            ("HORizontal:DELay:TIMe?", "0"),
+            ("WFMOutpre:NR_Pt?", "10000"),
+        ];
+        items.extend_from_slice(extra);
+        MockTransport::mapped(items)
+    }
+
+    #[test]
+    fn tek_source_window_without_zoom_cmds_stays_finite() {
+        let mock = tek_window_mock(&[]);
+        let mut scope =
+            InstrumentDevice::from_transport("MOCK", Box::new(mock), None).unwrap();
+        let (start, stop) = scope.apply_tek_source_data_window(1, None).unwrap();
+        assert!(start >= 1);
+        assert!(stop >= start);
+        let n = stop.saturating_sub(start).saturating_add(1);
+        assert!(n >= 2);
+        assert!(n <= 20_000_000);
+    }
+
+    #[test]
+    fn tek_waveview_zoom_narrows_source_window() {
+        let mock_full = tek_window_mock(&[]);
+        let mut full =
+            InstrumentDevice::from_transport("MOCK", Box::new(mock_full), None).unwrap();
+        let (s0, e0) = full.apply_tek_source_data_window(1, None).unwrap();
+        let n0 = e0.saturating_sub(s0).saturating_add(1);
+
+        let mock_zoom = tek_window_mock(&[
+            ("DISplay:WAVEView1:ZOOM:STATE?", "1"),
+            ("DISplay:WAVEView1:ZOOM:ZOOM1:SCAle?", "1.0E-6"),
+        ]);
+        let mut zoomed =
+            InstrumentDevice::from_transport("MOCK", Box::new(mock_zoom), None).unwrap();
+        let (s1, e1) = zoomed.apply_tek_source_data_window(1, None).unwrap();
+        let n1 = e1.saturating_sub(s1).saturating_add(1);
+        assert!(
+            n1 < n0,
+            "WAVEView zoom should request fewer points ({n1} vs {n0})"
+        );
+    }
+
+    #[test]
+    fn tek_measure_falls_back_to_meas1() {
+        let mock = MockTransport::mapped([
+            ("*IDN?", "TEKTRONIX,MDO34,C0123,CF:91"),
+            ("MEASUrement:MEAS1:VALue?", "1e3"),
+            ("MEASUrement:MEAS1:UNIts?", "Hz"),
+        ]);
+        let mut scope =
+            InstrumentDevice::from_transport("MOCK", Box::new(mock), None).unwrap();
+        let out = scope
+            .execute(ControlCommand::ScopeMeasure {
+                channel: 1,
+                meas_type: ScopeMeasType::Frequency,
+            })
+            .unwrap()
+            .unwrap();
+        assert!(
+            out.contains("1") && (out.contains("kHz") || out.contains("1000") || out.contains("1 k")),
+            "reading={out}"
+        );
     }
 
     #[test]

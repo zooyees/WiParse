@@ -1,12 +1,17 @@
 ﻿<#
 .SYNOPSIS
-  Legacy/CLI helper. Prefer Testing Hub → Run.
+  Legacy helper. Prefer:
+    wiparse ui test-tool run --id scope-serial-monitor
+    wiparse ui test-tool run --id scope-serial-monitor --preflight true
 
-  Starts scope-serial-monitor via test-tools/runner.mjs so path templates
-  ({data_root}/{product}/{plugin_dir}) match the GUI path.
+  Starts the plugin via test-tools/runner.mjs with --project so paths match Hub.
+  Test case dir is sanitize(file_prefix), not plugin id.
 #>
 param(
   [string]$DataRoot = "",
+  [string]$Project = "",
+  [string]$FilePrefix = "",
+  [string]$TestId = "",
   [string]$NodeExe = "",
   [switch]$Force,
   [switch]$Hud,
@@ -46,11 +51,48 @@ function Get-LoopProcesses {
   }
 }
 
+function Get-SanitizedTestId {
+  param([string]$Raw, [string]$Fallback)
+  if (-not $Raw) { return $Fallback }
+  $slug = ($Raw.Trim() -replace "\s+", "_")
+  $slug = $slug -replace "[^a-zA-Z0-9._-]+", "_"
+  $slug = $slug -replace "^[^a-zA-Z0-9]+", ""
+  $slug = $slug -replace "[._-]+$", ""
+  if ($slug -match "^[a-zA-Z0-9][a-zA-Z0-9._-]*$") { return $slug }
+  return $Fallback
+}
+
+function Get-DefaultFilePrefix {
+  $station = Join-Path $pluginDir "station.json"
+  if (Test-Path -LiteralPath $station) {
+    try {
+      $j = Get-Content -LiteralPath $station -Raw -Encoding UTF8 | ConvertFrom-Json
+      if ($j.paths.file_prefix) { return [string]$j.paths.file_prefix }
+    } catch {}
+  }
+  return "ScopeSerial"
+}
+
 $node = Find-Node -Hint $NodeExe
 if (-not $DataRoot) {
   if ($env:WIPARSE_DATA_ROOT) { $DataRoot = $env:WIPARSE_DATA_ROOT }
   else { $DataRoot = $repoRoot }
 }
+if (-not $Project) {
+  if ($env:WIPARSE_PROJECT) { $Project = $env:WIPARSE_PROJECT }
+  else { $Project = "default" }
+}
+if (-not $FilePrefix) {
+  if ($env:WIPARSE_TEST_ID) { $FilePrefix = $env:WIPARSE_TEST_ID }
+  else { $FilePrefix = Get-DefaultFilePrefix }
+}
+if (-not $TestId) {
+  $TestId = Get-SanitizedTestId -Raw $FilePrefix -Fallback $pluginId
+}
+
+$testDir = Join-Path $DataRoot ("projects\" + $Project + "\tests\" + $TestId)
+$env:WIPARSE_PROJECT = $Project
+$env:WIPARSE_TEST_ID = $TestId
 
 $existing = @(Get-LoopProcesses)
 if ($existing.Count -gt 0 -and -not $Force) {
@@ -61,7 +103,7 @@ if ($existing.Count -gt 0 -and -not $Force) {
 
 if ($Force -and $existing.Count -gt 0) {
   Write-Host "Force restart..."
-  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pluginDir "stop.ps1")
+  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pluginDir "stop.ps1") -DataRoot $DataRoot -Project $Project -FilePrefix $FilePrefix -TestId $TestId
   Start-Sleep -Seconds 1
 }
 
@@ -70,15 +112,17 @@ $nodeArgs = @(
   $runner,
   "--plugin", $pluginId,
   "--lifecycle", $life,
-  "--data-root", $DataRoot
+  "--data-root", $DataRoot,
+  "--project", $Project,
+  "--test-id", $TestId,
+  "--",
+  "--file_prefix", $FilePrefix
 )
 
 if ($Hud -and -not $Preflight) {
   $hud = Join-Path $pluginDir "hud.ps1"
   if (Test-Path -LiteralPath $hud) {
-    # Status path is expanded by the plugin; HUD needs a concrete file.
-    # Prefer default under data_root after a short wait once the loop writes it.
-    $statusGuess = Join-Path $DataRoot "instrument_data\ScopeSerial\_loop_status.json"
+    $statusGuess = Join-Path $testDir "status.json"
     Start-Process -FilePath "powershell.exe" -WindowStyle Hidden -ArgumentList @(
       "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass",
       "-File", $hud, "-StatusFile", $statusGuess
@@ -86,13 +130,14 @@ if ($Hud -and -not $Preflight) {
   }
 }
 
-Write-Host ("Starting {0} via runner ({1})..." -f $pluginId, $life)
+Write-Host ("Starting {0} via runner ({1}) project={2} test_id={3}..." -f $pluginId, $life, $Project, $TestId)
 if ($Preflight) {
   & $node @nodeArgs
   exit $LASTEXITCODE
 }
 
-$logDir = Join-Path $pluginDir "logs"
+New-Item -ItemType Directory -Force -Path $testDir | Out-Null
+$logDir = Join-Path $testDir "helper_logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $log = Join-Path $logDir ("loop_" + $stamp + ".log")
@@ -103,4 +148,5 @@ $p = Start-Process -FilePath $node -ArgumentList $nodeArgs `
   -PassThru -WindowStyle Hidden
 Write-Host ("Started PID={0}" -f $p.Id)
 Write-Host ("Log: {0}" -f $log)
-Write-Host "Prefer Testing Hub for params + in-panel HUD. Use -Hud only if you need the floating overlay."
+Write-Host ("HUD/lock: {0}" -f $testDir)
+Write-Host "Prefer: wiparse ui test-tool run --id scope-serial-monitor"

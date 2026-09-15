@@ -8,7 +8,7 @@ members = [
 default-members = ["crates/wiparse-cli", "crates/wiparse-gui"]
 
 [workspace.package]
-version = "1.1.13"
+version = "1.1.24"
 edition = "2021"
 license = "Proprietary"
 authors = ["WiParse"]
@@ -22,7 +22,7 @@ chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-serialport = "4"
+serialport = { version = "4", features = ["usbportinfo-interface"] }
 dirs = "6"
 eframe = { version = "0.31", default-features = true }
 egui = "0.31"

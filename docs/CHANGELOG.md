@@ -6,6 +6,132 @@
 
 ---
 
+## Unreleased
+
+---
+
+## 1.1.24 — 2026-09-16
+
+### Instrument Control
+
+- **WIPARSE I2C** 与 UART 同一套 WinUSB 打开：GUID `{7B3E9C41-…0103}` → 关联接口 bulk `0x03`/`0x84`，失败再 TCP `:1236`。SCAN/PING 不再依赖 dongle 在局域网里。
+- **DAP**：连接时只占用 USB CMSIS-DAP，不再对空芯片名做 Auto attach。无目标 MCU 时探针仍可用；填芯片名后点 Attach 再 Halt/烧录。
+
+---
+
+## 1.1.23 — 2026-09-15
+
+### Serial
+
+- WIPARSE UART USB 按 ICD 1.1 打开：WinUSB GUID `{7B3E9C41-…0101}` → `WinUsb_Initialize` → 关联接口 bulk `0x02`/`0x83`；旧固件仍回退 PDO `GLOBALROOT`，再回退 WiFi TCP。
+
+---
+
+## 1.1.22 — 2026-09-15
+
+### Serial
+
+- 设备管理器里的 **WIPARSE UART** 属于 WinUSB（USBDevice），默认不进 Ports。串口工具按通用 UART 会话列出 `winusb://wiparse/uart`：Windows 用 SetupAPI Hardware ID + `WinUsb_Initialize`（与 Hub `winusb-host.cs` 相同，不依赖 CMSIS GUID）；打开失败则自动回退 WiFi TCP `:1234`。真 COMx 仅在可选 `usbser` INF 绑定后出现。设备控制 dongle UART 同一顺序：WinUSB → TCP。
+
+---
+
+## 1.1.21 — 2026-09-15
+
+### Serial
+
+- WIPARSE UART USB 只认 ICD **MI_01**（及 CDC 数据面 MI_02），不再把 I2C **MI_03** / DAP **MI_00** 的幽灵 `PortName` 标成 UART。未真正绑定 `usbser` 的 WinUSB 口不再注入列表（打开会 `ERROR_FILE_NOT_FOUND`）。拔掉 dongle 后刷新会丢掉这些口。
+
+---
+
+## 1.1.20 — 2026-09-15
+
+### Serial
+
+- 串口工具左侧栏宽度锁定：COM 下拉关闭态只用短标签（`COMx` / `COMx · USB` / `WiFi · host`），长产品名截断，不再把主日志区挤出空隙。下拉菜单仍显示完整 `WIPARSE UART · USB/WiFi` 名称。
+- WIPARSE UART 枚举：Windows 从 `USB\VID_C251&PID_F01A` 与同 ContainerID 的 `PortName` 补 COM（不只依赖 Ports 类 / 产品名字串）；WiFi TCP 后台探测，失败不长时间缓存。侧栏增加可见「刷新端口」。
+
+---
+
+## 1.1.19 — 2026-09-15
+
+### Serial
+
+- 串口工具自动枚举 **WIPARSE UART**：USB CDC（VID `0xC251` / 产品名）与 WiFi TCP（`192.168.137.123:1234` / `dap.local:1234`）都会列出。两者同时在线时各占一条，名称标注 **USB** 或 **WiFi**。WiFi 项以 `tcp://host:1234` 打开（首包波特率与 dongle 一致）。
+
+---
+
+## 1.1.18 — 2026-09-15
+
+### Instrument Control
+
+- 新增 **WiParse-dongle** 设备种类（`wiparse_dongle`）。USB `VID=0xC251 PID=0xF01A` 识别为一块复合接口：DAP（probe-rs USB CMSIS-DAP）、UART（TCP `:1234` 或 CDC COM）、I2C 文本 RPC（TCP `:1236`）。工作区内分 DAP / UART / I2C 三个通道，覆盖 Halt/Run/烧录/RTT、UART 收发、SCAN/PING/READ/WRITE/WRITEREAD。地址形如 `dongle://wiparse/serial=…`。CLI：`wiparse dongle …`。
+
+### Test Report
+
+- 左侧树按层级缩进（用例 → 结果时间戳 → 产物分组），固定行高避免文字重叠。
+- 用例标题跟随 Hub **报告名称 / `file_prefix`**，不再用插件显示名或结果时间戳。Hub 开跑时写入 `project.json`；报告页「添加测试」同样按报告名称登记。
+
+---
+
+## 1.1.17 — 2026-09-15
+
+### Test Report
+
+- 左侧树收紧：新建项目默认折叠；文件名去掉前缀与时间戳噪音；HTML/PDF 组默认收起；无结果的用例默认折叠。
+- Markdown 预览中 **Ctrl+单击** 图片或表格里的波形/截图/PDF 路径，按类型在本页打开（波形嵌入、图片预览；HTML/PDF 仍走系统程序）。
+
+### Serial / 插件触发
+
+- 实时页 5000 行 FIFO 之后，`log.lines.get` 的 `from_row` / `total` 改为会话绝对序号（另给 `dropped` / `window` / `next_row`）。插件监控不再在窗口写满后空转。数据分析 Serial Live 游标同样按绝对序号跟随。
+
+---
+
+## 1.1.16 — 2026-09-15
+
+### Testing Hub
+
+- 左侧可新建项目；与测试报告共用 `apps.project.active_id`。
+- GUI **不再**向 runner 传 `--test-id`（旧 runner 会直接失败）。用例目录由 overlay 里的报告名称 / `file_prefix` 决定，并设置 `WIPARSE_TEST_ID`。
+- 参数表单：`group` 为等宽分区标题；JSON/文本高度封顶并内部滚动；宿主路径在左侧文件夹区。
+
+### Test Report
+
+- 索引三层：**项目 → 测试用例 → 测试结果**（`runs/{stamp}`）。波形 / 报告 / 截图挂在该次结果下，不再跨 stamp 摊平。
+- 右侧就地预览 Markdown、波形（嵌入分析）、图片、文本；PDF/HTML 仍走系统程序。单击 ISF 不再跳转波形页。
+- Markdown 预览允许同一次结果 `artifacts/` 下的兄弟目录（如 `reports/` 里的 `../shots/*.png`）；越出 `artifacts/` 仍拦截。
+- 下拉列出 `projects/` 下每个合法目录；兼容旧 `project.json`（`tests` 为字符串数组或缺少 JSON），新建项目后仍能看到旧项目。
+
+### 插件契约
+
+- 规范见 [`test-tools/PLUGIN_SPEC.md`](../test-tools/PLUGIN_SPEC.md)（GUI **1.1.16+**）。
+- `tests/{test_id}/` 用报告名；`plugin_id` 另存。`outputs[]` 的 `view` 决定报告页打开方式。`preflight` / `stop` 不分 stamp。禁止新 run 写入 `plugin_dir`。截图用 `instrument.capture`，不要 `scope.shot`。
+- `scope-serial-monitor` **v0.6.0**：产物写入 `tests/{file_prefix}/`（默认 `ScopeSerial`），`plugin_id` 另存为 `scope-serial-monitor`。需要 GUI **1.1.16+**。
+
+---
+
+## 1.1.15 — 2026-09-15
+
+Testing Hub can create a project on the left. A plugin `run` uses the form Report name / `file_prefix` as `tests/{test_id}/`. Artifacts stay under `runs/{stamp}/artifacts/`. Test Report lists those tests after switching project.
+
+The right pane previews by type in place: Markdown, waveform sources (embedded analysis plot), images, text. PDF/HTML still open in the system app. Clicking an ISF no longer jumps to the Waveform tab.
+
+---
+
+## 1.1.14 — 2026-09-15
+
+测试报告页改为项目回放索引（项目 → Hub 测试 → `outputs[]` 实际文件）。单击 ISF/log 跳转现有波形/串口页；Markdown 仍在报告页预览。不新增主标签，不同页托管查看器（P2）。
+
+- 索引按脏标记 / Hub 作业 epoch 刷新（运行中约 800ms，空闲约 2.5s），不再每帧扫盘。
+- 集成测试与测试报告共用 `apps.project.active_id`；Hub 左侧可选项目。
+- 单击波形替换当前文档，Ctrl/Cmd 叠加；PNG/PDF/HTML 留在报告页并用系统程序打开；`.txt` 跟随所在 `outputs[]` 分组。
+- 文件右键：系统打开 / 在文件夹中显示；测试标题右键可从 `project.json` 移除（不删磁盘产物）。
+- Hub 参数表单改为统一网格：`group` 是等宽分区标题（不再用缩进折叠打乱对齐）；宿主路径（数据根 / Node / CLI）放到左侧文件夹区。
+- CLI：`ui project` / `ui report open` / `ui test-tool run|stop`（`run` 可带 `--params` JSON）。MCP `wiparse_ui` 同步这些 `op`。
+- 示波器/串口监控 **v0.5.1**：截图改走 `instrument.capture`（不再用已废弃的 `scope.shot`）；辅助脚本使用 `--project`，锁/HUD/日志离开 `plugin_dir`。
+- Testing Hub 捆绑三通道插件（ICD **WIPARSE-IF-001**）：`wiparse-dap`、`wiparse-uart-bridge`、`wiparse-i2c-rpc`。协议库 `test-tools/lib/wiparse-if*.mjs`；Windows WinUSB 宿主 `lib/winusb-host.cs`。GUI USB 扫描把 `VID=0xC251 PID=0xF01A` 识别为 CMSIS-DAP。
+
+---
+
 ## 1.1.13 — 2026-09-15
 
 Testing Hub 把「行触发条件」做成通用 `json` 参数；示波器/串口监控插件不再把 ASK 写进平台。市场安装的插件可在插件列表卸载。

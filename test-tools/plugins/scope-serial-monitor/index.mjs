@@ -24,7 +24,8 @@ function logBanner(ctx, config, layout) {
   ctx.log?.(
     "info",
     `[scope-serial] product=${config.station?.product} prefix=${config.paths?.file_prefix}\n` +
-      `[scope-serial] project=${layout?.project || ctx.project || "default"} test_dir=${config.paths?.test_dir}\n` +
+      `[scope-serial] project=${layout?.project || ctx.project || "default"} test_id=${layout?.test_id || ""} plugin_id=${layout?.plugin_id || ctx.plugin?.id || ""}\n` +
+      `[scope-serial] test_dir=${config.paths?.test_dir}\n` +
       `[scope-serial] isf_dir=${config.paths?.isf_dir}\n` +
       `[scope-serial] report_dir=${config.paths?.report_dir}\n` +
       `[scope-serial] status_file=${config.paths?.status_file}\n` +

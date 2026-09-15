@@ -30,14 +30,15 @@
 | `instrument.command` | 与 GUI 控件同一套 `ControlCommand`。可用 `"ScopeStop"` 或 `{ "ScopeStop": null }` | 等到命令完成或 `timeout_s` |
 | `capture_scope` + `"save": true` | 截 PNG **写到** `evidence/<run>/scope/<tag>.png` | 等到文件写出 |
 | `capture_scope`（默认 `save: false`） | 与 1.1.3/`qi_pt_smoke` 相同：只排队截图，立刻进入下一步 | 不阻塞 |
-| `instrument.waveform_source` | 等同 GUI 按钮 **「读取波形源文件」**（显示通道的源文件/ISF，不是 CURVe） | 等到落盘或超时 |
+| `instrument.waveform_source` | 等同 GUI **「读取波形源文件」**：泰克用 **CURVe + WFMOutpre 组装 ISF**（屏幕时间窗），不是机内 `E:/`/`C:/` 源文件 | 等到落盘或超时 |
 
 **不会做的事：**
 
-- 不改 `instrument.waveform`（CURVe 采样）
+- 不把泰克 `instrument.waveform_source` 改回机内 `SAVe:WAVEform` + `FILESystem:READFile`（3 Series MDO 无 Windows 盘符，会罚满超时）
 - 不调用 `ui.wave.browser`，也不改波形分析页的 `waveform_browser_dir`
 - 不把 40MB ISF 或点列塞进 MCP；只记 **路径 + 字节数**
 - 不把 UIA 点按钮当产品路径
+- 不用已废弃的 `scope.shot` 验收 MDO34 / MDO34E
 
 ### 1.3 配置（与分析浏览器目录分开）
 
@@ -154,7 +155,7 @@ MCP：`wiparse_ui` `op=instrument.command` / `instrument.waveform_source`，参�
 ## 5. 不要用的做法
 
 - 不要用 UIA / 坐标去点「读取波形源文件」
-- 不要把 ISF 路径塞进 `instrument.waveform`（那是 CURVe）
+- 不要把 ISF 路径塞进 `instrument.waveform`（实时采样预览，不是源文件落盘）
 - 不要把 `capture_scope` 当成读波形源
 - 不要让 Cursor 去 Read 串口 txt 或 40MB ISF
 - Cursor 若显示 0 个 MCP 工具：那是宿主 IPC 问题，**完全退出 Cursor**，不是本功能的替代实现

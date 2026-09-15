@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use wiparse_core::config::AppConfig;
 use wiparse_core::i18n::Lang;
 use wiparse_core::bridge::Ft4222Session;
+use wiparse_core::dongle::{self, DongleSession};
 use wiparse_core::instrument::{
     discover_resources_with_library, export_csv, humanize_scope_reading_text, parse_control_command,
     AcquisitionBuffer, Capabilities, ControlCommand, Identity, InstrumentDevice, InstrumentKind,
@@ -258,6 +259,20 @@ struct ControlState {
     bridge_gpio_pin: u8,
     bridge_gpio_out: bool,
     bridge_gpio_value: bool,
+    dongle_tab: u8,
+    dongle_host: String,
+    dongle_uart_port: u16,
+    dongle_i2c_port: u16,
+    dongle_uart_com: String,
+    dongle_uart_baud: u32,
+    dongle_uart_hex: bool,
+    dongle_uart_tx: String,
+    dongle_uart_listen: bool,
+    dongle_i2c_addr: String,
+    dongle_i2c_hz: u32,
+    dongle_i2c_timeout_ms: u32,
+    dongle_i2c_write_hex: String,
+    dongle_i2c_read_len: u32,
 }
 
 impl Default for ControlState {
@@ -307,6 +322,20 @@ impl Default for ControlState {
             bridge_gpio_pin: 0,
             bridge_gpio_out: true,
             bridge_gpio_value: false,
+            dongle_tab: 0,
+            dongle_host: dongle::DEFAULT_IPV4.into(),
+            dongle_uart_port: dongle::UART_TCP_PORT,
+            dongle_i2c_port: dongle::I2C_TCP_PORT,
+            dongle_uart_com: String::new(),
+            dongle_uart_baud: dongle::UART_BAUD_DEFAULT,
+            dongle_uart_hex: true,
+            dongle_uart_tx: String::new(),
+            dongle_uart_listen: false,
+            dongle_i2c_addr: "50".into(),
+            dongle_i2c_hz: dongle::I2C_SPEED_DEFAULT,
+            dongle_i2c_timeout_ms: dongle::I2C_TIMEOUT_DEFAULT_MS,
+            dongle_i2c_write_hex: String::new(),
+            dongle_i2c_read_len: 1,
         }
     }
 }
@@ -328,7 +357,7 @@ pub struct InstrumentControlPanel {
     tx: Sender<Job>,
     rx: Receiver<Event>,
     resources: Vec<ResourceInfo>,
-    resource_inputs: [String; 6],
+    resource_inputs: [String; 7],
     devices: Vec<DeviceUi>,
     selected_kind: InstrumentKind,
     selected_id: Option<u64>,
@@ -386,7 +415,7 @@ impl InstrumentControlPanel {
         let (events, rx) = unbounded();
         thread::spawn(move || worker_loop(jobs, events));
         let instrument_cfg = &cfg.apps.instruments;
-        let mut resource_inputs: [String; 6] = std::array::from_fn(|_| String::new());
+        let mut resource_inputs: [String; 7] = std::array::from_fn(|_| String::new());
         if let Some(first) = instrument_cfg.known_tcpip_resources.first() {
             // Seed only until a scan classifies and redistributes devices.
             resource_inputs[0] = first.clone();
@@ -427,7 +456,7 @@ impl InstrumentControlPanel {
             scope_heavy_defer_frames: 0,
             logs: VecDeque::new(),
             scanning: false,
-            overview_open: true,
+            overview_open: false,
             device_photos: HashMap::new(),
             device_photo_tried: HashSet::new(),
             debug_mode: false,
@@ -445,7 +474,7 @@ impl InstrumentControlPanel {
         panel
     }
 
-    /// Enable/disable debug workbench: show all instrument cards and open demo sessions.
+    /// Enable/disable debug workbench: all cards, demo sessions, and 设备总览.
     pub fn apply_debug_mode(&mut self, enabled: bool, lang: Lang) {
         if self.debug_mode == enabled {
             return;
@@ -455,14 +484,26 @@ impl InstrumentControlPanel {
             self.ensure_demo_devices(lang);
             self.status = text(
                 lang,
-                "调试模式：已显示全部仪表卡片（演示连接）",
-                "Debug mode: all instrument cards shown (demo sessions)",
+                "调试模式：已显示全部仪表卡片与设备总览（演示连接）",
+                "Debug mode: all instrument cards and Control Mesh (demo sessions)",
             )
             .into();
         } else {
             self.disconnect_demo_devices();
+            self.close_overview();
             self.status = text(lang, "调试模式已关闭", "Debug mode off").into();
         }
+    }
+
+    fn show_overview(&self) -> bool {
+        self.debug_mode && self.overview_open
+    }
+
+    fn close_overview(&mut self) {
+        if !self.overview_open {
+            return;
+        }
+        self.select_kind(self.selected_kind);
     }
 
     fn ensure_demo_devices(&mut self, lang: Lang) {
@@ -473,6 +514,7 @@ impl InstrumentControlPanel {
             InstrumentKind::Multimeter,
             InstrumentKind::DebugProbe,
             InstrumentKind::UsbBridge,
+            InstrumentKind::WiparseDongle,
         ] {
             let has_live = self.devices.iter().any(|device| device.kind == kind);
             if has_live {
@@ -495,13 +537,14 @@ impl InstrumentControlPanel {
     }
 
     fn visible_instrument_kinds(&self) -> Vec<InstrumentKind> {
-        const ALL: [InstrumentKind; 6] = [
+        const ALL: [InstrumentKind; 7] = [
             InstrumentKind::Oscilloscope,
             InstrumentKind::DcSource,
             InstrumentKind::ElectronicLoad,
             InstrumentKind::Multimeter,
             InstrumentKind::DebugProbe,
             InstrumentKind::UsbBridge,
+            InstrumentKind::WiparseDongle,
         ];
         if self.debug_mode {
             return ALL.to_vec();
@@ -589,7 +632,12 @@ impl InstrumentControlPanel {
                 .devices
                 .iter()
                 .filter(|device| {
-                    device.kind == InstrumentKind::DebugProbe && device.controls.probe_rtt_on
+                    matches!(
+                        device.kind,
+                        InstrumentKind::DebugProbe | InstrumentKind::WiparseDongle
+                    ) && (device.controls.probe_rtt_on
+                        || (device.kind == InstrumentKind::WiparseDongle
+                            && device.controls.dongle_uart_listen))
                 })
                 .map(|device| device.id)
                 .collect();
@@ -830,7 +878,7 @@ impl InstrumentControlPanel {
     }
 
     pub fn overview_open(&self) -> bool {
-        self.overview_open
+        self.show_overview()
     }
 
     pub fn is_scanning(&self) -> bool {
@@ -848,6 +896,12 @@ impl InstrumentControlPanel {
                 .and_then(|v| v.as_str())
                 .is_some_and(|k| k.eq_ignore_ascii_case("overview") || k.eq_ignore_ascii_case("mesh"));
         if overview {
+            if !self.debug_mode {
+                return err(
+                    "ui.instrument.select",
+                    "overview is debug-mode only",
+                );
+            }
             self.select_overview();
             return ok(
                 "ui.instrument.select",
@@ -945,7 +999,7 @@ impl InstrumentControlPanel {
             "devices": devices,
             "scanning": self.scanning,
             "resources": resources,
-            "overview_open": self.overview_open,
+            "overview_open": self.show_overview(),
             "selected_id": self.selected_id,
             "sessions": self.devices.len(),
             "live": live,
@@ -1262,12 +1316,23 @@ impl InstrumentControlPanel {
                 self.log(format!("CONNECT {resource} — {}", identity.raw));
                 self.devices.push(DeviceUi {
                     id,
-                    resource,
+                    resource: resource.clone(),
                     identity,
                     kind,
                     profile,
                     capabilities,
-                    controls: ControlState::default(),
+                    controls: {
+                        let mut controls = ControlState::default();
+                        if kind == InstrumentKind::WiparseDongle {
+                            if let Some(spec) = dongle::parse_dongle_or_host(&resource) {
+                                controls.dongle_host = spec.host;
+                                controls.dongle_uart_port = spec.uart_port;
+                                controls.dongle_i2c_port = spec.i2c_port;
+                                controls.dongle_uart_com = spec.uart_com;
+                            }
+                        }
+                        controls
+                    },
                     acquiring: false,
                     paused: false,
                     last_activity: "LINK UP".into(),
@@ -1649,6 +1714,9 @@ impl InstrumentControlPanel {
     }
 
     fn select_overview(&mut self) {
+        if !self.debug_mode {
+            return;
+        }
         self.overview_open = true;
         self.selected_id = None;
     }
@@ -1671,7 +1739,7 @@ impl InstrumentControlPanel {
                 .then_with(|| a.address.cmp(&b.address))
         });
 
-        let mut assigned = [false; 6];
+        let mut assigned = [false; 7];
         for resource in &self.resources {
             let Some(kind) = resource.kind else {
                 continue;
@@ -1772,7 +1840,7 @@ impl InstrumentControlPanel {
             parse_usb_resource(&resource).map(|spec| spec.iface.kind())
         } else if matches!(
             kind,
-            InstrumentKind::DebugProbe | InstrumentKind::UsbBridge
+            InstrumentKind::DebugProbe | InstrumentKind::UsbBridge | InstrumentKind::WiparseDongle
         ) {
             Some(kind)
         } else {
@@ -2029,17 +2097,19 @@ impl InstrumentControlPanel {
                     .max_height(cards_height)
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
-                        let overview_action = overview_type_card(
-                            ui,
-                            lang,
-                            tokens,
-                            self.overview_open,
-                            self.devices.len(),
-                        );
-                        if overview_action {
-                            self.select_overview();
+                        if self.debug_mode {
+                            let overview_action = overview_type_card(
+                                ui,
+                                lang,
+                                tokens,
+                                self.show_overview(),
+                                self.devices.len(),
+                            );
+                            if overview_action {
+                                self.select_overview();
+                            }
+                            ui.add_space(7.0);
                         }
-                        ui.add_space(7.0);
                         for kind in self.visible_instrument_kinds() {
                             let matching_count = self
                                 .devices
@@ -2057,7 +2127,7 @@ impl InstrumentControlPanel {
                                 lang,
                                 tokens,
                                 kind,
-                                !self.overview_open && self.selected_kind == kind,
+                                !self.show_overview() && self.selected_kind == kind,
                                 matching_device.as_ref().map(|(_, model)| model.as_str()),
                                 matching_count,
                                 matching_device.as_ref().map(|(id, _)| *id),
@@ -2082,7 +2152,7 @@ impl InstrumentControlPanel {
     }
 
     fn workspace(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
-        if self.overview_open {
+        if self.show_overview() {
             self.overview_workspace(ui, lang, tokens);
             return;
         }
@@ -2132,6 +2202,7 @@ impl InstrumentControlPanel {
             InstrumentKind::Multimeter => self.dmm_workspace(ui, lang, tokens, id, index),
             InstrumentKind::DebugProbe => self.probe_workspace(ui, lang, tokens, id, index),
             InstrumentKind::UsbBridge => self.bridge_workspace(ui, lang, tokens, id, index),
+            InstrumentKind::WiparseDongle => self.dongle_workspace(ui, lang, tokens, id, index),
             InstrumentKind::Generic => {
                 self.generic_workspace(ui, lang, tokens, id, index, kind);
             }
@@ -3045,6 +3116,192 @@ impl InstrumentControlPanel {
             });
     }
 
+    fn dongle_workspace(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        id: u64,
+        index: usize,
+    ) {
+        egui::ScrollArea::vertical()
+            .id_salt(format!("dongle-workspace-{id}"))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(text(lang, "通道", "Channel")).strong());
+                    let tab = &mut self.devices[index].controls.dongle_tab;
+                    ui.selectable_value(tab, 0, "DAP");
+                    ui.selectable_value(tab, 1, "UART");
+                    ui.selectable_value(tab, 2, "I2C");
+                });
+                ui.add_space(8.0);
+                ui.columns(3, |columns| {
+                    card(
+                        &mut columns[0],
+                        tokens,
+                        text(lang, "参数设置", "Parameters"),
+                        |ui| {
+                            self.dongle_parameters_ui(ui, lang, tokens, index);
+                        },
+                    );
+                    card(
+                        &mut columns[1],
+                        tokens,
+                        text(lang, "控制", "Control"),
+                        |ui| {
+                            let commands =
+                                dongle_controls(ui, lang, tokens, &mut self.devices[index]);
+                            self.dispatch_scope_commands(id, commands);
+                        },
+                    );
+                    card(
+                        &mut columns[2],
+                        tokens,
+                        text(lang, "日志 / 捕获", "Log / Capture"),
+                        |ui| {
+                            ui.label(
+                                RichText::new(text(
+                                    lang,
+                                    "DAP 走 USB CMSIS-DAP（probe-rs，先占用探针；填芯片名再 Attach）。UART / I2C 优先 WinUSB（MI_01 / MI_03），失败再走 TCP :1234 / :1236。",
+                                    "DAP uses USB CMSIS-DAP (probe-rs claims the probe; enter a chip name then Attach). UART / I2C prefer WinUSB (MI_01 / MI_03), then TCP :1234 / :1236.",
+                                ))
+                                .small()
+                                .color(tokens.text_muted),
+                            );
+                            ui.add_space(6.0);
+                            self.device_io_log_ui(ui, tokens, index);
+                        },
+                    );
+                });
+            });
+    }
+
+    fn dongle_parameters_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        index: usize,
+    ) {
+        let device = &self.devices[index];
+        egui::Grid::new(("dongle-id-grid", device.id))
+            .num_columns(2)
+            .spacing([10.0, 4.0])
+            .show(ui, |ui| {
+                setting_row(ui, text(lang, "资源", "Resource"), &device.resource);
+                setting_row(ui, text(lang, "型号", "Model"), &device.identity.model);
+                setting_row(ui, text(lang, "序列号", "Serial"), &device.identity.serial);
+            });
+        ui.add_space(8.0);
+        ui.label(RichText::new(text(lang, "TCP 主机", "TCP host")).strong());
+        ui.add(
+            egui::TextEdit::singleline(&mut self.devices[index].controls.dongle_host)
+                .hint_text("192.168.137.123 / dap.local")
+                .desired_width(ui.available_width()),
+        );
+        ui.horizontal(|ui| {
+            ui.label("UART");
+            ui.add(
+                egui::DragValue::new(&mut self.devices[index].controls.dongle_uart_port)
+                    .range(1..=65535),
+            );
+            ui.label("I2C");
+            ui.add(
+                egui::DragValue::new(&mut self.devices[index].controls.dongle_i2c_port)
+                    .range(1..=65535),
+            );
+        });
+        ui.add_space(8.0);
+        match self.devices[index].controls.dongle_tab {
+            1 => {
+                ui.label(RichText::new(text(lang, "UART", "UART")).strong());
+                ui.horizontal(|ui| {
+                    ui.label(text(lang, "波特率", "Baud"));
+                    ui.add(
+                        egui::DragValue::new(&mut self.devices[index].controls.dongle_uart_baud)
+                            .range(dongle::UART_BAUD_MIN..=dongle::UART_BAUD_MAX)
+                            .speed(100.0),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label(text(lang, "COM（可选）", "COM (optional)"));
+                    ui.add(
+                        egui::TextEdit::singleline(
+                            &mut self.devices[index].controls.dongle_uart_com,
+                        )
+                        .hint_text("COM5")
+                        .desired_width(80.0),
+                    );
+                });
+                ui.checkbox(
+                    &mut self.devices[index].controls.dongle_uart_hex,
+                    text(lang, "十六进制发送", "Send hex"),
+                );
+                let uart_hex = self.devices[index].controls.dongle_uart_hex;
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.devices[index].controls.dongle_uart_tx)
+                        .hint_text(if uart_hex { "AA 55 …" } else { "text" })
+                        .desired_width(ui.available_width()),
+                );
+                ui.checkbox(
+                    &mut self.devices[index].controls.dongle_uart_listen,
+                    text(lang, "持续接收", "Listen"),
+                );
+            }
+            2 => {
+                ui.label(RichText::new(text(lang, "I2C RPC", "I2C RPC")).strong());
+                ui.horizontal(|ui| {
+                    ui.label(text(lang, "7-bit 地址", "7-bit addr"));
+                    ui.add(
+                        egui::TextEdit::singleline(
+                            &mut self.devices[index].controls.dongle_i2c_addr,
+                        )
+                        .desired_width(60.0)
+                        .hint_text("50"),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label(text(lang, "速率", "Speed"));
+                    ui.add(
+                        egui::DragValue::new(&mut self.devices[index].controls.dongle_i2c_hz)
+                            .range(10_000..=1_000_000)
+                            .suffix(" Hz")
+                            .speed(1000.0),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label(text(lang, "超时", "Timeout"));
+                    ui.add(
+                        egui::DragValue::new(
+                            &mut self.devices[index].controls.dongle_i2c_timeout_ms,
+                        )
+                        .range(1..=1000)
+                        .suffix(" ms"),
+                    );
+                });
+                ui.label(text(lang, "写 hex", "Write hex"));
+                ui.add(
+                    egui::TextEdit::singleline(
+                        &mut self.devices[index].controls.dongle_i2c_write_hex,
+                    )
+                    .desired_width(ui.available_width()),
+                );
+                ui.horizontal(|ui| {
+                    ui.label(text(lang, "读字节", "Read len"));
+                    ui.add(
+                        egui::DragValue::new(&mut self.devices[index].controls.dongle_i2c_read_len)
+                            .range(1..=256)
+                            .suffix(" B"),
+                    );
+                });
+            }
+            _ => {
+                self.probe_parameters_ui(ui, lang, tokens, index);
+            }
+        }
+    }
+
     fn probe_parameters_ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -3827,7 +4084,7 @@ impl InstrumentControlPanel {
                 );
             }
             InstrumentKind::Generic => {}
-            InstrumentKind::DebugProbe | InstrumentKind::UsbBridge => {}
+            InstrumentKind::DebugProbe | InstrumentKind::UsbBridge | InstrumentKind::WiparseDongle => {}
         }
     }
 
@@ -4226,18 +4483,37 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                     send_error_job(&events, Some(id), job_id, "device not connected");
                 }
             }
-            Job::PollRtt(id) => {
-                if let Some(LiveSession::Probe(probe)) = devices.get_mut(&id) {
-                    match probe.execute(ControlCommand::ProbeRttRead) {
-                        Ok(text) => {
-                            let _ = events.send(Event::SessionOutput { id, text });
-                        }
+            Job::PollRtt(id) => match devices.get_mut(&id) {
+                Some(LiveSession::Probe(probe)) => match probe.execute(ControlCommand::ProbeRttRead)
+                {
+                    Ok(text) => {
+                        let _ = events.send(Event::SessionOutput { id, text });
+                    }
+                    Err(error) => send_error(&events, Some(id), error),
+                },
+                Some(LiveSession::Dongle(dongle)) => {
+                    let mut chunks = Vec::new();
+                    match dongle.execute(ControlCommand::ProbeRttRead) {
+                        Ok(Some(text)) => chunks.push(text),
+                        Ok(None) => {}
+                        Err(_) => {}
+                    }
+                    match dongle.execute(ControlCommand::DongleUartRead) {
+                        Ok(Some(text)) => chunks.push(text),
+                        Ok(None) => {}
                         Err(error) => send_error(&events, Some(id), error),
                     }
-                } else {
+                    let text = if chunks.is_empty() {
+                        None
+                    } else {
+                        Some(chunks.join("\n"))
+                    };
+                    let _ = events.send(Event::SessionOutput { id, text });
+                }
+                _ => {
                     let _ = events.send(Event::SessionOutput { id, text: None });
                 }
-            }
+            },
             Job::Measure(id) => {
                 match devices.get_mut(&id) {
                     Some(LiveSession::Scpi(device)) => match device.read_measurements() {
@@ -4491,6 +4767,7 @@ enum LiveSession {
     Scpi(InstrumentDevice),
     Probe(ProbeSession),
     Bridge(Ft4222Session),
+    Dongle(DongleSession),
 }
 
 impl LiveSession {
@@ -4502,6 +4779,7 @@ impl LiveSession {
             Self::Scpi(device) => device.execute(command),
             Self::Probe(device) => device.execute(command),
             Self::Bridge(device) => device.execute(command),
+            Self::Dongle(device) => device.execute(command),
         }
     }
 }
@@ -4513,6 +4791,9 @@ fn open_demo_session(kind: InstrumentKind) -> Result<LiveSession, wiparse_core::
         ))),
         InstrumentKind::UsbBridge => Ok(LiveSession::Bridge(Ft4222Session::demo(
             "bridge://ft4222/serial=DEMO",
+        ))),
+        InstrumentKind::WiparseDongle => Ok(LiveSession::Dongle(DongleSession::demo(
+            "dongle://wiparse/serial=DEMO",
         ))),
         other => InstrumentDevice::connect_demo(other).map(LiveSession::Scpi),
     }
@@ -4530,6 +4811,7 @@ fn open_live_session(
     if let Some(spec) = parse_usb_resource(&resource) {
         return match spec.iface {
             UsbIface::Ft4222 => Ft4222Session::open(&resource).map(LiveSession::Bridge),
+            UsbIface::WiparseDongle => DongleSession::open(&resource).map(LiveSession::Dongle),
             _ => ProbeSession::open(&resource, None).map(LiveSession::Probe),
         };
     }
@@ -4540,6 +4822,7 @@ fn open_live_session(
         Some(InstrumentKind::UsbBridge) => {
             Ft4222Session::open(&resource).map(LiveSession::Bridge)
         }
+        Some(InstrumentKind::WiparseDongle) => DongleSession::open(&resource).map(LiveSession::Dongle),
         requested => InstrumentDevice::connect_with_library(resource, timeout_ms, requested, library)
             .map(LiveSession::Scpi),
     }
@@ -4564,6 +4847,14 @@ fn connected_event(id: u64, session: &LiveSession) -> Event {
             capabilities: Capabilities::default(),
         },
         LiveSession::Bridge(device) => Event::Connected {
+            id,
+            resource: device.resource.clone(),
+            identity: device.identity.clone(),
+            kind: device.kind,
+            profile: format!("{} {}", device.identity.manufacturer, device.identity.model),
+            capabilities: Capabilities::default(),
+        },
+        LiveSession::Dongle(device) => Event::Connected {
             id,
             resource: device.resource.clone(),
             identity: device.identity.clone(),
@@ -5127,6 +5418,9 @@ fn control_ui(
         InstrumentKind::UsbBridge => {
             commands.extend(bridge_controls(ui, lang, tokens, device));
         }
+        InstrumentKind::WiparseDongle => {
+            commands.extend(dongle_controls(ui, lang, tokens, device));
+        }
     }
     (commands, measure_once)
 }
@@ -5270,6 +5564,122 @@ fn bridge_controls(
             if ui.button(text(lang, "芯片信息", "Chip info")).clicked() {
                 out.push(ControlCommand::BridgeInfo);
             }
+        }
+    }
+    out
+}
+
+fn dongle_controls(
+    ui: &mut egui::Ui,
+    lang: Lang,
+    tokens: &Tokens,
+    device: &mut DeviceUi,
+) -> Vec<ControlCommand> {
+    let mut out = Vec::new();
+    ui.horizontal_wrapped(|ui| {
+        if ui.button(text(lang, "链路信息", "Link info")).clicked() {
+            out.push(ControlCommand::DongleSetLink {
+                host: device.controls.dongle_host.clone(),
+                uart_port: device.controls.dongle_uart_port,
+                i2c_port: device.controls.dongle_i2c_port,
+            });
+            out.push(ControlCommand::DongleInfo);
+        }
+    });
+    ui.add_space(6.0);
+    match device.controls.dongle_tab {
+        1 => {
+            if theme::accent_button(ui, tokens, text(lang, "打开 UART", "Open UART")).clicked() {
+                out.push(ControlCommand::DongleSetLink {
+                    host: device.controls.dongle_host.clone(),
+                    uart_port: device.controls.dongle_uart_port,
+                    i2c_port: device.controls.dongle_i2c_port,
+                });
+                out.push(ControlCommand::DongleUartOpen {
+                    host: device.controls.dongle_host.clone(),
+                    port: device.controls.dongle_uart_port,
+                    baud: device.controls.dongle_uart_baud,
+                    com: device.controls.dongle_uart_com.clone(),
+                    send_baud_cmd: true,
+                });
+            }
+            ui.horizontal_wrapped(|ui| {
+                if ui.button(text(lang, "发送", "Send")).clicked() {
+                    out.push(ControlCommand::DongleUartWrite {
+                        data: device.controls.dongle_uart_tx.clone(),
+                        hex: device.controls.dongle_uart_hex,
+                    });
+                }
+                if ui.button(text(lang, "读一次", "Read")).clicked() {
+                    out.push(ControlCommand::DongleUartRead);
+                }
+                if ui.button(text(lang, "关闭", "Close")).clicked() {
+                    device.controls.dongle_uart_listen = false;
+                    out.push(ControlCommand::DongleUartClose);
+                }
+            });
+        }
+        2 => {
+            ui.horizontal_wrapped(|ui| {
+                if theme::accent_button(ui, tokens, text(lang, "扫描", "Scan")).clicked() {
+                    out.push(ControlCommand::DongleSetLink {
+                        host: device.controls.dongle_host.clone(),
+                        uart_port: device.controls.dongle_uart_port,
+                        i2c_port: device.controls.dongle_i2c_port,
+                    });
+                    out.push(ControlCommand::DongleI2cScan);
+                }
+                if ui.button(text(lang, "Ping", "Ping")).clicked() {
+                    out.push(ControlCommand::DongleI2cPing {
+                        addr: device.controls.dongle_i2c_addr.clone(),
+                    });
+                }
+                if ui.button(text(lang, "恢复总线", "Recover")).clicked() {
+                    out.push(ControlCommand::DongleI2cRecover);
+                }
+            });
+            ui.horizontal_wrapped(|ui| {
+                if ui.button(text(lang, "速率", "Speed")).clicked() {
+                    out.push(ControlCommand::DongleI2cSpeed {
+                        hz: Some(device.controls.dongle_i2c_hz),
+                    });
+                }
+                if ui.button(text(lang, "超时", "Timeout")).clicked() {
+                    out.push(ControlCommand::DongleI2cTimeout {
+                        ms: Some(device.controls.dongle_i2c_timeout_ms),
+                    });
+                }
+                if ui.button("HELP").clicked() {
+                    out.push(ControlCommand::DongleI2cLine {
+                        line: "HELP".into(),
+                    });
+                }
+            });
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                if ui.button(text(lang, "写", "Write")).clicked() {
+                    out.push(ControlCommand::DongleI2cWrite {
+                        addr: device.controls.dongle_i2c_addr.clone(),
+                        data_hex: device.controls.dongle_i2c_write_hex.clone(),
+                    });
+                }
+                if ui.button(text(lang, "读", "Read")).clicked() {
+                    out.push(ControlCommand::DongleI2cRead {
+                        addr: device.controls.dongle_i2c_addr.clone(),
+                        len: device.controls.dongle_i2c_read_len,
+                    });
+                }
+                if ui.button(text(lang, "写后读", "WriteRead")).clicked() {
+                    out.push(ControlCommand::DongleI2cWriteRead {
+                        addr: device.controls.dongle_i2c_addr.clone(),
+                        data_hex: device.controls.dongle_i2c_write_hex.clone(),
+                        len: device.controls.dongle_i2c_read_len,
+                    });
+                }
+            });
+        }
+        _ => {
+            out.extend(probe_controls(ui, lang, tokens, device));
         }
     }
     out
@@ -6466,8 +6876,9 @@ fn kind_sort_key(kind: Option<InstrumentKind>) -> u8 {
         Some(InstrumentKind::Multimeter) => 3,
         Some(InstrumentKind::DebugProbe) => 4,
         Some(InstrumentKind::UsbBridge) => 5,
-        Some(InstrumentKind::Generic) => 6,
-        None => 7,
+        Some(InstrumentKind::WiparseDongle) => 6,
+        Some(InstrumentKind::Generic) => 7,
+        None => 8,
     }
 }
 
@@ -6479,6 +6890,7 @@ fn instrument_kind_slot(kind: InstrumentKind) -> usize {
         InstrumentKind::Multimeter => 3,
         InstrumentKind::DebugProbe => 4,
         InstrumentKind::UsbBridge => 5,
+        InstrumentKind::WiparseDongle => 6,
         InstrumentKind::Generic => 0,
     }
 }
@@ -6491,6 +6903,7 @@ fn instrument_name(lang: Lang, kind: InstrumentKind) -> &'static str {
         InstrumentKind::Multimeter => text(lang, "数字万用表", "Digital Multimeter"),
         InstrumentKind::DebugProbe => text(lang, "调试探针", "Debug Probe"),
         InstrumentKind::UsbBridge => text(lang, "USB 桥", "USB Bridge"),
+        InstrumentKind::WiparseDongle => text(lang, "WiParse-dongle", "WiParse-dongle"),
         InstrumentKind::Generic => text(lang, "通用 SCPI", "Generic SCPI"),
     }
 }
@@ -6532,6 +6945,11 @@ fn instrument_control_hint(lang: Lang, kind: InstrumentKind) -> &'static str {
             "FT4222 SPI / I2C / GPIO 收发。识别不需要 DLL，事务需要 LibFT4222。",
             "FT4222 SPI / I2C / GPIO. Scan needs no DLL; transactions need LibFT4222.",
         ),
+        InstrumentKind::WiparseDongle => text(
+            lang,
+            "一块硬件上的 DAP / UART / I2C：USB CMSIS-DAP，WinUSB UART/I2C，TCP 回退 :1234 / :1236。",
+            "One board, three channels: USB CMSIS-DAP, WinUSB UART/I2C, TCP fallback :1234 / :1236.",
+        ),
     }
 }
 
@@ -6566,6 +6984,11 @@ fn instrument_acquisition_hint(lang: Lang, kind: InstrumentKind) -> &'static str
             lang,
             "SPI/I2C/GPIO 往返数据写入右侧日志。",
             "SPI/I2C/GPIO traffic is written to the log panel.",
+        ),
+        InstrumentKind::WiparseDongle => text(
+            lang,
+            "DAP RTT、UART 捕获和 I2C RPC 回复写入右侧日志。",
+            "DAP RTT, UART capture and I2C RPC replies go to the log panel.",
         ),
     }
 }
@@ -6607,6 +7030,11 @@ fn instrument_settings_hint(lang: Lang, kind: InstrumentKind) -> &'static str {
             "查看 FT4222 序列号与 SPI/I2C/GPIO 参数。",
             "View FT4222 serial and SPI/I2C/GPIO parameters.",
         ),
+        InstrumentKind::WiparseDongle => text(
+            lang,
+            "查看 dongle 序列号、TCP 主机以及 DAP / UART / I2C 参数。",
+            "View dongle serial, TCP host, and DAP / UART / I2C parameters.",
+        ),
     }
 }
 
@@ -6643,6 +7071,11 @@ fn instrument_features(lang: Lang, kind: InstrumentKind) -> [(&'static str, &'st
             "SPI / I2C / GPIO 收发",
             "SPI / I2C / GPIO transfers",
         ),
+        InstrumentKind::WiparseDongle => text(
+            lang,
+            "DAP Halt/烧录、UART 透传、I2C SCAN/读写",
+            "DAP halt/flash, UART bridge, I2C scan/read/write",
+        ),
     };
     [
         (
@@ -6656,7 +7089,7 @@ fn instrument_features(lang: Lang, kind: InstrumentKind) -> [(&'static str, &'st
         (text(lang, "控制", "Control"), control),
         if matches!(
             kind,
-            InstrumentKind::DebugProbe | InstrumentKind::UsbBridge
+            InstrumentKind::DebugProbe | InstrumentKind::UsbBridge | InstrumentKind::WiparseDongle
         ) {
             (
                 text(lang, "日志", "Log"),
@@ -6700,6 +7133,7 @@ fn kind_icon(kind: InstrumentKind) -> &'static str {
         InstrumentKind::Multimeter => "DMM",
         InstrumentKind::DebugProbe => "PROBE",
         InstrumentKind::UsbBridge => "FT42",
+        InstrumentKind::WiparseDongle => "DONG",
         InstrumentKind::Generic => "SCPI",
     }
 }
@@ -6708,6 +7142,7 @@ fn resource_address_hint(kind: InstrumentKind) -> &'static str {
     match kind {
         InstrumentKind::DebugProbe => "probe://jlink/serial=...",
         InstrumentKind::UsbBridge => "bridge://ft4222/serial=...",
+        InstrumentKind::WiparseDongle => "dongle://wiparse/serial=...",
         _ => "USB0::0x0699::...::INSTR",
     }
 }
@@ -6716,6 +7151,11 @@ fn resource_empty_prompt(lang: Lang, kind: InstrumentKind) -> &'static str {
     match kind {
         InstrumentKind::DebugProbe => text(lang, "选择或输入探针地址", "Select or enter probe address"),
         InstrumentKind::UsbBridge => text(lang, "选择或输入桥地址", "Select or enter bridge address"),
+        InstrumentKind::WiparseDongle => text(
+            lang,
+            "选择或输入 dongle 地址",
+            "Select or enter dongle address",
+        ),
         _ => text(lang, "选择或输入 VISA 地址", "Select or enter VISA address"),
     }
 }
@@ -6939,6 +7379,13 @@ enum TwinFace {
         gpio_out: bool,
         gpio_value: bool,
     },
+    Dongle {
+        tab: u8,
+        host: String,
+        uart_baud: u32,
+        i2c_hz: u32,
+        rtt: bool,
+    },
     Generic {
         cmd: String,
     },
@@ -7050,6 +7497,13 @@ fn twin_face_of(
             gpio_pin: device.controls.bridge_gpio_pin,
             gpio_out: device.controls.bridge_gpio_out,
             gpio_value: device.controls.bridge_gpio_value,
+        },
+        InstrumentKind::WiparseDongle => TwinFace::Dongle {
+            tab: device.controls.dongle_tab,
+            host: device.controls.dongle_host.clone(),
+            uart_baud: device.controls.dongle_uart_baud,
+            i2c_hz: device.controls.dongle_i2c_hz,
+            rtt: device.controls.probe_rtt_on || device.controls.dongle_uart_listen,
         },
         InstrumentKind::Generic => TwinFace::Generic {
             cmd: device.controls.console.clone(),
@@ -7174,6 +7628,20 @@ fn twin_face_json(face: &TwinFace) -> serde_json::Value {
             "gpio_out": gpio_out,
             "gpio_value": gpio_value,
         }),
+        TwinFace::Dongle {
+            tab,
+            host,
+            uart_baud,
+            i2c_hz,
+            rtt,
+        } => serde_json::json!({
+            "type": "wiparse_dongle",
+            "channel": match *tab { 1 => "uart", 2 => "i2c", _ => "dap" },
+            "host": host,
+            "uart_baud": uart_baud,
+            "i2c_hz": i2c_hz,
+            "live": rtt,
+        }),
         TwinFace::Generic { cmd } => serde_json::json!({
             "type": "generic",
             "scpi": cmd,
@@ -7190,7 +7658,9 @@ fn twin_unit_size(face: &TwinFace) -> egui::Vec2 {
         TwinFace::Scope { .. } => egui::vec2(244.0, 154.0),
         TwinFace::Dmm { .. } => egui::vec2(224.0, 138.0),
         TwinFace::Load { .. } => egui::vec2(228.0, 146.0),
-        TwinFace::Probe { .. } | TwinFace::Bridge { .. } => egui::vec2(216.0, 132.0),
+        TwinFace::Probe { .. } | TwinFace::Bridge { .. } | TwinFace::Dongle { .. } => {
+            egui::vec2(216.0, 132.0)
+        }
         TwinFace::Generic { .. } => egui::vec2(204.0, 122.0),
     }
 }
@@ -7525,6 +7995,11 @@ fn twin_chassis_colors(kind: InstrumentKind) -> (Color32, Color32, Color32) {
             Color32::from_rgb(10, 20, 16),
             Color32::from_rgb(8, 14, 12),
         ),
+        InstrumentKind::WiparseDongle => (
+            Color32::from_rgb(20, 28, 44),
+            Color32::from_rgb(12, 18, 32),
+            Color32::from_rgb(8, 12, 22),
+        ),
         InstrumentKind::Generic => (
             Color32::from_rgb(10, 36, 52),
             Color32::from_rgb(6, 22, 34),
@@ -7636,6 +8111,15 @@ fn paint_twin_face(
                 hud,
                 t,
             );
+        }
+        TwinFace::Dongle {
+            tab,
+            host,
+            uart_baud,
+            i2c_hz,
+            rtt,
+        } => {
+            paint_face_dongle(painter, rect, *tab, host, *uart_baud, *i2c_hz, *rtt, hud);
         }
         TwinFace::Generic { cmd } => {
             paint_lcd_panel(painter, rect.shrink2(egui::vec2(0.0, 6.0)), LcdTint::Green);
@@ -8130,6 +8614,50 @@ fn paint_face_probe(
             hud.dim,
         );
     }
+}
+
+fn paint_face_dongle(
+    painter: &egui::Painter,
+    rect: Rect,
+    tab: u8,
+    host: &str,
+    uart_baud: u32,
+    i2c_hz: u32,
+    live: bool,
+    hud: &HudTokens,
+) {
+    paint_lcd_panel(painter, rect, LcdTint::Scope);
+    let ch = match tab {
+        1 => "UART",
+        2 => "I2C",
+        _ => "DAP",
+    };
+    painter.text(
+        egui::pos2(rect.left() + 8.0, rect.top() + 6.0),
+        egui::Align2::LEFT_TOP,
+        format!("WIPARSE  {ch}"),
+        egui::FontId::monospace(10.0),
+        lcd_lit(LcdTint::Scope),
+    );
+    let line = match tab {
+        1 => format!("{uart_baud} baud"),
+        2 => format!("{} kHz", i2c_hz / 1000),
+        _ => truncate_chars(host, 16).into(),
+    };
+    painter.text(
+        egui::pos2(rect.left() + 8.0, rect.center().y + 2.0),
+        egui::Align2::LEFT_CENTER,
+        line,
+        egui::FontId::monospace(12.0),
+        lcd_lit(LcdTint::Scope),
+    );
+    painter.text(
+        egui::pos2(rect.left() + 8.0, rect.bottom() - 8.0),
+        egui::Align2::LEFT_BOTTOM,
+        if live { "LIVE" } else { "IDLE" },
+        egui::FontId::monospace(10.0),
+        if live { hud.ok } else { lcd_dim(LcdTint::Scope) },
+    );
 }
 
 fn paint_face_bridge(
@@ -8647,6 +9175,41 @@ fn overview_param_lines(
                 ));
             }
         }
+        InstrumentKind::WiparseDongle => {
+            let ch = match device.controls.dongle_tab {
+                1 => "UART",
+                2 => "I2C",
+                _ => "DAP",
+            };
+            out.push((text(lang, "通道", "CH").into(), ch.into()));
+            out.push((
+                text(lang, "主机", "HOST").into(),
+                device.controls.dongle_host.clone(),
+            ));
+            if device.controls.dongle_tab == 1 {
+                out.push((
+                    "UART".into(),
+                    format!("{} baud", device.controls.dongle_uart_baud),
+                ));
+            } else if device.controls.dongle_tab == 2 {
+                out.push((
+                    "I2C".into(),
+                    format!(
+                        "0x{} {} Hz",
+                        device.controls.dongle_i2c_addr, device.controls.dongle_i2c_hz
+                    ),
+                ));
+            } else {
+                out.push((
+                    text(lang, "目标", "TGT").into(),
+                    if device.controls.probe_chip.trim().is_empty() {
+                        "DP / AUTO".into()
+                    } else {
+                        device.controls.probe_chip.clone()
+                    },
+                ));
+            }
+        }
         InstrumentKind::Generic => {
             out.push(("SCPI".into(), device.controls.console.clone()));
         }
@@ -8796,6 +9359,26 @@ fn paint_device_glyph(
                     Stroke::new(1.1_f32, accent),
                 );
             }
+        }
+        InstrumentKind::WiparseDongle => {
+            let body = Rect::from_center_size(c, egui::vec2(42.0, 22.0));
+            painter.rect_filled(body, CornerRadius::same(3), Color32::from_rgb(10, 22, 40));
+            painter.rect_stroke(body, CornerRadius::same(3), stroke, egui::StrokeKind::Inside);
+            for i in 0..3 {
+                let x = body.left() + 10.0 + i as f32 * 11.0;
+                painter.line_segment(
+                    [egui::pos2(x, body.bottom()), egui::pos2(x, r.bottom() - 8.0)],
+                    Stroke::new(1.2_f32, accent),
+                );
+            }
+            painter.rect_filled(
+                Rect::from_min_size(
+                    egui::pos2(body.right() - 8.0, body.top() + 4.0),
+                    egui::vec2(12.0, 14.0),
+                ),
+                CornerRadius::same(1),
+                hud.cyan,
+            );
         }
         InstrumentKind::Generic => {
             painter.text(

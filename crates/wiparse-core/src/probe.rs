@@ -23,6 +23,10 @@ enum ProbeInner {
         chip: String,
         ticks: u32,
     },
+    /// USB probe opened; no chip session yet (empty target / Auto would fail).
+    Claimed {
+        probe: probe_rs::probe::Probe,
+    },
     Live {
         session: probe_rs::Session,
         rtt: Option<probe_rs::rtt::Rtt>,
@@ -91,17 +95,22 @@ impl ProbeSession {
         let speed_khz = speed_khz.clamp(10, 50_000);
         let applied = probe.set_speed(speed_khz).unwrap_or(speed_khz);
         let chip = chip.unwrap_or("").trim().to_owned();
-        let session = attach_session(probe, &chip)?;
         let mut identity = spec.identity();
         identity.firmware = chip.clone();
+        let inner = if chip.is_empty() {
+            ProbeInner::Claimed { probe }
+        } else {
+            let session = attach_session(probe, &chip)?;
+            ProbeInner::Live {
+                session,
+                rtt: None,
+            }
+        };
         Ok(Self {
             resource: resource.to_owned(),
             identity,
             kind: InstrumentKind::DebugProbe,
-            inner: ProbeInner::Live {
-                session,
-                rtt: None,
-            },
+            inner,
             rtt_channel: 0,
             speed_khz: applied,
         })
@@ -149,11 +158,10 @@ impl ProbeSession {
                     format!("demo probe attached to {chip}")
                 }))
             }
-            ProbeInner::Live { .. } => {
-                let resource = self.resource.clone();
-                *self = Self::open(&resource, Some(target))?;
+            ProbeInner::Claimed { .. } | ProbeInner::Live { .. } => {
+                self.reopen(Some(target))?;
                 Ok(Some(if target.trim().is_empty() {
-                    "attached (unspecified target / DP only)".into()
+                    "DAP USB claimed (no target)".into()
                 } else {
                     format!("attached to {}", target.trim())
                 }))
@@ -167,6 +175,7 @@ impl ProbeSession {
                 *halted = true;
                 Ok(Some("halted".into()))
             }
+            ProbeInner::Claimed { .. } => Err(need_target()),
             ProbeInner::Live { session, .. } => {
                 let mut core = session.core(0).map_err(probe_err)?;
                 core.halt(Duration::from_millis(500)).map_err(probe_err)?;
@@ -181,6 +190,7 @@ impl ProbeSession {
                 *halted = false;
                 Ok(Some("running".into()))
             }
+            ProbeInner::Claimed { .. } => Err(need_target()),
             ProbeInner::Live { session, .. } => {
                 let mut core = session.core(0).map_err(probe_err)?;
                 core.run().map_err(probe_err)?;
@@ -199,6 +209,7 @@ impl ProbeSession {
                     "system reset (demo)".into()
                 }))
             }
+            ProbeInner::Claimed { .. } => Err(need_target()),
             ProbeInner::Live { session, .. } => {
                 let mut core = session.core(0).map_err(probe_err)?;
                 if hardware {
@@ -226,6 +237,7 @@ impl ProbeSession {
                     *b = mem.get(&(addr + i as u64)).copied().unwrap_or(0);
                 }
             }
+            ProbeInner::Claimed { .. } => return Err(need_target()),
             ProbeInner::Live { session, .. } => {
                 use probe_rs::MemoryInterface;
                 let mut core = session.core(0).map_err(probe_err)?;
@@ -244,6 +256,7 @@ impl ProbeSession {
                     mem.insert(addr + i as u64, *b);
                 }
             }
+            ProbeInner::Claimed { .. } => return Err(need_target()),
             ProbeInner::Live { session, .. } => {
                 use probe_rs::MemoryInterface;
                 let mut core = session.core(0).map_err(probe_err)?;
@@ -276,6 +289,7 @@ impl ProbeSession {
                     bytes.len()
                 )))
             }
+            ProbeInner::Claimed { .. } => Err(need_target()),
             ProbeInner::Live { session, .. } => {
                 let format = flash_format(path, base_address);
                 let mut options = probe_rs::flashing::DownloadOptions::default();
@@ -298,6 +312,7 @@ impl ProbeSession {
                 *rtt_on = true;
                 Ok(Some(format!("RTT up-channel {up_channel} started (demo)")))
             }
+            ProbeInner::Claimed { .. } => Err(need_target()),
             ProbeInner::Live { session, rtt, .. } => {
                 let attached = {
                     let mut core = session.core(0).map_err(probe_err)?;
@@ -319,6 +334,7 @@ impl ProbeSession {
                 *rtt_on = false;
                 Ok(Some("RTT stopped".into()))
             }
+            ProbeInner::Claimed { .. } => Ok(Some("RTT stopped".into())),
             ProbeInner::Live { rtt, .. } => {
                 *rtt = None;
                 Ok(Some("RTT stopped".into()))
@@ -340,6 +356,7 @@ impl ProbeSession {
                 }
                 Ok(Some(format!("[demo RTT] tick {}\n", *ticks)))
             }
+            ProbeInner::Claimed { .. } => Ok(None),
             ProbeInner::Live {
                 session,
                 rtt,
@@ -371,6 +388,10 @@ impl ProbeSession {
                 if chip.is_empty() { "auto" } else { chip.as_str() },
                 self.speed_khz
             ))),
+            ProbeInner::Claimed { .. } => Ok(Some(format!(
+                "DAP USB claimed, no target, speed={} kHz",
+                self.speed_khz
+            ))),
             ProbeInner::Live { session, .. } => {
                 let target = session.target().name.clone();
                 let mut core = session.core(0).map_err(probe_err)?;
@@ -396,6 +417,7 @@ impl ProbeSession {
             ProbeInner::Demo { halted, .. } => Ok(Some(format!(
                 "demo regs PC=00000000 SP=20000000 halted={halted}"
             ))),
+            ProbeInner::Claimed { .. } => Err(need_target()),
             ProbeInner::Live { session, .. } => {
                 let mut core = session.core(0).map_err(probe_err)?;
                 let ids: Vec<(String, probe_rs::RegisterId)> = core
@@ -422,6 +444,7 @@ impl ProbeSession {
                 mem.clear();
                 Ok(Some("demo chip erase".into()))
             }
+            ProbeInner::Claimed { .. } => Err(need_target()),
             ProbeInner::Live { session, .. } => {
                 probe_rs::flashing::erase_all(session, probe_rs::flashing::FlashProgress::empty())
                     .map_err(probe_err)?;
@@ -432,19 +455,41 @@ impl ProbeSession {
 
     fn set_speed(&mut self, khz: u32) -> Result<Option<String>, InstrumentError> {
         let khz = khz.clamp(10, 50_000);
-        match &self.inner {
+        match &mut self.inner {
             ProbeInner::Demo { .. } => {
                 self.speed_khz = khz;
                 Ok(Some(format!("demo SWD/JTAG {khz} kHz")))
             }
+            ProbeInner::Claimed { probe } => {
+                self.speed_khz = probe.set_speed(khz).unwrap_or(khz);
+                Ok(Some(format!("SWD/JTAG {} kHz", self.speed_khz)))
+            }
             ProbeInner::Live { .. } => {
-                let resource = self.resource.clone();
-                let chip = self.identity.firmware.clone();
-                *self = Self::open_at_speed(&resource, Some(&chip), khz)?;
+                self.reopen(Some(&self.identity.firmware.clone()))?;
                 Ok(Some(format!("SWD/JTAG {} kHz", self.speed_khz)))
             }
         }
     }
+
+    fn reopen(&mut self, chip: Option<&str>) -> Result<(), InstrumentError> {
+        let resource = self.resource.clone();
+        let speed = self.speed_khz;
+        self.inner = ProbeInner::Demo {
+            halted: false,
+            mem: BTreeMap::new(),
+            rtt_on: false,
+            chip: String::new(),
+            ticks: 0,
+        };
+        *self = Self::open_at_speed(&resource, chip, speed)?;
+        Ok(())
+    }
+}
+
+fn need_target() -> InstrumentError {
+    InstrumentError::Io(
+        "DAP USB is claimed. Enter a chip name (for example STM32F103C8) and Attach.".into(),
+    )
 }
 
 fn attach_session(
@@ -470,7 +515,9 @@ fn probe_matches(spec: &UsbResource, info: &probe_rs::probe::DebugProbeInfo) -> 
     let type_ok = match spec.iface {
         UsbIface::Jlink => ident.contains("j-link") || ident.contains("jlink"),
         UsbIface::Stlink => ident.contains("st-link") || ident.contains("stlink"),
-        UsbIface::CmsisDap => ident.contains("cmsis") || ident.contains("dap"),
+        UsbIface::CmsisDap | UsbIface::WiparseDongle => {
+            ident.contains("cmsis") || ident.contains("dap") || ident.contains("wiparse")
+        }
         UsbIface::Ft4222 => false,
     };
     if !type_ok {

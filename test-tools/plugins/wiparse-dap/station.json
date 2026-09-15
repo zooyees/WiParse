@@ -1,0 +1,60 @@
+{
+  "sop": {
+    "id": "WI-DAP-001",
+    "rev": "A",
+    "title": "CMSIS-DAP 通道",
+    "effective": "2026-09-15"
+  },
+  "station": {
+    "id": "STATION-DAP",
+    "name": "CMSIS-DAP",
+    "product": "WiparseDap"
+  },
+  "gui": {
+    "api": "http://127.0.0.1:7878",
+    "min_version": "1.1.14"
+  },
+  "channel": {
+    "transport": "auto",
+    "host": "dap.local",
+    "tcp_port": 3240,
+    "vid": "C251",
+    "pid": "F01A",
+    "fallback_host": "192.168.137.123",
+    "usb_mi": 0,
+    "usb_name": "",
+    "out_ep": "01",
+    "in_ep": "81",
+    "packet_size": 512,
+    "connect_timeout_ms": 4000
+  },
+  "probe": {
+    "prefer_device_id": "",
+    "resource": "",
+    "model": "",
+    "chip": "",
+    "speed_khz": 1000
+  },
+  "run": {
+    "op": "session",
+    "address": "08000000",
+    "length": 64,
+    "data_hex": "",
+    "firmware": "",
+    "verify": true,
+    "hardware_reset": false,
+    "rtt_channel": 0,
+    "tool_cmd": "pyocd list",
+    "recipe": []
+  },
+  "paths": {
+    "file_prefix": "WiparseDap",
+    "lock_file": "{test_dir}/run.lock",
+    "stop_file": "{test_dir}/run.stop",
+    "status_file": "{test_dir}/status.json",
+    "logs_dir": "{artifacts_dir}/logs",
+    "report_dir": "{artifacts_dir}/reports",
+    "dumps_dir": "{artifacts_dir}/dumps",
+    "summary_md": "{artifacts_dir}/reports/{file_prefix}_{stamp}.md"
+  }
+}

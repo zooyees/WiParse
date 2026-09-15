@@ -26,5 +26,17 @@ sha2 = "0.10"
 ureq = { version = "2", default-features = false, features = ["json", "tls"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+windows-sys = { version = "0.48", features = [
+    "Win32_Devices_Usb",
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+    "Win32_System_IO",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 serde_json = { workspace = true }

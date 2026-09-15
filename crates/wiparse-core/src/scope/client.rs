@@ -3,7 +3,7 @@
 use crate::config::load_config;
 use crate::paths::project_path;
 use crate::scope::binary::{
-    downsample_minmax, nearest_step, parse_ieee_block, SCALE_STEPS_S, SCALE_STEPS_V,
+    downsample_minmax, extract_png, nearest_step, parse_ieee_block, SCALE_STEPS_S, SCALE_STEPS_V,
 };
 use crate::scope::visa::{Instrument, ResourceManager, VisaError};
 use chrono::Local;
@@ -357,6 +357,8 @@ impl TektronixScopeClient {
         }))
     }
 
+    /// Deprecated local-VISA hardcopy. Prefer `instrument.capture` on the
+    /// instrument page. Still strips IEEE `#N` and requires PNG magic.
     pub fn capture_png(
         &mut self,
         out_path: Option<&Path>,
@@ -373,12 +375,22 @@ impl TektronixScopeClient {
         handle
             .write_str("SAVe:IMAGe:INKSaver ON")
             .map_err(|e| ScopeError::coded("SCOPE_CAPTURE_FAILED", e.to_string()))?;
+        let _ = handle.write_str("HARDCopy:PORT APPLication");
+        let _ = handle.write_str("HARDCopy:PORT USB");
         handle
             .write_str("HARDCopy STARt")
             .map_err(|e| ScopeError::coded("SCOPE_CAPTURE_FAILED", e.to_string()))?;
-        let data = handle
+        let raw = handle
             .read_raw()
             .map_err(|e| ScopeError::coded("SCOPE_CAPTURE_FAILED", e.to_string()))?;
+        let data = extract_png(&raw)
+            .ok_or_else(|| {
+                ScopeError::coded(
+                    "SCOPE_CAPTURE_FAILED",
+                    "HARDCopy did not return a PNG (IEEE header stripped)",
+                )
+            })?
+            .to_vec();
 
         let path = match out_path {
             Some(p) if p.as_os_str() != "-" => {

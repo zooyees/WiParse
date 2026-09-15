@@ -139,6 +139,27 @@ pub struct AppsConfig {
     pub test_report: TestReportConfig,
     #[serde(default)]
     pub test_tool: TestToolConfig,
+    #[serde(default)]
+    pub project: ProjectWorkspaceConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectWorkspaceConfig {
+    /// Active Hub / report project id (`projects/{id}`).
+    #[serde(default = "default_project_id")]
+    pub active_id: String,
+}
+
+fn default_project_id() -> String {
+    "default".into()
+}
+
+impl Default for ProjectWorkspaceConfig {
+    fn default() -> Self {
+        Self {
+            active_id: default_project_id(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -551,6 +572,7 @@ impl Default for AppsConfig {
             data_analysis: DataAnalysisConfig::default(),
             test_report: TestReportConfig::default(),
             test_tool: TestToolConfig::default(),
+            project: ProjectWorkspaceConfig::default(),
         }
     }
 }

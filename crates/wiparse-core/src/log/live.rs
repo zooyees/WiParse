@@ -17,6 +17,8 @@ fn intern(s: &str) -> LogLine {
 pub struct LiveLogStore {
     lines: VecDeque<LogLine>,
     max_line_chars: usize,
+    /// Lines popped from the front for FIFO. Absolute seq = dropped + window index.
+    dropped: usize,
 }
 
 impl Default for LiveLogStore {
@@ -24,6 +26,7 @@ impl Default for LiveLogStore {
         Self {
             lines: VecDeque::new(),
             max_line_chars: 0,
+            dropped: 0,
         }
     }
 }
@@ -36,6 +39,17 @@ impl LiveLogStore {
     pub fn clear(&mut self) {
         self.lines.clear();
         self.max_line_chars = 0;
+        self.dropped = 0;
+    }
+
+    /// Number of lines evicted from the front since the last clear.
+    pub fn dropped(&self) -> usize {
+        self.dropped
+    }
+
+    /// Next absolute sequence number (dropped + current window length).
+    pub fn abs_len(&self) -> usize {
+        self.dropped.saturating_add(self.lines.len())
     }
 
     /// Append lines and return how many rows were evicted from the front.
@@ -64,12 +78,47 @@ impl LiveLogStore {
                 .max()
                 .unwrap_or(0);
         }
+        self.dropped = self.dropped.saturating_add(evicted);
         evicted
     }
 
     pub fn set_lines(&mut self, lines: impl IntoIterator<Item = impl AsRef<str>>) {
         self.clear();
         let _ = self.append_lines(lines);
+    }
+}
+
+/// Page an absolute session cursor into the live FIFO window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LiveAbsPage {
+    pub window_from: usize,
+    pub take: usize,
+    pub next_abs: usize,
+    pub total_abs: usize,
+    pub truncated: bool,
+}
+
+pub fn live_abs_page(dropped: usize, window: usize, from_abs: usize, limit: usize) -> LiveAbsPage {
+    let total_abs = dropped.saturating_add(window);
+    let truncated = from_abs < dropped;
+    let start_abs = from_abs.max(dropped);
+    if start_abs >= total_abs || limit == 0 {
+        return LiveAbsPage {
+            window_from: window,
+            take: 0,
+            next_abs: start_abs.max(total_abs),
+            total_abs,
+            truncated,
+        };
+    }
+    let window_from = start_abs - dropped;
+    let take = (total_abs - start_abs).min(limit);
+    LiveAbsPage {
+        window_from,
+        take,
+        next_abs: start_abs + take,
+        total_abs,
+        truncated,
     }
 }
 
@@ -103,5 +152,35 @@ mod tests {
         assert_eq!(evicted, 1);
         assert_eq!(store.line_count(), MAX_LIVE_LINES);
         assert_eq!(store.max_line_chars(), 5);
+        assert_eq!(store.dropped(), 1);
+        assert_eq!(store.abs_len(), MAX_LIVE_LINES + 1);
+    }
+
+    #[test]
+    fn live_abs_page_keeps_cursor_after_fifo() {
+        let page = live_abs_page(10, 5_000, 5_000, 200);
+        assert!(!page.truncated);
+        assert_eq!(page.window_from, 4_990);
+        assert_eq!(page.take, 10);
+        assert_eq!(page.next_abs, 5_010);
+        assert_eq!(page.total_abs, 5_010);
+    }
+
+    #[test]
+    fn live_abs_page_skips_gap_when_cursor_was_evicted() {
+        let page = live_abs_page(8_000, 5_000, 5_000, 200);
+        assert!(page.truncated);
+        assert_eq!(page.window_from, 0);
+        assert_eq!(page.take, 200);
+        assert_eq!(page.next_abs, 8_200);
+        assert_eq!(page.total_abs, 13_000);
+    }
+
+    #[test]
+    fn live_abs_page_empty_at_head() {
+        let page = live_abs_page(0, 5_000, 5_000, 200);
+        assert_eq!(page.take, 0);
+        assert_eq!(page.next_abs, 5_000);
+        assert_eq!(page.total_abs, 5_000);
     }
 }

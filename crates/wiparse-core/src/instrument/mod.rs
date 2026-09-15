@@ -8,14 +8,15 @@ pub mod recording;
 
 use crate::scope::visa::{Instrument as VisaInstrument, ResourceManager, VisaError};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 pub use drivers::{
     classify_instrument_kind, detect_profile, estimate_dc_source_channels,
-    format_human_scope_reading, humanize_scope_reading_text, parse_control_command, ControlCommand,
-    InstrumentDevice, InstrumentProfile, MeasureFunction, Reading, ScopeMeasType,
-    ScopeWaveformDensity, WaveformTrace,
+    estimate_tek_scope_channels, format_human_scope_reading, humanize_scope_reading_text,
+    parse_control_command, tek_scope_family, ControlCommand, InstrumentDevice, InstrumentProfile,
+    MeasureFunction, Reading, ScopeMeasType, ScopeWaveformDensity, TekScopeFamily, WaveformTrace,
 };
 pub use recording::{export_csv, AcquisitionBuffer, Sample};
 
@@ -28,6 +29,7 @@ pub enum InstrumentKind {
     Multimeter,
     DebugProbe,
     UsbBridge,
+    WiparseDongle,
     Generic,
 }
 
@@ -40,6 +42,7 @@ impl InstrumentKind {
             Self::Multimeter => "Multimeter",
             Self::DebugProbe => "Debug Probe",
             Self::UsbBridge => "USB Bridge",
+            Self::WiparseDongle => "WiParse-dongle",
             Self::Generic => "Generic SCPI",
         }
     }
@@ -375,15 +378,19 @@ fn kind_rank(kind: Option<InstrumentKind>) -> u8 {
         Some(InstrumentKind::Multimeter) => 3,
         Some(InstrumentKind::DebugProbe) => 4,
         Some(InstrumentKind::UsbBridge) => 5,
-        Some(InstrumentKind::Generic) => 6,
-        None => 7,
+        Some(InstrumentKind::WiparseDongle) => 6,
+        Some(InstrumentKind::Generic) => 7,
+        None => 8,
     }
 }
 
 #[derive(Default)]
 pub struct MockTransport {
     responses: VecDeque<(String, String)>,
-    pub writes: Vec<String>,
+    by_command: HashMap<String, String>,
+    raw_on_write: HashMap<String, Vec<u8>>,
+    last_write: String,
+    pub writes: Arc<Mutex<Vec<String>>>,
 }
 
 impl MockTransport {
@@ -395,19 +402,49 @@ impl MockTransport {
                 .into_iter()
                 .map(|(command, response)| (command.into(), response.into()))
                 .collect(),
-            writes: Vec::new(),
+            writes: Arc::new(Mutex::new(Vec::new())),
+            ..Self::default()
         }
+    }
+
+    /// Lookup responses by exact SCPI command (order-independent). Unknown
+    /// queries fail so `query_soft` can skip unsupported 3 Series / MDO3000 cmds.
+    pub fn mapped(
+        items: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Self {
+        let mut by_command = HashMap::new();
+        for (command, response) in items {
+            by_command.insert(command.into(), response.into());
+        }
+        Self {
+            by_command,
+            writes: Arc::new(Mutex::new(Vec::new())),
+            ..Self::default()
+        }
+    }
+
+    pub fn with_raw_on(mut self, command: impl Into<String>, data: impl Into<Vec<u8>>) -> Self {
+        self.raw_on_write.insert(command.into(), data.into());
+        self
+    }
+
+    pub fn write_log(&self) -> Arc<Mutex<Vec<String>>> {
+        Arc::clone(&self.writes)
     }
 }
 
 impl Transport for MockTransport {
     fn write(&mut self, command: &str) -> Result<(), InstrumentError> {
-        self.writes.push(command.to_owned());
+        self.last_write = command.to_owned();
+        self.writes.lock().unwrap().push(command.to_owned());
         Ok(())
     }
 
     fn query(&mut self, command: &str) -> Result<String, InstrumentError> {
-        self.writes.push(command.to_owned());
+        self.writes.lock().unwrap().push(command.to_owned());
+        if let Some(response) = self.by_command.get(command) {
+            return Ok(response.clone());
+        }
         let Some((expected, response)) = self.responses.pop_front() else {
             return Err(InstrumentError::Io(format!(
                 "no mock response for {command}"
@@ -422,6 +459,9 @@ impl Transport for MockTransport {
     }
 
     fn read_raw(&mut self) -> Result<Vec<u8>, InstrumentError> {
+        if let Some(data) = self.raw_on_write.get(&self.last_write) {
+            return Ok(data.clone());
+        }
         Ok(Vec::new())
     }
 }
@@ -451,6 +491,7 @@ impl DemoTransport {
             InstrumentKind::Generic => "WiParse,GENERIC-DEMO,DEMO001,1.0".into(),
             InstrumentKind::DebugProbe => "SEGGER,J-Link,DEMO001,demo".into(),
             InstrumentKind::UsbBridge => "FTDI,FT4222H,DEMO001,demo".into(),
+            InstrumentKind::WiparseDongle => "WIPARSE,WiParse-dongle,DEMO001,demo".into(),
         };
         Self {
             kind,

@@ -40,15 +40,19 @@ wiparse
 ├── parse   (line | metrics | file | stdin)
 ├── session (list | show)
 ├── wave    (live | session | export)
-├── scope   (list | shot | wave)  # 本地 VISA 示波器
+├── scope   (list | shot | wave)  # 本地 VISA；`shot` 已废弃，请用 ui instrument capture
 ├── probe   (list | connect | halt | run | reset | status | regs | flash | mem-read | mem-write | erase | speed | rtt-start | rtt-stop | rtt-read)
 ├── bridge  (list | connect | info | spi | i2c | gpio)
+├── dongle  (list | connect | info | scan | ping | recover | write | read | writeread | uart-open | uart-write | uart-read | uart-close)
 └── ui      # 需 GUI：切页 / 面板 / 参数
     ├── state | show | panels | prefs
     ├── serial (open | close | clear | filter | tab | name | browser)
     ├── wave   (open | close | select | browser | bus | cursor | fit)
     ├── calc   (get | set)
-    └── instrument (select | scan | list | overview | connect | connect-all | disconnect | measure | capture | waveform | waveform-source | command)
+    ├── instrument (select | scan | list | overview | connect | connect-all | disconnect | measure | capture | waveform | waveform-source | command)
+    ├── project (list | select | create | add-test | remove-test)
+    ├── report (open)
+    └── test-tool (run | stop)
 ```
 
 仪表页也可用 `wiparse ui instrument ...`；复杂 SCPI/控件仍可用 `api invoke instrument.command`。`instrument.overview` 返回数字孪生面板数据（电源通道 LCD 的 V/A/W、示波器通道、DMM 读数等）。
@@ -107,7 +111,8 @@ wiparse wave live --port COM3 --duration 5 --demo
 wiparse wave session --session-id 1 --format json
 wiparse wave export --session-id 1 --format csv --out wave.csv
 wiparse scope list
-wiparse scope shot --index 0 --out shot.png
+# deprecated: 仅修到写出合法 PNG。3 Series / 仪表页请用：
+wiparse ui instrument capture --id 1
 wiparse scope wave --index 0 --channel CH1 --points 10000
 wiparse api events --since-seq 0
 ```
@@ -160,6 +165,17 @@ wiparse ui instrument waveform --id 1 --channel 1 --points 10000
 wiparse ui instrument command --id 1 --query "*IDN?"
 wiparse ui instrument connect-all
 
+wiparse ui project list
+wiparse ui project select --id default
+wiparse ui project create --id lot-1 --name "Lot 1"
+wiparse ui project add-test --id scope-serial-monitor
+wiparse ui report open --path D:/data/projects/default/tests/scope-serial-monitor/runs/x/artifacts/reports/a.md
+wiparse ui test-tool run --id scope-serial-monitor --preflight true
+wiparse ui test-tool run --id scope-serial-monitor
+wiparse ui test-tool run --id scope-serial-monitor --params "{\"port\":\"COM7\"}"
+wiparse ui test-tool stop
+wiparse ui instrument capture --id 1
+
 wiparse probe list
 wiparse probe connect --resource "probe://jlink/serial=..."
 wiparse probe halt --id 1
@@ -170,6 +186,15 @@ wiparse probe flash --id 1 --path firmware.hex --verify
 wiparse --local probe list
 wiparse --local probe halt --resource "probe://jlink/serial=..." --chip STM32F103C8
 wiparse --local probe status --demo
+
+wiparse dongle list
+wiparse dongle connect --resource "dongle://wiparse/serial=..."
+wiparse dongle scan --id 3
+wiparse dongle ping --id 3 --addr 50
+wiparse --local dongle scan --demo
+wiparse --local dongle info --demo
+wiparse --local dongle scan --resource "dongle://wiparse/serial=..."
+# I2C 优先 WinUSB MI_03，失败再 TCP :1236；DAP 连接时占用 USB，填 --chip 后再 Attach
 
 wiparse bridge list
 wiparse bridge spi --id 2 --write 9F --read-len 4

@@ -20,6 +20,28 @@ fn display_y(y_raw: f64, y_scale: f64, y_offset: f64) -> f64 {
     y_raw * y_scale + y_offset
 }
 
+/// Guarantee finite `min < max` extents before `PlotBounds::from_min_max`.
+fn finite_extent(mut lo: f64, mut hi: f64, fallback: (f64, f64)) -> (f64, f64) {
+    if !lo.is_finite() || !hi.is_finite() {
+        return fallback;
+    }
+    if lo > hi {
+        std::mem::swap(&mut lo, &mut hi);
+    }
+    if (hi - lo).abs() <= f64::EPSILON * lo.abs().max(hi.abs()).max(1.0) {
+        let eps = ((lo.abs() + 1.0) * 1e-9).max(1e-12);
+        lo -= eps;
+        hi += eps;
+    }
+    (lo, hi)
+}
+
+fn plot_bounds_clamped(xmin: f64, xmax: f64, ymin: f64, ymax: f64) -> PlotBounds {
+    let (xmin, xmax) = finite_extent(xmin, xmax, (0.0, 1.0));
+    let (ymin, ymax) = finite_extent(ymin, ymax, (0.0, 1.0));
+    PlotBounds::from_min_max([xmin, ymin], [xmax, ymax])
+}
+
 #[inline]
 fn append_pos(pts: &mut Vec<Pos2>, p: Pos2) {
     if let Some(last) = pts.last() {
@@ -190,9 +212,11 @@ impl ScopeEnvelopePlotItem {
         y_offset: f64,
     ) -> Self {
         let (xmin, xmax, ymin, ymax) = envelope_bounds(columns.as_slice());
-        let cached_bounds = PlotBounds::from_min_max(
-            [xmin, display_y(ymin, y_scale, y_offset)],
-            [xmax, display_y(ymax, y_scale, y_offset)],
+        let cached_bounds = plot_bounds_clamped(
+            xmin,
+            xmax,
+            display_y(ymin, y_scale, y_offset),
+            display_y(ymax, y_scale, y_offset),
         );
         Self {
             columns,
@@ -316,7 +340,7 @@ impl ScopeVectorPlotItem {
             highlighted,
             y_scale,
             y_offset,
-            cached_bounds: PlotBounds::from_min_max([xmin, ymin], [xmax, ymax]),
+            cached_bounds: plot_bounds_clamped(xmin, xmax, ymin, ymax),
         }
     }
 
@@ -583,5 +607,33 @@ mod tests {
                 .any(|p| (p.y - 10.0).abs() < 0.05 && ((p.x - fake_a).abs() < 0.05 || (p.x - fake_b).abs() < 0.05)),
             "must not place the peak at 35%/65% of the bucket"
         );
+    }
+
+    #[test]
+    fn plot_bounds_clamp_empty_inverted_and_nan() {
+        let empty = ScopeEnvelopePlotItem::new(
+            Arc::new(Vec::new()),
+            Color32::WHITE,
+            1.0,
+            "empty",
+            false,
+            1.0,
+            0.0,
+        );
+        let b = empty.bounds();
+        assert!(b.min()[0].is_finite() && b.max()[0].is_finite());
+        assert!(b.max()[0] > b.min()[0]);
+        assert!(b.max()[1] > b.min()[1]);
+
+        let inverted = plot_bounds_clamped(5.0, 1.0, 3.0, -2.0);
+        assert!(inverted.min()[0] < inverted.max()[0]);
+        assert!(inverted.min()[1] < inverted.max()[1]);
+
+        let nan = plot_bounds_clamped(0.0, 1.0, f64::NAN, f64::NAN);
+        assert!(nan.min()[1].is_finite() && nan.max()[1] > nan.min()[1]);
+
+        let flat = plot_bounds_clamped(2.0, 2.0, 0.0, 0.0);
+        assert!(flat.max()[0] > flat.min()[0]);
+        assert!(flat.max()[1] > flat.min()[1]);
     }
 }

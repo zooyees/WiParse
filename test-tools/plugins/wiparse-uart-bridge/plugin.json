@@ -1,0 +1,347 @@
+{
+  "id": "wiparse-uart-bridge",
+  "name": "UART Bridge",
+  "name_zh": "UART 透传桥",
+  "type": "serial",
+  "version": "1.0.0",
+  "entry": "index.mjs",
+  "config": "station.json",
+  "description": "Generic UART byte bridge (WIPARSE-IF CH-UART). TCP :1234 first-packet baud, WinUSB CDC SET_LINE_CODING+DTR, or GUI COM. Capture, send hex/text, expect, recipe.",
+  "capabilities": ["preflight", "run", "stop"],
+  "engines": { "node": ">=18", "wiparse": ">=1.1.14" },
+  "sandbox": {
+    "permissions": ["gui.api", "cli", "serial", "fs.data_root", "network.outbound"]
+  },
+  "outputs": [
+    {
+      "id": "logs",
+      "label": "UART capture",
+      "label_zh": "UART 捕获",
+      "view": "log",
+      "dir": "{artifacts_dir}/logs",
+      "include": ["*.jsonl", "*.txt", "*.bin", "*.hex"]
+    },
+    {
+      "id": "reports",
+      "label": "Report",
+      "label_zh": "报告",
+      "view": "report",
+      "dir": "{artifacts_dir}/reports",
+      "include": ["*.md"]
+    }
+  ],
+  "params": [
+    {
+      "name": "transport",
+      "type": "enum",
+      "path": "channel.transport",
+      "default": "auto",
+      "group": "transport",
+      "group_zh": "传输",
+      "label": "Transport",
+      "label_zh": "传输",
+      "help": "auto = WinUSB MI_01 then TCP :1234. serial = GUI COMx (optional INF). tcp/usb force one path.",
+      "options": [
+        { "value": "auto", "label": "Auto USB then TCP", "label_zh": "自动 USB→TCP" },
+        { "value": "tcp", "label": "TCP :1234", "label_zh": "TCP" },
+        { "value": "usb", "label": "USB WinUSB (MI_01)", "label_zh": "USB WinUSB" },
+        { "value": "serial", "label": "GUI serial COM", "label_zh": "GUI 串口" }
+      ]
+    },
+    {
+      "name": "host",
+      "type": "string",
+      "path": "channel.host",
+      "default": "dap.local",
+      "group": "transport",
+      "group_zh": "传输",
+      "label": "Host",
+      "label_zh": "主机"
+    },
+    {
+      "name": "tcp_port",
+      "type": "number",
+      "path": "channel.tcp_port",
+      "default": 1234,
+      "group": "transport",
+      "group_zh": "传输",
+      "label": "TCP port",
+      "label_zh": "TCP 端口"
+    },
+    {
+      "name": "vid",
+      "type": "string",
+      "path": "channel.vid",
+      "default": "C251",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "USB VID",
+      "label_zh": "USB VID"
+    },
+    {
+      "name": "pid",
+      "type": "string",
+      "path": "channel.pid",
+      "default": "F01A",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "USB PID",
+      "label_zh": "USB PID"
+    },
+    {
+      "name": "fallback_host",
+      "type": "string",
+      "path": "channel.fallback_host",
+      "default": "192.168.137.123",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "Fallback IPv4",
+      "label_zh": "备用 IPv4",
+      "help": "Tried only when Host is empty or dap.local. Clear to disable."
+    },
+    {
+      "name": "usb_mi",
+      "type": "number",
+      "path": "channel.usb_mi",
+      "default": 1,
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "USB interface MI",
+      "label_zh": "USB 接口号"
+    },
+    {
+      "name": "usb_name",
+      "type": "string",
+      "path": "channel.usb_name",
+      "default": "",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "USB name contains",
+      "label_zh": "USB 名称包含"
+    },
+    {
+      "name": "out_ep",
+      "type": "string",
+      "path": "channel.out_ep",
+      "default": "02",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "Bulk OUT EP",
+      "label_zh": "Bulk OUT 端点"
+    },
+    {
+      "name": "in_ep",
+      "type": "string",
+      "path": "channel.in_ep",
+      "default": "83",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "Bulk IN EP",
+      "label_zh": "Bulk IN 端点"
+    },
+    {
+      "name": "cdc_if",
+      "type": "number",
+      "path": "channel.cdc_if",
+      "default": 1,
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "CDC interface index",
+      "label_zh": "CDC 接口号"
+    },
+    {
+      "name": "port",
+      "type": "serial_port",
+      "path": "serial.port",
+      "default": "",
+      "group": "serial",
+      "group_zh": "串口",
+      "label": "COM / tty",
+      "label_zh": "串口",
+      "help": "Only if the host bound CDC ACM / optional COM INF."
+    },
+    {
+      "name": "baud",
+      "type": "number",
+      "path": "serial.baud",
+      "default": 115200,
+      "group": "serial",
+      "group_zh": "串口",
+      "label": "Baud",
+      "label_zh": "波特率",
+      "help": "1200–2000000. TCP first payload is this decimal if 2–7 digits."
+    },
+    {
+      "name": "data_bits",
+      "type": "enum",
+      "path": "serial.data_bits",
+      "default": "8",
+      "group": "serial",
+      "group_zh": "串口",
+      "advanced": true,
+      "label": "Data bits",
+      "label_zh": "数据位",
+      "options": ["5", "6", "7", "8"]
+    },
+    {
+      "name": "parity",
+      "type": "enum",
+      "path": "serial.parity",
+      "default": "none",
+      "group": "serial",
+      "group_zh": "串口",
+      "advanced": true,
+      "label": "Parity",
+      "label_zh": "校验",
+      "options": [
+        { "value": "none", "label": "None", "label_zh": "无" },
+        { "value": "odd", "label": "Odd", "label_zh": "奇" },
+        { "value": "even", "label": "Even", "label_zh": "偶" }
+      ]
+    },
+    {
+      "name": "stop_bits",
+      "type": "enum",
+      "path": "serial.stop_bits",
+      "default": "1",
+      "group": "serial",
+      "group_zh": "串口",
+      "advanced": true,
+      "label": "Stop bits",
+      "label_zh": "停止位",
+      "options": ["1", "1.5", "2"]
+    },
+    {
+      "name": "dtr",
+      "type": "boolean",
+      "path": "serial.dtr",
+      "default": "true",
+      "group": "serial",
+      "group_zh": "串口",
+      "label": "DTR (USB owns RX)",
+      "label_zh": "DTR（USB 占 RX）",
+      "help": "ICD: DTR=1 USB owns target RX; DTR=0 lets TCP :1234 take RX. Close must drop DTR."
+    },
+    {
+      "name": "rts",
+      "type": "boolean",
+      "path": "serial.rts",
+      "default": "false",
+      "group": "serial",
+      "group_zh": "串口",
+      "advanced": true,
+      "label": "RTS",
+      "label_zh": "RTS"
+    },
+    {
+      "name": "send_baud_cmd",
+      "type": "boolean",
+      "path": "channel.send_baud_cmd",
+      "default": "true",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "TCP first-packet baud",
+      "label_zh": "TCP 首包波特率"
+    },
+    {
+      "name": "op",
+      "type": "enum",
+      "path": "run.op",
+      "default": "capture",
+      "group": "action",
+      "group_zh": "动作",
+      "label": "Operation",
+      "label_zh": "操作",
+      "options": [
+        { "value": "capture", "label": "Capture", "label_zh": "捕获" },
+        { "value": "discover", "label": "Discover", "label_zh": "发现" },
+        { "value": "send", "label": "Send", "label_zh": "发送" },
+        { "value": "ping", "label": "Open/close", "label_zh": "开闭自检" },
+        { "value": "recipe", "label": "Recipe", "label_zh": "配方" }
+      ]
+    },
+    {
+      "name": "duration_s",
+      "type": "number",
+      "path": "run.duration_s",
+      "default": 10,
+      "group": "action",
+      "group_zh": "动作",
+      "label": "Capture seconds",
+      "label_zh": "捕获秒数",
+      "help": "0 = until Hub Stop."
+    },
+    {
+      "name": "send_text",
+      "type": "text",
+      "path": "run.send_text",
+      "default": "",
+      "group": "action",
+      "group_zh": "动作",
+      "label": "Send text",
+      "label_zh": "发送文本"
+    },
+    {
+      "name": "send_hex",
+      "type": "string",
+      "path": "run.send_hex",
+      "default": "",
+      "group": "action",
+      "group_zh": "动作",
+      "label": "Send hex",
+      "label_zh": "发送 hex"
+    },
+    {
+      "name": "expect_contains",
+      "type": "string",
+      "path": "run.expect_contains",
+      "default": "",
+      "group": "action",
+      "group_zh": "动作",
+      "label": "Expect contains",
+      "label_zh": "期望包含"
+    },
+    {
+      "name": "timestamp",
+      "type": "boolean",
+      "path": "run.timestamp",
+      "default": "true",
+      "group": "action",
+      "group_zh": "动作",
+      "advanced": true,
+      "label": "Timestamp log",
+      "label_zh": "时间戳日志"
+    },
+    {
+      "name": "recipe",
+      "type": "json",
+      "path": "run.recipe",
+      "default": "[]",
+      "group": "action",
+      "group_zh": "动作",
+      "label": "Recipe",
+      "label_zh": "配方",
+      "help": "[{send_text|send_hex, expect_contains, wait_ms}, ...]"
+    },
+    {
+      "name": "connect_timeout_ms",
+      "type": "number",
+      "path": "channel.connect_timeout_ms",
+      "default": 4000,
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "Connect timeout (ms)",
+      "label_zh": "连接超时 ms"
+    }
+  ]
+}

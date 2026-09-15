@@ -2,9 +2,9 @@
 
 **[中文](#中文)** · **[English](#english)**
 
-无线充电（Qi）测试与工位工具。当前版本 **1.1.13**（以工作区 `Cargo.toml` 的 `workspace.package.version` 为准）。
+无线充电（Qi）测试与工位工具。当前版本 **1.1.24**（以工作区 `Cargo.toml` 的 `workspace.package.version` 为准）。
 
-Wireless charging (Qi) lab and station utility. Current version **1.1.13**.
+Wireless charging (Qi) lab and station utility. Current version **1.1.24**.
 
 许可：**Proprietary**。本仓库不是通用示波器软件，也不是面向公网的服务。
 
@@ -32,7 +32,7 @@ WiParse 面向 **Qi 无线充电研发台、产线工位和闭环测试**：把�
 
 - 看清 ASK / FSK 报文，并按 Qi 包名做协议解析（例如 ID / CE / RP，而不是把某个 header 写死进引擎）。
 - 在报文出现的上升沿停示波器、截图、读取波形源文件（ISF），形成可复查的证据包。
-- 在仪表页 **设备总览** 里看数字孪生工位：电源按真实通道画 LCD（实测 V/A/W），示波器 / 负载 / 万用表 / 探针 / FT4222 同步前面板状态。
+- 在仪表页 **设备总览** 里看数字孪生工位：电源按真实通道画 LCD（实测 V/A/W），示波器 / 负载 / 万用表 / 探针 / FT4222 / WiParse-dongle 同步前面板状态。
 - 离线打开 Tek / Rigol 波形，做 I2C / SPI / UART / I2S / **DDSSS** 总线解码。
 - 用 Node 插件把“预检 / 运行 / 停止”做成产线配方，而不是把示波器型号写进 GUI。
 
@@ -53,7 +53,7 @@ WiParse 面向 **Qi 无线充电研发台、产线工位和闭环测试**：把�
 #### 运行环境
 
 - **主平台：Windows x64**（MSVC 链接器；日常产物为 `dist\WiParse.exe` / `dist\WiParse-CLI.exe`）。
-- 仪表：本机需可用的 **VISA**（NI-VISA / TekVISA 等）；支持示波器、直流电源、电子负载、万用表、通用 SCPI，以及 USB 调试探针（J-Link / ST-Link / CMSIS-DAP）与 FT4222 桥。
+- 仪表：本机需可用的 **VISA**（NI-VISA / TekVISA 等）；支持示波器、直流电源、电子负载、万用表、通用 SCPI，以及 USB 调试探针（J-Link / ST-Link / CMSIS-DAP）、WiParse-dongle（DAP/UART/I2C）与 FT4222 桥。
 - Testing Hub / MCP：需要 **Node.js 18+**。
 - 语言：界面中/英；设置菜单可切换，配置键 `ui.language`。
 - 主题：深色 / 浅色，`ui.theme`。
@@ -117,6 +117,7 @@ GUI 顶栏标签（设置菜单可显隐各页）：
 | 电子负载 | 模式与测量 |
 | 万用表 | 功能 / 量程 / NPLC |
 | 调试探针 | J-Link / ST-Link / CMSIS-DAP（probe-rs USB，**无需** JLinkARM.dll）：Halt/Run/复位、寄存器、擦除、速度、烧录、内存、RTT |
+| WiParse-dongle | 一块硬件上的 DAP / UART / I2C（VID `0xC251` PID `0xF01A`）：USB CMSIS-DAP；UART/I2C 优先 WinUSB，失败再 TCP `:1234` / `:1236` |
 | USB 桥 | FT4222 SPI/I2C/GPIO。扫描不需 DLL；事务从 exe 旁 / `vendor/ftdi` 加载 `LibFT4222.dll` |
 | 通用 SCPI | 原始命令（查询以 `?` 结尾） |
 
@@ -158,9 +159,9 @@ Node 插件宿主。左侧 **插件 | 市场** 分段：
 
 #### 4.6 测试报告
 
-按文件夹浏览 Markdown；右侧轻量预览（标题、表格、代码块、图片）。可用系统关联程序打开原文件。不在进程内渲染完整 HTML/PDF。
+顶栏选 **项目**（`{data_root}/projects/{id}`）。树是三层：**测试用例**（`tests/{id}`，一般用报告名称 / `file_prefix`）→ **测试结果**（每次 Hub `run` 的 `runs/{stamp}`）→ 该次产物分组（波形 / 报告 / 截图 capture / 其它，来自插件 `outputs[]`）。点 Markdown、波形、图片、文本在本页预览；PDF/HTML 用系统程序打开。单击波形替换当前文档，Ctrl/Cmd 叠加。右键可系统打开或在文件夹中显示；用例标题右键可从项目移除（不删磁盘文件）。不在进程内渲染完整 HTML/PDF。
 
-插件生成的 `summary_md` 与 PNG 共置报告目录，MD 用相对路径引用波形图；`file_prefix` 同时决定 ISF / PDF / PNG 与摘要文件名。
+运行仍在集成测试。第一次 `run` 会把该用例写入 `project.json` 的 `tests[]`。磁盘上已有、但 JSON 未登记的用例目录也会出现在树上。旧 `evidence/` 目录不再作为默认索引。
 
 #### 4.7 计算器
 
@@ -460,8 +461,8 @@ Tabs: **Serial Tool** · **Instrument Control** · **Waveform Analysis** · **Da
 | Instruments | Cards by kind (scope / DC source / load / DMM / debug probe / FT4222 / generic SCPI). Default **device overview** twin with live LCD (PSU channels show measured V/A/W). Connect-all on the discovery list. Scope: stop, PNG, CURVe, **waveform source (ISF)**. `waveform_source_dir` is separate from the analysis browser dir |
 | Waveform | Offline ISF / Tek WFM / CSV / Rigol WFM; pan/cursors; bus decode including DDSSS |
 | Data analysis | Frame header + up to 8 filter series from Live serial or files; WIDA cache + LOD |
-| Testing Hub | Plugins \| Market; `preflight` / `run` / `stop`; generic `device` params (no scope type hardcoded in the GUI) |
-| Test report | Markdown browser + light preview (not HTML/PDF) |
+| Testing Hub | Plugins \| Market; `preflight` / `run` / `stop`; generic `device` params (no scope type hardcoded in the GUI). Shares the active **project** with Test Report (`apps.project.active_id` / `--project`) |
+| Test report | Project playback index: test case → result (`runs/{stamp}`) → wave / report / capture files. Markdown, waveform, image, and text preview in-pane; PDF/HTML open in the system viewer. Not an in-app HTML/PDF engine |
 | Calculator | LC, band-pass, Q from peak decay, RC, CRC, ASCII/radix/scientific converters |
 
 ### 5. How to use

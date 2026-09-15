@@ -299,6 +299,27 @@ async function waitNewIsf(dir, filename, sinceMs, timeoutMs) {
   return newestIsf(dir, stem, sinceMs)?.path ?? null;
 }
 
+/** Wait until `instrument.capture` finishes writing PNG (HTTP returns accepted immediately). */
+async function waitFile(file, timeoutMs, sinceMs = 0) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    if (fs.existsSync(stopFile)) return null;
+    try {
+      const st = fs.statSync(file);
+      if (st.size > 32 && st.mtimeMs >= sinceMs - 2000) return file;
+    } catch {
+      /* not yet */
+    }
+    await sleep(pollMs);
+  }
+  try {
+    if (fs.existsSync(file) && fs.statSync(file).size > 32) return file;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 async function resolveScope(depth = 0) {
   const list = await invoke("instrument.list");
   const devices = list.data?.devices || [];
@@ -334,7 +355,11 @@ function scopeSpec() {
   };
 }
 
-/** Incremental live log cursor — avoids re-fetching thousands of lines each poll. */
+/** Incremental live log cursor — avoids re-fetching thousands of lines each poll.
+ *  `from_row` is an absolute session sequence. After the 5000-line FIFO wraps,
+ *  WiParse still pages by that seq (`total` / `next_row` keep growing; `dropped`
+ *  is how many lines left the window).
+ */
 async function liveLinesSince(fromRow, limit = 200) {
   const chunk = await invoke("log.lines.get", {
     tab_id: 0,
@@ -343,7 +368,8 @@ async function liveLinesSince(fromRow, limit = 200) {
   });
   const lines = (chunk.data?.lines || []).map(String);
   const total = Number(chunk.data?.total ?? fromRow + lines.length);
-  return { lines, total, next: fromRow + lines.length };
+  const next = Number(chunk.data?.next_row ?? fromRow + lines.length);
+  return { lines, total, next };
 }
 
 async function waitTrigger(cycle, scopeId) {
@@ -419,9 +445,18 @@ async function startScopeAndSerial(deviceId) {
 }
 
 async function captureShotAndIsf(deviceId, shotPath, filename) {
-  const shot = await invoke("scope.shot", { index: 0, out: shotPath }, cfg.timing.shot_timeout_ms);
-  const shotFile = shot.data?.path || (fs.existsSync(shotPath) ? shotPath : null);
+  fs.mkdirSync(path.dirname(shotPath), { recursive: true });
   const sinceMs = Date.now();
+  // Prefer instrument.capture (HARDCopy PNG). scope.shot is deprecated local-VISA.
+  const shot = await invoke(
+    "instrument.capture",
+    { device_id: deviceId, path: shotPath, wait: true },
+    30_000,
+  );
+  if (shot.ok === false) {
+    throw new Error(shot.error || "instrument.capture failed");
+  }
+  const shotFile = await waitFile(shotPath, cfg.timing.shot_timeout_ms, sinceMs);
   const src = await invoke("instrument.waveform_source", {
     device_id: deviceId,
     dir: outDir,
@@ -545,6 +580,8 @@ function mdRelPath(fromFile, target) {
   if (!target) return "";
   const rel = path.relative(path.dirname(fromFile), target);
   if (!rel) return "";
+  // Reports live in artifacts/reports/; shots are siblings. Keep POSIX
+  // separators so the Test Report preview can resolve ../shots/*.png.
   return rel.split(path.sep).join("/");
 }
 
@@ -1142,6 +1179,8 @@ if (isDirect) {
         pluginDir: here,
         args: {},
         dataRoot: process.env.WIPARSE_DATA_ROOT,
+        project: process.env.WIPARSE_PROJECT,
+        testId: process.env.WIPARSE_TEST_ID,
         configPath: pth,
         lifecycle,
         stamp,

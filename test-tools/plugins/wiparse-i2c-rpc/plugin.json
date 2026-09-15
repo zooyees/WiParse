@@ -1,0 +1,282 @@
+{
+  "id": "wiparse-i2c-rpc",
+  "name": "I2C RPC Master",
+  "name_zh": "I2C 文本 RPC",
+  "type": "instrument",
+  "version": "1.0.0",
+  "entry": "index.mjs",
+  "config": "station.json",
+  "description": "Generic I2C master text RPC (WIPARSE-IF CH-I2C). TCP :1236 or USB MI_03. HELP/PING/SCAN/SPEED/TIMEOUT/RECOVER/WRITE/READ/WRITEREAD plus JSON or line recipes.",
+  "capabilities": ["preflight", "run", "stop"],
+  "engines": { "node": ">=18", "wiparse": ">=1.1.14" },
+  "sandbox": {
+    "permissions": ["gui.api", "cli", "serial", "fs.data_root", "network.outbound"]
+  },
+  "outputs": [
+    {
+      "id": "logs",
+      "label": "RPC log",
+      "label_zh": "RPC 日志",
+      "view": "log",
+      "dir": "{artifacts_dir}/logs",
+      "include": ["*.jsonl", "*.json", "*.txt"]
+    },
+    {
+      "id": "reports",
+      "label": "Report",
+      "label_zh": "报告",
+      "view": "report",
+      "dir": "{artifacts_dir}/reports",
+      "include": ["*.md"]
+    }
+  ],
+  "params": [
+    {
+      "name": "transport",
+      "type": "enum",
+      "path": "channel.transport",
+      "default": "auto",
+      "group": "transport",
+      "group_zh": "传输",
+      "label": "Transport",
+      "label_zh": "传输",
+      "help": "auto = WinUSB MI_03 then TCP :1236. Line protocol is identical on USB and TCP. DTR is ignored.",
+      "options": [
+        { "value": "auto", "label": "Auto USB then TCP", "label_zh": "自动 USB→TCP" },
+        { "value": "tcp", "label": "TCP :1236", "label_zh": "TCP" },
+        { "value": "usb", "label": "USB WinUSB (MI_03)", "label_zh": "USB WinUSB" },
+        { "value": "serial", "label": "GUI serial (CDC ACM)", "label_zh": "GUI 串口" }
+      ]
+    },
+    {
+      "name": "host",
+      "type": "string",
+      "path": "channel.host",
+      "default": "dap.local",
+      "group": "transport",
+      "group_zh": "传输",
+      "label": "Host",
+      "label_zh": "主机"
+    },
+    {
+      "name": "tcp_port",
+      "type": "number",
+      "path": "channel.tcp_port",
+      "default": 1236,
+      "group": "transport",
+      "group_zh": "传输",
+      "label": "TCP port",
+      "label_zh": "TCP 端口"
+    },
+    {
+      "name": "vid",
+      "type": "string",
+      "path": "channel.vid",
+      "default": "C251",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "USB VID",
+      "label_zh": "USB VID"
+    },
+    {
+      "name": "pid",
+      "type": "string",
+      "path": "channel.pid",
+      "default": "F01A",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "USB PID",
+      "label_zh": "USB PID"
+    },
+    {
+      "name": "fallback_host",
+      "type": "string",
+      "path": "channel.fallback_host",
+      "default": "192.168.137.123",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "Fallback IPv4",
+      "label_zh": "备用 IPv4",
+      "help": "Tried only when Host is empty or dap.local. Clear to disable."
+    },
+    {
+      "name": "usb_mi",
+      "type": "number",
+      "path": "channel.usb_mi",
+      "default": 3,
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "USB interface MI",
+      "label_zh": "USB 接口号"
+    },
+    {
+      "name": "usb_name",
+      "type": "string",
+      "path": "channel.usb_name",
+      "default": "",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "USB name contains",
+      "label_zh": "USB 名称包含"
+    },
+    {
+      "name": "out_ep",
+      "type": "string",
+      "path": "channel.out_ep",
+      "default": "03",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "Bulk OUT EP",
+      "label_zh": "Bulk OUT 端点"
+    },
+    {
+      "name": "in_ep",
+      "type": "string",
+      "path": "channel.in_ep",
+      "default": "84",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "Bulk IN EP",
+      "label_zh": "Bulk IN 端点"
+    },
+    {
+      "name": "port",
+      "type": "serial_port",
+      "path": "serial.port",
+      "default": "",
+      "group": "serial",
+      "group_zh": "串口",
+      "advanced": true,
+      "label": "COM / ttyACM",
+      "label_zh": "串口"
+    },
+    {
+      "name": "speed_hz",
+      "type": "number",
+      "path": "i2c.speed_hz",
+      "default": 400000,
+      "group": "bus",
+      "group_zh": "总线",
+      "label": "Speed (Hz)",
+      "label_zh": "速率 Hz",
+      "help": "10000–1000000. Applied via SPEED before the operation when > 0."
+    },
+    {
+      "name": "timeout_ms",
+      "type": "number",
+      "path": "i2c.timeout_ms",
+      "default": 50,
+      "group": "bus",
+      "group_zh": "总线",
+      "label": "I2C timeout (ms)",
+      "label_zh": "I2C 超时 ms",
+      "help": "1–1000, clamped by the dongle."
+    },
+    {
+      "name": "apply_bus",
+      "type": "boolean",
+      "path": "i2c.apply_bus",
+      "default": "true",
+      "group": "bus",
+      "group_zh": "总线",
+      "label": "Apply SPEED/TIMEOUT",
+      "label_zh": "下发 SPEED/TIMEOUT"
+    },
+    {
+      "name": "op",
+      "type": "enum",
+      "path": "run.op",
+      "default": "scan",
+      "group": "action",
+      "group_zh": "动作",
+      "label": "Operation",
+      "label_zh": "操作",
+      "options": [
+        { "value": "scan", "label": "SCAN", "label_zh": "扫描" },
+        { "value": "discover", "label": "Discover", "label_zh": "发现" },
+        { "value": "help", "label": "HELP", "label_zh": "帮助" },
+        { "value": "ping", "label": "PING", "label_zh": "探针" },
+        { "value": "read", "label": "READ", "label_zh": "读" },
+        { "value": "write", "label": "WRITE", "label_zh": "写" },
+        { "value": "writeread", "label": "WRITEREAD", "label_zh": "写后读" },
+        { "value": "speed", "label": "SPEED", "label_zh": "速率" },
+        { "value": "timeout", "label": "TIMEOUT", "label_zh": "超时" },
+        { "value": "recover", "label": "RECOVER", "label_zh": "总线恢复" },
+        { "value": "recipe", "label": "Recipe", "label_zh": "配方" },
+        { "value": "script", "label": "Script text", "label_zh": "脚本文本" }
+      ]
+    },
+    {
+      "name": "addr",
+      "type": "string",
+      "path": "run.addr",
+      "default": "50",
+      "group": "action",
+      "group_zh": "动作",
+      "label": "7-bit address",
+      "label_zh": "7 位地址",
+      "help": "Hex byte: 50, 0A, or 0x50."
+    },
+    {
+      "name": "length",
+      "type": "number",
+      "path": "run.length",
+      "default": 2,
+      "group": "action",
+      "group_zh": "动作",
+      "label": "Read length n",
+      "label_zh": "读长度 n",
+      "help": "Decimal 1–256."
+    },
+    {
+      "name": "data_hex",
+      "type": "string",
+      "path": "run.data_hex",
+      "default": "",
+      "group": "action",
+      "group_zh": "动作",
+      "label": "Write data (hex)",
+      "label_zh": "写数据 hex"
+    },
+    {
+      "name": "recipe",
+      "type": "json",
+      "path": "run.recipe",
+      "default": "[]",
+      "group": "script",
+      "group_zh": "脚本",
+      "label": "Recipe JSON",
+      "label_zh": "配方 JSON",
+      "help": "[{\"cmd\":\"SCAN\"},{\"cmd\":\"READ\",\"addr\":\"50\",\"len\":2},{\"cmd\":\"WRITEREAD\",\"addr\":\"50\",\"data\":\"00\",\"len\":2}]"
+    },
+    {
+      "name": "script",
+      "type": "text",
+      "path": "run.script",
+      "default": "",
+      "group": "script",
+      "group_zh": "脚本",
+      "label": "Script (one cmd/line)",
+      "label_zh": "脚本（一行一条）",
+      "help": "Raw ICD lines. Comments start with #."
+    },
+    {
+      "name": "connect_timeout_ms",
+      "type": "number",
+      "path": "channel.connect_timeout_ms",
+      "default": 4000,
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "Connect timeout (ms)",
+      "label_zh": "连接超时 ms"
+    }
+  ]
+}

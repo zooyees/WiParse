@@ -791,6 +791,14 @@ impl LogTabPage {
         self.backend.line_count()
     }
 
+    /// Live FIFO evictions since last clear. Zero for file tabs.
+    pub fn dropped(&self) -> usize {
+        match &self.backend {
+            TabBackend::Live(s) => s.dropped(),
+            _ => 0,
+        }
+    }
+
     pub fn lines_slice(&self, from: usize, limit: usize) -> Vec<String> {
         let total = self.line_count();
         let start = from.min(total);

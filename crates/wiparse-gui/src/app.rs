@@ -234,6 +234,33 @@ impl WiParseApp {
         }
     }
 
+    fn open_report_artifact(
+        &mut self,
+        path: std::path::PathBuf,
+        view: wiparse_core::project::ArtifactView,
+        overlay: bool,
+    ) {
+        use wiparse_core::project::ArtifactView;
+        match view {
+            ArtifactView::Log => {
+                self.test_report.open_in_pane(path, view, overlay, self.lang);
+            }
+            ArtifactView::Wave => {
+                let _ = self.waveform.open_path_maybe_overlay(&path, self.lang, overlay);
+                if self.active != MainTab::TestReport {
+                    self.show_waveform = true;
+                    self.active = MainTab::Waveform;
+                }
+            }
+            ArtifactView::Report => {
+                self.test_report.open_markdown(path, self.lang);
+            }
+            ArtifactView::External => {
+                let _ = crate::test_report::open_path_external(&path);
+            }
+        }
+    }
+
     fn persist_ui_prefs(&mut self) {
         self.cfg.ui.panels.serial_tool = self.show_serial;
         self.cfg.ui.panels.calculator = self.show_calculator;
@@ -961,13 +988,15 @@ impl eframe::App for WiParseApp {
         self.serial.drain_events_with_bus(live_filters, Some(&self.api));
         // Data Analysis serial-live: pull new live lines after serial drain.
         if self.data_analysis.wants_live_serial() {
-            let total = self.serial.live_line_count();
-            self.data_analysis.prepare_live_poll(total);
+            let dropped = self.serial.live_dropped();
+            let total = self.serial.live_abs_len();
+            self.data_analysis.prepare_live_poll(total, dropped);
             let from = self.data_analysis.live_line_cursor();
             if total > from {
                 let lines = self.serial.live_lines_since(from, total - from);
+                let next = from.max(dropped).saturating_add(lines.len());
                 self.data_analysis
-                    .ingest_live_lines(&lines, total, self.lang);
+                    .ingest_live_lines(&lines, next, self.lang);
             }
         }
         for tag in self.serial.take_scope_captures() {
@@ -1220,7 +1249,38 @@ impl eframe::App for WiParseApp {
                     self.data_analysis.clear_live_plot_dirty();
                 }
                 MainTab::TestReport if self.show_test_report => {
-                    self.test_report.ui(ui, self.lang, &t);
+                    let plugins = self.test_tool.plugin_metas();
+                    let running = self.test_tool.running_test_id().map(str::to_owned);
+                    let data_root = self.test_tool.data_root_path();
+                    let hub_project = self.test_tool.current_project_id();
+                    let hub_epoch = self.test_tool.artifact_epoch();
+                    match self.test_report.ui(
+                        ui,
+                        self.lang,
+                        &t,
+                        &data_root,
+                        &plugins,
+                        running.as_deref(),
+                        &hub_project,
+                        hub_epoch,
+                        Some(&mut self.waveform),
+                    ) {
+                        crate::test_report::ReportAction::None => {}
+                        crate::test_report::ReportAction::GoHub => {
+                            self.show_test_tool = true;
+                            self.active = MainTab::TestTool;
+                        }
+                        crate::test_report::ReportAction::ProjectChanged(id) => {
+                            self.test_tool.set_project_id(id);
+                        }
+                        crate::test_report::ReportAction::Open {
+                            path,
+                            view,
+                            overlay,
+                        } => {
+                            self.open_report_artifact(path, view, overlay);
+                        }
+                    }
                 }
                 MainTab::TestTool if self.show_test_tool => {
                     self.test_tool.ui(

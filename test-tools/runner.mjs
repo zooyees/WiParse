@@ -17,6 +17,7 @@ import {
   checkEngines,
   collectOutputFiles,
   ensureProjectScaffold,
+  ensureTestInProject,
   loadOverlayFile,
   loadStationConfig,
   makeStamp,
@@ -29,6 +30,7 @@ import {
   resolveLifecycle,
   resolveProjectLayout,
   sanitizeId,
+  sanitizeTestId,
   truthy,
   validatePluginManifest,
   writeRunJson,
@@ -94,6 +96,8 @@ function parseArgs(argv) {
       out.project = argv[++i];
     } else if (a === "--stamp" && argv[i + 1]) {
       out.stamp = argv[++i];
+    } else if ((a === "--test-id" || a === "--test_id") && argv[i + 1]) {
+      out.testId = argv[++i];
     } else if (a === "--help" || a === "-h") {
       out.help = true;
     } else {
@@ -239,7 +243,7 @@ function printHelp() {
   node runner.mjs --list [--type smoke] [--json]
   node runner.mjs --plugin <id> [--lifecycle preflight|run|stop]
                   [--cli path] [--url url] [--data-root dir]
-                  [--project id] [--stamp yyyyMMdd_HHmmss]
+                  [--project id] [--test-id id] [--stamp yyyyMMdd_HHmmss]
                   [--overlay file.json]
                   [--marketplace-dir dir] [--plugins-root dir]
                   [-- --port COM3]
@@ -433,15 +437,26 @@ async function main() {
     lifecycle === "run"
       ? String(opts.stamp || process.env.WIPARSE_STAMP || makeStamp())
       : "";
+  const testId = sanitizeTestId(
+    opts.testId || args.file_prefix || process.env.WIPARSE_TEST_ID,
+    plugin.id
+  );
   const layout = resolveProjectLayout({
     dataRoot,
     project,
-    testId: plugin.id,
+    testId,
+    pluginId: plugin.id,
     stamp,
     lifecycle,
   });
   try {
-    ensureProjectScaffold(layout);
+    if (lifecycle === "run") {
+      ensureTestInProject(layout, plugin.id, {
+        name: String(args.file_prefix || testId).trim(),
+      });
+    } else {
+      ensureProjectScaffold(layout);
+    }
     if (lifecycle === "run" && layout.artifacts_dir) {
       fs.mkdirSync(layout.artifacts_dir, { recursive: true });
     }
@@ -474,7 +489,7 @@ async function main() {
   };
 
   console.log(
-    `[runner] plugin=${plugin.id} lifecycle=${lifecycle} type=${plugin.type} source=${plugin.source || "bundled"} data_root=${dataRoot} project=${project}${stamp ? ` stamp=${stamp}` : ""}`
+    `[runner] plugin=${plugin.id} lifecycle=${lifecycle} type=${plugin.type} source=${plugin.source || "bundled"} data_root=${dataRoot} project=${project} test_id=${testId}${stamp ? ` stamp=${stamp}` : ""}`
   );
 
   try {

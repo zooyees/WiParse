@@ -58,6 +58,12 @@ pub fn handle(host: &mut UiHost<'_>, method: &str, params: &Value) -> Option<(In
         "ui.calc.set" => Some((host.calculator.api_set(params), false)),
         "ui.instrument.select" => Some((host.instruments.api_select(params), false)),
         "ui.report.browser" => Some((host.test_report.api_set_browser_dir(params), true)),
+        "ui.report.open" => Some(ui_report_open(host, params)),
+        "ui.project.list" => Some((ui_project_list(host), false)),
+        "ui.project.select" => Some(ui_project_select(host, params)),
+        "ui.project.create" => Some(ui_project_create(host, params)),
+        "ui.project.add_test" => Some(ui_project_add_test(host, params)),
+        "ui.project.remove_test" => Some(ui_project_remove_test(host, params)),
         "ui.test_tool.browser" => Some((host.test_tool.api_set_plugins_dir(params), true)),
         "ui.test_tool.run" => Some((host.test_tool.api_run(params), false)),
         "ui.test_tool.stop" => Some((host.test_tool.api_stop(), false)),
@@ -232,4 +238,142 @@ fn ui_prefs(host: &mut UiHost<'_>, params: &Value) -> (InvokeReply, bool) {
         return (err("ui.prefs", "set language, theme, and/or debug"), false);
     }
     (ok("ui.prefs", snapshot(host)), true)
+}
+
+fn project_ctx<'a>(
+    host: &'a mut UiHost<'_>,
+) -> (std::path::PathBuf, Vec<wiparse_core::project::PluginMeta>) {
+    (host.test_tool.data_root_path(), host.test_tool.plugin_metas())
+}
+
+fn ui_project_list(host: &mut UiHost<'_>) -> InvokeReply {
+    let data_root = host.test_tool.data_root_path();
+    let plugins = host.test_tool.plugin_metas();
+    let id = host.test_report.project_id().to_owned();
+    let _ = host.test_report.select_project(&data_root, &plugins, &id);
+    let docs = wiparse_core::project::list_projects(&data_root);
+    let list: Vec<Value> = docs
+        .iter()
+        .map(|d| {
+            json!({
+                "id": d.id,
+                "name": d.name,
+                "tests": d.tests.iter().map(|t| &t.id).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    ok(
+        "ui.project.list",
+        json!({
+            "active_id": host.test_report.project_id(),
+            "projects": list,
+            "tree": host.test_report.api_snapshot(),
+        }),
+    )
+}
+
+fn ui_project_select(host: &mut UiHost<'_>, params: &Value) -> (InvokeReply, bool) {
+    let Some(id) = params.get("id").and_then(|v| v.as_str()) else {
+        return (err("ui.project.select", "missing id"), false);
+    };
+    let (data_root, plugins) = project_ctx(host);
+    match host.test_report.select_project(&data_root, &plugins, id) {
+        Ok(id) => {
+            host.test_tool.set_project_id(id);
+            (ok("ui.project.select", host.test_report.api_snapshot()), true)
+        }
+        Err(e) => (err("ui.project.select", &e), false),
+    }
+}
+
+fn ui_project_create(host: &mut UiHost<'_>, params: &Value) -> (InvokeReply, bool) {
+    let Some(id) = params.get("id").and_then(|v| v.as_str()) else {
+        return (err("ui.project.create", "missing id"), false);
+    };
+    let name = params.get("name").and_then(|v| v.as_str());
+    let (data_root, plugins) = project_ctx(host);
+    match host.test_report.create_project(&data_root, &plugins, id, name) {
+        Ok(id) => {
+            host.test_tool.set_project_id(id);
+            (ok("ui.project.create", host.test_report.api_snapshot()), true)
+        }
+        Err(e) => (err("ui.project.create", &e), false),
+    }
+}
+
+fn ui_project_add_test(host: &mut UiHost<'_>, params: &Value) -> (InvokeReply, bool) {
+    let Some(id) = params
+        .get("id")
+        .or_else(|| params.get("plugin"))
+        .and_then(|v| v.as_str())
+    else {
+        return (err("ui.project.add_test", "missing id"), false);
+    };
+    let (data_root, plugins) = project_ctx(host);
+    match host.test_report.add_hub_test(&data_root, &plugins, id) {
+        Ok(()) => (ok("ui.project.add_test", host.test_report.api_snapshot()), true),
+        Err(e) => (err("ui.project.add_test", &e), false),
+    }
+}
+
+fn ui_project_remove_test(host: &mut UiHost<'_>, params: &Value) -> (InvokeReply, bool) {
+    let Some(id) = params
+        .get("id")
+        .or_else(|| params.get("plugin"))
+        .and_then(|v| v.as_str())
+    else {
+        return (err("ui.project.remove_test", "missing id"), false);
+    };
+    let (data_root, plugins) = project_ctx(host);
+    match host.test_report.remove_hub_test(&data_root, &plugins, id) {
+        Ok(()) => (
+            ok("ui.project.remove_test", host.test_report.api_snapshot()),
+            true,
+        ),
+        Err(e) => (err("ui.project.remove_test", &e), false),
+    }
+}
+
+fn ui_report_open(host: &mut UiHost<'_>, params: &Value) -> (InvokeReply, bool) {
+    let Some(path) = params.get("path").and_then(|v| v.as_str()) else {
+        return (err("ui.report.open", "missing path"), false);
+    };
+    let view = params.get("view").and_then(|v| v.as_str());
+    let overlay = params.get("overlay").and_then(|v| v.as_bool()).unwrap_or(false);
+    let data_root = host.test_tool.data_root_path();
+    let pb = std::path::Path::new(path);
+    match host.test_report.prepare_open(&data_root, pb, view) {
+        Ok((path, view)) => {
+            use wiparse_core::project::ArtifactView;
+            let meta = json!({
+                "path": path.display().to_string(),
+                "view": view.as_str(),
+                "overlay": overlay,
+                "project": host.test_report.project_id(),
+            });
+            match view {
+                ArtifactView::Log => {
+                    *host.show_test_report = true;
+                    *host.active = MainTab::TestReport;
+                    host.test_report.open_in_pane(path, view, overlay, *host.lang);
+                }
+                ArtifactView::Wave => {
+                    let _ = host.waveform.open_path_maybe_overlay(&path, *host.lang, overlay);
+                    *host.show_test_report = true;
+                    *host.active = MainTab::TestReport;
+                    host.test_report.open_in_pane(path, view, overlay, *host.lang);
+                }
+                ArtifactView::Report => {
+                    *host.show_test_report = true;
+                    *host.active = MainTab::TestReport;
+                    host.test_report.open_markdown(path, *host.lang);
+                }
+                ArtifactView::External => {
+                    let _ = crate::test_report::open_path_external(&path);
+                }
+            }
+            (ok("ui.report.open", meta), true)
+        }
+        Err(e) => (err("ui.report.open", &e), false),
+    }
 }

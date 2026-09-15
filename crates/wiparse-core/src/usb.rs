@@ -6,6 +6,8 @@ const VID_SEGGER: u16 = 0x1366;
 const VID_ST: u16 = 0x0483;
 const VID_FTDI: u16 = 0x0403;
 const PID_FT4222: u16 = 0x601C;
+const VID_WIPARSE: u16 = 0xC251;
+const PID_WIPARSE_DAP: u16 = 0xF01A;
 
 const STLINK_PIDS: &[u16] = &[
     0x3744, 0x3748, 0x374A, 0x374B, 0x374E, 0x374F, 0x3752, 0x3753, 0x3754, 0x3755, 0x3757,
@@ -17,6 +19,7 @@ pub enum UsbIface {
     Stlink,
     CmsisDap,
     Ft4222,
+    WiparseDongle,
 }
 
 impl UsbIface {
@@ -26,12 +29,14 @@ impl UsbIface {
             Self::Stlink => "stlink",
             Self::CmsisDap => "cmsis-dap",
             Self::Ft4222 => "ft4222",
+            Self::WiparseDongle => "wiparse",
         }
     }
 
     pub fn kind(self) -> InstrumentKind {
         match self {
             Self::Ft4222 => InstrumentKind::UsbBridge,
+            Self::WiparseDongle => InstrumentKind::WiparseDongle,
             _ => InstrumentKind::DebugProbe,
         }
     }
@@ -42,6 +47,7 @@ impl UsbIface {
             Self::Stlink => "STMicroelectronics",
             Self::CmsisDap => "CMSIS-DAP",
             Self::Ft4222 => "FTDI",
+            Self::WiparseDongle => "WIPARSE",
         }
     }
 
@@ -51,6 +57,7 @@ impl UsbIface {
             Self::Stlink => "ST-Link",
             Self::CmsisDap => "CMSIS-DAP",
             Self::Ft4222 => "FT4222H",
+            Self::WiparseDongle => "WiParse-dongle",
         }
     }
 }
@@ -63,10 +70,10 @@ pub struct UsbResource {
 
 impl UsbResource {
     pub fn to_address(&self) -> String {
-        let scheme = if self.iface == UsbIface::Ft4222 {
-            "bridge"
-        } else {
-            "probe"
+        let scheme = match self.iface {
+            UsbIface::Ft4222 => "bridge",
+            UsbIface::WiparseDongle => "dongle",
+            _ => "probe",
         };
         if self.serial.is_empty() {
             format!("{scheme}://{}", self.iface.as_str())
@@ -92,9 +99,12 @@ pub fn parse_usb_resource(address: &str) -> Option<UsbResource> {
         (rest, None)
     } else if let Some(rest) = address.strip_prefix("bridge://") {
         (rest, Some(UsbIface::Ft4222))
+    } else if let Some(rest) = address.strip_prefix("dongle://") {
+        (rest, Some(UsbIface::WiparseDongle))
     } else {
         return None;
     };
+    let rest = rest.split_once('?').map(|(p, _)| p).unwrap_or(rest);
     let (iface_str, serial) = if let Some((head, tail)) = rest.split_once("/serial=") {
         (head, tail.trim().to_owned())
     } else if let Some((head, tail)) = rest.split_once('?') {
@@ -112,6 +122,7 @@ pub fn parse_usb_resource(address: &str) -> Option<UsbResource> {
         "stlink" | "st-link" => UsbIface::Stlink,
         "cmsis-dap" | "dap" | "daplink" => UsbIface::CmsisDap,
         "ft4222" | "ft4222h" | "ftdi4222" => UsbIface::Ft4222,
+        "wiparse" | "wiparse-dongle" | "dongle" => UsbIface::WiparseDongle,
         "" => default_iface?,
         _ => default_iface?,
     };
@@ -120,13 +131,16 @@ pub fn parse_usb_resource(address: &str) -> Option<UsbResource> {
 
 pub fn is_usb_session_address(address: &str) -> bool {
     let a = address.trim();
-    a.starts_with("probe://") || a.starts_with("bridge://")
+    a.starts_with("probe://") || a.starts_with("bridge://") || a.starts_with("dongle://")
 }
 
 pub fn classify_usb(vid: u16, pid: u16, product: &str, manufacturer: &str) -> Option<UsbIface> {
     let blob = format!("{product} {manufacturer}").to_ascii_uppercase();
     if vid == VID_FTDI && pid == PID_FT4222 {
         return Some(UsbIface::Ft4222);
+    }
+    if vid == VID_WIPARSE && pid == PID_WIPARSE_DAP {
+        return Some(UsbIface::WiparseDongle);
     }
     if vid == VID_SEGGER {
         return Some(UsbIface::Jlink);
@@ -138,6 +152,14 @@ pub fn classify_usb(vid: u16, pid: u16, product: &str, manufacturer: &str) -> Op
         return Some(UsbIface::CmsisDap);
     }
     None
+}
+
+/// True when a WIPARSE dongle (`VID 0xC251` / `PID 0xF01A`) is on the USB bus.
+pub fn wiparse_dongle_connected() -> bool {
+    match nusb::list_devices() {
+        Ok(mut iter) => iter.any(|d| d.vendor_id() == VID_WIPARSE && d.product_id() == PID_WIPARSE_DAP),
+        Err(_) => false,
+    }
 }
 
 pub fn discover_usb_instruments() -> Vec<ResourceInfo> {
@@ -185,7 +207,9 @@ fn discover_probe_rs_instruments(seen: &std::collections::HashSet<String>) -> Ve
     let mut extra = Vec::new();
     for info in lister {
         let ident = info.identifier.to_ascii_lowercase();
-        let iface = if ident.contains("j-link") || ident.contains("jlink") {
+        let iface = if ident.contains("wiparse") {
+            UsbIface::WiparseDongle
+        } else if ident.contains("j-link") || ident.contains("jlink") {
             UsbIface::Jlink
         } else if ident.contains("st-link") || ident.contains("stlink") {
             UsbIface::Stlink
@@ -195,15 +219,25 @@ fn discover_probe_rs_instruments(seen: &std::collections::HashSet<String>) -> Ve
             continue;
         };
         let serial = info.serial_number.clone().unwrap_or_default();
-        let spec = UsbResource { iface, serial };
+        let spec = UsbResource {
+            iface,
+            serial: serial.clone(),
+        };
         let address = spec.to_address();
         if seen.contains(&address) {
+            continue;
+        }
+        if !serial.is_empty()
+            && seen.iter().any(|a| {
+                a.contains(&format!("serial={serial}")) || a.contains(&format!("serial={serial}?"))
+            })
+        {
             continue;
         }
         extra.push(ResourceInfo {
             address,
             transport: "USB".into(),
-            kind: Some(InstrumentKind::DebugProbe),
+            kind: Some(spec.iface.kind()),
             identity: Some(spec.identity()),
             probe_error: None,
         });
@@ -233,6 +267,14 @@ mod tests {
             classify_usb(0x0D28, 0x0204, "CMSIS-DAP", "ARM"),
             Some(UsbIface::CmsisDap)
         );
+        assert_eq!(
+            classify_usb(0xC251, 0xF01A, "", ""),
+            Some(UsbIface::WiparseDongle)
+        );
+        assert_eq!(
+            classify_usb(0xC251, 0xF01A, "", "").unwrap().kind(),
+            InstrumentKind::WiparseDongle
+        );
     }
 
     #[test]
@@ -244,5 +286,9 @@ mod tests {
         let b = parse_usb_resource("bridge://ft4222/serial=FT1").unwrap();
         assert_eq!(b.iface, UsbIface::Ft4222);
         assert_eq!(b.iface.kind(), InstrumentKind::UsbBridge);
+        let d = parse_usb_resource("dongle://wiparse/serial=ABC?host=dap.local").unwrap();
+        assert_eq!(d.iface, UsbIface::WiparseDongle);
+        assert_eq!(d.serial, "ABC");
+        assert_eq!(d.to_address(), "dongle://wiparse/serial=ABC");
     }
 }

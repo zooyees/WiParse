@@ -353,9 +353,13 @@ impl DataAnalysisPanel {
     }
 
     /// Cap initial catch-up so enabling Serial Live does not re-parse a huge log.
-    pub fn prepare_live_poll(&mut self, total_lines: usize) {
+    /// `dropped` is the live FIFO eviction count (absolute seq base).
+    pub fn prepare_live_poll(&mut self, total_lines: usize, dropped: usize) {
         if !matches!(self.source, DataSource::SerialLive) {
             return;
+        }
+        if self.live_cursor < dropped {
+            self.live_cursor = dropped;
         }
         const MAX_CATCHUP: usize = 2000;
         if self.live_cursor == 0 && total_lines > MAX_CATCHUP {

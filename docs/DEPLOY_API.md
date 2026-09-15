@@ -100,6 +100,7 @@ Copy-Item target\release\wiparse.exe     dist\WiParse-CLI.exe -Force
 - `serial.monitor.start` / `stop` / `status`（`serial.status` 为 status 别名）
 - `serial.select`（只改口/波特率，不打开；监控已开时需先 stop）
 - `serial.send` / `serial.read`（需先 `monitor.start`；停着时读缓冲用 `log.lines.get`）
+- `log.lines.get`：`from_row` 为会话绝对序号；`total` 为下一序号（FIFO 后继续增长）。另有 `dropped`（已挤出窗口的行数）、`window`（当前缓冲长度）、`next_row`、`truncated`（游标已被挤掉）。实时页窗口仍是 5000 行。
 - `instrument.*`（含 `instrument.overview` / `instrument.connect_all` / `instrument.waveform_source`）、`log.tabs.list`、`log.lines.get`、`log.brief`、`system.ui.state`
 - `ui.show` / `ui.panels` / `ui.prefs` / `ui.serial.*` / `ui.wave.*`（`ui.wave.bus` 支持 `kind=ddsss`） / `ui.calc.*` / `ui.instrument.select`（`overview` / `kind` / `device_id`）
 - `test.start` / `status` / `abort` / `pack`（闭环执行器 + 证据包）
@@ -160,7 +161,7 @@ $env:WIPARSE_URL = "http://127.0.0.1:7878"
 
 ## 6. MCP（E：直连 HTTP）
 
-`mcp/wiparse` 六个工具（紧凑 JSON，HTTP）：`wiparse_brief`、`wiparse_select`、`wiparse_test`、`wiparse_send`、`wiparse_report_pack`、`wiparse_ui`。不要把 `serial.txt` 或 ISF 点列读进模型。`wiparse_ui` 的 `op=instrument.overview` 返回孪生面板状态（无波形点列）；`op=instrument.waveform_source` 只返回路径/字节数。
+`mcp/wiparse` 六个工具（紧凑 JSON，HTTP）：`wiparse_brief`、`wiparse_select`、`wiparse_test`、`wiparse_send`、`wiparse_report_pack`、`wiparse_ui`。不要把 `serial.txt` 或 ISF 点列读进模型。`wiparse_ui` 的 `op=instrument.overview` 返回孪生面板状态（无波形点列）；`op=instrument.waveform_source` 只返回路径/字节数。`op=project.*` / `report.open` 操作测试报告项目索引（路径须在当前项目 jail 内，**不**回传文件正文）。`op=test_tool.run` / `test_tool.stop` 驱动 Testing Hub 插件。
 
 闭环计划与工位步骤见 [`WORKSTATION_CLOSED_LOOP.md`](WORKSTATION_CLOSED_LOOP.md)。
 
@@ -194,7 +195,7 @@ Agent 推荐：`wiparse_ui` 切到串口页 → `wiparse_select` 选口（不打
 
 - [ ] 启动 `WiParse.exe`
 - [ ] `WiParse-CLI.exe api health` → `ok: true`
-- [ ] `api capabilities` 含 `ui.show` / `serial.select` / `instrument.*`
+- [ ] `api capabilities` 含 `ui.show` / `serial.select` / `instrument.*` / `ui.project.list` / `ui.report.open`
 - [ ] `WiParse-CLI.exe ui state`（GUI 已开）
 - [ ] MCP `wiparse_brief` / `wiparse_select` / `wiparse_ui` 有返回
 - [ ] `dist` 中两个 exe 为本次 release 构建

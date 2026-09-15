@@ -62,6 +62,8 @@ const LAYOUT_PATH_KEYS = Object.freeze([
   "summary_md",
   "shot_dir",
   "docs_dir",
+  "logs_dir",
+  "dumps_dir",
 ]);
 
 export function projectRoot() {
@@ -193,19 +195,33 @@ export function sanitizeId(raw, fallback = "default") {
   return fallback;
 }
 
+/** Test directory slug from Hub report name / file_prefix. */
+export function sanitizeTestId(raw, fallback = "default") {
+  const cleaned = sanitizeFilePrefix(raw).replace(/\s+/g, "_");
+  const slug = cleaned
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
+    .replace(/^[^a-zA-Z0-9]+/, "")
+    .replace(/[._-]+$/g, "");
+  if (/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(slug)) return slug;
+  return sanitizeId(fallback, "default");
+}
+
 /**
  * Canonical project layout. `stamp` / `run_dir` / `artifacts_dir` exist only for lifecycle=run.
+ * `test_id` is the report-name directory; `plugin_id` is the plugin that wrote it.
  */
 export function resolveProjectLayout({
   dataRoot,
   project,
   testId,
+  pluginId,
   stamp,
   lifecycle,
 } = {}) {
   const root = dataRoot || resolveDataRoot();
   const projectId = sanitizeId(project || process.env.WIPARSE_PROJECT, "default");
   const test_id = String(testId || "").trim();
+  const plugin_id = String(pluginId || test_id || "").trim();
   const test_dir = path.join(root, "projects", projectId, "tests", test_id);
   const stampVal = lifecycle === "run" && stamp ? String(stamp) : "";
   const run_dir = stampVal ? path.join(test_dir, "runs", stampVal) : "";
@@ -214,7 +230,7 @@ export function resolveProjectLayout({
     project: projectId,
     project_id: projectId,
     test_id,
-    plugin_id: test_id,
+    plugin_id,
     stamp: stampVal,
     test_dir,
     run_dir,
@@ -260,6 +276,45 @@ export function ensureProjectScaffold(layout) {
       )}\n`,
       "utf8"
     );
+  }
+  return pj;
+}
+
+/** Append this test (report-name directory) to project.json.tests. */
+export function ensureTestInProject(layout, pluginId, extra = {}) {
+  const pj = ensureProjectScaffold(layout);
+  const id = String(layout?.test_id || pluginId || "").trim();
+  if (!pj || !id) return pj;
+  let doc;
+  try {
+    doc = JSON.parse(fs.readFileSync(pj, "utf8"));
+  } catch {
+    return pj;
+  }
+  if (!doc || typeof doc !== "object") return pj;
+  if (!Array.isArray(doc.tests)) doc.tests = [];
+  const plugin_id = String(pluginId || layout.plugin_id || id);
+  const name = String(extra.name || extra.file_prefix || "").trim();
+  const existing = doc.tests.find((t) => (typeof t === "string" ? t : t?.id) === id);
+  if (existing && typeof existing === "object") {
+    let dirty = false;
+    if (!existing.plugin_id && plugin_id && plugin_id !== id) {
+      existing.plugin_id = plugin_id;
+      dirty = true;
+    }
+    if (!existing.name && name && name !== id) {
+      existing.name = name;
+      dirty = true;
+    }
+    if (dirty) fs.writeFileSync(pj, `${JSON.stringify(doc, null, 2)}\n`, "utf8");
+    return pj;
+  }
+  if (!existing) {
+    const entry = { id };
+    if (plugin_id && plugin_id !== id) entry.plugin_id = plugin_id;
+    if (name && name !== id) entry.name = name;
+    doc.tests.push(entry);
+    fs.writeFileSync(pj, `${JSON.stringify(doc, null, 2)}\n`, "utf8");
   }
   return pj;
 }
@@ -799,12 +854,20 @@ export function loadStationConfig(ctx) {
   const args = mergeArgs(ctx.plugin?.params, ctx.args || {});
   let config = applyParamPaths(raw, ctx.plugin?.params, args);
   const dataRoot = resolveDataRoot(ctx.dataRoot || args.data_root);
+  const pluginId = ctx.plugin?.id || "default";
   const layout =
     ctx.layout ||
     resolveProjectLayout({
       dataRoot,
       project: ctx.project || args.project,
-      testId: ctx.plugin?.id,
+      testId: sanitizeTestId(
+        ctx.testId ||
+          args.file_prefix ||
+          process.env.WIPARSE_TEST_ID ||
+          config.paths?.file_prefix,
+        pluginId
+      ),
+      pluginId,
       stamp: ctx.stamp,
       lifecycle: ctx.lifecycle || "run",
     });
@@ -850,9 +913,11 @@ export default {
   applyParamPaths,
   makeStamp,
   sanitizeId,
+  sanitizeTestId,
   resolveProjectLayout,
   injectDefaultPathTemplates,
   ensureProjectScaffold,
+  ensureTestInProject,
   expandTemplates,
   colocateStatusWithIsf,
   colocateSummaryWithReport,

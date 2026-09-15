@@ -3,35 +3,35 @@
   "name": "Scope & Serial Monitor",
   "name_zh": "示波器/串口监控",
   "type": "capture_loop",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "entry": "index.mjs",
   "config": "station.json",
-  "description": "Configurable line triggers (JSON) → scope stop → shot/ISF/PDF → resume. Writes under projects/{project}/tests/scope-serial-monitor/runs/{stamp}/.",
+  "description": "Configurable line triggers (JSON) → scope stop → instrument.capture + waveform_source → PDF. Writes under projects/{project}/tests/{test_id}/runs/{stamp}/ where test_id is the sanitized report name (file_prefix).",
   "capabilities": ["preflight", "run", "stop"],
   "engines": {
     "node": ">=18",
-    "wiparse": ">=1.1.13"
+    "wiparse": ">=1.1.16"
   },
   "outputs": [
     {
       "id": "waves",
-      "label": "Waveform sources",
-      "label_zh": "波形源文件",
+      "label": "Waves",
+      "label_zh": "波形",
       "view": "wave",
       "dir": "{artifacts_dir}/waves",
       "include": ["*.isf", "*.wfm", "*.csv"]
     },
     {
       "id": "reports",
-      "label": "Test report",
-      "label_zh": "测试报告",
+      "label": "Report",
+      "label_zh": "报告",
       "view": "report",
       "dir": "{artifacts_dir}/reports",
       "include": ["*.md"]
     },
     {
       "id": "shots",
-      "label": "Screenshots",
+      "label": "Shots",
       "label_zh": "截图",
       "view": "external",
       "dir": "{artifacts_dir}/shots",
@@ -39,8 +39,8 @@
     },
     {
       "id": "docs",
-      "label": "HTML / PDF",
-      "label_zh": "HTML / PDF",
+      "label": "HTML/PDF",
+      "label_zh": "文档",
       "view": "external",
       "dir": "{artifacts_dir}/docs",
       "include": ["*.html", "*.pdf", "*.json", "*.jsonl"]
@@ -56,7 +56,7 @@
       "group_zh": "路径",
       "label": "Report name / prefix",
       "label_zh": "报告名称/前缀",
-      "help": "Prefix for ISF, PDF, PNG, and the summary Markdown (e.g. MyLot → MyLot_summary_*.md)"
+      "help": "Report name. Sanitized value is tests/{test_id}/ and the prefix for ISF, PDF, PNG, and summary Markdown (e.g. MyLot → tests/MyLot/ and MyLot_summary_*.md)."
     },
     {
       "name": "prefer_device_id",
@@ -149,7 +149,7 @@
       "group_zh": "路径",
       "label": "Product",
       "label_zh": "产品名",
-      "help": "Shown in the report body only. Folder tree uses project / plugin id, not {product}."
+      "help": "Shown in the report body only. Folder tree uses project / file_prefix / stamp, not {product}."
     },
     {
       "name": "rising_edge",

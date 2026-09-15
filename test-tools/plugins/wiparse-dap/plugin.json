@@ -1,0 +1,372 @@
+{
+  "id": "wiparse-dap",
+  "name": "CMSIS-DAP Probe",
+  "name_zh": "CMSIS-DAP 调试通道",
+  "type": "instrument",
+  "version": "1.0.0",
+  "entry": "index.mjs",
+  "config": "station.json",
+  "description": "Generic CMSIS-DAP v2 host (WIPARSE-IF CH-DAP). USB WinUSB / TCP USB-IP:3240 / GUI probe-rs / external pyOCD·OpenOCD·probe-rs. Discover, DAP_Info, halt/run/reset, mem, flash, RTT, recipe.",
+  "capabilities": ["preflight", "run", "stop"],
+  "engines": { "node": ">=18", "wiparse": ">=1.1.14" },
+  "sandbox": {
+    "permissions": ["gui.api", "cli", "fs.data_root", "network.outbound"]
+  },
+  "outputs": [
+    {
+      "id": "logs",
+      "label": "Session log",
+      "label_zh": "会话日志",
+      "view": "log",
+      "dir": "{artifacts_dir}/logs",
+      "include": ["*.jsonl", "*.txt", "*.json"]
+    },
+    {
+      "id": "reports",
+      "label": "Report",
+      "label_zh": "报告",
+      "view": "report",
+      "dir": "{artifacts_dir}/reports",
+      "include": ["*.md"]
+    },
+    {
+      "id": "dumps",
+      "label": "Memory / tool dumps",
+      "label_zh": "内存与工具输出",
+      "view": "external",
+      "dir": "{artifacts_dir}/dumps",
+      "include": ["*.hex", "*.bin", "*.txt", "*.log"]
+    }
+  ],
+  "params": [
+    {
+      "name": "transport",
+      "type": "enum",
+      "path": "channel.transport",
+      "default": "auto",
+      "group": "transport",
+      "group_zh": "传输",
+      "label": "Transport",
+      "label_zh": "传输",
+      "help": "auto = USB WinUSB then TCP USB/IP then GUI probe-rs. gui = Hub debug_probe only. tool = spawn pyocd/openocd/probe-rs.",
+      "options": [
+        { "value": "auto", "label": "Auto", "label_zh": "自动" },
+        { "value": "usb", "label": "USB WinUSB (MI_00)", "label_zh": "USB WinUSB" },
+        { "value": "tcp", "label": "TCP USB/IP :3240", "label_zh": "TCP USB/IP" },
+        { "value": "gui", "label": "GUI probe-rs", "label_zh": "GUI 探针" },
+        { "value": "tool", "label": "External tool", "label_zh": "外部工具" }
+      ]
+    },
+    {
+      "name": "host",
+      "type": "string",
+      "path": "channel.host",
+      "default": "dap.local",
+      "group": "transport",
+      "group_zh": "传输",
+      "label": "Host",
+      "label_zh": "主机",
+      "help": "mDNS or IPv4. Empty tries dap.local then 192.168.137.123."
+    },
+    {
+      "name": "tcp_port",
+      "type": "number",
+      "path": "channel.tcp_port",
+      "default": 3240,
+      "group": "transport",
+      "group_zh": "传输",
+      "label": "TCP port",
+      "label_zh": "TCP 端口"
+    },
+    {
+      "name": "vid",
+      "type": "string",
+      "path": "channel.vid",
+      "default": "C251",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "USB VID",
+      "label_zh": "USB VID"
+    },
+    {
+      "name": "pid",
+      "type": "string",
+      "path": "channel.pid",
+      "default": "F01A",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "USB PID",
+      "label_zh": "USB PID"
+    },
+    {
+      "name": "fallback_host",
+      "type": "string",
+      "path": "channel.fallback_host",
+      "default": "192.168.137.123",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "Fallback IPv4",
+      "label_zh": "备用 IPv4",
+      "help": "Tried only when Host is empty or dap.local. Clear to disable the dongle default IP."
+    },
+    {
+      "name": "usb_mi",
+      "type": "number",
+      "path": "channel.usb_mi",
+      "default": 0,
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "USB interface MI",
+      "label_zh": "USB 接口号",
+      "help": "WinUSB MI_xx. Dongle CH-DAP is 0; other CMSIS-DAP boards may differ."
+    },
+    {
+      "name": "usb_name",
+      "type": "string",
+      "path": "channel.usb_name",
+      "default": "",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "USB name contains",
+      "label_zh": "USB 名称包含",
+      "help": "Optional friendly-name substring (e.g. CMSIS-DAP). Empty = MI + CMSIS-DAP heuristic."
+    },
+    {
+      "name": "out_ep",
+      "type": "string",
+      "path": "channel.out_ep",
+      "default": "01",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "Bulk OUT EP",
+      "label_zh": "Bulk OUT 端点"
+    },
+    {
+      "name": "in_ep",
+      "type": "string",
+      "path": "channel.in_ep",
+      "default": "81",
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "Bulk IN EP",
+      "label_zh": "Bulk IN 端点"
+    },
+    {
+      "name": "packet_size",
+      "type": "number",
+      "path": "channel.packet_size",
+      "default": 512,
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "DAP packet size",
+      "label_zh": "DAP 包长"
+    },
+    {
+      "name": "prefer_device_id",
+      "type": "device",
+      "path": "probe.prefer_device_id",
+      "filter": { "kind": "wiparse_dongle,debug_probe" },
+      "fills": {
+        "probe_resource": "resource",
+        "probe_model": "model"
+      },
+      "default": "",
+      "group": "probe",
+      "group_zh": "探针",
+      "label": "GUI probe",
+      "label_zh": "GUI 探针",
+      "help": "Any CMSIS-DAP / J-Link / ST-Link already connected in Instrument Control."
+    },
+    {
+      "name": "probe_resource",
+      "type": "string",
+      "path": "probe.resource",
+      "default": "",
+      "group": "probe",
+      "group_zh": "探针",
+      "label": "Probe resource",
+      "label_zh": "探针地址",
+      "help": "e.g. probe://cmsis-dap/serial=AABBCCDDEEFF"
+    },
+    {
+      "name": "probe_model",
+      "type": "string",
+      "path": "probe.model",
+      "default": "",
+      "group": "probe",
+      "group_zh": "探针",
+      "advanced": true,
+      "label": "Model filter",
+      "label_zh": "型号过滤"
+    },
+    {
+      "name": "chip",
+      "type": "string",
+      "path": "probe.chip",
+      "default": "",
+      "group": "probe",
+      "group_zh": "探针",
+      "label": "Target chip",
+      "label_zh": "目标芯片",
+      "help": "probe-rs / pyOCD target name (stm32f103c8, nrf52840_xxaa, …). Required for mem/flash."
+    },
+    {
+      "name": "speed_khz",
+      "type": "number",
+      "path": "probe.speed_khz",
+      "default": 1000,
+      "group": "probe",
+      "group_zh": "探针",
+      "label": "SWJ clock (kHz)",
+      "label_zh": "SWJ 时钟 kHz",
+      "help": "Dongle default is 1000 kHz (ICD)."
+    },
+    {
+      "name": "op",
+      "type": "enum",
+      "path": "run.op",
+      "default": "session",
+      "group": "action",
+      "group_zh": "动作",
+      "label": "Operation",
+      "label_zh": "操作",
+      "options": [
+        { "value": "session", "label": "Session (discover + status)", "label_zh": "会话（发现+状态）" },
+        { "value": "discover", "label": "Discover only", "label_zh": "仅发现" },
+        { "value": "usbip-list", "label": "USB/IP DEVLIST", "label_zh": "USB/IP 列表" },
+        { "value": "dap-info", "label": "USB DAP_Info", "label_zh": "USB DAP_Info" },
+        { "value": "connect", "label": "GUI connect", "label_zh": "GUI 连接" },
+        { "value": "status", "label": "ProbeStatus", "label_zh": "状态" },
+        { "value": "halt", "label": "Halt", "label_zh": "停核" },
+        { "value": "run", "label": "Run", "label_zh": "运行" },
+        { "value": "reset", "label": "Reset", "label_zh": "复位" },
+        { "value": "regs", "label": "Registers", "label_zh": "寄存器" },
+        { "value": "mem-read", "label": "Memory read", "label_zh": "读内存" },
+        { "value": "mem-write", "label": "Memory write", "label_zh": "写内存" },
+        { "value": "flash", "label": "Flash", "label_zh": "烧录" },
+        { "value": "erase", "label": "Erase", "label_zh": "擦除" },
+        { "value": "speed", "label": "Set speed", "label_zh": "设速度" },
+        { "value": "rtt-start", "label": "RTT start", "label_zh": "RTT 开始" },
+        { "value": "rtt-read", "label": "RTT read", "label_zh": "RTT 读取" },
+        { "value": "rtt-stop", "label": "RTT stop", "label_zh": "RTT 停止" },
+        { "value": "tool", "label": "External tool", "label_zh": "外部工具" },
+        { "value": "recipe", "label": "Recipe JSON", "label_zh": "配方" }
+      ]
+    },
+    {
+      "name": "address",
+      "type": "string",
+      "path": "run.address",
+      "default": "08000000",
+      "group": "action",
+      "group_zh": "动作",
+      "label": "Address",
+      "label_zh": "地址",
+      "help": "Hex address for mem-read / mem-write."
+    },
+    {
+      "name": "length",
+      "type": "number",
+      "path": "run.length",
+      "default": 64,
+      "group": "action",
+      "group_zh": "动作",
+      "label": "Length",
+      "label_zh": "长度"
+    },
+    {
+      "name": "data_hex",
+      "type": "string",
+      "path": "run.data_hex",
+      "default": "",
+      "group": "action",
+      "group_zh": "动作",
+      "label": "Data (hex)",
+      "label_zh": "数据(hex)"
+    },
+    {
+      "name": "firmware",
+      "type": "path",
+      "path": "run.firmware",
+      "default": "",
+      "group": "action",
+      "group_zh": "动作",
+      "label": "Firmware",
+      "label_zh": "固件",
+      "help": "HEX / BIN / ELF for flash."
+    },
+    {
+      "name": "verify",
+      "type": "boolean",
+      "path": "run.verify",
+      "default": "true",
+      "group": "action",
+      "group_zh": "动作",
+      "label": "Verify flash",
+      "label_zh": "烧录校验"
+    },
+    {
+      "name": "hardware_reset",
+      "type": "boolean",
+      "path": "run.hardware_reset",
+      "default": "false",
+      "group": "action",
+      "group_zh": "动作",
+      "advanced": true,
+      "label": "Hardware reset",
+      "label_zh": "硬件复位"
+    },
+    {
+      "name": "rtt_channel",
+      "type": "number",
+      "path": "run.rtt_channel",
+      "default": 0,
+      "group": "action",
+      "group_zh": "动作",
+      "advanced": true,
+      "label": "RTT up channel",
+      "label_zh": "RTT 通道"
+    },
+    {
+      "name": "tool_cmd",
+      "type": "text",
+      "path": "run.tool_cmd",
+      "default": "pyocd list",
+      "group": "tool",
+      "group_zh": "外部工具",
+      "label": "Tool command",
+      "label_zh": "工具命令",
+      "help": "Shell line. Examples: pyocd gdbserver -t stm32f103c8 | probe-rs list | openocd -f interface/cmsis-dap.cfg"
+    },
+    {
+      "name": "recipe",
+      "type": "json",
+      "path": "run.recipe",
+      "default": "[]",
+      "group": "tool",
+      "group_zh": "外部工具",
+      "label": "Recipe",
+      "label_zh": "配方",
+      "help": "JSON array of {op,...} using the same op names as the Operation enum."
+    },
+    {
+      "name": "connect_timeout_ms",
+      "type": "number",
+      "path": "channel.connect_timeout_ms",
+      "default": 4000,
+      "group": "transport",
+      "group_zh": "传输",
+      "advanced": true,
+      "label": "Connect timeout (ms)",
+      "label_zh": "连接超时 ms"
+    }
+  ]
+}
