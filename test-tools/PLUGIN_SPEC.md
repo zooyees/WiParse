@@ -1,7 +1,7 @@
 # WiParse Testing Hub 插件规范
 
-**日期** 2026-09-15  
-**宿主** WiParse GUI **1.1.16+**（Testing Hub / `test_tool`）  
+**日期** 2026-09-16  
+**宿主** WiParse GUI **1.1.16+**（Testing Hub / `test_tool`；清单字段对齐 **1.1.26**）  
 **运行时** Node.js **>=18**，ESM `.mjs`  
 **读者** 插件作者 / 工位 AI
 
@@ -20,8 +20,12 @@
 
 示例：
 
-- `plugins/example-smoke` — CLI + health，声明 `outputs[]`
+- `plugins/example-smoke` — CLI + health，声明 `outputs[]` 与 `report_name`
 - `plugins/scope-serial-monitor` — capture_loop 示例（配方在插件里，不在 Hub）
+- `plugins/wiparse-dap` — CMSIS-DAP v2（USB / USB-IP / GUI probe-rs）
+- `plugins/wiparse-uart-bridge` — UART 透传（WinUSB / TCP :1234）
+- `plugins/wiparse-i2c-rpc` — I2C 文本 RPC（WinUSB / TCP :1236）
+- `plugins/wiparse-netcfg` — CH-NETCFG 配网（USB MI_05 EP0 / TCP :1238）
 
 ---
 
@@ -54,7 +58,7 @@ node test-tools/runner.mjs
   -- --<extra> <value> ...
 ```
 
-**不要**让 GUI 传 `--test-id`（旧 runner 会当成 unknown arg 直接退出）。用例目录由 overlay 里的报告名称 / `paths.file_prefix` 决定；GUI 另设环境变量 `WIPARSE_TEST_ID` / `WIPARSE_PROJECT` 作后备。CLI 仍可显式 `--test-id` / `--stamp`。
+**不要**让 GUI 传 `--test-id`（旧 runner 会当成 unknown arg 直接退出）。用例目录由 overlay 里的 **`report_name`**（或用户覆盖的 `paths.file_prefix`）决定；GUI 另设环境变量 `WIPARSE_TEST_ID` / `WIPARSE_PROJECT` 作后备。CLI 仍可显式 `--test-id` / `--stamp`。
 
 overlay 是 **本轮运行** 的参数覆盖，**不会写回 `station.json`**。Windows 上避免把大段 JSON 塞进 argv。
 
@@ -87,6 +91,7 @@ test-tools/plugins/<id>/
 ```
 
 - `<id>` 与 `plugin.json.id` 一致：`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`
+- **`report_name`（MUST）**：测试报告左侧 **测试用例** 标题，也是默认 `tests/{test_id}/` 与 `file_prefix`。不能用 run 时间戳，不要用插件营销名（`name` / `name_zh`）冒充。可选 `report_name_zh`。
 - 锁 / 停 / HUD 文件由 `paths.*` 声明。Hub **不** 硬编码 `_loop_status.json`。
 - **禁止** 新 `run` 写入 `plugin_dir`、`instrument_data/`、`test report/`、旧 `evidence/`
 
@@ -168,9 +173,9 @@ export default async function run(ctx) { /* use ctx.stamp / ctx.layout */ }
 | `fills` | 选设备后写入其它 param |
 | `options` | `type=enum`：`{ value, label, label_zh }` |
 
+顶层 **MUST**：`id`、`name`、`type`、**`report_name`**。`report_name` 是测试报告用例名，不是一次 run 的 stamp。
 
-
-报告名称 / 前缀用 `paths.file_prefix`（或同名 param）。它同时决定产物文件名 **与** 测试用例目录 `tests/{test_id}/`。
+`params` 里的 `file_prefix`（「报告名称/前缀」）是 **可选覆盖**：空则用 `plugin.json.report_name`。它同时决定产物文件名 **与** 测试用例目录 `tests/{test_id}/`。
 
 ### `type`
 
@@ -242,7 +247,7 @@ Hub 写入临时 JSON，例如：
 - runner：`--overlay <path>` → `loadOverlayFile` → 与 argv 合并（overlay 覆盖 argv）→ `applyParamPaths`
 - **不** 把 overlay 写进 `station.json`
 - 磁盘上的 `station.json` 仍是出厂/工位配方
-- - `file_prefix` 经 `sanitizeTestId` 后成为 `test_id`（目录名）；非法或空则回退 `plugin.id`
+- `file_prefix` 经 `sanitizeTestId` 后成为 `test_id`（目录名）；非法或空则回退 `plugin.json.report_name`，再回退 `plugin.id`
 
 ---
 
@@ -253,7 +258,7 @@ Hub 写入临时 JSON，例如：
 ```
 {data_root}/projects/{project}/
   project.json
-  tests/{test_id}/                 # 用例：报告名 / file_prefix
+  tests/{test_id}/                 # 用例：plugin.json report_name（或覆盖后的 file_prefix）
     run.lock
     run.stop
     status.json
@@ -265,7 +270,7 @@ Hub 写入临时 JSON，例如：
 | 层 | 是什么 | 谁决定 |
 |----|--------|--------|
 | 项目 | `projects/{id}/` | Hub / 测试报告顶栏；共用 `apps.project.active_id` |
-| 测试用例 | `tests/{test_id}/` | `file_prefix`（报告名称）；`plugin_id` 另存，不等于目录名 |
+| 测试用例 | `tests/{test_id}/` | `report_name`（插件规则）；表单 `file_prefix` 可覆盖。`plugin_id` 另存 |
 | 测试结果 | `runs/{stamp}/` | runner 分配的 stamp；其下 `outputs[]` 才是波形 / 报告 / 截图 |
 
 `project.json` 的 `tests[]`：
@@ -276,9 +281,9 @@ Hub 写入临时 JSON，例如：
 
 - `id`：用例目录名（sanitize 后的报告名）
 - `plugin_id`：可缺省；缺省时 `id` 视为旧式插件 id
-- `name`：显示名；缺省用插件名或 `id`
+- `name`：显示名；缺省用插件 `report_name`，**不用** run 时间戳
 - 兼容旧文件：`tests` 可以是字符串数组 `["scope-serial-monitor"]`
-- 第一次 `run` 由 runner `ensureTestInProject` 写入。磁盘上已有、JSON 未登记的 `tests/{id}/` 仍会出现在测试报告树里
+- 第一次 `run` 由 runner `ensureTestInProject` 写入。磁盘上已有、JSON 未登记的 `tests/{id}/` 仍会出现在测试报告树里；若目录名是 stamp 或插件 id，树标题仍显示 `report_name`
 
 默认 `paths`：`test_dir` / `run_dir` / `artifacts_dir` / `lock_file` / `stop_file` / `status_file`。`product` 与 `file_prefix` 用于文件名与报告正文。`plugin_dir` 只读。
 

@@ -109,6 +109,8 @@ struct PluginInfo {
     id: String,
     name: String,
     name_zh: String,
+    report_name: String,
+    report_name_zh: String,
     type_name: String,
     version: String,
     description: String,
@@ -119,6 +121,22 @@ struct PluginInfo {
     source: String,
     params: Vec<PluginParam>,
     outputs: Vec<wiparse_core::project::OutputSpec>,
+}
+
+impl PluginInfo {
+    fn report_name_or_fallback(&self) -> &str {
+        let name = self.report_name.trim();
+        if !name.is_empty() {
+            return name;
+        }
+        if let Some(p) = self.params.iter().find(|x| x.name == "file_prefix") {
+            let d = p.default.trim();
+            if !d.is_empty() {
+                return d;
+            }
+        }
+        self.id.as_str()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -324,29 +342,42 @@ impl TestToolPanel {
         self.job.as_ref().map(|j| j.test_id.as_str())
     }
 
-    fn hub_test_id_for(&self, plugin: &PluginInfo) -> String {
-        let prefix = self
-            .param_values
+    fn hub_report_name<'a>(&'a self, plugin: &'a PluginInfo) -> &'a str {
+        self.param_values
             .get("file_prefix")
             .map(|s| s.as_str())
-            .unwrap_or("");
-        wiparse_core::project::sanitize_test_id(prefix, &plugin.id)
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| plugin.report_name_or_fallback())
+    }
+
+    fn hub_test_id_for(&self, plugin: &PluginInfo) -> String {
+        wiparse_core::project::sanitize_test_id(self.hub_report_name(plugin), &plugin.id)
     }
 
     pub fn plugin_metas(&self) -> Vec<wiparse_core::project::PluginMeta> {
         self.plugins
             .iter()
-            .map(|p| wiparse_core::project::PluginMeta {
-                id: p.id.clone(),
-                name: p.name.clone(),
-                name_zh: p.name_zh.clone(),
-                outputs: p.outputs.clone(),
-                file_prefix: p
-                    .params
-                    .iter()
-                    .find(|x| x.name == "file_prefix")
-                    .map(|x| x.default.clone())
-                    .unwrap_or_default(),
+            .map(|p| {
+                let report = p.report_name_or_fallback().to_owned();
+                wiparse_core::project::PluginMeta {
+                    id: p.id.clone(),
+                    name: p.name.clone(),
+                    name_zh: p.name_zh.clone(),
+                    outputs: p.outputs.clone(),
+                    file_prefix: p
+                        .params
+                        .iter()
+                        .find(|x| x.name == "file_prefix")
+                        .map(|x| x.default.clone())
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or_else(|| report.clone()),
+                    report_name: if p.report_name.trim().is_empty() {
+                        report
+                    } else {
+                        p.report_name.clone()
+                    },
+                    report_name_zh: p.report_name_zh.clone(),
+                }
             })
             .collect()
     }
@@ -408,6 +439,8 @@ impl TestToolPanel {
                 "id": p.id,
                 "name": p.name,
                 "name_zh": p.name_zh,
+                "report_name": p.report_name,
+                "report_name_zh": p.report_name_zh,
                 "type": p.type_name,
                 "version": p.version,
             })).collect::<Vec<_>>(),
@@ -2741,6 +2774,15 @@ impl TestToolPanel {
             }
             params.insert(p.name.clone(), overlay_json_value(&p.type_name, raw));
         }
+        if !params.contains_key("file_prefix") {
+            let slug = self.hub_report_name(plugin);
+            if !slug.trim().is_empty() {
+                params.insert(
+                    "file_prefix".into(),
+                    serde_json::Value::String(slug.to_owned()),
+                );
+            }
+        }
         if params.is_empty() {
             return Ok(None);
         }
@@ -2844,16 +2886,8 @@ impl TestToolPanel {
         args.push(data_root);
         args.push("--project".into());
         args.push(self.effective_project_id());
-        let report_name = self
-            .param_values
-            .get("file_prefix")
-            .map(|s| s.as_str())
-            .unwrap_or("");
-        let entry = wiparse_core::project::test_ref_from_report(
-            &plugin.id,
-            report_name,
-            &plugin.name,
-        );
+        let report_name = self.hub_report_name(&plugin);
+        let entry = wiparse_core::project::test_ref_from_report(&plugin.id, report_name);
         let test_id = entry.id.clone();
         let _ = wiparse_core::project::add_test_entry(
             &self.data_root_path(),
@@ -3853,7 +3887,7 @@ fn read_plugin_info(path: &Path) -> Option<PluginInfo> {
     if id.trim().is_empty() {
         return None;
     }
-    let params = v
+    let params: Vec<PluginParam> = v
         .get("params")
         .and_then(|x| x.as_array())
         .map(|arr| {
@@ -3913,6 +3947,20 @@ fn read_plugin_info(path: &Path) -> Option<PluginInfo> {
                 .collect()
         })
         .unwrap_or_default();
+    let report_name = {
+        let mut r = v
+            .get("report_name")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_owned();
+        if r.is_empty() {
+            if let Some(p) = params.iter().find(|x| x.name == "file_prefix") {
+                r = p.default.trim().to_owned();
+            }
+        }
+        r
+    };
     Some(PluginInfo {
         id: id.clone(),
         name: v
@@ -3924,6 +3972,13 @@ fn read_plugin_info(path: &Path) -> Option<PluginInfo> {
             .get("name_zh")
             .and_then(|x| x.as_str())
             .unwrap_or("")
+            .to_owned(),
+        report_name,
+        report_name_zh: v
+            .get("report_name_zh")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
             .to_owned(),
         type_name: v
             .get("type")
@@ -4113,7 +4168,10 @@ fn expand_station_templates(
     plugin_id: &str,
 ) {
     let product = station_get(station, "station.product").unwrap_or_default();
-    let file_prefix = station_get(station, "paths.file_prefix").unwrap_or_default();
+    let mut file_prefix = station_get(station, "paths.file_prefix").unwrap_or_default();
+    if file_prefix.trim().is_empty() {
+        file_prefix = test_id.to_owned();
+    }
     let test_dir = PathBuf::from(data_root)
         .join("projects")
         .join(project)

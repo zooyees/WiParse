@@ -1,5 +1,5 @@
 /**
- * Windows WinUSB host for WIPARSE composite functions (MI_00/01/03).
+ * Windows WinUSB host for WIPARSE composite functions (MI_00/01/03/05).
  * Compiles test-tools/lib/winusb-host.cs with .NET Framework csc on first use.
  * Linux/macOS: discovery is best-effort (lsusb / system_profiler); open is TCP/COM.
  */
@@ -118,6 +118,9 @@ export function classifyPnpRow(row) {
   const name = String(row.name || "").toUpperCase();
   const mi = row.mi;
   if (mi === CHANNELS.dap.mi || name.includes("CMSIS-DAP")) return "dap";
+  if (mi === CHANNELS.netcfg.mi || name.includes("NETCFG") || name.includes("WIPARSE NET")) {
+    return "netcfg";
+  }
   if (mi === CHANNELS.uart.mi || name.includes("UART")) return "uart";
   if (mi === CHANNELS.i2c.mi || name.includes("I2C")) return "i2c";
   return "other";
@@ -200,13 +203,16 @@ export class WinusbSession {
     });
   }
 
-  open({ path: devicePath, mi, vid, pid } = {}) {
-    return this.request("open", {
+  open({ path: devicePath, mi, vid, pid, associate } = {}) {
+    const extra = {
       path: devicePath || "",
       mi: mi ?? 0,
       vid: vid || IF_SPEC.vid.toString(16),
       pid: pid || IF_SPEC.pid.toString(16),
-    });
+    };
+    if (associate === 0 || associate === false) extra.associate = 0;
+    else if (associate === 1 || associate === true) extra.associate = 1;
+    return this.request("open", extra);
   }
 
   write(pipe, hex, timeoutMs = 3000) {
@@ -221,10 +227,10 @@ export class WinusbSession {
     );
   }
 
-  control({ type, request, value = 0, index = 0, hex = "", timeoutMs = 2000 } = {}) {
+  control({ type, request, value = 0, index = 0, hex = "", max = 64, timeoutMs = 2000 } = {}) {
     return this.request(
       "control",
-      { type, request, value, index, hex, timeout_ms: timeoutMs },
+      { type, request, value, index, hex, max, timeout_ms: timeoutMs },
       timeoutMs + 1000
     );
   }
@@ -252,19 +258,26 @@ export async function openWinusbChannel(channel, args = {}) {
   const sess = new WinusbSession(built.exe);
   try {
     if (channel !== "dap") {
-      const listed = await sess.list({ vid: args.vid, pid: args.pid });
+      const listed = await sess.list({ vid: args.vid, pid: args.pid, guid: ch.guid });
       const usable = (listed.devices || []).some(
         (d) => Number(d.mi) === ch.mi && String(d.path || "").length > 0
       );
       if (!usable) {
         sess.close();
+        const bcd = `0x${IF_SPEC.bcd_device.toString(16).padStart(4, "0")}`;
+        const fw = channel === "netcfg" ? `${bcd} (WIPARSE NET GUID)` : `${bcd} (UART/I2C GUID)`;
         return {
           ok: false,
-          error: `${ch.usb_name || ch.name} MI_${ch.mi.toString(16).padStart(2, "0")} has no openable WinUSB path; flash bcdDevice 0x0205 (UART/I2C GUID) or use TCP :${ch.tcp_port}`,
+          error: `${ch.usb_name || ch.name} MI_${ch.mi.toString(16).padStart(2, "0")} has no openable WinUSB path; flash bcdDevice ${fw} or use TCP :${ch.tcp_port}`,
         };
       }
     }
-    await sess.open({ mi: ch.mi, vid: args.vid, pid: args.pid });
+    await sess.open({
+      mi: ch.mi,
+      vid: args.vid,
+      pid: args.pid,
+      associate: channel === "netcfg" ? 0 : 1,
+    });
     return { ok: true, session: sess, channel: ch };
   } catch (e) {
     sess.close();

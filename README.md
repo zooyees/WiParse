@@ -2,9 +2,9 @@
 
 **[中文](#中文)** · **[English](#english)**
 
-无线充电（Qi）测试与工位工具。当前版本 **1.1.24**（以工作区 `Cargo.toml` 的 `workspace.package.version` 为准）。
+无线充电（Qi）测试与工位工具。当前版本 **1.1.26**（以工作区 `Cargo.toml` 的 `workspace.package.version` 为准）。
 
-Wireless charging (Qi) lab and station utility. Current version **1.1.24**.
+Wireless charging (Qi) lab and station utility. Current version **1.1.26**.
 
 许可：**Proprietary**。本仓库不是通用示波器软件，也不是面向公网的服务。
 
@@ -159,7 +159,7 @@ Node 插件宿主。左侧 **插件 | 市场** 分段：
 
 #### 4.6 测试报告
 
-顶栏选 **项目**（`{data_root}/projects/{id}`）。树是三层：**测试用例**（`tests/{id}`，一般用报告名称 / `file_prefix`）→ **测试结果**（每次 Hub `run` 的 `runs/{stamp}`）→ 该次产物分组（波形 / 报告 / 截图 capture / 其它，来自插件 `outputs[]`）。点 Markdown、波形、图片、文本在本页预览；PDF/HTML 用系统程序打开。单击波形替换当前文档，Ctrl/Cmd 叠加。右键可系统打开或在文件夹中显示；用例标题右键可从项目移除（不删磁盘文件）。不在进程内渲染完整 HTML/PDF。
+顶栏选 **项目**（`{data_root}/projects/{id}`）。树是三层：**测试用例**（`tests/{id}`，标题用插件 **`report_name`**，表单 `file_prefix` 可覆盖；**不是** run 时间戳）→ **测试结果**（每次 Hub `run` 的 `runs/{stamp}`）→ 该次产物分组（波形 / 报告 / 截图 capture / 其它，来自插件 `outputs[]`）。点 Markdown、波形、图片、文本在本页预览；PDF/HTML 用系统程序打开。单击波形替换当前文档，Ctrl/Cmd 叠加。右键可系统打开或在文件夹中显示；用例标题右键可从项目移除（不删磁盘文件）。不在进程内渲染完整 HTML/PDF。
 
 运行仍在集成测试。第一次 `run` 会把该用例写入 `project.json` 的 `tests[]`。磁盘上已有、但 JSON 未登记的用例目录也会出现在树上。旧 `evidence/` 目录不再作为默认索引。
 

@@ -1,22 +1,22 @@
 /**
- * WIPARSE-IF-001 host helpers (ICD 2026-09-15).
+ * WIPARSE-IF-001 host helpers (ICD 2026-09-16 v1.4).
  * Protocol only — no Hub plugin.id branches. Defaults match the dongle;
  * every identifier is overridable so the same plugins talk to any peer
- * that speaks CMSIS-DAP v2 / UART bridge / I2C text RPC.
+ * that speaks CMSIS-DAP v2 / UART bridge / I2C text RPC / CH-NETCFG.
  */
 
 export const IF_SPEC = Object.freeze({
   id: "WIPARSE-IF-001",
-  version: "1.2",
-  date: "2026-09-15",
+  version: "1.4",
+  date: "2026-09-16",
   manufacturer: "WIPARSE",
   product: "WIPARSE CMSIS-DAP",
   vid: 0xc251,
   pid: 0xf01a,
-  bcd_device: 0x0206,
+  bcd_device: 0x0208,
   mdns: "dap.local",
   default_ipv4: "192.168.137.123",
-  sta_ssids: Object.freeze(["OTA", "DAP"]),
+  sta_ssids: Object.freeze(["WINDLINK", "OTA", "DAP"]),
   sta_password: "12345678",
   softap_ssid: "DAP-Dongle",
   cmsis_guid: "{CDB3B5AD-293B-4663-AA36-1AAE46463776}",
@@ -338,6 +338,124 @@ export function formatI2cCommand(item) {
   throw new Error(`unknown I2C command: ${cmd}`);
 }
 
+export function splitNetcfgControlChunks(line, mps = CHANNELS.netcfg.mps) {
+  const raw = Buffer.from(String(line ?? ""), "utf8");
+  if (raw.length > CHANNELS.netcfg.max_line - 1) {
+    throw new Error("netcfg line exceeds 127 bytes");
+  }
+  if (!raw.length) return [];
+  const size = Math.max(1, Number(mps) || CHANNELS.netcfg.mps);
+  const chunks = [];
+  for (let i = 0; i < raw.length; i += size) {
+    const bytes = raw.subarray(i, i + size);
+    chunks.push({
+      bytes,
+      hex: bytes.toString("hex"),
+      last: i + bytes.length >= raw.length,
+    });
+  }
+  return chunks;
+}
+
+export function redactNetcfgLine(line) {
+  return String(line ?? "").replace(/^(PSK|PASS|PASSWORD)\b(\s+)\S+/i, "$1$2***");
+}
+
+export function parseNetcfgStatus(line) {
+  const raw = String(line ?? "").replace(/\r$/, "");
+  const fields = {};
+  for (const m of raw.matchAll(/([A-Za-z][A-Za-z0-9_]*)=(\S+)/g)) {
+    fields[m[1].toLowerCase()] = m[2];
+  }
+  const ip = fields.ip || "";
+  const wifi = fields.wifi === "1";
+  return {
+    ok: /^\s*OK\b/i.test(raw),
+    wifi,
+    ip,
+    gw: fields.gw || "",
+    mask: fields.mask || "",
+    ssid: fields.ssid || "",
+    dhcp: fields.dhcp === "1",
+    source: fields.source || "",
+    rssi: fields.rssi || "",
+    hostname: fields.hostname || "",
+    ap: fields.ap === "1",
+    got_ip: wifi && ip && ip !== "0.0.0.0",
+    raw,
+    fields,
+  };
+}
+
+export function formatNetcfgCommand(item) {
+  if (item == null) return "";
+  if (typeof item === "string") return item.trim();
+  const cmd = String(item.cmd || item.command || "").trim().toUpperCase();
+  if (!cmd) return "";
+  if (cmd === "HELP" || cmd === "?" || cmd === "STATUS" || cmd === "DHCP" || cmd === "SAVE" || cmd === "APPLY" || cmd === "REVERT") {
+    return cmd === "?" ? "HELP" : cmd;
+  }
+  if (cmd === "SSID") {
+    const name = String(item.ssid ?? item.name ?? item.value ?? "").trim();
+    return name ? `SSID ${name}` : "SSID";
+  }
+  if (cmd === "PSK" || cmd === "PASS" || cmd === "PASSWORD") {
+    const psk = String(item.psk ?? item.password ?? item.value ?? "");
+    return psk ? `PSK ${psk}` : "";
+  }
+  if (cmd === "STATIC") {
+    const ip = String(item.ip ?? "").trim();
+    const gw = String(item.gw ?? item.gateway ?? "").trim();
+    const mask = String(item.mask ?? item.netmask ?? "").trim();
+    if (!ip || !gw || !mask) throw new Error("STATIC needs ip gw mask");
+    return `STATIC ${ip} ${gw} ${mask}`;
+  }
+  if (cmd === "HOSTNAME") {
+    const name = String(item.hostname ?? item.name ?? item.value ?? "").trim();
+    return name ? `HOSTNAME ${name}` : "HOSTNAME";
+  }
+  throw new Error(`unknown NETCFG command: ${cmd}`);
+}
+
+export function buildNetcfgRecipe(wifi = {}, op = "apply") {
+  const o = String(op || "apply").trim().toLowerCase();
+  if (o === "status") return ["STATUS"];
+  if (o === "help") return ["HELP"];
+  if (o === "revert") return ["REVERT"];
+  if (o === "script" || o === "recipe") return [];
+  const ssid = String(wifi.ssid ?? "").trim();
+  const psk = String(wifi.psk ?? wifi.password ?? "");
+  const hostname = String(wifi.hostname ?? "").trim();
+  const dhcp =
+    wifi.dhcp === true || wifi.dhcp === "true" || wifi.dhcp === "1" || wifi.dhcp === 1;
+  const lines = [];
+  if (ssid) {
+    if (ssid.length < 1 || ssid.length > 32) throw new Error("ssid 1-32");
+    lines.push(`SSID ${ssid}`);
+  }
+  if (psk) {
+    if (psk.length < 8 || psk.length > 63) throw new Error("psk 8-63");
+    lines.push(`PSK ${psk}`);
+  }
+  if (dhcp) lines.push("DHCP");
+  else {
+    const ip = String(wifi.ip ?? "").trim();
+    const gw = String(wifi.gateway ?? wifi.gw ?? "").trim();
+    const mask = String(wifi.netmask ?? wifi.mask ?? "").trim();
+    if (ip) {
+      if (!gw || !mask) throw new Error("STATIC needs gateway and netmask");
+      lines.push(`STATIC ${ip} ${gw} ${mask}`);
+    }
+  }
+  if (hostname) {
+    if (hostname.length < 1 || hostname.length > 32) throw new Error("hostname 1-32");
+    lines.push(`HOSTNAME ${hostname}`);
+  }
+  if (o === "save") lines.push("SAVE");
+  else if (o === "apply") lines.push("APPLY");
+  return lines;
+}
+
 export function parseI2cReply(line) {
   const raw = String(line ?? "").replace(/\r$/, "");
   const parts = raw.trim().split(/\s+/).filter(Boolean);
@@ -507,6 +625,7 @@ export function resolveChannel(kind, args = {}) {
     tcp_port: numOr(args.tcp_port, base.tcp_port),
     packet: numOr(args.packet_size, base.packet || 512),
     usb_name: String(args.usb_name ?? "").trim(),
+    guid: String(args.usb_guid || args.guid || "").trim() || base.guid,
     fallback_host:
       fb === undefined || fb === null ? IF_SPEC.default_ipv4 : String(fb).trim(),
   };
@@ -552,6 +671,7 @@ export function overlayChannelArgs(config, args = {}) {
   const ch = config?.channel || {};
   return {
     usb_mi: args.usb_mi ?? ch.usb_mi,
+    usb_guid: args.usb_guid ?? ch.usb_guid,
     usb_name: args.usb_name ?? ch.usb_name,
     out_ep: args.out_ep ?? ch.out_ep,
     in_ep: args.in_ep ?? ch.in_ep,

@@ -2,7 +2,7 @@
 
 Plugin-style scripts for the GUI **集成测试 / Testing Hub** panel (config key still `test_tool`).  
 Drive **WiParse GUI HTTP API** and/or **CLI**.  
-See **[PLUGIN_SPEC.md](./PLUGIN_SPEC.md)** for the **2026-09-15 / GUI 1.1.16** contract (project → test case → result layout, overlay `file_prefix` as `test_id`, generic `device` params, `outputs[]`). This is the document to hand to another developer or AI writing a plugin.
+See **[PLUGIN_SPEC.md](./PLUGIN_SPEC.md)** for the **2026-09-16 / GUI 1.1.16+** contract (`report_name` test cases, overlay `file_prefix` as optional `test_id`, generic `device` params, `outputs[]`). This is the document to hand to another developer or AI writing a plugin.
 
 ## Quick start
 

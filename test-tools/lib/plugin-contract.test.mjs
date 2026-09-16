@@ -18,6 +18,7 @@ import {
   ensureTestInProject,
   loadStationConfig,
   sanitizeTestId,
+  resolveReportName,
 } from "./plugin-contract.mjs";
 import fs from "node:fs";
 import os from "node:os";
@@ -92,6 +93,31 @@ test("scope-serial-monitor plugin.json validates", () => {
   assert.equal(raw.params.some((p) => p.type === "device"), true);
   assert.equal(raw.params.some((p) => p.type === "json" && p.name === "triggers"), true);
   assert.ok(Array.isArray(raw.outputs) && raw.outputs.some((o) => o.id === "waves"));
+  assert.equal(raw.report_name, "ScopeSerial");
+});
+
+test("all bundled plugins declare report_name and 1.1.16 engines", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const root = path.join(here, "..", "plugins");
+  const ids = fs.readdirSync(root).filter((id) => fs.existsSync(path.join(root, id, "plugin.json")));
+  assert.ok(ids.length >= 6, ids.join(","));
+  for (const id of ids) {
+    const raw = JSON.parse(fs.readFileSync(path.join(root, id, "plugin.json"), "utf8"));
+    const check = validatePluginManifest(raw);
+    assert.equal(check.ok, true, `${id}: ${check.errors?.join("; ")}`);
+    assert.ok(String(raw.report_name || "").trim(), `${id} missing report_name`);
+    assert.notEqual(raw.report_name, raw.name, `${id} report_name must not copy marketing name`);
+    assert.equal(raw.engines?.wiparse, ">=1.1.16", id);
+    assert.ok(Array.isArray(raw.outputs) && raw.outputs.length >= 1, `${id} outputs[]`);
+    assert.ok(raw.params?.some((p) => p.name === "file_prefix"), `${id} file_prefix param`);
+    const stationPath = path.join(root, id, "station.json");
+    if (fs.existsSync(stationPath)) {
+      const station = JSON.parse(fs.readFileSync(stationPath, "utf8"));
+      const s = validateStationConfig(station);
+      assert.equal(s.ok, true, `${id} station: ${s.errors?.join("; ")}`);
+      assert.equal(station.gui?.min_version, "1.1.16", id);
+    }
+  }
 });
 
 test("applyParamPaths parses json overlay onto station", () => {
@@ -194,6 +220,7 @@ test("plugin.json group/advanced/hidden are accepted", () => {
   const check = validatePluginManifest({
     id: "demo",
     name: "Demo",
+    report_name: "DemoReport",
     type: "custom",
     params: [
       { name: "a", type: "string", group: "paths", group_zh: "路径" },
@@ -202,6 +229,24 @@ test("plugin.json group/advanced/hidden are accepted", () => {
     ],
   });
   assert.equal(check.ok, true, check.errors?.join("; "));
+});
+
+test("report_name is required on plugin.json", () => {
+  const missing = validatePluginManifest({
+    id: "demo",
+    name: "Demo",
+    type: "custom",
+  });
+  assert.equal(missing.ok, false);
+  assert.ok(missing.errors.some((e) => e.includes("report_name")));
+  assert.equal(
+    resolveReportName({ id: "wiparse-dap", report_name: "WiparseDap" }, {}),
+    "WiparseDap"
+  );
+  assert.equal(
+    resolveReportName({ id: "wiparse-dap", report_name: "WiparseDap" }, { file_prefix: "MyLot" }),
+    "MyLot"
+  );
 });
 
 test("resolveProjectLayout run vs preflight", () => {

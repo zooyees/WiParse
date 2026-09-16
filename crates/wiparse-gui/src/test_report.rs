@@ -15,16 +15,18 @@ use wiparse_core::config::AppConfig;
 use wiparse_core::i18n::{tr, Lang};
 use wiparse_core::project::{
     add_test, add_test_entry, ensure_project, index_project, list_projects, path_in_project_jail,
-    remove_test, sanitize_id, test_ref_from_report, tree_snapshot, ArtifactView, IndexedGroup,
-    IndexedProject, PluginMeta, ProjectDoc,
+    remove_test, sanitize_id, test_case_label, test_ref_from_report, tree_snapshot, ArtifactView,
+    IndexedGroup, IndexedProject, PluginMeta, ProjectDoc,
 };
 use crate::waveform_analysis::WaveformAnalysisPanel;
 
 const SIDE_W: f32 = 300.0;
 const PANEL_GAP: f32 = 8.0;
 const CARD_MARGIN_X: i8 = 10;
-const TREE_ROW_H: f32 = 22.0;
-const TREE_INDENT: f32 = 14.0;
+const TREE_ROW_H: f32 = 24.0;
+const TREE_PAD: f32 = 6.0;
+const TREE_INDENT: f32 = 16.0;
+const TREE_CHEVRON_W: f32 = 14.0;
 const MAX_PREVIEW_CHARS: usize = 400_000;
 const MAX_MD_IMAGE_EDGE: u32 = 1600;
 
@@ -574,14 +576,15 @@ impl TestReportPanel {
                 if self.add_test_open {
                     let mut added: Option<wiparse_core::project::ProjectTestRef> = None;
                     for p in plugins {
-                        let entry = test_ref_from_report(&p.id, &p.file_prefix, &p.name);
+                        let entry = test_ref_from_report(&p.id, p.report_slug());
                         if self.index.tests.iter().any(|t| t.id == entry.id) {
                             continue;
                         }
-                        let title = if entry.name.is_empty() {
-                            entry.id.as_str()
+                        let title = p.report_label(matches!(lang, Lang::Zh));
+                        let title = if title.is_empty() {
+                            entry.display_name()
                         } else {
-                            entry.name.as_str()
+                            title
                         };
                         if ui
                             .add(
@@ -599,7 +602,7 @@ impl TestReportPanel {
                         }
                     }
                     if plugins.iter().all(|p| {
-                        let entry = test_ref_from_report(&p.id, &p.file_prefix, &p.name);
+                        let entry = test_ref_from_report(&p.id, p.report_slug());
                         self.index.tests.iter().any(|t| t.id == entry.id)
                     }) {
                         ui.label(
@@ -648,6 +651,13 @@ impl TestReportPanel {
                         action = ReportAction::GoHub;
                     }
                 } else {
+                    ui.add_space(4.0);
+                    ui.painter().hline(
+                        ui.max_rect().x_range(),
+                        ui.cursor().top(),
+                        Stroke::new(1.0_f32, tokens.divider),
+                    );
+                    ui.add_space(6.0);
                     let list_h = ui.available_height().max(72.0);
                     let mut open_file: Option<(PathBuf, ArtifactView, bool)> = None;
                     let mut remove_id: Option<String> = None;
@@ -660,40 +670,44 @@ impl TestReportPanel {
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
-                            ui.spacing_mut().item_spacing.y = 3.0;
-                            for test in &tests {
-                                let title = if !test.name.trim().is_empty() {
-                                    test.name.as_str()
-                                } else {
-                                    test.id.as_str()
-                                };
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            for (ti, test) in tests.iter().enumerate() {
+                                if ti > 0 {
+                                    ui.add_space(6.0);
+                                }
+                                let title = test_display_name(test, plugins, lang);
                                 let running = running_id == Some(test.id.as_str())
                                     || running_id == Some(test.plugin_id.as_str());
-                                let mut header = title.to_owned();
-                                if running {
-                                    header.push_str("  · ");
-                                    header.push_str(&tr(lang, "report.running"));
-                                }
-                                if !test.installed {
-                                    header.push_str("  · ");
-                                    header.push_str(&tr(lang, "report.missing_plugin"));
+                                let trail = if running {
+                                    Some(TreeTrail::Status {
+                                        text: tr(lang, "report.running"),
+                                        color: tokens.accent,
+                                    })
+                                } else if !test.installed {
+                                    Some(TreeTrail::Status {
+                                        text: tr(lang, "report.missing_plugin"),
+                                        color: tokens.text_muted,
+                                    })
                                 } else if test.results.is_empty() {
-                                    header.push_str("  · 0");
-                                }
+                                    None
+                                } else {
+                                    Some(TreeTrail::Count(test.results.len()))
+                                };
                                 let color = if test.installed {
                                     tokens.text_primary
                                 } else {
                                     tokens.text_muted
                                 };
-                                let (open, header_resp) = collapsing_row(
+                                let (open, header_resp) = tree_branch_row(
                                     ui,
                                     tokens,
                                     ("report-test", test.id.as_str()),
-                                    &header,
-                                    running || !test.results.is_empty(),
-                                    0.0,
+                                    0,
+                                    &title,
                                     color,
-                                    ui_theme::FONT_BODY,
+                                    true,
+                                    running || !test.results.is_empty(),
+                                    trail.as_ref(),
                                 );
                                 header_resp.context_menu(|ui| {
                                     if ui.button(tr(lang, "report.remove_test")).clicked() {
@@ -715,7 +729,7 @@ impl TestReportPanel {
                                     tree_hint_row(
                                         ui,
                                         tokens,
-                                        TREE_INDENT,
+                                        1,
                                         &tr(lang, "report.test_missing"),
                                     );
                                 }
@@ -723,34 +737,28 @@ impl TestReportPanel {
                                     tree_hint_row(
                                         ui,
                                         tokens,
-                                        TREE_INDENT,
+                                        1,
                                         &tr(lang, "report.test_no_runs"),
                                     );
                                     continue;
                                 }
                                 for (ri, result) in test.results.iter().enumerate() {
-                                    let mut rtitle = format_result_stamp(&result.stamp);
-                                    if let Some(ok) = result.ok {
-                                        rtitle.push_str("  ");
-                                        rtitle.push_str(&tr(
-                                            lang,
-                                            if ok {
-                                                "report.result_ok"
-                                            } else {
-                                                "report.result_fail"
-                                            },
-                                        ));
-                                    }
-                                    rtitle.push_str(&format!("  ({})", result.file_count()));
-                                    let (ropen, rresp) = collapsing_row(
+                                    let rtitle = format_result_stamp(&result.stamp);
+                                    let trail = result.ok.map(|ok| TreeTrail::Dot(if ok {
+                                        tokens.success
+                                    } else {
+                                        tokens.stop_bg
+                                    }));
+                                    let (ropen, rresp) = tree_branch_row(
                                         ui,
                                         tokens,
                                         ("report-result", test.id.as_str(), result.stamp.as_str()),
+                                        1,
                                         &rtitle,
-                                        ri == 0,
-                                        TREE_INDENT,
                                         tokens.text_primary,
-                                        ui_theme::FONT_CAPTION,
+                                        false,
+                                        ri == 0,
+                                        trail.as_ref(),
                                     );
                                     if rresp.double_clicked() {
                                         if let Some(f) = result
@@ -770,7 +778,7 @@ impl TestReportPanel {
                                             &mut open_file,
                                             &test.id,
                                             &result.stamp,
-                                            TREE_INDENT * 2.0,
+                                            2,
                                         );
                                     }
                                 }
@@ -1045,42 +1053,46 @@ fn paint_output_groups(
     open_file: &mut Option<(PathBuf, ArtifactView, bool)>,
     name_prefix: &str,
     stamp: &str,
-    indent: f32,
+    depth: u8,
 ) {
-    for group in groups {
-        if group.files.is_empty() {
-            continue;
-        }
-        let gtitle = if matches!(lang, Lang::Zh) && !group.label_zh.is_empty() {
-            group.label_zh.as_str()
-        } else {
-            group.label.as_str()
-        };
-        let collapsed = group_starts_collapsed(group);
-        let header = format!("{}  ({})", gtitle, group.files.len());
-        let (open, _) = collapsing_row(
-            ui,
-            tokens,
-            ("report-group", name_prefix, stamp, group.id.as_str()),
-            &header,
-            !collapsed,
-            indent,
-            tokens.text_muted,
-            ui_theme::FONT_CAPTION,
-        );
-        if !open {
-            continue;
+    let nonempty: Vec<&IndexedGroup> = groups.iter().filter(|g| !g.files.is_empty()).collect();
+    if nonempty.is_empty() {
+        return;
+    }
+    let flatten = nonempty.len() == 1 && nonempty[0].files.len() <= 4;
+    for group in nonempty {
+        let file_depth = if flatten { depth } else { depth + 1 };
+        if !flatten {
+            let gtitle = if matches!(lang, Lang::Zh) && !group.label_zh.is_empty() {
+                group.label_zh.as_str()
+            } else {
+                group.label.as_str()
+            };
+            let (open, _) = tree_branch_row(
+                ui,
+                tokens,
+                ("report-group", name_prefix, stamp, group.id.as_str()),
+                depth,
+                gtitle,
+                tokens.text_muted,
+                false,
+                group_starts_open(group),
+                Some(&TreeTrail::Count(group.files.len())),
+            );
+            if !open {
+                continue;
+            }
         }
         for file in &group.files {
             let is_sel = selected.as_ref().is_some_and(|p| same_path(p, &file.path));
             let label = short_artifact_label(&file.name, name_prefix, stamp);
-            let row = file_row(
+            let row = tree_leaf_row(
                 ui,
                 tokens,
+                file_depth,
                 &label,
                 type_badge(&file.name),
                 is_sel,
-                indent + TREE_INDENT,
             );
             let view = open_view_for_file(file.view, group.view, &file.name);
             if row.clicked() {
@@ -1107,17 +1119,8 @@ fn paint_output_groups(
     }
 }
 
-fn group_starts_collapsed(group: &IndexedGroup) -> bool {
-    if group.id == "docs" || group.id == "_other" {
-        return true;
-    }
-    group.files.len() > 2
-        && group.files.iter().all(|f| {
-            matches!(
-                file_ext(&f.name).as_str(),
-                "html" | "htm" | "pdf" | "json" | "jsonl"
-            )
-        })
+fn group_starts_open(group: &IndexedGroup) -> bool {
+    matches!(group.id.as_str(), "reports" | "report")
 }
 
 fn type_badge(name: &str) -> &'static str {
@@ -1170,7 +1173,7 @@ fn short_artifact_label(name: &str, prefix: &str, stamp: &str) -> String {
             return if head.is_empty() {
                 nice
             } else {
-                format!("{head}  {nice}")
+                format!("{head} {nice}")
             };
         }
     }
@@ -1185,41 +1188,74 @@ fn short_artifact_label(name: &str, prefix: &str, stamp: &str) -> String {
 
 fn format_result_stamp(stamp: &str) -> String {
     let full = wiparse_core::project::format_run_stamp(stamp);
-    if full.len() >= 19 && full.as_bytes().get(4) == Some(&b'-') {
-        full[5..].to_owned()
+    if full.len() >= 16 && full.as_bytes().get(4) == Some(&b'-') {
+        // "YYYY-MM-DD HH:MM:SS" → "MM-DD HH:MM"
+        let md = &full[5..10];
+        let hm = if full.len() >= 16 { &full[11..16] } else { "" };
+        if hm.is_empty() {
+            md.to_owned()
+        } else {
+            format!("{md}  {hm}")
+        }
     } else {
         full
     }
 }
 
-fn collapsing_row(
+fn test_display_name(test: &wiparse_core::project::IndexedTest, plugins: &[PluginMeta], lang: Lang) -> String {
+    let plugin = plugins
+        .iter()
+        .find(|p| p.id == test.plugin_id || p.id == test.id);
+    if plugin.is_some() {
+        return test_case_label(
+            &test.name,
+            &test.id,
+            &test.plugin_id,
+            plugin,
+            matches!(lang, Lang::Zh),
+        );
+    }
+    if matches!(lang, Lang::Zh) && !test.name_zh.trim().is_empty() {
+        return test.name_zh.clone();
+    }
+    if !test.name.trim().is_empty() && !wiparse_core::project::is_run_stamp(&test.name) {
+        return test.name.clone();
+    }
+    test.id.clone()
+}
+
+enum TreeTrail {
+    Count(usize),
+    Status { text: String, color: Color32 },
+    Dot(Color32),
+}
+
+fn tree_x(depth: u8) -> f32 {
+    TREE_PAD + f32::from(depth) * TREE_INDENT
+}
+
+fn tree_branch_row(
     ui: &mut egui::Ui,
     tokens: &Tokens,
     id: impl std::hash::Hash,
+    depth: u8,
     title: &str,
-    default_open: bool,
-    indent: f32,
     color: Color32,
-    font_size: f32,
+    strong: bool,
+    default_open: bool,
+    trail: Option<&TreeTrail>,
 ) -> (bool, egui::Response) {
     let eid = ui.make_persistent_id(id);
     let mut state =
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), eid, default_open);
-    let width = ui.available_width().max(40.0);
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, TREE_ROW_H), egui::Sense::click());
-    if resp.hovered() {
-        ui.painter().rect_filled(
-            rect,
-            CornerRadius::same(3),
-            tokens.accent_soft.gamma_multiply(0.45),
-        );
-    }
-    let y = rect.center().y;
-    let x = rect.min.x + indent + 2.0;
+    let (rect, resp) = allocate_tree_row(ui);
+    paint_tree_bg(ui, tokens, rect, resp.hovered(), false);
     if resp.clicked() {
         state.toggle(ui);
     }
     let open = state.is_open();
+    let x = rect.min.x + tree_x(depth);
+    let y = rect.center().y;
     ui.painter().text(
         egui::pos2(x, y),
         egui::Align2::LEFT_CENTER,
@@ -1227,87 +1263,152 @@ fn collapsing_row(
         FontId::proportional(ui_theme::FONT_CAPTION),
         tokens.text_muted,
     );
-    let text_x = x + 14.0;
-    let max_w = (rect.max.x - text_x - 6.0).max(16.0);
-    let max_chars = ((max_w / 6.6) as usize).max(4);
-    ui.painter().text(
-        egui::pos2(text_x, y),
-        egui::Align2::LEFT_CENTER,
-        elide_chars(title, max_chars),
-        FontId::proportional(font_size),
-        color,
-    );
+    let title_x = x + TREE_CHEVRON_W;
+    let trail_w = paint_tree_trail(ui, tokens, rect, trail);
+    let max_w = (rect.max.x - trail_w - title_x - 6.0).max(12.0);
+    let font = FontId::proportional(if strong {
+        ui_theme::FONT_TITLE
+    } else {
+        ui_theme::FONT_BODY
+    });
+    paint_elided(ui, egui::pos2(title_x, y), title, font, color, max_w);
     state.store(ui.ctx());
     (open, resp)
 }
 
-fn tree_hint_row(ui: &mut egui::Ui, tokens: &Tokens, indent: f32, text: &str) {
-    let width = ui.available_width().max(40.0);
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, TREE_ROW_H), egui::Sense::hover());
-    ui.painter().text(
-        egui::pos2(rect.min.x + indent + 16.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        elide_chars(text, 36),
-        FontId::proportional(ui_theme::FONT_CAPTION),
-        tokens.text_muted,
-    );
-}
-
-fn file_row(
+fn tree_leaf_row(
     ui: &mut egui::Ui,
     tokens: &Tokens,
+    depth: u8,
     name: &str,
     badge: &str,
     selected: bool,
-    indent: f32,
 ) -> egui::Response {
-    let row_h = 20.0_f32;
-    let width = ui.available_width().max(80.0);
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::click());
-    if selected {
-        ui.painter().rect_filled(
-            rect,
-            CornerRadius::same(3),
-            tokens.accent.gamma_multiply(0.18),
-        );
-    } else if resp.hovered() {
-        ui.painter().rect_filled(
-            rect,
-            CornerRadius::same(3),
-            tokens.accent_soft.gamma_multiply(0.55),
-        );
-    }
+    let (rect, resp) = allocate_tree_row(ui);
+    paint_tree_bg(ui, tokens, rect, resp.hovered(), selected);
+    let x = rect.min.x + tree_x(depth);
     let y = rect.center().y;
-    let x = rect.min.x + indent;
-    ui.painter().text(
-        egui::pos2(x + 4.0, y),
-        egui::Align2::LEFT_CENTER,
-        badge,
-        FontId::proportional(ui_theme::FONT_CAPTION),
-        tokens.text_muted,
-    );
-    let text_x = x + 32.0;
-    let max_w = (rect.max.x - text_x - 4.0).max(16.0);
-    let max_chars = ((max_w / 6.6) as usize).max(4);
-    ui.painter().text(
-        egui::pos2(text_x, y),
-        egui::Align2::LEFT_CENTER,
-        elide_chars(name, max_chars),
+    let title_x = x + TREE_CHEVRON_W;
+    let trail = TreeTrail::Status {
+        text: badge.to_owned(),
+        color: tokens.text_muted,
+    };
+    let trail_w = paint_tree_trail(ui, tokens, rect, Some(&trail));
+    let max_w = (rect.max.x - trail_w - title_x - 6.0).max(12.0);
+    paint_elided(
+        ui,
+        egui::pos2(title_x, y),
+        name,
         FontId::proportional(ui_theme::FONT_BODY),
         tokens.text_primary,
+        max_w,
     );
     resp
 }
 
-fn elide_chars(s: &str, max_chars: usize) -> String {
-    let count = s.chars().count();
-    if count <= max_chars {
-        return s.to_owned();
+fn tree_hint_row(ui: &mut egui::Ui, tokens: &Tokens, depth: u8, text: &str) {
+    let (rect, _) = allocate_tree_row(ui);
+    let title_x = rect.min.x + tree_x(depth) + TREE_CHEVRON_W;
+    let max_w = (rect.max.x - title_x - 8.0).max(12.0);
+    paint_elided(
+        ui,
+        egui::pos2(title_x, rect.center().y),
+        text,
+        FontId::proportional(ui_theme::FONT_CAPTION),
+        tokens.text_muted,
+        max_w,
+    );
+}
+
+fn allocate_tree_row(ui: &mut egui::Ui) -> (egui::Rect, egui::Response) {
+    let width = ui.available_width().max(40.0);
+    ui.allocate_exact_size(egui::vec2(width, TREE_ROW_H), egui::Sense::click())
+}
+
+fn paint_tree_bg(ui: &egui::Ui, tokens: &Tokens, rect: egui::Rect, hovered: bool, selected: bool) {
+    let fill = if selected {
+        Some(tokens.accent.gamma_multiply(0.16))
+    } else if hovered {
+        Some(tokens.accent_soft.gamma_multiply(0.55))
+    } else {
+        None
+    };
+    if let Some(fill) = fill {
+        ui.painter()
+            .rect_filled(rect.shrink2(egui::vec2(1.0, 0.5)), CornerRadius::same(5), fill);
     }
-    let take = max_chars.saturating_sub(1);
-    let mut out: String = s.chars().take(take).collect();
-    out.push('\u{2026}'); // …
-    out
+}
+
+fn paint_tree_trail(
+    ui: &egui::Ui,
+    tokens: &Tokens,
+    rect: egui::Rect,
+    trail: Option<&TreeTrail>,
+) -> f32 {
+    let Some(trail) = trail else {
+        return 8.0;
+    };
+    let y = rect.center().y;
+    match trail {
+        TreeTrail::Count(n) => {
+            let text = n.to_string();
+            let font = FontId::proportional(ui_theme::FONT_CAPTION);
+            let w = measure_text(ui, &text, &font);
+            ui.painter().text(
+                egui::pos2(rect.max.x - 8.0, y),
+                egui::Align2::RIGHT_CENTER,
+                text,
+                font,
+                tokens.text_muted,
+            );
+            w + 16.0
+        }
+        TreeTrail::Status { text, color } => {
+            let font = FontId::proportional(ui_theme::FONT_CAPTION);
+            let w = measure_text(ui, text, &font);
+            ui.painter().text(
+                egui::pos2(rect.max.x - 8.0, y),
+                egui::Align2::RIGHT_CENTER,
+                text,
+                font,
+                *color,
+            );
+            w + 16.0
+        }
+        TreeTrail::Dot(color) => {
+            ui.painter()
+                .circle_filled(egui::pos2(rect.max.x - 12.0, y), 3.5, *color);
+            22.0
+        }
+    }
+}
+
+fn measure_text(ui: &egui::Ui, text: &str, font: &FontId) -> f32 {
+    ui.fonts(|f| f.layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE).size().x)
+}
+
+fn paint_elided(
+    ui: &egui::Ui,
+    center_left: egui::Pos2,
+    text: &str,
+    font: FontId,
+    color: Color32,
+    max_w: f32,
+) {
+    let format = TextFormat {
+        font_id: font,
+        color,
+        ..Default::default()
+    };
+    let mut job = LayoutJob::default();
+    job.append(text, 0.0, format);
+    job.wrap.max_width = max_w.max(8.0);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    job.wrap.overflow_character = Some('…');
+    let galley = ui.fonts(|f| f.layout_job(job));
+    let pos = egui::pos2(center_left.x, center_left.y - galley.size().y * 0.5);
+    ui.painter().galley(pos, galley, color);
 }
 
 fn format_size(bytes: u64) -> String {
@@ -2622,7 +2723,7 @@ mod tests {
                 "tianshu_xinwei_mpp25w",
                 "20260915_143758",
             ),
-            "timeout  14:37:38"
+            "timeout 14:37:38"
         );
         assert_eq!(
             short_artifact_label(
@@ -2630,14 +2731,49 @@ mod tests {
                 "tianshu_xinwei_mpp25w",
                 "20260915_143758",
             ),
-            "summary  14:37:58"
+            "summary 14:37:58"
         );
         assert_eq!(short_artifact_label("index.jsonl", "lot", "20260915_143758"), "index.jsonl");
     }
 
     #[test]
     fn result_stamp_drops_year() {
-        assert_eq!(format_result_stamp("20260915_143758"), "09-15 14:37:58");
+        assert_eq!(format_result_stamp("20260915_143758"), "09-15  14:37");
+    }
+
+    #[test]
+    fn test_display_uses_plugin_report_name_not_stamp_or_title() {
+        let test = wiparse_core::project::IndexedTest {
+            id: "wiparse-dap".into(),
+            name: "wiparse-dap".into(),
+            name_zh: String::new(),
+            plugin_id: "wiparse-dap".into(),
+            installed: true,
+            results: vec![],
+        };
+        let plugins = [PluginMeta {
+            id: "wiparse-dap".into(),
+            name: "CMSIS-DAP Probe".into(),
+            name_zh: "CMSIS-DAP 调试通道".into(),
+            outputs: vec![],
+            file_prefix: "WiparseDap".into(),
+            report_name: "WiparseDap".into(),
+            report_name_zh: "DAP 通道".into(),
+        }];
+        assert_eq!(test_display_name(&test, &plugins, Lang::Zh), "DAP 通道");
+        assert_eq!(test_display_name(&test, &plugins, Lang::En), "WiparseDap");
+        let stamped = wiparse_core::project::IndexedTest {
+            id: "20260916_143758".into(),
+            name: "20260916_143758".into(),
+            name_zh: String::new(),
+            plugin_id: "wiparse-dap".into(),
+            installed: true,
+            results: vec![],
+        };
+        assert_eq!(
+            test_display_name(&stamped, &plugins, Lang::En),
+            "WiparseDap"
+        );
     }
 
     #[test]

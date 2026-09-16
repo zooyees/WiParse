@@ -195,6 +195,18 @@ export function sanitizeId(raw, fallback = "default") {
   return fallback;
 }
 
+/** Canonical report name: overlay/args file_prefix, else plugin.json report_name. */
+export function resolveReportName(plugin, args = {}) {
+  const fromArgs = String(args?.file_prefix ?? "").trim();
+  if (fromArgs) return fromArgs;
+  const fromPlugin = String(plugin?.report_name ?? "").trim();
+  if (fromPlugin) return fromPlugin;
+  const fromParam = plugin?.params?.find((p) => p?.name === "file_prefix")?.default;
+  const fromDefault = String(fromParam ?? "").trim();
+  if (fromDefault) return fromDefault;
+  return String(plugin?.id || "default").trim();
+}
+
 /** Test directory slug from Hub report name / file_prefix. */
 export function sanitizeTestId(raw, fallback = "default") {
   const cleaned = sanitizeFilePrefix(raw).replace(/\s+/g, "_");
@@ -564,6 +576,12 @@ export function validatePluginManifest(raw) {
     errors.push("id: must match [a-zA-Z0-9][a-zA-Z0-9._-]*");
   }
   if (!raw.name || typeof raw.name !== "string") errors.push("name: required string");
+  if (!raw.report_name || typeof raw.report_name !== "string" || !raw.report_name.trim()) {
+    errors.push("report_name: required non-empty string (Test Report case title)");
+  }
+  if (raw.report_name_zh != null && typeof raw.report_name_zh !== "string") {
+    errors.push("report_name_zh: must be string");
+  }
   if (!raw.type || typeof raw.type !== "string") errors.push("type: required string");
   else if (!PLUGIN_TYPES.includes(raw.type)) {
     errors.push(`type: must be one of ${PLUGIN_TYPES.join("|")}`);
@@ -862,9 +880,10 @@ export function loadStationConfig(ctx) {
       project: ctx.project || args.project,
       testId: sanitizeTestId(
         ctx.testId ||
-          args.file_prefix ||
           process.env.WIPARSE_TEST_ID ||
-          config.paths?.file_prefix,
+          resolveReportName(ctx.plugin, {
+            file_prefix: args.file_prefix || config.paths?.file_prefix,
+          }),
         pluginId
       ),
       pluginId,
@@ -927,6 +946,7 @@ export default {
   collectOutputFiles,
   writeRunJson,
   sanitizeFilePrefix,
+  resolveReportName,
   resolveConfigPath,
   parseSemver,
   cmpSemver,

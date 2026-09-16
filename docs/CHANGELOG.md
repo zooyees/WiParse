@@ -8,6 +8,32 @@
 
 ## Unreleased
 
+- 捆绑插件对齐 **1.1.26** 契约：清单均有 `report_name` / `report_name_zh`；表单可选 `file_prefix` 覆盖用例目录；`engines.wiparse >=1.1.16`。`example-smoke` **v0.2.1** 声明 `outputs[]` 并写入 `tests/{report_name}/runs/{stamp}/`。`wiparse-dap` / `wiparse-uart-bridge` / `wiparse-i2c-rpc` **v1.0.1**。
+- `wiparse-netcfg` **v1.1.0**：对齐 DAP-Link ICD **v1.4** / 固件 `bcdDevice 0x0208`。USB `MI_05` EP0 优先，TCP `:1238` 仅 GOT_IP 后可用。PSK 不落日志。
+
+---
+
+## 1.1.26 — 2026-09-16
+
+### Test Report / Plugin
+
+- 每个插件清单必须有 **`report_name`**（可选 `report_name_zh`）。测试报告左侧用例名只用报告名，不用插件营销名、目录 id 或 run 时间戳。时间戳只出现在结果层。
+- 用例标题单一规则：自定义前缀 → `report_name` → 目录名。Hub / runner 默认 `tests/{test_id}/` 跟随 `report_name`；表单 `file_prefix` 仍可覆盖。
+
+### Testing Hub
+
+- `wiparse-netcfg` **v1.0.0**：CH-NETCFG 配网插件。USB `MI_05` EP0（`0x20`/`0x21`）优先，TCP `:1238` 作已入网后备。`APPLY` 后轮询 `STATUS wifi=`，日志脱敏 PSK。需要固件 `bcdDevice 0x0206`。
+
+---
+
+## 1.1.25 — 2026-09-16
+
+### Test Report
+
+- 左侧树按统一网格重排：用例 → 结果时间戳 → 产物分组 → 文件，行高 24px、缩进 16px，用例之间留 6px 空隙。
+- 标题单行省略；数量 / 通过失败 / 文件类型放在行尾，不再和名称挤在一起。
+- 插件中文名、结果 `MM-DD  HH:MM`；仅报告组默认展开，单组且文件很少时扁平化。
+
 ---
 
 ## 1.1.24 — 2026-09-16

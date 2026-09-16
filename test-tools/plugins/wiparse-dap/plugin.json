@@ -2,13 +2,15 @@
   "id": "wiparse-dap",
   "name": "CMSIS-DAP Probe",
   "name_zh": "CMSIS-DAP 调试通道",
+  "report_name": "WiparseDap",
+  "report_name_zh": "DAP 通道",
   "type": "instrument",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "entry": "index.mjs",
   "config": "station.json",
-  "description": "Generic CMSIS-DAP v2 host (WIPARSE-IF CH-DAP). USB WinUSB / TCP USB-IP:3240 / GUI probe-rs / external pyOCD·OpenOCD·probe-rs. Discover, DAP_Info, halt/run/reset, mem, flash, RTT, recipe.",
+  "description": "Generic CMSIS-DAP v2 host (WIPARSE-IF CH-DAP). USB WinUSB / TCP USB-IP:3240 / GUI probe-rs / external pyOCD·OpenOCD·probe-rs. Discover, DAP_Info, halt/run/reset, mem, flash, RTT, recipe. Test case dir is report_name (override with file_prefix).",
   "capabilities": ["preflight", "run", "stop"],
-  "engines": { "node": ">=18", "wiparse": ">=1.1.14" },
+  "engines": { "node": ">=18", "wiparse": ">=1.1.16" },
   "sandbox": {
     "permissions": ["gui.api", "cli", "fs.data_root", "network.outbound"]
   },
@@ -39,6 +41,17 @@
     }
   ],
   "params": [
+    {
+      "name": "file_prefix",
+      "type": "string",
+      "path": "paths.file_prefix",
+      "default": "WiparseDap",
+      "group": "paths",
+      "group_zh": "路径",
+      "label": "Report name / prefix",
+      "label_zh": "报告名称/前缀",
+      "help": "Optional override of plugin.json report_name. Sanitized value is tests/{test_id}/."
+    },
     {
       "name": "transport",
       "type": "enum",

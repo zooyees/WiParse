@@ -192,8 +192,38 @@ pub struct PluginMeta {
     pub name: String,
     pub name_zh: String,
     pub outputs: Vec<OutputSpec>,
-    /// Hub 「报告名称/前缀」默认值（`paths.file_prefix`）。空则用例目录回退 `id`。
+    /// Default `tests/{test_id}/` slug (`paths.file_prefix`). Empty → `report_name`.
     pub file_prefix: String,
+    /// Plugin-manifest report name shown as the Test Report case title.
+    pub report_name: String,
+    pub report_name_zh: String,
+}
+
+impl PluginMeta {
+    pub fn report_label(&self, zh: bool) -> &str {
+        if zh && !self.report_name_zh.trim().is_empty() {
+            return self.report_name_zh.as_str();
+        }
+        if !self.report_name.trim().is_empty() {
+            return self.report_name.as_str();
+        }
+        if !self.file_prefix.trim().is_empty() {
+            return self.file_prefix.as_str();
+        }
+        ""
+    }
+
+    pub fn report_slug(&self) -> &str {
+        let prefix = self.file_prefix.trim();
+        if !prefix.is_empty() {
+            return prefix;
+        }
+        let name = self.report_name.trim();
+        if !name.is_empty() {
+            return name;
+        }
+        self.id.as_str()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -244,15 +274,19 @@ impl IndexedResult {
     }
 }
 
-/// Format a Hub stamp folder (`20260915_120000`) for the report tree.
-pub fn format_run_stamp(stamp: &str) -> String {
-    let b = stamp.as_bytes();
-    if b.len() == 15
+/// Hub run stamp folder: `YYYYMMDD_HHMMSS`.
+pub fn is_run_stamp(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 15
         && b[8] == b'_'
         && b.iter()
             .enumerate()
             .all(|(i, c)| i == 8 || c.is_ascii_digit())
-    {
+}
+
+/// Format a Hub stamp folder (`20260915_120000`) for the report tree.
+pub fn format_run_stamp(stamp: &str) -> String {
+    if is_run_stamp(stamp) {
         format!(
             "{}-{}-{} {}:{}:{}",
             &stamp[0..4],
@@ -359,10 +393,10 @@ impl ProjectTestRef {
         }
     }
 
-    /// Sidebar / index label: explicit report name, else the `tests/{id}` slug.
+    /// Stored label if it is not empty and not a run stamp.
     pub fn display_name(&self) -> &str {
         let name = self.name.trim();
-        if name.is_empty() {
+        if name.is_empty() || is_run_stamp(name) {
             &self.id
         } else {
             name
@@ -370,21 +404,79 @@ impl ProjectTestRef {
     }
 }
 
-/// Register a Hub test from plugin id + report name (`file_prefix`).
-/// Empty prefix → folder is `plugin_id`; `plugin_name` is only the fallback label.
-pub fn test_ref_from_report(plugin_id: &str, file_prefix: &str, plugin_name: &str) -> ProjectTestRef {
-    let prefix = file_prefix.trim();
-    if prefix.is_empty() {
+fn is_generic_case_label(s: &str, plugin_id: &str, plugin: Option<&PluginMeta>) -> bool {
+    let s = s.trim();
+    if s.is_empty() || is_run_stamp(s) {
+        return true;
+    }
+    if s == plugin_id {
+        return true;
+    }
+    let Some(p) = plugin else {
+        return false;
+    };
+    s == p.id
+        || (!p.name.is_empty() && s == p.name)
+        || (!p.name_zh.is_empty() && s == p.name_zh)
+        || (!p.report_name.is_empty() && s == p.report_name)
+        || (!p.report_name_zh.is_empty() && s == p.report_name_zh)
+        || (!p.file_prefix.is_empty() && s == p.file_prefix)
+}
+
+/// Test Report case title: plugin `report_name`, never a run stamp.
+pub fn test_case_label(
+    test_name: &str,
+    test_id: &str,
+    plugin_id: &str,
+    plugin: Option<&PluginMeta>,
+    zh: bool,
+) -> String {
+    let pid = if plugin_id.trim().is_empty() {
+        test_id
+    } else {
+        plugin_id
+    };
+    if !is_generic_case_label(test_name, pid, plugin) {
+        return test_name.trim().to_owned();
+    }
+    if let Some(p) = plugin {
+        let label = p.report_label(zh).trim();
+        if !label.is_empty() {
+            return label.to_owned();
+        }
+    }
+    if !is_generic_case_label(test_id, pid, plugin) {
+        return test_id.to_owned();
+    }
+    if let Some(p) = plugin {
+        if zh && !p.name_zh.is_empty() {
+            return p.name_zh.clone();
+        }
+        if !p.name.is_empty() {
+            return p.name.clone();
+        }
+    }
+    if !is_run_stamp(test_id) {
+        test_id.to_owned()
+    } else {
+        pid.to_owned()
+    }
+}
+
+/// Register a Hub test from plugin id + report name (folder slug and display name).
+pub fn test_ref_from_report(plugin_id: &str, report_name: &str) -> ProjectTestRef {
+    let label = report_name.trim();
+    if label.is_empty() {
         ProjectTestRef {
             id: sanitize_id(plugin_id, "default"),
             plugin_id: plugin_id.to_owned(),
-            name: plugin_name.trim().to_owned(),
+            name: String::new(),
         }
     } else {
         ProjectTestRef {
-            id: sanitize_test_id(prefix, plugin_id),
+            id: sanitize_test_id(label, plugin_id),
             plugin_id: plugin_id.to_owned(),
-            name: prefix.to_owned(),
+            name: label.to_owned(),
         }
     }
 }
@@ -859,7 +951,11 @@ fn merge_testcase_refs(data_root: &Path, doc: &ProjectDoc) -> Vec<ProjectTestRef
             refs.push(ProjectTestRef {
                 id: id.to_owned(),
                 plugin_id,
-                name: id.to_owned(),
+                name: if is_run_stamp(id) {
+                    String::new()
+                } else {
+                    id.to_owned()
+                },
             });
         }
     }
@@ -876,12 +972,8 @@ pub fn index_project(
     for tref in merge_testcase_refs(data_root, doc) {
         let plugin_id = tref.plugin_key().to_owned();
         let plugin = plugins.iter().find(|p| p.id == plugin_id);
-        let name = tref.display_name().to_owned();
-        let name_zh = if tref.name.trim().is_empty() {
-            String::new()
-        } else {
-            tref.name.clone()
-        };
+        let name = test_case_label(&tref.name, &tref.id, &plugin_id, plugin, false);
+        let name_zh = test_case_label(&tref.name, &tref.id, &plugin_id, plugin, true);
         let outputs = plugin.map(|p| p.outputs.as_slice()).unwrap_or(&[]);
         let mut results = Vec::new();
         let runs = test_dir(data_root, &doc.id, &tref.id).join("runs");
@@ -1038,6 +1130,8 @@ mod tests {
             name: "Example Smoke".into(),
             name_zh: "示例冒烟".into(),
             file_prefix: String::new(),
+            report_name: "ExampleSmoke".into(),
+            report_name_zh: "示例冒烟".into(),
             outputs: vec![OutputSpec {
                 id: "logs".into(),
                 label: "Log".into(),
@@ -1048,8 +1142,8 @@ mod tests {
             }],
         }];
         let idx = index_project(&root, &load_project(&root, "lot1").unwrap(), &plugins);
-        assert_eq!(idx.tests[0].name, "example-smoke");
-        assert!(idx.tests[0].name_zh.is_empty());
+        assert_eq!(idx.tests[0].name, "ExampleSmoke");
+        assert_eq!(idx.tests[0].name_zh, "示例冒烟");
         assert_eq!(idx.tests[0].results.len(), 1);
         assert_eq!(idx.tests[0].results[0].stamp, "20260101_000000");
         assert_eq!(idx.tests[0].results[0].groups.len(), 1);
@@ -1078,14 +1172,49 @@ mod tests {
 
     #[test]
     fn test_ref_follows_report_name_not_plugin_title() {
-        let named = test_ref_from_report("scope-serial-monitor", "ScopeSerial", "Scope & Serial Monitor");
+        let named = test_ref_from_report("scope-serial-monitor", "ScopeSerial");
         assert_eq!(named.id, "ScopeSerial");
         assert_eq!(named.plugin_id, "scope-serial-monitor");
         assert_eq!(named.name, "ScopeSerial");
         assert_eq!(named.display_name(), "ScopeSerial");
-        let fallback = test_ref_from_report("example-smoke", "", "Example Smoke");
-        assert_eq!(fallback.id, "example-smoke");
-        assert_eq!(fallback.name, "Example Smoke");
+        let fallback = test_ref_from_report("example-smoke", "ExampleSmoke");
+        assert_eq!(fallback.id, "ExampleSmoke");
+        assert_eq!(fallback.plugin_id, "example-smoke");
+        assert_eq!(fallback.name, "ExampleSmoke");
+        let empty = test_ref_from_report("example-smoke", "");
+        assert_eq!(empty.id, "example-smoke");
+        assert!(empty.name.is_empty());
+    }
+
+    #[test]
+    fn test_case_label_prefers_report_name_over_stamp() {
+        let plugin = PluginMeta {
+            id: "wiparse-dap".into(),
+            name: "CMSIS-DAP Probe".into(),
+            name_zh: "CMSIS-DAP 调试通道".into(),
+            outputs: Vec::new(),
+            file_prefix: "WiparseDap".into(),
+            report_name: "WiparseDap".into(),
+            report_name_zh: "DAP 通道".into(),
+        };
+        assert_eq!(
+            test_case_label("wiparse-dap", "wiparse-dap", "wiparse-dap", Some(&plugin), true),
+            "DAP 通道"
+        );
+        assert_eq!(
+            test_case_label(
+                "20260916_143758",
+                "20260916_143758",
+                "wiparse-dap",
+                Some(&plugin),
+                false
+            ),
+            "WiparseDap"
+        );
+        assert_eq!(
+            test_case_label("MyLot", "MyLot", "wiparse-dap", Some(&plugin), true),
+            "MyLot"
+        );
     }
 
     #[test]
@@ -1106,10 +1235,14 @@ mod tests {
             name: "Scope & Serial Monitor".into(),
             name_zh: "示波器与串口监控".into(),
             file_prefix: "ScopeSerial".into(),
+            report_name: "ScopeSerial".into(),
+            report_name_zh: "示波器串口".into(),
             outputs: Vec::new(),
         }];
         let idx = index_project(&root, &load_project(&root, "lot1").unwrap(), &plugins);
-        assert_eq!(idx.tests[0].name, "scope-serial-monitor");
+        assert_eq!(idx.tests[0].name, "ScopeSerial");
+        assert_eq!(idx.tests[0].name_zh, "示波器串口");
+        assert_ne!(idx.tests[0].name, "Scope & Serial Monitor");
         fs::remove_dir_all(&root).ok();
     }
 
@@ -1143,6 +1276,8 @@ mod tests {
             name: "Example Smoke".into(),
             name_zh: "示例冒烟".into(),
             file_prefix: "ScopeSerial".into(),
+            report_name: "ScopeSerial".into(),
+            report_name_zh: "示波器串口".into(),
             outputs: vec![OutputSpec {
                 id: "logs".into(),
                 label: "Log".into(),
@@ -1176,6 +1311,8 @@ mod tests {
             name: "Example Smoke".into(),
             name_zh: "示例冒烟".into(),
             file_prefix: String::new(),
+            report_name: "ExampleSmoke".into(),
+            report_name_zh: "示例冒烟".into(),
             outputs: vec![OutputSpec {
                 id: "logs".into(),
                 label: "Log".into(),
@@ -1233,6 +1370,8 @@ mod tests {
             name: "Example Smoke".into(),
             name_zh: "示例冒烟".into(),
             file_prefix: String::new(),
+            report_name: "ExampleSmoke".into(),
+            report_name_zh: "示例冒烟".into(),
             outputs: vec![OutputSpec {
                 id: "waves".into(),
                 label: "Waves".into(),

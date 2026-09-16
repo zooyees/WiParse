@@ -22,6 +22,11 @@ import {
   parseUsbipDevlistReply,
   resolveChannel,
   uartBaudFirstPacket,
+  splitNetcfgControlChunks,
+  redactNetcfgLine,
+  parseNetcfgStatus,
+  formatNetcfgCommand,
+  buildNetcfgRecipe,
 } from "./wiparse-if.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -29,9 +34,13 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 test("ICD defaults match WIPARSE-IF-001", () => {
   assert.equal(IF_SPEC.vid, 0xc251);
   assert.equal(IF_SPEC.pid, 0xf01a);
+  assert.equal(IF_SPEC.bcd_device, 0x0208);
+  assert.equal(IF_SPEC.version, "1.4");
   assert.equal(CHANNELS.dap.tcp_port, 3240);
   assert.equal(CHANNELS.uart.tcp_port, 1234);
   assert.equal(CHANNELS.i2c.tcp_port, 1236);
+  assert.equal(CHANNELS.netcfg.tcp_port, 1238);
+  assert.equal(CHANNELS.netcfg.mi, 5);
   assert.equal(CHANNELS.dap.packet, 512);
   assert.equal(CHANNELS.uart.out_ep, 0x02);
   assert.equal(CHANNELS.i2c.in_ep, 0x84);
@@ -98,6 +107,52 @@ test("I2C RPC formatter and parser", () => {
   assert.throws(() => formatI2cCommand({ cmd: "WRITE", addr: "50", data: "zz" }));
 });
 
+test("NETCFG EP0 chunks, STATUS parse, PSK redact, apply recipe", () => {
+  const chunks = splitNetcfgControlChunks("SSID WINDLINK", 8);
+  assert.equal(chunks.length, 2);
+  assert.equal(chunks[0].last, false);
+  assert.equal(chunks[1].last, true);
+  assert.equal(Buffer.concat(chunks.map((c) => c.bytes)).toString("utf8"), "SSID WINDLINK");
+  const st = parseNetcfgStatus(
+    "OK STATUS ssid=WINDLINK ip=192.168.137.123 gw=192.168.137.1 mask=255.255.255.0 dhcp=0 source=nvs wifi=1 rssi=-40 hostname=dap ap=0"
+  );
+  assert.equal(st.ok, true);
+  assert.equal(st.got_ip, true);
+  assert.equal(st.ssid, "WINDLINK");
+  assert.equal(st.dhcp, false);
+  const down = parseNetcfgStatus("OK STATUS ssid=WINDLINK ip=0.0.0.0 wifi=0");
+  assert.equal(down.got_ip, false);
+  assert.equal(redactNetcfgLine("PSK secret-pass"), "PSK ***");
+  assert.equal(redactNetcfgLine("STATUS"), "STATUS");
+  assert.equal(formatNetcfgCommand({ cmd: "STATIC", ip: "1.2.3.4", gw: "1.2.3.1", mask: "255.255.255.0" }), "STATIC 1.2.3.4 1.2.3.1 255.255.255.0");
+  const recipe = buildNetcfgRecipe(
+    {
+      ssid: "WINDLINK",
+      psk: "abcdefgh",
+      dhcp: false,
+      ip: "192.168.137.123",
+      gateway: "192.168.137.1",
+      netmask: "255.255.255.0",
+      hostname: "dap",
+    },
+    "apply"
+  );
+  assert.deepEqual(recipe, [
+    "SSID WINDLINK",
+    "PSK abcdefgh",
+    "STATIC 192.168.137.123 192.168.137.1 255.255.255.0",
+    "HOSTNAME dap",
+    "APPLY",
+  ]);
+  const net = resolveChannel("netcfg", {});
+  assert.equal(net.tcp_port, 1238);
+  assert.equal(net.guid, "{7B3E9C41-2A18-4F6D-9E50-1C8A6D4B0105}");
+  assert.equal(hostMatchesDevice({ mi: 5, name: "WIPARSE NET" }, net), true);
+  assert.equal(hostMatchesDevice({ mi: 0, name: "WIPARSE CMSIS-DAP v2" }, net), false);
+  const custom = resolveChannel("netcfg", { usb_guid: "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}" });
+  assert.equal(custom.guid, "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}");
+});
+
 test("USB/IP DEVLIST header and DAP_Info packet", () => {
   const req = encodeUsbipDevlistRequest();
   assert.equal(req.length, 8);
@@ -123,7 +178,7 @@ test("USB/IP DEVLIST header and DAP_Info packet", () => {
   assert.deepEqual([...parseHexBytes("0A FF")], [0x0a, 0xff]);
 });
 
-for (const id of ["wiparse-dap", "wiparse-uart-bridge", "wiparse-i2c-rpc"]) {
+for (const id of ["wiparse-dap", "wiparse-uart-bridge", "wiparse-i2c-rpc", "wiparse-netcfg"]) {
   test(`${id} plugin.json + station.json validate`, () => {
     const dir = path.join(here, "..", "plugins", id);
     const plugin = JSON.parse(fs.readFileSync(path.join(dir, "plugin.json"), "utf8"));
@@ -131,10 +186,15 @@ for (const id of ["wiparse-dap", "wiparse-uart-bridge", "wiparse-i2c-rpc"]) {
     const p = validatePluginManifest(plugin);
     assert.equal(p.ok, true, p.errors?.join("; "));
     assert.equal(plugin.id, id);
+    assert.ok(plugin.report_name && plugin.report_name.trim().length > 0);
+    assert.ok(plugin.report_name_zh && plugin.report_name_zh.trim().length > 0);
+    assert.equal(plugin.engines?.wiparse, ">=1.1.16");
     assert.ok(Array.isArray(plugin.outputs) && plugin.outputs.length >= 2);
+    assert.ok(plugin.params.some((x) => x.name === "file_prefix"));
     assert.ok(plugin.params.some((x) => x.name === "transport"));
     const s = validateStationConfig(station);
     assert.equal(s.ok, true, s.errors?.join("; "));
+    assert.equal(station.gui?.min_version, "1.1.16");
     assert.match(station.paths.lock_file, /test_dir/);
     assert.doesNotMatch(station.paths.lock_file, /plugin_dir/);
   });

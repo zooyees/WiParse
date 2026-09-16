@@ -2,6 +2,8 @@
   "id": "scope-serial-monitor",
   "name": "Scope & Serial Monitor",
   "name_zh": "示波器/串口监控",
+  "report_name": "ScopeSerial",
+  "report_name_zh": "示波器串口",
   "type": "capture_loop",
   "version": "0.6.0",
   "entry": "index.mjs",
@@ -56,7 +58,7 @@
       "group_zh": "路径",
       "label": "Report name / prefix",
       "label_zh": "报告名称/前缀",
-      "help": "Report name. Sanitized value is tests/{test_id}/ and the prefix for ISF, PDF, PNG, and summary Markdown (e.g. MyLot → tests/MyLot/ and MyLot_summary_*.md)."
+      "help": "Report name. Default is plugin.json report_name. Sanitized value is tests/{test_id}/ and the prefix for ISF, PDF, PNG, and summary Markdown."
     },
     {
       "name": "prefer_device_id",

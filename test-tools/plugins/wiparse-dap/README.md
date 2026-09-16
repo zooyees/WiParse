@@ -28,7 +28,7 @@ Recipe example:
 ]
 ```
 
-Artifacts: `projects/{project}/tests/wiparse-dap/runs/{stamp}/artifacts/{logs,reports,dumps}/`.
+Artifacts: `projects/{project}/tests/{report_name}/runs/{stamp}/artifacts/{logs,reports,dumps}/` (`file_prefix` may override the case dir).
 
 ```powershell
 wiparse ui test-tool run --id wiparse-dap --preflight true

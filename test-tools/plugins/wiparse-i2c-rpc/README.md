@@ -30,7 +30,7 @@ Recipe:
 
 Or a `#` comment script, one ICD line per row.
 
-Default run: `SCAN` after optional `SPEED`/`TIMEOUT`. Bus lock wait is 2 s on the dongle (`ERR busy`).
+Default run: `SCAN` after optional `SPEED`/`TIMEOUT`. Bus lock wait is 2 s on the dongle (`ERR busy`). Artifacts: `tests/{report_name}/runs/{stamp}/artifacts/{logs,reports}/`.
 
 ```powershell
 wiparse ui test-tool run --id wiparse-i2c-rpc --params "{\"op\":\"scan\"}"

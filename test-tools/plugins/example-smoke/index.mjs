@@ -1,5 +1,8 @@
+import fs from "node:fs";
+import path from "node:path";
 import { createClient } from "../../lib/wiparse-sdk.mjs";
-import { normalizeResult, truthy } from "../../lib/plugin-contract.mjs";
+import { normalizeResult, resolveReportName, truthy } from "../../lib/plugin-contract.mjs";
+import { attachArtifacts, writeJson, writeText } from "../../lib/plugin-session.mjs";
 
 async function checkCli(ctx) {
   const w = createClient({
@@ -32,7 +35,6 @@ export async function preflight(ctx) {
 }
 
 export async function stop() {
-  // Stateless smoke plugin — nothing to stop.
   return normalizeResult({ ok: true, step: "stop" }, "stop");
 }
 
@@ -46,11 +48,12 @@ export default async function run(ctx) {
 
   const w = await checkCli(ctx);
   const wantApi = truthy(ctx.args?.check_api ?? "true");
+  let health = null;
   if (wantApi) {
     ctx.log("info", "[example-smoke] api health...\n");
     try {
-      const h = await w.api.health();
-      ctx.log("info", `${JSON.stringify(h)}\n`);
+      health = await w.api.health();
+      ctx.log("info", `${JSON.stringify(health)}\n`);
     } catch (e) {
       return normalizeResult(
         {
@@ -62,8 +65,37 @@ export default async function run(ctx) {
       );
     }
   }
+
+  const layout = ctx.layout;
+  const prefix = resolveReportName(ctx.plugin, ctx.args);
+  const stamp = layout?.stamp || ctx.stamp || "run";
+  let summaryMd;
+  if (layout?.artifacts_dir) {
+    const logsDir = path.join(layout.artifacts_dir, "logs");
+    const reportsDir = path.join(layout.artifacts_dir, "reports");
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.mkdirSync(reportsDir, { recursive: true });
+    writeJson(path.join(logsDir, `smoke_${stamp}.json`), {
+      ok: true,
+      plugin: ctx.plugin.id,
+      report_name: prefix,
+      health,
+    });
+    summaryMd = path.join(reportsDir, `${prefix}_${stamp}.md`);
+    writeText(
+      summaryMd,
+      [`# ${prefix} ${stamp}`, "", `- Plugin: \`${ctx.plugin.id}\``, `- API: ${wantApi ? "checked" : "skipped"}`, ""].join(
+        "\n"
+      )
+    );
+  }
+
   return normalizeResult(
-    { ok: true, plugin: ctx.plugin.id, type: ctx.plugin.type },
+    attachArtifacts(
+      { ok: true, plugin: ctx.plugin.id, type: ctx.plugin.type, summary_md: summaryMd },
+      ctx.plugin,
+      layout
+    ),
     "run"
   );
 }

@@ -22,6 +22,9 @@ import {
   parityToCdc,
   resolveChannel,
   hostMatchesDevice,
+  splitNetcfgControlChunks,
+  parseNetcfgStatus,
+  formatNetcfgCommand,
   stopBitsToCdc,
   uartBaudFirstPacket,
   vidPidTokens,
@@ -446,6 +449,135 @@ export async function runI2cRecipe(ch, items, { onLine, timeoutMs = 8000 } = {})
     }
   }
   return { ok: results.every((r) => r.parsed?.ok === true), results };
+}
+
+class WinusbNetcfgChannel {
+  constructor(session, spec) {
+    this.kind = "netcfg";
+    this.transport = "usb";
+    this.session = session;
+    this.spec = spec;
+  }
+  async rpc(line, { timeoutMs = 8000 } = {}) {
+    const body = String(line || "").replace(/[\r\n]+$/g, "");
+    if (!body) return { lines: [], text: "" };
+    const spec = this.spec;
+    const chunks = splitNetcfgControlChunks(body, spec.mps);
+    for (const chunk of chunks) {
+      await this.session.control({
+        type: spec.bm_out,
+        request: spec.tx_breq,
+        value: chunk.last ? 1 : 0,
+        index: spec.mi,
+        hex: chunk.hex,
+        timeoutMs,
+      });
+    }
+    let reply = Buffer.alloc(0);
+    let off = 0;
+    let empty = 0;
+    const deadline = Date.now() + timeoutMs;
+    const cmd = body.trim().split(/\s+/)[0]?.toUpperCase();
+    const help = cmd === "HELP" || cmd === "?";
+    while (Date.now() < deadline) {
+      const rd = await this.session.control({
+        type: spec.bm_in,
+        request: spec.rx_breq,
+        value: off,
+        index: spec.mi,
+        hex: "",
+        max: spec.mps,
+        timeoutMs: Math.max(50, deadline - Date.now()),
+      });
+      const n = Number(rd.transferred ?? 0);
+      const data = Buffer.from(String(rd.hex || ""), "hex").subarray(0, n > 0 ? n : 0);
+      if (!data.length) {
+        if (off === 0 && empty < 10) {
+          empty += 1;
+          await new Promise((r) => setTimeout(r, 20));
+          continue;
+        }
+        break;
+      }
+      empty = 0;
+      reply = Buffer.concat([reply, data]);
+      if (!help && (reply.includes(0x0a) || data.length < spec.mps)) break;
+      if (help && data.length < spec.mps) break;
+      off += data.length;
+      if (off > 2048) break;
+    }
+    const text = reply.toString("utf8").replace(/\r/g, "").trimEnd();
+    const lines = text.split("\n").map((l) => l.trimEnd()).filter((l) => l.length);
+    return { lines, text: lines.join("\n") };
+  }
+  close() {
+    this.session.close();
+  }
+}
+
+export async function openNetcfgChannel(args) {
+  const spec = resolveChannel("netcfg", args);
+  const transport = String(args.transport || "usb").toLowerCase();
+  const host = args.host || IF_SPEC.mdns;
+  const port = spec.tcp_port;
+  const timeoutMs = Number(args.connect_timeout_ms || 4000);
+  const tryTcp = async () => {
+    const sock = await connectTcp({
+      host,
+      port,
+      timeoutMs,
+      fallbackHost: spec.fallback_host,
+    });
+    return new TcpByteChannel(sock, "netcfg");
+  };
+  const tryUsb = async () => {
+    const opened = await openWinusbChannel("netcfg", args);
+    if (!opened.ok) throw new Error(opened.error || "netcfg usb open failed");
+    return new WinusbNetcfgChannel(opened.session, opened.channel);
+  };
+  if (transport === "tcp") return tryTcp();
+  if (transport === "usb") return tryUsb();
+  if (transport === "auto") {
+    try {
+      return await tryUsb();
+    } catch {
+      return tryTcp();
+    }
+  }
+  throw new Error(`NETCFG transport ${transport} is not supported (use usb, tcp, or auto)`);
+}
+
+export async function runNetcfgRecipe(ch, items, { onLine, timeoutMs = 8000 } = {}) {
+  const results = [];
+  for (const item of asCommandList(items)) {
+    const line = typeof item === "string" ? item.trim() : formatNetcfgCommand(item);
+    if (!line) continue;
+    onLine?.(line);
+    const { text, lines } = await ch.rpc(line, { timeoutMs });
+    const parsed = parseI2cReply(lines?.[0] || text);
+    results.push({ line, reply: text, parsed, lines });
+    if (parsed.ok === false && parsed.kind === "err") {
+      const cont =
+        item && typeof item === "object" && (item.continue_on_error === true || item.continue_on_error === "true");
+      if (!cont) return { ok: false, results, error: parsed.raw };
+    }
+  }
+  return { ok: results.every((r) => r.parsed?.ok !== false), results };
+}
+
+export async function waitNetcfgGotIp(ch, { timeoutMs = 15000, intervalMs = 500, stop, onTick } = {}) {
+  const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+  let last = null;
+  while (Date.now() <= deadline) {
+    if (stop?.()) break;
+    const { text } = await ch.rpc("STATUS");
+    last = parseNetcfgStatus(text);
+    onTick?.(last);
+    if (last.got_ip) return last;
+    if (Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, Math.max(100, Number(intervalMs) || 500)));
+  }
+  return last;
 }
 
 export async function configureI2cBus(ch, { speed_hz, timeout_ms } = {}) {

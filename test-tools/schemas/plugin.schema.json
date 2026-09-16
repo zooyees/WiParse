@@ -4,11 +4,17 @@
   "title": "WiParse Test Plugin Manifest",
   "type": "object",
   "additionalProperties": true,
-  "required": ["id", "name", "type"],
+  "required": ["id", "name", "type", "report_name"],
   "properties": {
     "id": { "type": "string", "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$" },
     "name": { "type": "string", "minLength": 1 },
     "name_zh": { "type": "string" },
+    "report_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Test Report sidebar title and default tests/{test_id}/ plus file_prefix. Not a run stamp."
+    },
+    "report_name_zh": { "type": "string" },
     "type": {
       "type": "string",
       "enum": ["smoke", "serial", "instrument", "capture_loop", "custom"]

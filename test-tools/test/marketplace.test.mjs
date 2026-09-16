@@ -36,6 +36,8 @@ function writeFixturePlugin() {
       {
         id: "demo-marketplace-plugin",
         name: "Demo Marketplace Plugin",
+        report_name: "DemoPlugin",
+        report_name_zh: "市场演示",
         type: "smoke",
         version: "1.0.0",
         entry: "index.mjs",
@@ -43,7 +45,7 @@ function writeFixturePlugin() {
         publisher: "wiparse",
         marketplace: { channel: "stable" },
         sandbox: { permissions: ["gui.api", "cli"] },
-        engines: { node: ">=18" },
+        engines: { node: ">=18", wiparse: ">=1.1.16" },
       },
       null,
       2

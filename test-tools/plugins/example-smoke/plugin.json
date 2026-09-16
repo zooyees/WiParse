@@ -2,16 +2,50 @@
   "id": "example-smoke",
   "name": "Example Smoke",
   "name_zh": "示例冒烟",
+  "report_name": "ExampleSmoke",
+  "report_name_zh": "示例冒烟",
   "type": "smoke",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "entry": "index.mjs",
-  "description": "Framework demo: CLI version + optional API health (preflight/run/stop).",
+  "description": "Framework demo: CLI version + optional API health (preflight/run/stop). Writes a Markdown report under tests/{report_name}/runs/{stamp}/.",
   "capabilities": ["preflight", "run", "stop"],
   "engines": {
     "node": ">=18",
-    "wiparse": ">=1.1.8"
+    "wiparse": ">=1.1.16"
   },
+  "sandbox": {
+    "permissions": ["gui.api", "cli", "fs.data_root"]
+  },
+  "outputs": [
+    {
+      "id": "logs",
+      "label": "Log",
+      "label_zh": "日志",
+      "view": "log",
+      "dir": "{artifacts_dir}/logs",
+      "include": ["*.json", "*.txt"]
+    },
+    {
+      "id": "reports",
+      "label": "Report",
+      "label_zh": "报告",
+      "view": "report",
+      "dir": "{artifacts_dir}/reports",
+      "include": ["*.md"]
+    }
+  ],
   "params": [
+    {
+      "name": "file_prefix",
+      "type": "string",
+      "path": "paths.file_prefix",
+      "default": "ExampleSmoke",
+      "group": "paths",
+      "group_zh": "路径",
+      "label": "Report name / prefix",
+      "label_zh": "报告名称/前缀",
+      "help": "Optional override of plugin.json report_name. Sanitized value is tests/{test_id}/."
+    },
     {
       "name": "check_api",
       "type": "boolean",

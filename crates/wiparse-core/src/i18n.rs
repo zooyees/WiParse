@@ -54,12 +54,12 @@ pub fn tr(lang: Lang, key: &str) -> String {
         (Lang::Zh, "about.notes_section") => "本版更新",
         (Lang::En, "about.notes_section") => "What's New",
         (Lang::Zh, "about.notes") => "\
-• 串口 WIPARSE UART：按 WinUSB GUID 打开（不依赖系统 COM），失败回退 WiFi TCP\n\
-• 设备控制 dongle：DAP 先占用 USB 探针再 Attach；I2C 优先 WinUSB MI_03，失败再 TCP :1236\n\
+• 测试报告用例名用插件 report_name；结果层才显示时间戳\n\
+• 设备控制 dongle：DAP 先占用 USB 再 Attach；I2C 优先 WinUSB MI_03\n\
 详细记录见 docs/CHANGELOG.md",
         (Lang::En, "about.notes") => "\
-• Serial WIPARSE UART opens via WinUSB GUID (not a system COM); Start falls back to WiFi TCP\n\
-• Dongle DAP claims USB first then Attach; I2C prefers WinUSB MI_03, then TCP :1236\n\
+• Test Report cases use the plugin report_name; timestamps stay on result rows\n\
+• Dongle DAP claims USB first then Attach; I2C prefers WinUSB MI_03\n\
 Details: docs/CHANGELOG.md",
         (Lang::Zh, "about.close") => "关闭",
         (Lang::En, "about.close") => "Close",

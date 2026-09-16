@@ -20,7 +20,7 @@ Default 115200 8N1, baud range 1200–2e6, 5–8 data, none/odd/even, stop 1/1.5
 - `recipe` — `[{ "send_text": "AT\\r\\n", "expect_contains": "OK", "wait_ms": 300 }]`
 - `ping` / `discover`
 
-Logs: `{artifacts_dir}/logs/uart_{stamp}.{jsonl,bin,hex}`.
+Logs: `{artifacts_dir}/logs/uart_{stamp}.{jsonl,bin,hex}` under `tests/{report_name}/runs/{stamp}/`.
 
 ```powershell
 wiparse ui test-tool run --id wiparse-uart-bridge --params "{\"transport\":\"tcp\",\"baud\":115200,\"duration_s\":5}"

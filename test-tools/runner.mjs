@@ -31,6 +31,7 @@ import {
   resolveProjectLayout,
   sanitizeId,
   sanitizeTestId,
+  resolveReportName,
   truthy,
   validatePluginManifest,
   writeRunJson,
@@ -437,8 +438,9 @@ async function main() {
     lifecycle === "run"
       ? String(opts.stamp || process.env.WIPARSE_STAMP || makeStamp())
       : "";
+  const reportName = resolveReportName(plugin, args);
   const testId = sanitizeTestId(
-    opts.testId || args.file_prefix || process.env.WIPARSE_TEST_ID,
+    opts.testId || process.env.WIPARSE_TEST_ID || reportName,
     plugin.id
   );
   const layout = resolveProjectLayout({
@@ -452,7 +454,7 @@ async function main() {
   try {
     if (lifecycle === "run") {
       ensureTestInProject(layout, plugin.id, {
-        name: String(args.file_prefix || testId).trim(),
+        name: reportName,
       });
     } else {
       ensureProjectScaffold(layout);

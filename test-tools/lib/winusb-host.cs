@@ -16,8 +16,6 @@ namespace WiParse
         static readonly Guid GuidUart = new Guid("7B3E9C41-2A18-4F6D-9E50-1C8A6D4B0101");
         static readonly Guid GuidI2c = new Guid("7B3E9C41-2A18-4F6D-9E50-1C8A6D4B0103");
         static readonly Guid GuidNet = new Guid("7B3E9C41-2A18-4F6D-9E50-1C8A6D4B0105");
-        static readonly Guid GuidNet = new Guid("7B3E9C41-2A18-4F6D-9E50-1C8A6D4B0105");
-        static readonly Guid GuidNet = new Guid("7B3E9C41-2A18-4F6D-9E50-1C8A6D4B0105");
 
         const int DIGCF_PRESENT = 0x2;
         const int DIGCF_ALLCLASSES = 0x4;
@@ -192,7 +190,7 @@ namespace WiParse
             string needle = ("VID_" + vid + "&PID_" + pid).ToUpperInvariant();
             var items = new List<object>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var g in new[] { GuidUart, GuidI2c, GuidCmsis, GuidWinusb, GuidUsbDevice })
+            foreach (var g in new[] { GuidNet, GuidUart, GuidI2c, GuidCmsis, GuidWinusb, GuidUsbDevice })
             {
                 foreach (var path in Enumerate(g))
                 {
@@ -225,11 +223,12 @@ namespace WiParse
             string vid = NormalizeHex(GetStr(msg, "vid"), "C251");
             string pid = NormalizeHex(GetStr(msg, "pid"), "F01A");
             int mi = GetInt(msg, "mi", -1);
+            int associate = GetInt(msg, "associate", mi == 5 ? 0 : 1);
             var candidates = new List<string>();
             if (!string.IsNullOrEmpty(explicitPath)) candidates.Add(explicitPath);
             string needle = ("VID_" + vid + "&PID_" + pid).ToUpperInvariant();
             string miTok = mi >= 0 ? ("MI_" + mi.ToString("X2")) : "";
-            foreach (var g in new[] { GuidUart, GuidI2c, GuidCmsis, GuidWinusb, GuidUsbDevice })
+            foreach (var g in new[] { GuidNet, GuidUart, GuidI2c, GuidCmsis, GuidWinusb, GuidUsbDevice })
             {
                 foreach (var p in Enumerate(g))
                 {
@@ -249,7 +248,7 @@ namespace WiParse
             {
                 try
                 {
-                    TryOpenPath(path);
+                    TryOpenPath(path, associate != 0);
                     Reply(id, true, null, new Dictionary<string, object> { { "path", path } });
                     return;
                 }
@@ -258,7 +257,7 @@ namespace WiParse
             throw last ?? new Exception("device path not found");
         }
 
-        static void TryOpenPath(string path)
+        static void TryOpenPath(string path, bool associate)
         {
             fileHandle = CreateFile(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, IntPtr.Zero, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, IntPtr.Zero);
             if (fileHandle == IntPtr.Zero || fileHandle.ToInt64() == INVALID_HANDLE_VALUE32)
@@ -272,7 +271,7 @@ namespace WiParse
                 throw new Exception("WinUsb_Initialize failed err=" + err + " path=" + path);
             }
             IntPtr assoc;
-            if (WinUsb_GetAssociatedInterface(winusbParent, 0, out assoc) && assoc != IntPtr.Zero)
+            if (associate && WinUsb_GetAssociatedInterface(winusbParent, 0, out assoc) && assoc != IntPtr.Zero)
                 winusb = assoc;
             else
                 winusb = winusbParent;

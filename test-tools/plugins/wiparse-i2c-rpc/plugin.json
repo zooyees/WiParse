@@ -2,13 +2,15 @@
   "id": "wiparse-i2c-rpc",
   "name": "I2C RPC Master",
   "name_zh": "I2C 文本 RPC",
+  "report_name": "WiparseI2c",
+  "report_name_zh": "I2C RPC",
   "type": "instrument",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "entry": "index.mjs",
   "config": "station.json",
-  "description": "Generic I2C master text RPC (WIPARSE-IF CH-I2C). TCP :1236 or USB MI_03. HELP/PING/SCAN/SPEED/TIMEOUT/RECOVER/WRITE/READ/WRITEREAD plus JSON or line recipes.",
+  "description": "Generic I2C master text RPC (WIPARSE-IF CH-I2C). TCP :1236 or USB MI_03. HELP/PING/SCAN/SPEED/TIMEOUT/RECOVER/WRITE/READ/WRITEREAD plus JSON or line recipes. Test case dir is report_name (override with file_prefix).",
   "capabilities": ["preflight", "run", "stop"],
-  "engines": { "node": ">=18", "wiparse": ">=1.1.14" },
+  "engines": { "node": ">=18", "wiparse": ">=1.1.16" },
   "sandbox": {
     "permissions": ["gui.api", "cli", "serial", "fs.data_root", "network.outbound"]
   },
@@ -31,6 +33,17 @@
     }
   ],
   "params": [
+    {
+      "name": "file_prefix",
+      "type": "string",
+      "path": "paths.file_prefix",
+      "default": "WiparseI2c",
+      "group": "paths",
+      "group_zh": "路径",
+      "label": "Report name / prefix",
+      "label_zh": "报告名称/前缀",
+      "help": "Optional override of plugin.json report_name. Sanitized value is tests/{test_id}/."
+    },
     {
       "name": "transport",
       "type": "enum",
