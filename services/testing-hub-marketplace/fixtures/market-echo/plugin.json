@@ -2,8 +2,6 @@
   "id": "market-echo",
   "name": "Market Echo",
   "name_zh": "市场回显",
-  "report_name": "MarketEcho",
-  "report_name_zh": "市场回显",
   "type": "custom",
   "version": "1.0.0",
   "entry": "index.mjs",
@@ -23,7 +21,6 @@
     ]
   },
   "engines": {
-    "node": ">=18",
-    "wiparse": ">=1.1.16"
+    "node": ">=18"
   }
 }

@@ -37,7 +37,7 @@ use wiparse_core::waveform_file::{
 
 const TOOLBAR_H: f32 = 44.0;
 const PANEL_GAP: f32 = 8.0;
-const SIDE_W: f32 = 280.0;
+const SIDE_W: f32 = ui_theme::SIDEBAR_W;
 /// Compact Y-axis strip width (scope-style, right of plot).
 const CHANNEL_AXIS_COL_W: f32 = 28.0;
 const AXIS_HANDLE_RADIUS: f32 = 5.5;
@@ -353,7 +353,15 @@ impl WaveformAnalysisPanel {
             bus_rect,
             tokens,
             &t(lang, "协议分析", "Bus Decode"),
-            |ui| self.bus_decode_panel(ui, lang, tokens),
+            |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("waveform-bus-settings")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.set_max_width(ui.available_width());
+                        self.bus_decode_panel(ui, lang, tokens);
+                    });
+            },
         );
         card_in_rect(
             ui,
@@ -846,6 +854,9 @@ impl WaveformAnalysisPanel {
         let Some(extent) = self.data_extent() else {
             return bounds;
         };
+        if !bounds.is_valid() {
+            return extent;
+        }
         let ex0 = extent.min()[0];
         let ex1 = extent.max()[0];
         let ey0 = extent.min()[1];
@@ -1135,12 +1146,16 @@ impl WaveformAnalysisPanel {
         match load_config() {
             Ok(mut cfg) => {
                 cfg.apps.instruments.waveform_browser_dir = self.browser_dir.clone();
-                let _ = save_config(&cfg);
+                if let Err(error) = save_config(&cfg) {
+                    tracing::warn!("failed to save waveform browser config: {error}");
+                }
             }
             Err(_) => {
                 let mut cfg = AppConfig::default();
                 cfg.apps.instruments.waveform_browser_dir = self.browser_dir.clone();
-                let _ = save_config(&cfg);
+                if let Err(error) = save_config(&cfg) {
+                    tracing::warn!("failed to save waveform browser config: {error}");
+                }
             }
         }
     }
@@ -1191,6 +1206,7 @@ impl WaveformAnalysisPanel {
             t(lang, "正在加载", "Loading"),
             path.display()
         );
+        tracing::info!(path = %path.display(), "waveform load started");
         thread::spawn(move || {
             load_waveform_file_worker(&path, tx);
         });
@@ -1244,6 +1260,7 @@ impl WaveformAnalysisPanel {
             nch,
             max_pts
         );
+        tracing::info!(channels = nch, points_per_channel = max_pts, "waveform preview loaded");
         self.bus_decode_dirty = true;
         (first_idx, end)
     }
@@ -1485,6 +1502,7 @@ impl WaveformAnalysisPanel {
             BusKind::Spi => ch.spi_mosi.or(ch.spi_clk),
             BusKind::I2s => ch.i2s_data.or(ch.i2s_ws).or(ch.i2s_bclk),
             BusKind::Ddsss => ch.ddsss_signal,
+            BusKind::UsbPd | BusKind::Scp | BusKind::Ufcs => ch.charging_signal,
         }
     }
 
@@ -1518,6 +1536,7 @@ impl WaveformAnalysisPanel {
                     && self.bus_settings.channels.i2s_data.is_some()
             }
             BusKind::Ddsss => self.bus_settings.channels.ddsss_signal.is_some(),
+            BusKind::UsbPd | BusKind::Scp | BusKind::Ufcs => self.bus_settings.channels.charging_signal.is_some(),
         }
     }
 
@@ -1568,6 +1587,7 @@ impl WaveformAnalysisPanel {
             .collect();
         let generation = self.bus_decode_gen.wrapping_add(1);
         self.bus_decode_gen = generation;
+        tracing::info!(protocol = settings.kind.label(), channels = traces.len(), generation, "bus decode started");
         let (tx, rx) = unbounded();
         self.pending_bus_decode = Some(PendingBusDecode { generation, rx });
         thread::spawn(move || {
@@ -1588,6 +1608,7 @@ impl WaveformAnalysisPanel {
         if gen != self.bus_decode_gen {
             return;
         }
+        tracing::info!(generation = gen, frames = result.frames.len(), bytes = result.byte_spans.len(), bits = result.bits.len(), chips = result.chips.len(), truncated = result.truncated, "bus decode completed");
         self.bus_result = Some(result);
         self.selected_bus_frame = None;
     }
@@ -1633,6 +1654,38 @@ impl WaveformAnalysisPanel {
 
                 match self.bus_settings.kind {
                     BusKind::Off => {}
+                    BusKind::UsbPd | BusKind::Scp | BusKind::Ufcs => {
+                        changed |= bus_grid_channel_combo(ui, layout, "charging_sig",
+                            if self.bus_settings.kind == BusKind::UsbPd { "CC" } else if self.bus_settings.kind == BusKind::Scp { "D- (SCP)" } else { "D+ (UFCS)" },
+                            &self.waves, &mut self.bus_settings.channels.charging_signal);
+                        bus_grid_label(ui, layout, &t(lang, "阈值 V", "Threshold V"));
+                        ui.horizontal(|ui| {
+                            let mut manual = self.bus_settings.threshold.is_some();
+                            if ui.checkbox(&mut manual, t(lang, "手动", "Manual")).changed() {
+                                self.bus_settings.threshold = if manual { Some(if self.bus_settings.kind == BusKind::Scp { 1.1 } else { 0.6 }) } else { None };
+                                changed = true;
+                            }
+                            if let Some(value) = self.bus_settings.threshold.as_mut() {
+                                changed |= ui.add(egui::DragValue::new(value).speed(0.01).range(-20.0..=20.0)).changed();
+                            }
+                        });
+                        ui.end_row();
+                        if self.bus_settings.kind == BusKind::Ufcs {
+                            bus_grid_label(ui, layout, &t(lang, "波特率", "Baud"));
+                            egui::ComboBox::from_id_salt("ufcs_baud").selected_text(self.bus_settings.ufcs.baud.to_string())
+                                .show_ui(ui, |ui| {
+                                    for baud in [38400, 57600, 115200, 230400] {
+                                        changed |= ui.selectable_value(&mut self.bus_settings.ufcs.baud, baud, baud.to_string()).changed();
+                                    }
+                                });
+                            ui.end_row();
+                        }
+                        if self.bus_settings.kind == BusKind::Scp {
+                            bus_grid_label(ui, layout, "UI (µs)");
+                            changed |= ui.add(egui::DragValue::new(&mut self.bus_settings.scp.ui_us).range(120.0..=200.0).speed(1.0)).changed();
+                            ui.end_row();
+                        }
+                    }
                     BusKind::Uart => {
                         changed |= bus_grid_channel_combo(
                             ui,
@@ -1983,7 +2036,7 @@ impl WaveformAnalysisPanel {
                         .map(|b| format!("{b:02X}"))
                         .collect::<Vec<_>>()
                         .join(" ");
-                    if let Some(desc) = describe_ask_bytes(&frame.bytes) {
+                    if let Some(desc) = describe_ask_bytes(&frame.bytes).filter(|_| self.bus_settings.kind == BusKind::Ddsss) {
                         ui.label(
                             RichText::new(format!("{desc}  [{hex}]"))
                                 .small()
@@ -2653,10 +2706,14 @@ impl WaveformAnalysisPanel {
         // Ctrl+wheel → X zoom via egui_plot.
         // Ctrl+Shift+wheel → Y zoom MUST be manual: egui remaps Shift+wheel to
         // horizontal scroll (delta.y=0), so zoom_delta never fires for Y.
-        let allow_zoom = if ctrl && !shift {
-            Vec2b::new(true, false)
+        // egui_plot applies wheel zoom after the plot closure and draws the
+        // resulting bounds before we can clamp them. At extreme zoom its f64
+        // endpoints can collapse or reverse and paint_grid panics in clamp().
+        // Apply X zoom here, through our bounded view path, before painting.
+        let x_wheel_zoom = if ctrl && !shift {
+            ui.input(|i| i.zoom_delta_2d().x as f64)
         } else {
-            Vec2b::FALSE
+            1.0
         };
         let y_wheel = if ctrl && shift {
             ctrl_shift_wheel_scroll(ui)
@@ -2668,7 +2725,9 @@ impl WaveformAnalysisPanel {
         let pending = self.pending_bounds.take();
         let mode = self.mode;
         let axis = self.cursor_axis;
-        let x_view = self.last_x_range;
+        let x_view = self
+            .last_x_range
+            .filter(|&(x0, x1)| x0.is_finite() && x1.is_finite() && x1 > x0);
         let mut next_x_range = None;
         let mut next_y_range = None;
         let mut click_val = None;
@@ -2806,13 +2865,21 @@ impl WaveformAnalysisPanel {
             .bus_overlay_channel()
             .and_then(|i| self.waves.get(i))
             .map(wave_display_y_top);
+        // Decode results can contain millions of marks. Never clone the entire
+        // result into per-frame plot data: keep work proportional to screen pixels.
+        let overlay_range = if fit {
+            None
+        } else {
+            pending.map(|b| (b.min()[0], b.max()[0])).or(x_view)
+        };
+        let mark_budget = ((plot_width_px as usize).saturating_mul(2)).clamp(256, 4096);
         let bus_markers: Vec<(usize, f64, f64, bool, String)> = self
             .bus_result
             .as_ref()
             .map(|r| {
-                r.frames
-                    .iter()
-                    .enumerate()
+                sampled_visible_indices(&r.frames, overlay_range, mark_budget, self.selected_bus_frame, |f| (f.t_start, f.t_end))
+                    .into_iter()
+                    .map(|i| (i, &r.frames[i]))
                     .map(|(i, f)| {
                         (
                             i,
@@ -2829,8 +2896,9 @@ impl WaveformAnalysisPanel {
             .bus_result
             .as_ref()
             .map(|r| {
-                r.byte_spans
-                    .iter()
+                sampled_visible_indices(&r.byte_spans, overlay_range, mark_budget, None, |b| (b.t_start, b.t_end))
+                    .into_iter()
+                    .map(|i| &r.byte_spans[i])
                     .map(|b| {
                         (
                             b.t_start,
@@ -2846,8 +2914,9 @@ impl WaveformAnalysisPanel {
             .bus_result
             .as_ref()
             .map(|r| {
-                r.bits
-                    .iter()
+                sampled_visible_indices(&r.bits, overlay_range, mark_budget, None, |b| (b.t_start, b.t_end))
+                    .into_iter()
+                    .map(|i| &r.bits[i])
                     .map(|b| (b.t_start, b.t_end, b.label(), b.one, b.error))
                     .collect()
             })
@@ -2856,8 +2925,9 @@ impl WaveformAnalysisPanel {
             .bus_result
             .as_ref()
             .map(|r| {
-                r.chips
-                    .iter()
+                sampled_visible_indices(&r.chips, overlay_range, mark_budget, None, |c| (c.t_start, c.t_end))
+                    .into_iter()
+                    .map(|i| &r.chips[i])
                     .map(|c| (c.t_start, c.t_end, c.one, c.error))
                     .collect()
             })
@@ -2866,7 +2936,7 @@ impl WaveformAnalysisPanel {
         ui_theme::with_plot_well_visuals(ui, tokens, |ui| {
         Plot::new("waveform-analysis-plot")
             .height(height)
-            .allow_zoom(allow_zoom)
+            .allow_zoom(Vec2b::FALSE)
             .allow_drag(mode == InteractMode::Pan)
             .allow_scroll(!ctrl)
             .allow_boxed_zoom(mode == InteractMode::Pan)
@@ -2941,6 +3011,23 @@ impl WaveformAnalysisPanel {
                     let clamped = self.clamp_view_bounds(b);
                     plot_ui.set_plot_bounds(clamped);
                     applied = Some(clamped);
+                }
+
+                if x_wheel_zoom.is_finite()
+                    && x_wheel_zoom > 0.0
+                    && (x_wheel_zoom - 1.0).abs() > f64::EPSILON
+                    && plot_ui.response().contains_pointer()
+                {
+                    let base = applied.unwrap_or_else(|| plot_ui.plot_bounds());
+                    let anchor = plot_ui
+                        .pointer_coordinate()
+                        .map(|p| p.x)
+                        .unwrap_or((base.min()[0] + base.max()[0]) * 0.5);
+                    if let Some(zoomed) = zoom_x_around(base, x_wheel_zoom, anchor) {
+                        let clamped = self.clamp_view_bounds(zoomed);
+                        plot_ui.set_plot_bounds(clamped);
+                        applied = Some(clamped);
+                    }
                 }
 
                 let bounds = applied.unwrap_or_else(|| plot_ui.plot_bounds());
@@ -3067,22 +3154,27 @@ impl WaveformAnalysisPanel {
 
                 let min_label_dt = x_span * (64.0 / plot_width_px as f64);
                 let min_byte_dt = x_span * (36.0 / plot_width_px as f64);
+                let min_marker_dt = x_span * (32.0 / plot_width_px as f64);
                 let x_lo = bounds.min()[0];
                 let x_hi = bounds.max()[0];
                 let is_ctrl_event = |summary: &str| {
                     matches!(summary, "START" | "Sr" | "STOP" | "CS" | "CS#")
                 };
+                let mut last_marker = f64::NEG_INFINITY;
                 for (_i, t0, t1, selected, summary) in &bus_markers {
                     if *t1 < x_lo || *t0 > x_hi {
                         continue;
                     }
-                    let color = bus_packet_color(*selected, summary);
-                    plot_ui.vline(
-                        VLine::new(*t0)
-                            .color(color)
-                            .width(if *selected { 3.25_f32 } else { 2.15_f32 })
-                            .name(""),
-                    );
+                    if *selected || *t0 - last_marker >= min_marker_dt {
+                        let color = bus_packet_color(*selected, summary);
+                        plot_ui.vline(
+                            VLine::new(*t0)
+                                .color(if *selected { color } else { color.gamma_multiply(0.38) })
+                                .width(if *selected { 2.0_f32 } else { 0.8_f32 })
+                                .name(""),
+                        );
+                        last_marker = *t0;
+                    }
                 }
                 let wave_top = overlay_top_plot.unwrap_or_else(|| bounds.max()[1]);
                 let far_enough = |t: f64, shown: &[f64], min_dt: f64| {
@@ -3130,16 +3222,18 @@ impl WaveformAnalysisPanel {
                     if !is_ctrl_event(summary) {
                         continue;
                     }
-                    paint_label(
-                        plot_ui,
-                        *t0,
-                        LANE_PACKET,
-                        summary,
-                        *selected,
-                        marker_color(*selected, summary),
-                        15.0,
-                    );
-                    shown_pkt.push(*t0);
+                    if *selected || far_enough(*t0, &shown_pkt, min_label_dt) {
+                        paint_label(
+                            plot_ui,
+                            *t0,
+                            LANE_PACKET,
+                            summary,
+                            *selected,
+                            marker_color(*selected, summary),
+                            15.0,
+                        );
+                        shown_pkt.push(*t0);
+                    }
                 }
                 for (_i, t0, t1, selected, summary) in &bus_markers {
                     if *t1 < x_lo || *t0 > x_hi || summary != "BREAK" {
@@ -3167,15 +3261,17 @@ impl WaveformAnalysisPanel {
                         continue;
                     }
                     let byte_color = if *bad { byte_bad } else { byte_ok };
-                    plot_ui.vline(VLine::new(*t0).color(byte_color).width(1.35_f32).name(""));
-                    plot_ui.vline(
-                        VLine::new(*t1)
-                            .color(byte_color.gamma_multiply(0.55))
-                            .width(1.0_f32)
-                            .name(""),
-                    );
+                    let byte_px = ((*t1 - *t0).abs() / x_span) * plot_width_px as f64;
+                    if byte_px >= 28.0 {
+                        plot_ui.vline(
+                            VLine::new(*t0)
+                                .color(byte_color.gamma_multiply(0.35))
+                                .width(0.75_f32)
+                                .name(""),
+                        );
+                    }
                     let t_mid = (*t0 + *t1) * 0.5;
-                    if far_enough(t_mid, &shown_byte, min_byte_dt) {
+                    if byte_px >= 32.0 && far_enough(t_mid, &shown_byte, min_byte_dt) {
                         paint_label(plot_ui, t_mid, LANE_BYTE, hex, false, byte_color, 13.0);
                         shown_byte.push(t_mid);
                     }
@@ -3208,7 +3304,7 @@ impl WaveformAnalysisPanel {
                 let min_bit_dt = x_span * (28.0 / plot_width_px as f64);
                 // Chip→bit: one correlator bit is Nseq chips. Show the bit name (St/b0–b7/P/Sp)
                 // whenever the group is readable, and always if the chip lane is on.
-                let show_bit_lane = !bus_bits.is_empty() && (bit_px >= 6.0 || chip_px >= 5.0);
+                let show_bit_lane = !bus_bits.is_empty() && bit_px >= 18.0;
                 if show_bit_lane {
                     let mut shown_bit: Vec<f64> = Vec::new();
                     for (t0, t1, kind, one, bit_err) in &bus_bits {
@@ -3221,15 +3317,16 @@ impl WaveformAnalysisPanel {
                             ddsss_bit_color(kind.trim_end_matches('!'))
                         };
                         let ctrl = kind.starts_with("St") || kind.starts_with("Sp") || kind.starts_with("P");
-                        plot_ui.vline(
-                            VLine::new(*t0)
-                                .color(color)
-                                .width(if ctrl { 1.6_f32 } else { 1.15_f32 })
-                                .name(""),
-                        );
+                        if bit_px >= 24.0 {
+                            plot_ui.vline(
+                                VLine::new(*t0)
+                                    .color(color.gamma_multiply(if ctrl { 0.55 } else { 0.3 }))
+                                    .width(if ctrl { 1.0_f32 } else { 0.7_f32 })
+                                    .name(""),
+                            );
+                        }
                         let t_mid = (*t0 + *t1) * 0.5;
-                        let force = chip_px >= 8.0 || bit_px >= 20.0;
-                        if !force && !far_enough(t_mid, &shown_bit, min_bit_dt) {
+                        if bit_px < 28.0 || !far_enough(t_mid, &shown_bit, min_bit_dt) {
                             continue;
                         }
                         let label = if bit_px >= 26.0 {
@@ -3250,21 +3347,7 @@ impl WaveformAnalysisPanel {
                     let mut chip_shown = 0usize;
                     let mut bit_i = 0usize;
                     // Soften / gate chip separators by on-screen chip width.
-                    let draw_chip_vlines = chip_px >= 3.5;
-                    let chip_line_mul = if chip_px >= 14.0 {
-                        0.45
-                    } else if chip_px >= 8.0 {
-                        0.28
-                    } else {
-                        0.16
-                    };
-                    let chip_line_w = if chip_px >= 14.0 {
-                        0.55_f32
-                    } else if chip_px >= 8.0 {
-                        0.4_f32
-                    } else {
-                        0.3_f32
-                    };
+                    let draw_chip_vlines = chip_px >= 18.0;
                     for (t0, t1, one, err) in &bus_chips {
                         if *t1 < x_lo || *t0 > x_hi {
                             continue;
@@ -3296,10 +3379,10 @@ impl WaveformAnalysisPanel {
                         };
                         if *err {
                             // Mismatch: thin orange tick only when not a solid fence.
-                            if chip_px >= 2.5 {
+                            if chip_px >= 12.0 {
                                 plot_ui.vline(
                                     VLine::new(*t0)
-                                        .color(err_col.gamma_multiply(0.85))
+                                        .color(err_col.gamma_multiply(0.55))
                                         .width(0.85_f32)
                                         .name(""),
                                 );
@@ -3307,15 +3390,15 @@ impl WaveformAnalysisPanel {
                         } else if draw_chip_vlines {
                             plot_ui.vline(
                                 VLine::new(*t0)
-                                    .color(color.gamma_multiply(chip_line_mul))
-                                    .width(chip_line_w)
+                                    .color(color.gamma_multiply(0.25))
+                                    .width(0.5_f32)
                                     .name(""),
                             );
                         }
                         let show_text = if *err {
-                            chip_px >= 3.0 || bit_px >= 16.0
+                            chip_px >= 18.0
                         } else {
-                            chip_px >= 8.0
+                            chip_px >= 20.0
                         };
                         if show_text && chip_shown < 480 {
                             plot_ui.add(PlotTextLabel::lane(
@@ -3735,6 +3818,12 @@ impl WaveformAnalysisPanel {
                 "extension": self.bus_settings.ddsss.extension.label(),
                 "fop": self.bus_settings.ddsss.fop_hz,
             },
+            "bus_charging": {
+                "signal": self.bus_settings.channels.charging_signal,
+                "threshold": self.bus_settings.threshold,
+                "ufcs_baud": self.bus_settings.ufcs.baud,
+                "scp_ui_us": self.bus_settings.scp.ui_us,
+            },
             "cursors": {
                 "x1": self.x1, "x2": self.x2, "y1": self.y1, "y2": self.y2
             }
@@ -3803,7 +3892,10 @@ impl WaveformAnalysisPanel {
                 "spi" => BusKind::Spi,
                 "i2s" => BusKind::I2s,
                 "ddsss" | "dsss" => BusKind::Ddsss,
-                _ => return err("ui.wave.bus", "kind must be off|uart|i2c|spi|i2s|ddsss"),
+                "usbpd" | "usb_pd" | "usb-pd" | "pd" => BusKind::UsbPd,
+                "scp" => BusKind::Scp,
+                "ufcs" => BusKind::Ufcs,
+                _ => return err("ui.wave.bus", "kind must be off|uart|i2c|spi|i2s|ddsss|usbpd|scp|ufcs"),
             };
         }
         let ch = &mut self.bus_settings.channels;
@@ -3815,6 +3907,7 @@ impl WaveformAnalysisPanel {
         }
         if let Some(n) = idx(params, "signal") {
             ch.ddsss_signal = Some(n);
+            ch.charging_signal = Some(n);
         }
         if let Some(n) = idx(params, "scl") {
             ch.i2c_scl = Some(n);
@@ -3846,7 +3939,18 @@ impl WaveformAnalysisPanel {
         if let Some(v) = params.get("threshold").and_then(|x| x.as_f64()) {
             self.bus_settings.threshold = Some(v);
         }
+        if params.get("threshold").is_some_and(|v| v.is_null()) {
+            self.bus_settings.threshold = None;
+        }
+        if let Some(v) = params.get("ui_us").and_then(|x| x.as_f64()) {
+            if !(120.0..=200.0).contains(&v) { return err("ui.wave.bus", "ui_us must be 120..200"); }
+            self.bus_settings.scp.ui_us = v;
+        }
         if let Some(v) = params.get("baud").and_then(|x| x.as_f64()) {
+            if self.bus_settings.kind == BusKind::Ufcs {
+                if ![38400.0,57600.0,115200.0,230400.0].contains(&v) { return err("ui.wave.bus", "unsupported UFCS baud"); }
+                self.bus_settings.ufcs.baud = v as u32;
+            }
             self.bus_settings.uart.baud = Some(v);
             self.uart_baud_text = format!("{v}");
         }
@@ -4166,6 +4270,51 @@ fn ordered(a: f64, b: f64) -> (f64, f64) {
     } else {
         (b, a)
     }
+}
+
+/// Select only on-screen decode marks, with a hard cap on plot items per frame.
+/// The decoder owns the full result; the UI must not clone it on every repaint.
+fn sampled_visible_indices<T>(
+    items: &[T],
+    view: Option<(f64, f64)>,
+    budget: usize,
+    selected: Option<usize>,
+    span: impl Fn(&T) -> (f64, f64),
+) -> Vec<usize> {
+    let view = view.filter(|(a, b)| a.is_finite() && b.is_finite()).map(|(a, b)| ordered(a, b));
+    let visible = |item: &T| {
+        let (a, b) = span(item);
+        if !a.is_finite() || !b.is_finite() {
+            return false;
+        }
+        let (lo, hi) = ordered(a, b);
+        view.is_none_or(|(x0, x1)| hi >= x0 && lo <= x1)
+    };
+    let count = items.iter().filter(|item| visible(item)).count();
+    let stride = count.div_ceil(budget.max(1)).max(1);
+    let mut result = Vec::with_capacity(count.min(budget.max(1)) + usize::from(selected.is_some()));
+    let mut visible_index = 0;
+    for (i, item) in items.iter().enumerate() {
+        if !visible(item) {
+            continue;
+        }
+        if visible_index % stride == 0 || selected == Some(i) {
+            result.push(i);
+        }
+        visible_index += 1;
+    }
+    result
+}
+
+/// Compute a pointer-anchored X zoom without passing invalid bounds to egui_plot.
+fn zoom_x_around(bounds: PlotBounds, factor: f64, anchor: f64) -> Option<PlotBounds> {
+    if !bounds.is_valid() || !factor.is_finite() || factor <= 0.0 || !anchor.is_finite() {
+        return None;
+    }
+    let x0 = anchor + (bounds.min()[0] - anchor) / factor;
+    let x1 = anchor + (bounds.max()[0] - anchor) / factor;
+    let result = PlotBounds::from_min_max([x0, bounds.min()[1]], [x1, bounds.max()[1]]);
+    result.is_valid().then_some(result)
 }
 
 /// X1/X2 measurement cursors can gate UART/I2C/SPI/I2S decode to a window.
@@ -4921,6 +5070,36 @@ fn t(lang: Lang, zh: &str, en: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ctrl_wheel_zoom_never_passes_collapsed_bounds_to_plot() {
+        let mut panel = WaveformAnalysisPanel::new(&AppConfig::default());
+        panel.cached_extent = Some((0.0, 1.0, -1.0, 1.0));
+        let mut bounds = PlotBounds::from_min_max([0.0005, -1.0], [0.0007, 1.0]);
+        for _ in 0..1000 {
+            let anchor = 0.00059699;
+            if let Some(next) = zoom_x_around(bounds, 1.2, anchor) {
+                bounds = panel.clamp_view_bounds(next);
+            }
+            assert!(bounds.is_valid(), "{bounds:?}");
+            assert!(bounds.max()[0] - bounds.min()[0] >= 1.0 / VIEW_MAX_ZOOM_X);
+        }
+        assert!(zoom_x_around(bounds, f64::NAN, 0.0).is_none());
+        assert!(zoom_x_around(bounds, 0.0, 0.0).is_none());
+    }
+
+    #[test]
+    fn decode_overlay_sampling_bounds_large_repaints_and_keeps_selection() {
+        let marks: Vec<(f64, f64)> = (0..100_000)
+            .map(|i| (i as f64, i as f64 + 0.5))
+            .collect();
+        let visible = sampled_visible_indices(&marks, Some((20_000.0, 80_000.0)), 512, Some(79_999), |m| *m);
+        assert!(visible.len() <= 513);
+        assert!(visible.contains(&79_999));
+        assert!(visible.iter().all(|&i| i >= 20_000 && i <= 80_000));
+        let narrow = sampled_visible_indices(&marks, Some((42.0, 45.0)), 512, None, |m| *m);
+        assert_eq!(narrow, vec![42, 43, 44, 45]);
+    }
 
     #[test]
     fn ddsss_bit_colors_are_unique() {

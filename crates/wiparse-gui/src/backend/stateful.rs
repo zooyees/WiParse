@@ -5,11 +5,28 @@ use super::ui::{self, UiHost};
 use super::{ApiBridge, InvokeReply, PendingRequest};
 use crate::serial_tool::SerialToolPanel;
 use serde_json::{json, Value};
+use std::time::{Duration, Instant};
 use wiparse_core::i18n::Lang;
+
+const MAX_API_REQUESTS_PER_FRAME: usize = 32;
+const API_FRAME_BUDGET: Duration = Duration::from_millis(4);
 
 pub fn drain_api_requests(bridge: &ApiBridge, mut host: UiHost<'_>) -> bool {
     let mut persist = false;
-    while let Some(req) = bridge.try_recv() {
+    let started = Instant::now();
+    for _ in 0..MAX_API_REQUESTS_PER_FRAME {
+        if started.elapsed() >= API_FRAME_BUDGET {
+            break;
+        }
+        let Some(req) = bridge.try_recv() else {
+            break;
+        };
+        if Instant::now() > req.deadline {
+            let _ = req
+                .reply
+                .try_send(err(&req.method, "request expired before execution"));
+            continue;
+        }
         persist |= handle(bridge, &mut host, req);
     }
     let (port, baud) = host.serial.current_port_baud();
@@ -23,6 +40,7 @@ fn handle(bridge: &ApiBridge, host: &mut UiHost<'_>, req: PendingRequest) -> boo
         method,
         params,
         reply,
+        deadline: _,
     } = req;
     let lang = *host.lang;
     let (result, persist) = if let Some(pair) = ui::handle(host, &method, &params) {
@@ -31,9 +49,24 @@ fn handle(bridge: &ApiBridge, host: &mut UiHost<'_>, req: PendingRequest) -> boo
         let result = match method.as_str() {
             "serial.monitor.start" => serial_start(bridge, host.serial, lang, &params),
             "serial.monitor.stop" => {
-                host.serial.api_stop_monitor(lang);
-                bridge.set_monitoring(false, None, None);
-                *bridge.serial_write.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                let port = params
+                    .get("port")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                if let Some(port) = port {
+                    host.serial.api_stop_device(lang, port);
+                } else if let Some(selected) = host.serial.selected_device() {
+                    host.serial.api_stop_device(lang, &selected);
+                } else {
+                    host.serial.api_stop_monitor(lang);
+                }
+                let still = host.serial.is_monitoring();
+                bridge.set_monitoring(still, None, None);
+                *bridge
+                    .serial_write
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = None;
                 bridge.publish_serial_status("stopped");
                 ok(&method, json!({ "stopped": true }))
             }
@@ -66,8 +99,10 @@ fn handle(bridge: &ApiBridge, host: &mut UiHost<'_>, req: PendingRequest) -> boo
                 match host.serial.api_test_start(lang, &params) {
                     Ok(data) => {
                         if let Some(tx) = host.serial.take_write_sender() {
-                            *bridge.serial_write.lock().unwrap_or_else(|e| e.into_inner()) =
-                                Some(tx);
+                            *bridge
+                                .serial_write
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner()) = Some(tx);
                         }
                         let (port, baud) = host.serial.current_port_baud();
                         if host.serial.is_monitoring() {
@@ -104,7 +139,10 @@ fn handle(bridge: &ApiBridge, host: &mut UiHost<'_>, req: PendingRequest) -> boo
             "instrument.capture" => host.instruments.api_capture(&params),
             "instrument.waveform" => host.instruments.api_waveform(&params),
             "instrument.waveform_source" => host.instruments.api_waveform_source(&params),
-            _ => err(&method, &format!("stateful method not implemented: {method}")),
+            _ => err(
+                &method,
+                &format!("stateful method not implemented: {method}"),
+            ),
         };
         (result, false)
     };
@@ -129,7 +167,10 @@ fn serial_start(
     match serial.api_start_monitor(lang, port, baud) {
         Ok((port, baud)) => {
             if let Some(tx) = serial.take_write_sender() {
-                *bridge.serial_write.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
+                *bridge
+                    .serial_write
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = Some(tx);
             }
             bridge.set_monitoring(true, Some(port.clone()), Some(baud));
             bridge.publish_serial_status(&format!("open {port} @ {baud}"));
@@ -192,7 +233,10 @@ fn serial_send(bridge: &ApiBridge, serial: &SerialToolPanel, params: &Value) -> 
         }
         i += 2;
     }
-    let guard = bridge.serial_write.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = bridge
+        .serial_write
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     match guard.as_ref() {
         Some(tx) => match tx.send(bytes) {
             Ok(()) => ok(
@@ -226,4 +270,3 @@ fn serial_read(serial: &SerialToolPanel, params: &Value) -> InvokeReply {
         }),
     )
 }
-

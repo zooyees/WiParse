@@ -8,7 +8,7 @@ members = [
 default-members = ["crates/wiparse-cli", "crates/wiparse-gui"]
 
 [workspace.package]
-version = "1.1.26"
+version = "1.1.27"
 edition = "2021"
 license = "Proprietary"
 authors = ["WiParse"]
@@ -40,7 +40,8 @@ rfd = "0.15"
 winit = { path = "third_party/winit" }
 
 [profile.release]
-# Preserve runtime behavior while removing linker-visible dead code and symbols.
+# Keep a matching PDB for diagnosing release-only Windows fail-fast crashes.
 lto = "fat"
 codegen-units = 1
-strip = "symbols"
+debug = "line-tables-only"
+strip = "none"

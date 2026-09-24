@@ -15,12 +15,12 @@ use wiparse_core::config::AppConfig;
 use wiparse_core::i18n::{tr, Lang};
 use wiparse_core::project::{
     add_test, add_test_entry, ensure_project, index_project, list_projects, path_in_project_jail,
-    remove_test, sanitize_id, test_case_label, test_ref_from_report, tree_snapshot, ArtifactView,
-    IndexedGroup, IndexedProject, PluginMeta, ProjectDoc,
+    remove_test, sanitize_id, test_case_label, test_ref_from_report, tree_snapshot,     ArtifactView, IndexedFile, IndexedGroup, IndexedProject, IndexedResult, PluginMeta,
+    ProjectDoc,
 };
 use crate::waveform_analysis::WaveformAnalysisPanel;
 
-const SIDE_W: f32 = 300.0;
+const SIDE_W: f32 = ui_theme::SIDEBAR_W;
 const PANEL_GAP: f32 = 8.0;
 const CARD_MARGIN_X: i8 = 10;
 const TREE_ROW_H: f32 = 24.0;
@@ -255,7 +255,9 @@ impl TestReportPanel {
     fn persist_project(&self) {
         if let Ok(mut cfg) = wiparse_core::config::load_config() {
             cfg.apps.project.active_id = self.project_id.clone();
-            let _ = wiparse_core::config::save_config(&cfg);
+            if let Err(error) = wiparse_core::config::save_config(&cfg) {
+                tracing::warn!("failed to save report project config: {error}");
+            }
         }
     }
 
@@ -453,9 +455,13 @@ impl TestReportPanel {
                     FontId::proportional(ui_theme::FONT_CAPTION),
                     tokens.text_muted,
                 );
+                let refresh_w = ui_theme::CTRL_H;
                 let combo_rect = egui::Rect::from_min_max(
                     egui::pos2(prow.min.x + cap_w, prow.min.y),
-                    prow.max,
+                    egui::pos2(
+                        (prow.max.x - refresh_w - ui_theme::SPACE_SM).max(prow.min.x + cap_w),
+                        prow.max.y,
+                    ),
                 );
 
                 let current_label = self
@@ -471,6 +477,7 @@ impl TestReportPanel {
                     })
                     .unwrap_or_else(|| self.project_id.clone());
                 let mut picked = self.project_id.clone();
+                let mut open_new_project = false;
                 let projects = self.projects.clone();
                 ui.scope_builder(
                     egui::UiBuilder::new()
@@ -491,9 +498,44 @@ impl TestReportPanel {
                                     };
                                     ui.selectable_value(&mut picked, p.id.clone(), label);
                                 }
+                                ui.separator();
+                                if ui
+                                    .button(tr(lang, "report.project_new_item"))
+                                    .clicked()
+                                {
+                                    open_new_project = true;
+                                }
                             });
                     },
                 );
+                let refresh_rect = egui::Rect::from_min_max(
+                    egui::pos2(prow.max.x - refresh_w, prow.min.y),
+                    prow.max,
+                );
+                let refresh_clicked = ui
+                    .scope_builder(
+                        egui::UiBuilder::new()
+                            .max_rect(refresh_rect)
+                            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                        |ui| {
+                            ui_theme::secondary_btn_sized(
+                                ui,
+                                tokens,
+                                "⟳",
+                                egui::vec2(refresh_w, ui_theme::CTRL_H),
+                            )
+                            .on_hover_text(tr(lang, "btn.refresh_browser"))
+                            .clicked()
+                        },
+                    )
+                    .inner;
+                if refresh_clicked {
+                    self.index_dirty = true;
+                    self.rebuild_index(data_root, plugins);
+                }
+                if open_new_project {
+                    self.new_project_open = true;
+                }
                 if picked != self.project_id {
                     self.project_id = picked;
                     self.persist_project();
@@ -535,43 +577,16 @@ impl TestReportPanel {
                     });
                 }
 
-                let gap = 6.0;
-                let btn_w = ((ctrl_w - gap * 2.0) / 3.0).max(40.0);
-                ui.horizontal(|ui| {
-                    ui.set_max_width(ctrl_w);
-                    ui.spacing_mut().item_spacing.x = gap;
-                    if ui_theme::secondary_btn_sized(
-                        ui,
-                        tokens,
-                        tr(lang, "btn.refresh_browser"),
-                        egui::vec2(btn_w, ui_theme::CTRL_H),
-                    )
-                    .clicked()
-                    {
-                        self.index_dirty = true;
-                        self.rebuild_index(data_root, plugins);
-                    }
-                    if ui_theme::secondary_btn_sized(
-                        ui,
-                        tokens,
-                        tr(lang, "report.add_test"),
-                        egui::vec2(btn_w, ui_theme::CTRL_H),
-                    )
-                    .clicked()
-                    {
-                        self.add_test_open = !self.add_test_open;
-                    }
-                    if ui_theme::secondary_btn_sized(
-                        ui,
-                        tokens,
-                        tr(lang, "report.project_new"),
-                        egui::vec2(btn_w, ui_theme::CTRL_H),
-                    )
-                    .clicked()
-                    {
-                        self.new_project_open = !self.new_project_open;
-                    }
-                });
+                if ui_theme::secondary_btn_sized(
+                    ui,
+                    tokens,
+                    tr(lang, "report.add_test"),
+                    egui::vec2((ctrl_w * 0.46).max(96.0), ui_theme::CTRL_H),
+                )
+                .clicked()
+                {
+                    self.add_test_open = !self.add_test_open;
+                }
 
                 if self.add_test_open {
                     let mut added: Option<wiparse_core::project::ProjectTestRef> = None;
@@ -688,10 +703,8 @@ impl TestReportPanel {
                                         text: tr(lang, "report.missing_plugin"),
                                         color: tokens.text_muted,
                                     })
-                                } else if test.results.is_empty() {
-                                    None
                                 } else {
-                                    Some(TreeTrail::Count(test.results.len()))
+                                    None
                                 };
                                 let color = if test.installed {
                                     tokens.text_primary
@@ -706,7 +719,9 @@ impl TestReportPanel {
                                     &title,
                                     color,
                                     true,
+                                    true,
                                     running || !test.results.is_empty(),
+                                    false,
                                     trail.as_ref(),
                                 );
                                 header_resp.context_menu(|ui| {
@@ -742,22 +757,35 @@ impl TestReportPanel {
                                     );
                                     continue;
                                 }
+                                let stamps: Vec<&str> =
+                                    test.results.iter().map(|r| r.stamp.as_str()).collect();
+                                let titles = run_row_titles(&stamps);
                                 for (ri, result) in test.results.iter().enumerate() {
-                                    let rtitle = format_result_stamp(&result.stamp);
-                                    let trail = result.ok.map(|ok| TreeTrail::Dot(if ok {
-                                        tokens.success
-                                    } else {
-                                        tokens.stop_bg
-                                    }));
+                                    let rtitle = titles.get(ri).map(String::as_str).unwrap_or("");
+                                    let trail = result.ok.map(|ok| {
+                                        TreeTrail::Dot(if ok {
+                                            tokens.success
+                                        } else {
+                                            tokens.stop_bg
+                                        })
+                                    });
+                                    let reports = report_files(result);
+                                    let expandable = run_has_children(result);
+                                    let run_selected = reports.len() == 1
+                                        && selected.as_ref().is_some_and(|p| {
+                                            same_path(p, &reports[0].path)
+                                        });
                                     let (ropen, rresp) = tree_branch_row(
                                         ui,
                                         tokens,
                                         ("report-result", test.id.as_str(), result.stamp.as_str()),
                                         1,
-                                        &rtitle,
+                                        rtitle,
                                         tokens.text_primary,
                                         false,
+                                        expandable,
                                         ri == 0,
+                                        run_selected,
                                         trail.as_ref(),
                                     );
                                     if rresp.double_clicked() {
@@ -765,8 +793,27 @@ impl TestReportPanel {
                                             .latest_report()
                                             .or_else(|| result.latest_any())
                                         {
-                                            open_file = Some((f.path.clone(), f.view, false));
+                                            let overlay = rresp.ctx.input(|i| {
+                                                i.modifiers.ctrl || i.modifiers.command
+                                            });
+                                            open_file = Some((f.path.clone(), f.view, overlay));
                                         }
+                                    }
+                                    if let Some(target) =
+                                        result.latest_report().or_else(|| result.latest_any())
+                                    {
+                                        let path = target.path.clone();
+                                        rresp.context_menu(|ui| {
+                                            if ui.button(tr(lang, "report.open_external")).clicked()
+                                            {
+                                                let _ = open_path_external(&path);
+                                                ui.close_menu();
+                                            }
+                                            if ui.button(tr(lang, "report.reveal")).clicked() {
+                                                reveal_in_folder(&path);
+                                                ui.close_menu();
+                                            }
+                                        });
                                     }
                                     if ropen {
                                         paint_output_groups(
@@ -818,32 +865,64 @@ impl TestReportPanel {
             .inner_margin(Margin::symmetric(12, 10))
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
-                ui.horizontal(|ui| {
-                    let title = if self.preview_title.is_empty() {
-                        tr(lang, "report.viewer_title")
-                    } else {
-                        self.preview_title.clone()
-                    };
-                    ui.label(
-                        RichText::new(title)
-                            .size(ui_theme::FONT_TITLE)
-                            .strong()
-                            .color(tokens.text_primary),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if self.selected.is_some()
-                            && ui_theme::secondary_btn_sized(
+                let title = if self.preview_title.is_empty() {
+                    tr(lang, "report.viewer_title")
+                } else {
+                    self.preview_title.clone()
+                };
+                let row_w = ui.available_width().max(1.0);
+                let button_w = if self.selected.is_some() { 120.0 } else { 0.0 };
+                let gap = if button_w > 0.0 { 8.0 } else { 0.0 };
+                let (row, _) = ui.allocate_exact_size(
+                    egui::vec2(row_w, ui_theme::CTRL_H),
+                    egui::Sense::hover(),
+                );
+                let button_rect = egui::Rect::from_min_max(
+                    egui::pos2((row.right() - button_w).max(row.left()), row.top()),
+                    row.max,
+                );
+                let title_rect = egui::Rect::from_min_max(
+                    row.min,
+                    egui::pos2((button_rect.left() - gap).max(row.left()), row.bottom()),
+                );
+                ui.scope_builder(
+                    egui::UiBuilder::new()
+                        .max_rect(title_rect)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                    |ui| {
+                        ui.set_clip_rect(title_rect.intersect(ui.clip_rect()));
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(title)
+                                    .size(ui_theme::FONT_TITLE)
+                                    .strong()
+                                    .color(tokens.text_primary),
+                            )
+                            .truncate()
+                            .selectable(false),
+                        );
+                    },
+                );
+                if button_w > 0.0 {
+                    let mut open_external = false;
+                    ui.scope_builder(
+                        egui::UiBuilder::new()
+                            .max_rect(button_rect)
+                            .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                        |ui| {
+                            open_external = ui_theme::secondary_btn_sized(
                                 ui,
                                 tokens,
                                 tr(lang, "report.open_external"),
-                                egui::vec2(120.0, ui_theme::CTRL_H),
+                                button_rect.size(),
                             )
-                            .clicked()
-                        {
-                            self.open_external(lang);
-                        }
-                    });
-                });
+                            .clicked();
+                        },
+                    );
+                    if open_external {
+                        self.open_external(lang);
+                    }
+                }
                 ui.add_space(6.0);
                 ui.painter().hline(
                     ui.max_rect().x_range(),
@@ -1044,6 +1123,41 @@ fn panel_in_rect(ui: &mut egui::Ui, rect: egui::Rect, add: impl FnOnce(&mut egui
     );
 }
 
+fn is_report_group(group: &IndexedGroup) -> bool {
+    group.view == ArtifactView::Report || matches!(group.id.as_str(), "reports" | "report")
+}
+
+fn report_files(result: &IndexedResult) -> Vec<&IndexedFile> {
+    result
+        .groups
+        .iter()
+        .filter(|g| is_report_group(g))
+        .flat_map(|g| g.files.iter())
+        .collect()
+}
+
+fn run_has_children(result: &IndexedResult) -> bool {
+    let report_n: usize = result
+        .groups
+        .iter()
+        .filter(|g| is_report_group(g))
+        .map(|g| g.files.len())
+        .sum();
+    let attachments = result
+        .groups
+        .iter()
+        .any(|g| !is_report_group(g) && !g.files.is_empty());
+    report_n > 1 || attachments
+}
+
+fn group_label<'a>(lang: Lang, group: &'a IndexedGroup) -> &'a str {
+    if matches!(lang, Lang::Zh) && !group.label_zh.is_empty() {
+        group.label_zh.as_str()
+    } else {
+        group.label.as_str()
+    }
+}
+
 fn paint_output_groups(
     ui: &mut egui::Ui,
     lang: Lang,
@@ -1055,87 +1169,91 @@ fn paint_output_groups(
     stamp: &str,
     depth: u8,
 ) {
-    let nonempty: Vec<&IndexedGroup> = groups.iter().filter(|g| !g.files.is_empty()).collect();
-    if nonempty.is_empty() {
-        return;
-    }
-    let flatten = nonempty.len() == 1 && nonempty[0].files.len() <= 4;
-    for group in nonempty {
-        let file_depth = if flatten { depth } else { depth + 1 };
-        if !flatten {
-            let gtitle = if matches!(lang, Lang::Zh) && !group.label_zh.is_empty() {
-                group.label_zh.as_str()
-            } else {
-                group.label.as_str()
-            };
-            let (open, _) = tree_branch_row(
-                ui,
-                tokens,
-                ("report-group", name_prefix, stamp, group.id.as_str()),
-                depth,
-                gtitle,
-                tokens.text_muted,
-                false,
-                group_starts_open(group),
-                Some(&TreeTrail::Count(group.files.len())),
+    let report_rows: Vec<(&IndexedFile, &IndexedGroup)> = groups
+        .iter()
+        .filter(|g| is_report_group(g))
+        .flat_map(|g| g.files.iter().map(move |f| (f, g)))
+        .collect();
+    if report_rows.len() > 1 {
+        let labels: Vec<String> = report_rows
+            .iter()
+            .map(|(_, g)| group_label(lang, g).to_owned())
+            .collect();
+        let titles = numbered_labels(&labels);
+        for ((file, group), title) in report_rows.into_iter().zip(titles) {
+            paint_file_row(
+                ui, lang, tokens, depth, &title, file, group.view, selected, open_file,
             );
-            if !open {
-                continue;
-            }
         }
-        for file in &group.files {
-            let is_sel = selected.as_ref().is_some_and(|p| same_path(p, &file.path));
-            let label = short_artifact_label(&file.name, name_prefix, stamp);
-            let row = tree_leaf_row(
-                ui,
-                tokens,
-                file_depth,
-                &label,
-                type_badge(&file.name),
-                is_sel,
+    }
+
+    let attach: Vec<&IndexedGroup> = groups
+        .iter()
+        .filter(|g| !is_report_group(g) && !g.files.is_empty())
+        .collect();
+    let multi_roles = attach.len() >= 2;
+    for group in attach {
+        let role = group_label(lang, group);
+        if multi_roles && group.files.len() > 1 {
+            tree_caption_row(ui, tokens, depth, role);
+        }
+        let parts: Vec<(String, String)> = group
+            .files
+            .iter()
+            .map(|f| {
+                (
+                    short_artifact_label(&f.name, name_prefix, stamp),
+                    file_ext(&f.name),
+                )
+            })
+            .collect();
+        let titles = attachment_titles(role, &parts);
+        for (file, title) in group.files.iter().zip(titles) {
+            paint_file_row(
+                ui, lang, tokens, depth, &title, file, group.view, selected, open_file,
             );
-            let view = open_view_for_file(file.view, group.view, &file.name);
-            if row.clicked() {
-                let overlay = row.ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
-                *open_file = Some((file.path.clone(), view, overlay));
-            }
-            row.context_menu(|ui| {
-                if ui.button(tr(lang, "report.open_external")).clicked() {
-                    let _ = open_path_external(&file.path);
-                    ui.close_menu();
-                }
-                if ui.button(tr(lang, "report.reveal")).clicked() {
-                    reveal_in_folder(&file.path);
-                    ui.close_menu();
-                }
-            });
-            row.on_hover_text(format!(
-                "{}\n{}  {}",
-                file.path.display(),
-                format_size(file.size),
-                format_mtime(file.mtime)
-            ));
         }
     }
 }
 
-fn group_starts_open(group: &IndexedGroup) -> bool {
-    matches!(group.id.as_str(), "reports" | "report")
-}
-
-fn type_badge(name: &str) -> &'static str {
-    match file_ext(name).as_str() {
-        "md" | "markdown" => "MD",
-        "isf" => "ISF",
-        "wfm" => "WFM",
-        "csv" => "CSV",
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => "IMG",
-        "pdf" => "PDF",
-        "html" | "htm" => "WEB",
-        "txt" | "log" => "LOG",
-        "json" | "jsonl" => "JSON",
-        _ => "FILE",
+fn paint_file_row(
+    ui: &mut egui::Ui,
+    lang: Lang,
+    tokens: &Tokens,
+    depth: u8,
+    title: &str,
+    file: &IndexedFile,
+    group_view: ArtifactView,
+    selected: &Option<PathBuf>,
+    open_file: &mut Option<(PathBuf, ArtifactView, bool)>,
+) {
+    let is_sel = selected
+        .as_ref()
+        .is_some_and(|p| same_path(p, &file.path));
+    let row = tree_file_row(ui, tokens, depth, title, is_sel);
+    let view = open_view_for_file(file.view, group_view, &file.name);
+    if row.clicked() {
+        let overlay = row
+            .ctx
+            .input(|i| i.modifiers.ctrl || i.modifiers.command);
+        *open_file = Some((file.path.clone(), view, overlay));
     }
+    row.context_menu(|ui| {
+        if ui.button(tr(lang, "report.open_external")).clicked() {
+            let _ = open_path_external(&file.path);
+            ui.close_menu();
+        }
+        if ui.button(tr(lang, "report.reveal")).clicked() {
+            reveal_in_folder(&file.path);
+            ui.close_menu();
+        }
+    });
+    row.on_hover_text(format!(
+        "{}\n{}  {}",
+        file.path.display(),
+        format_size(file.size),
+        format_mtime(file.mtime)
+    ));
 }
 
 /// Drop `{prefix}_` and `{YYYYMMDD}_HHMMSS` so `lot_timeout_20260915_143738.isf`
@@ -1202,6 +1320,116 @@ fn format_result_stamp(stamp: &str) -> String {
     }
 }
 
+fn format_result_stamp_secs(stamp: &str) -> String {
+    let full = wiparse_core::project::format_run_stamp(stamp);
+    if full.len() >= 19 && full.as_bytes().get(4) == Some(&b'-') {
+        format!("{}  {}", &full[5..10], &full[11..19])
+    } else {
+        format_result_stamp(stamp)
+    }
+}
+
+/// Same minute shows seconds; identical seconds then get a 1-based index.
+fn run_row_titles(stamps: &[&str]) -> Vec<String> {
+    let base: Vec<String> = stamps.iter().copied().map(format_result_stamp).collect();
+    let base_n = tally(&base);
+    let with_sec: Vec<String> = stamps
+        .iter()
+        .zip(&base)
+        .map(|(stamp, b)| {
+            if base_n.get(b).copied().unwrap_or(0) > 1 {
+                format_result_stamp_secs(stamp)
+            } else {
+                b.clone()
+            }
+        })
+        .collect();
+    let sec_n = tally(&with_sec);
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    with_sec
+        .into_iter()
+        .map(|title| {
+            if sec_n.get(&title).copied().unwrap_or(0) > 1 {
+                let n = seen.entry(title.clone()).or_insert(0);
+                *n += 1;
+                format!("{title} · {n}")
+            } else {
+                title
+            }
+        })
+        .collect()
+}
+
+fn tally(items: &[String]) -> HashMap<String, usize> {
+    let mut n = HashMap::new();
+    for item in items {
+        *n.entry(item.clone()).or_insert(0) += 1;
+    }
+    n
+}
+
+/// First copy keeps the label; later copies of the same label get ` 2`, ` 3`.
+fn numbered_labels(labels: &[String]) -> Vec<String> {
+    let total = tally(labels);
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    labels
+        .iter()
+        .map(|label| {
+            let n = seen.entry(label.clone()).or_insert(0);
+            *n += 1;
+            if total.get(label).copied().unwrap_or(0) <= 1 || *n == 1 {
+                label.clone()
+            } else {
+                format!("{label} {n}")
+            }
+        })
+        .collect()
+}
+
+/// One file uses the role name. Matching shorts then gain an extension, then an index.
+fn attachment_titles(role: &str, parts: &[(String, String)]) -> Vec<String> {
+    if parts.len() <= 1 {
+        return vec![role.to_owned()];
+    }
+    let bases: Vec<String> = parts
+        .iter()
+        .map(|(short, _)| {
+            if short.is_empty() {
+                role.to_owned()
+            } else {
+                format!("{role} {short}")
+            }
+        })
+        .collect();
+    let exts: Vec<String> = parts.iter().map(|(_, ext)| ext.clone()).collect();
+    let base_n = tally(&bases);
+    let with_ext: Vec<String> = bases
+        .iter()
+        .zip(&exts)
+        .map(|(base, ext)| {
+            if base_n.get(base).copied().unwrap_or(0) > 1 && !ext.is_empty() {
+                format!("{base} {ext}")
+            } else {
+                base.clone()
+            }
+        })
+        .collect();
+    let ext_n = tally(&with_ext);
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    with_ext
+        .into_iter()
+        .map(|title| {
+            if ext_n.get(&title).copied().unwrap_or(0) > 1 {
+                let n = seen.entry(title.clone()).or_insert(0);
+                *n += 1;
+                format!("{title} {n}")
+            } else {
+                title
+            }
+        })
+        .collect()
+}
+
 fn test_display_name(test: &wiparse_core::project::IndexedTest, plugins: &[PluginMeta], lang: Lang) -> String {
     let plugin = plugins
         .iter()
@@ -1225,7 +1453,6 @@ fn test_display_name(test: &wiparse_core::project::IndexedTest, plugins: &[Plugi
 }
 
 enum TreeTrail {
-    Count(usize),
     Status { text: String, color: Color32 },
     Dot(Color32),
 }
@@ -1242,28 +1469,34 @@ fn tree_branch_row(
     title: &str,
     color: Color32,
     strong: bool,
+    expandable: bool,
     default_open: bool,
+    selected: bool,
     trail: Option<&TreeTrail>,
 ) -> (bool, egui::Response) {
     let eid = ui.make_persistent_id(id);
     let mut state =
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), eid, default_open);
     let (rect, resp) = allocate_tree_row(ui);
-    paint_tree_bg(ui, tokens, rect, resp.hovered(), false);
-    if resp.clicked() {
+    paint_tree_bg(ui, tokens, rect, resp.hovered(), selected);
+    if expandable && resp.clicked() {
         state.toggle(ui);
     }
-    let open = state.is_open();
+    let open = expandable && state.is_open();
     let x = rect.min.x + tree_x(depth);
     let y = rect.center().y;
-    ui.painter().text(
-        egui::pos2(x, y),
-        egui::Align2::LEFT_CENTER,
-        if open { "▾" } else { "▸" },
-        FontId::proportional(ui_theme::FONT_CAPTION),
-        tokens.text_muted,
-    );
-    let title_x = x + TREE_CHEVRON_W;
+    let title_x = if expandable {
+        ui.painter().text(
+            egui::pos2(x, y),
+            egui::Align2::LEFT_CENTER,
+            if open { "▾" } else { "▸" },
+            FontId::proportional(ui_theme::FONT_CAPTION),
+            tokens.text_muted,
+        );
+        x + TREE_CHEVRON_W
+    } else {
+        x
+    };
     let trail_w = paint_tree_trail(ui, tokens, rect, trail);
     let max_w = (rect.max.x - trail_w - title_x - 6.0).max(12.0);
     let font = FontId::proportional(if strong {
@@ -1276,34 +1509,41 @@ fn tree_branch_row(
     (open, resp)
 }
 
-fn tree_leaf_row(
+fn tree_file_row(
     ui: &mut egui::Ui,
     tokens: &Tokens,
     depth: u8,
     name: &str,
-    badge: &str,
     selected: bool,
 ) -> egui::Response {
     let (rect, resp) = allocate_tree_row(ui);
     paint_tree_bg(ui, tokens, rect, resp.hovered(), selected);
-    let x = rect.min.x + tree_x(depth);
-    let y = rect.center().y;
-    let title_x = x + TREE_CHEVRON_W;
-    let trail = TreeTrail::Status {
-        text: badge.to_owned(),
-        color: tokens.text_muted,
-    };
-    let trail_w = paint_tree_trail(ui, tokens, rect, Some(&trail));
-    let max_w = (rect.max.x - trail_w - title_x - 6.0).max(12.0);
+    let title_x = rect.min.x + tree_x(depth);
+    let max_w = (rect.max.x - title_x - 8.0).max(12.0);
     paint_elided(
         ui,
-        egui::pos2(title_x, y),
+        egui::pos2(title_x, rect.center().y),
         name,
-        FontId::proportional(ui_theme::FONT_BODY),
-        tokens.text_primary,
+        FontId::proportional(ui_theme::FONT_CAPTION),
+        tokens.text_muted,
         max_w,
     );
     resp
+}
+
+fn tree_caption_row(ui: &mut egui::Ui, tokens: &Tokens, depth: u8, text: &str) {
+    let width = ui.available_width().max(40.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, TREE_ROW_H), egui::Sense::hover());
+    let title_x = rect.min.x + tree_x(depth);
+    let max_w = (rect.max.x - title_x - 8.0).max(12.0);
+    paint_elided(
+        ui,
+        egui::pos2(title_x, rect.center().y),
+        text,
+        FontId::proportional(ui_theme::FONT_CAPTION),
+        tokens.text_muted,
+        max_w,
+    );
 }
 
 fn tree_hint_row(ui: &mut egui::Ui, tokens: &Tokens, depth: u8, text: &str) {
@@ -1326,22 +1566,26 @@ fn allocate_tree_row(ui: &mut egui::Ui) -> (egui::Rect, egui::Response) {
 }
 
 fn paint_tree_bg(ui: &egui::Ui, tokens: &Tokens, rect: egui::Rect, hovered: bool, selected: bool) {
-    let fill = if selected {
-        Some(tokens.accent.gamma_multiply(0.16))
+    if selected {
+        ui.painter().rect_filled(
+            rect.shrink2(egui::vec2(1.0, 0.5)),
+            CornerRadius::same(5),
+            tokens.accent.gamma_multiply(0.08),
+        );
+        let bar = egui::Rect::from_min_max(rect.min, egui::pos2(rect.min.x + 2.0, rect.max.y));
+        ui.painter().rect_filled(bar, CornerRadius::ZERO, tokens.accent);
     } else if hovered {
-        Some(tokens.accent_soft.gamma_multiply(0.55))
-    } else {
-        None
-    };
-    if let Some(fill) = fill {
-        ui.painter()
-            .rect_filled(rect.shrink2(egui::vec2(1.0, 0.5)), CornerRadius::same(5), fill);
+        ui.painter().rect_filled(
+            rect.shrink2(egui::vec2(1.0, 0.5)),
+            CornerRadius::same(5),
+            tokens.accent_soft.gamma_multiply(0.55),
+        );
     }
 }
 
 fn paint_tree_trail(
     ui: &egui::Ui,
-    tokens: &Tokens,
+    _tokens: &Tokens,
     rect: egui::Rect,
     trail: Option<&TreeTrail>,
 ) -> f32 {
@@ -1350,19 +1594,6 @@ fn paint_tree_trail(
     };
     let y = rect.center().y;
     match trail {
-        TreeTrail::Count(n) => {
-            let text = n.to_string();
-            let font = FontId::proportional(ui_theme::FONT_CAPTION);
-            let w = measure_text(ui, &text, &font);
-            ui.painter().text(
-                egui::pos2(rect.max.x - 8.0, y),
-                egui::Align2::RIGHT_CENTER,
-                text,
-                font,
-                tokens.text_muted,
-            );
-            w + 16.0
-        }
         TreeTrail::Status { text, color } => {
             let font = FontId::proportional(ui_theme::FONT_CAPTION);
             let w = measure_text(ui, text, &font);
@@ -2739,6 +2970,72 @@ mod tests {
     #[test]
     fn result_stamp_drops_year() {
         assert_eq!(format_result_stamp("20260915_143758"), "09-15  14:37");
+        assert_eq!(
+            run_row_titles(&["20260915_143758"]),
+            vec!["09-15  14:37".to_owned()]
+        );
+    }
+
+    #[test]
+    fn same_minute_runs_show_seconds() {
+        assert_eq!(
+            run_row_titles(&["20260915_143758", "20260915_143701"]),
+            vec![
+                "09-15  14:37:58".to_owned(),
+                "09-15  14:37:01".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn same_second_runs_show_index() {
+        assert_eq!(
+            run_row_titles(&["20260915_143758", "20260915_143758"]),
+            vec![
+                "09-15  14:37:58 · 1".to_owned(),
+                "09-15  14:37:58 · 2".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn one_attachment_uses_role_name() {
+        assert_eq!(
+            attachment_titles("配置日志", &[("uart 23:27:58".into(), "json".into())]),
+            vec!["配置日志".to_owned()]
+        );
+    }
+
+    #[test]
+    fn matching_attachment_shorts_use_extension_then_index() {
+        assert_eq!(
+            attachment_titles(
+                "捕获",
+                &[
+                    ("uart 23:27:58".into(), "json".into()),
+                    ("uart 23:27:58".into(), "log".into()),
+                    ("uart 23:27:58".into(), "isf".into()),
+                ]
+            ),
+            vec![
+                "捕获 uart 23:27:58 json".to_owned(),
+                "捕获 uart 23:27:58 log".to_owned(),
+                "捕获 uart 23:27:58 isf".to_owned(),
+            ]
+        );
+        assert_eq!(
+            attachment_titles(
+                "捕获",
+                &[
+                    ("uart 23:27:58".into(), "json".into()),
+                    ("uart 23:27:58".into(), "json".into()),
+                ]
+            ),
+            vec![
+                "捕获 uart 23:27:58 json 1".to_owned(),
+                "捕获 uart 23:27:58 json 2".to_owned(),
+            ]
+        );
     }
 
     #[test]

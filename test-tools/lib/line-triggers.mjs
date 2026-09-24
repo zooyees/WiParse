@@ -50,7 +50,12 @@ function compilePredicate(spec, fallbackType = "regex", fallbackFlags = "") {
   if (pattern == null || String(pattern) === "") throw new Error("需要 pattern");
   if (type === "regex") {
     const re = new RegExp(String(pattern), spec.flags ?? fallbackFlags ?? "");
-    return (line) => re.test(line);
+    return (line) => {
+      // RegExp instances with g/y keep a mutable lastIndex. A shared trigger
+      // must evaluate every serial line independently.
+      re.lastIndex = 0;
+      return re.test(line);
+    };
   }
   if (type === "contains") {
     const cs = spec.case_sensitive === true;

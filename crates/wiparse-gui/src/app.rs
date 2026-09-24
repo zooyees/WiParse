@@ -99,6 +99,7 @@ pub struct WiParseApp {
     cfg: AppConfig,
     lang: Lang,
     active: MainTab,
+    last_logged_tab: Option<MainTab>,
     show_serial: bool,
     show_calculator: bool,
     show_instruments: bool,
@@ -129,10 +130,15 @@ pub struct WiParseApp {
     theme_applied_light: Option<bool>,
     taskbar_icon_applied: bool,
     taskbar_icon_attempts: u8,
+    startup_warning: Option<String>,
 }
 
 impl WiParseApp {
     pub fn new(cfg: AppConfig) -> Self {
+        Self::new_with_warning(cfg, None)
+    }
+
+    pub fn new_with_warning(cfg: AppConfig, startup_warning: Option<String>) -> Self {
         let lang = parse_lang(&cfg.ui.language);
         let show_serial = cfg.ui.panels.serial_tool;
         let show_calculator = cfg.ui.panels.calculator;
@@ -171,6 +177,7 @@ impl WiParseApp {
             cfg,
             lang,
             active,
+            last_logged_tab: None,
             show_serial,
             show_calculator,
             show_instruments,
@@ -198,6 +205,7 @@ impl WiParseApp {
             theme_applied_light: None,
             taskbar_icon_applied: false,
             taskbar_icon_attempts: 0,
+            startup_warning,
         }
     }
 
@@ -273,7 +281,9 @@ impl WiParseApp {
             Lang::Zh => "zh".into(),
             Lang::En => "en".into(),
         };
-        let _ = save_config(&self.cfg);
+        if let Err(e) = save_config(&self.cfg) {
+            self.startup_warning = Some(format!("配置保存失败 / Failed to save config: {e}"));
+        }
     }
 
     fn set_debug_mode(&mut self, enabled: bool) {
@@ -940,6 +950,13 @@ impl WiParseApp {
 impl eframe::App for WiParseApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.api.attach_egui_ctx(ctx);
+        if let Some(message) = self.startup_warning.clone() {
+            egui::Window::new("WiParse 配置 / Configuration")
+                .collapsible(false).resizable(true).show(ctx, |ui| {
+                    ui.label(message);
+                    if ui.button("知道了 / Dismiss").clicked() { self.startup_warning = None; }
+                });
+        }
         if !self.update_startup_checked {
             self.update_startup_checked = true;
             self.updater.maybe_check_on_startup();
@@ -1061,6 +1078,10 @@ impl eframe::App for WiParseApp {
         }
         let t = self.tokens;
         self.ensure_visible_tab();
+        if self.last_logged_tab != Some(self.active) {
+            tracing::info!(tab = self.active.as_id(), "active WiParse page");
+            self.last_logged_tab = Some(self.active);
+        }
 
         egui::TopBottomPanel::top("main_header")
             .frame(
@@ -1073,6 +1094,7 @@ impl eframe::App for WiParseApp {
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
+                    let compact_nav = ui.available_width() < 1160.0;
 
                     main_tab(
                         ui,
@@ -1098,38 +1120,32 @@ impl eframe::App for WiParseApp {
                         self.show_waveform,
                         &tr(self.lang, "tool.waveform_analysis.name"),
                     );
-                    main_tab(
-                        ui,
-                        &t,
-                        &mut self.active,
-                        MainTab::DataAnalysis,
-                        self.show_data_analysis,
-                        &tr(self.lang, "tool.data_analysis.name"),
-                    );
-                    main_tab(
-                        ui,
-                        &t,
-                        &mut self.active,
-                        MainTab::TestTool,
-                        self.show_test_tool,
-                        &tr(self.lang, "tool.test_tool.name"),
-                    );
-                    main_tab(
-                        ui,
-                        &t,
-                        &mut self.active,
-                        MainTab::TestReport,
-                        self.show_test_report,
-                        &tr(self.lang, "tool.test_report.name"),
-                    );
-                    main_tab(
-                        ui,
-                        &t,
-                        &mut self.active,
-                        MainTab::Calculator,
-                        self.show_calculator,
-                        &tr(self.lang, "tool.calculator.name"),
-                    );
+                    if compact_nav {
+                        ui.menu_button(if self.lang == Lang::Zh { "更多" } else { "More" }, |ui| {
+                            for (tab, visible, label) in [
+                                (MainTab::DataAnalysis, self.show_data_analysis, tr(self.lang, "tool.data_analysis.name")),
+                                (MainTab::TestTool, self.show_test_tool, tr(self.lang, "tool.test_tool.name")),
+                                (MainTab::TestReport, self.show_test_report, tr(self.lang, "tool.test_report.name")),
+                            ] {
+                                if visible && ui.selectable_label(self.active == tab, label).clicked() {
+                                    self.active = tab;
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+                    } else {
+                        main_tab(ui, &t, &mut self.active, MainTab::DataAnalysis, self.show_data_analysis, &tr(self.lang, "tool.data_analysis.name"));
+                        main_tab(ui, &t, &mut self.active, MainTab::TestTool, self.show_test_tool, &tr(self.lang, "tool.test_tool.name"));
+                        main_tab(ui, &t, &mut self.active, MainTab::TestReport, self.show_test_report, &tr(self.lang, "tool.test_report.name"));
+                    }
+                    if self.show_calculator {
+                        ui.menu_button(if self.lang == Lang::Zh { "工具" } else { "Tools" }, |ui| {
+                            if ui.selectable_label(self.active == MainTab::Calculator, tr(self.lang, "tool.calculator.name")).clicked() {
+                                self.active = MainTab::Calculator;
+                                ui.close_menu();
+                            }
+                        });
+                    }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Gear icon settings — quieter than text label.
@@ -1148,15 +1164,17 @@ impl eframe::App for WiParseApp {
                         } else {
                             t.text_muted
                         };
-                        let gear = "⚙";
-                        let galley = ui.fonts(|f| {
-                            f.layout_no_wrap(gear.to_string(), FontId::proportional(16.0), fg)
-                        });
-                        let text_pos = Pos2::new(
-                            rect.center().x - galley.size().x * 0.5,
-                            rect.center().y - galley.size().y * 0.5,
-                        );
-                        ui.painter().galley(text_pos, galley, fg);
+                        // Draw with primitives so the icon does not depend on a symbol font.
+                        ui.painter().circle_stroke(rect.center(), 6.0, Stroke::new(1.6_f32, fg));
+                        ui.painter().circle_stroke(rect.center(), 2.0, Stroke::new(1.6_f32, fg));
+                        for n in 0..8 {
+                            let angle = n as f32 * std::f32::consts::TAU / 8.0;
+                            let dir = Vec2::angled(angle);
+                            ui.painter().line_segment(
+                                [rect.center() + dir * 7.0, rect.center() + dir * 9.0],
+                                Stroke::new(1.6_f32, fg),
+                            );
+                        }
                         self.settings_btn_rect = Some(rect.expand(2.0));
                         let resp = resp.on_hover_text(tr(self.lang, "menu.settings"));
                         if resp.clicked() {
@@ -1477,8 +1495,8 @@ fn main_tab(
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
 
     if ui.is_rect_visible(rect) {
-        if resp.hovered() && !selected {
-            ui.painter().rect_filled(rect, CornerRadius::ZERO, t.accent_soft);
+        if resp.hovered() || selected {
+            ui.painter().rect_filled(rect, CornerRadius::same(ui_theme::RADIUS_CTRL), t.accent_soft);
         }
         let text_pos = Pos2::new(
             rect.center().x - galley.size().x * 0.5,

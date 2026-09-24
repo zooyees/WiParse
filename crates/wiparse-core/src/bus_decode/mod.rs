@@ -6,6 +6,13 @@ mod i2c;
 mod i2s;
 mod spi;
 mod uart;
+mod charging;
+mod usb_pd;
+mod ufcs;
+mod scp;
+pub use usb_pd::decode_usb_pd;
+pub use ufcs::{decode_ufcs, UfcsConfig};
+pub use scp::{decode_scp, ScpConfig};
 
 pub use ddsss::{
     decode_ddsss, qi_ask_frame, synthesize_ddsss, DdsssConfig, DdsssExtension, DdsssSequence,
@@ -29,6 +36,9 @@ pub enum BusKind {
     Spi,
     I2s,
     Ddsss,
+    UsbPd,
+    Scp,
+    Ufcs,
 }
 
 impl BusKind {
@@ -40,6 +50,9 @@ impl BusKind {
             Self::Spi => "SPI",
             Self::I2s => "I2S",
             Self::Ddsss => "DDSSS",
+            Self::UsbPd => "USB PD",
+            Self::Scp => "SCP",
+            Self::Ufcs => "UFCS",
         }
     }
 
@@ -51,6 +64,9 @@ impl BusKind {
             Self::Spi,
             Self::I2s,
             Self::Ddsss,
+            Self::UsbPd,
+            Self::Scp,
+            Self::Ufcs,
         ]
     }
 }
@@ -63,7 +79,7 @@ pub struct BusFrame {
     /// Compact plot label (packet name). Keep short — hex lives on the byte row.
     pub summary: String,
     pub bytes: Vec<u8>,
-    /// DDSSS ASK integrity. Other buses leave this as `None`.
+    /// Protocol integrity (CRC/checksum, parity or framing).
     pub error: BusFrameError,
 }
 
@@ -82,7 +98,7 @@ impl BusFrame {
     }
 }
 
-/// ASK packet integrity (DDSSS).
+/// Decoded packet integrity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BusFrameError {
     #[default]
@@ -169,6 +185,8 @@ impl BusByteSpan {
 
 /// Hard cap on decoded payload bytes (all bus protocols). Further data is skipped.
 pub const MAX_DECODE_BYTES: usize = 512;
+/// Bound payload-free markers too (noise / repeated resets / empty STARTs).
+pub const MAX_DECODE_FRAMES: usize = 2048;
 
 pub(crate) fn try_push_frame(
     frames: &mut Vec<BusFrame>,
@@ -176,6 +194,7 @@ pub(crate) fn try_push_frame(
     frame: BusFrame,
 ) -> bool {
     let n = frame.bytes.len();
+    if frames.len() >= MAX_DECODE_FRAMES { return false; }
     if n > 0 && *used >= MAX_DECODE_BYTES {
         return false;
     }
@@ -218,6 +237,7 @@ pub struct BusChannelMap {
     pub i2s_ws: Option<usize>,
     pub i2s_data: Option<usize>,
     pub ddsss_signal: Option<usize>,
+    pub charging_signal: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -229,6 +249,8 @@ pub struct BusDecodeSettings {
     pub spi: SpiConfig,
     pub i2s: I2sConfig,
     pub ddsss: DdsssConfig,
+    pub ufcs: UfcsConfig,
+    pub scp: ScpConfig,
     pub threshold: Option<f64>,
     pub idle_high: bool,
     /// Optional time gate `[t0, t1]` (seconds, trace time base).
@@ -245,6 +267,8 @@ impl Default for BusDecodeSettings {
             spi: SpiConfig::default(),
             i2s: I2sConfig::default(),
             ddsss: DdsssConfig::default(),
+            ufcs: UfcsConfig::default(),
+            scp: ScpConfig::default(),
             threshold: None,
             idle_high: true,
             time_gate: None,
@@ -264,6 +288,16 @@ pub fn decode_bus(waves: &[WaveformTrace], settings: &BusDecodeSettings) -> BusD
 
     match settings.kind {
         BusKind::Off => BusDecodeResult::default(),
+        BusKind::UsbPd | BusKind::Scp | BusKind::Ufcs => {
+            let Some(idx) = settings.channels.charging_signal else { return need_channel("CC / D- / D+ signal"); };
+            let Some(trace) = waves.get(idx) else { return invalid_channel(); };
+            let trace = slice_trace(trace);
+            match settings.kind {
+                BusKind::UsbPd => decode_usb_pd(&trace, settings.threshold),
+                BusKind::Scp => decode_scp(&trace, settings.threshold, &settings.scp),
+                _ => decode_ufcs(&trace, settings.threshold, &settings.ufcs),
+            }
+        }
         BusKind::Uart => {
             let Some(idx) = settings.channels.uart_signal else {
                 return need_channel("UART signal");
@@ -412,6 +446,7 @@ pub fn compact_bus_decode_indices(
     ch.i2s_ws = remap(ch.i2s_ws);
     ch.i2s_data = remap(ch.i2s_data);
     ch.ddsss_signal = remap(ch.ddsss_signal);
+    ch.charging_signal = remap(ch.charging_signal);
 
     (unique, compact)
 }
@@ -437,10 +472,7 @@ fn gate_trace(trace: &WaveformTrace, gate: Option<(f64, f64)>) -> WaveformTrace 
         return trace.clone();
     }
     let start = trace.x[..n].partition_point(|&v| v < lo);
-    let end = trace.x[..n]
-        .partition_point(|&v| v <= hi)
-        .max(start + 1)
-        .min(n);
+    let end = trace.x[..n].partition_point(|&v| v <= hi).max(start).min(n);
     WaveformTrace {
         channel: trace.channel.clone(),
         x: trace.x[start..end].to_vec().into(),

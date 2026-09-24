@@ -63,6 +63,8 @@ fn uart_port_info(serial: &str) -> PortInfo {
         hwid: format!("USB VID:PID={VID:04X}:{PID:04X} MI_{UART_MI:02}"),
         transport: "usb".into(),
         device,
+        instance: String::new(),
+        usb_busy: false,
     }
 }
 

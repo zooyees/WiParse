@@ -265,10 +265,13 @@ export async function openWinusbChannel(channel, args = {}) {
       if (!usable) {
         sess.close();
         const bcd = `0x${IF_SPEC.bcd_device.toString(16).padStart(4, "0")}`;
-        const fw = channel === "netcfg" ? `${bcd} (WIPARSE NET GUID)` : `${bcd} (UART/I2C GUID)`;
+        const fw =
+          channel === "netcfg"
+            ? "STA-down config needs USB MI_05 EP0; TCP is only reachable after GOT_IP"
+            : `flash bcdDevice ${bcd} (UART/I2C GUID) or use TCP :${ch.tcp_port}`;
         return {
           ok: false,
-          error: `${ch.usb_name || ch.name} MI_${ch.mi.toString(16).padStart(2, "0")} has no openable WinUSB path; flash bcdDevice ${fw} or use TCP :${ch.tcp_port}`,
+          error: `${ch.usb_name || ch.name} MI_${ch.mi.toString(16).padStart(2, "0")} has no openable WinUSB path; ${fw}`,
         };
       }
     }

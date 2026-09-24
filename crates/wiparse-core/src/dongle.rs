@@ -642,35 +642,13 @@ fn host_candidates(host: &str) -> Vec<String> {
     out
 }
 
-/// Probe SoftAP / mDNS UART (`:1234`). IPv4 first so a missing `dap.local` does not stall.
-pub fn discover_wifi_uart(timeout: Duration) -> Option<(String, u16)> {
-    for host in [DEFAULT_IPV4, DEFAULT_MDNS] {
-        if probe_tcp_uart(host, UART_TCP_PORT, timeout) {
-            return Some((host.to_owned(), UART_TCP_PORT));
-        }
-    }
-    None
-}
-
-fn probe_tcp_uart(host: &str, port: u16, timeout: Duration) -> bool {
-    let host = host.to_owned();
-    let (tx, rx) = std::sync::mpsc::channel();
-    let Ok(_) = std::thread::Builder::new()
-        .name("wiparse-uart-probe".into())
-        .spawn(move || {
-            let ok = match (host.as_str(), port).to_socket_addrs() {
-                Ok(addrs) => addrs
-                    .into_iter()
-                    .any(|addr| TcpStream::connect_timeout(&addr, timeout).is_ok()),
-                Err(_) => false,
-            };
-            let _ = tx.send(ok);
-        })
-    else {
-        return false;
-    };
-    rx.recv_timeout(timeout.saturating_add(Duration::from_millis(250)))
-        .unwrap_or(false)
+/// First `_uart-bridge._tcp` row already in the browse cache. Does not connect
+/// to `192.168.137.123` or `dap.local`.
+pub fn discover_wifi_uart(_timeout: Duration) -> Option<(String, u16)> {
+    crate::mdns_browse::uart_bridge_rows()
+        .into_iter()
+        .next()
+        .map(|row| (row.ipv4.to_string(), row.port))
 }
 
 fn connect_tcp(host: &str, port: u16, timeout: Duration) -> Result<TcpStream, InstrumentError> {

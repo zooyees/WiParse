@@ -1052,12 +1052,17 @@ impl CalculatorPanel {
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
         let available = ui.available_rect_before_wrap();
         let gap = 8.0;
-        let cell_width = ((available.width() - gap * 2.0) / 3.0).max(1.0);
-        let cell_height = ((available.height() - gap) / 2.0).max(1.0);
+        let (columns, rows) = calculator_grid_shape(available.width());
+        let cell_width =
+            ((available.width() - gap * (columns.saturating_sub(1) as f32)) / columns as f32)
+                .max(1.0);
+        let cell_height =
+            ((available.height() - gap * (rows.saturating_sub(1) as f32)) / rows as f32)
+                .max(1.0);
 
         for index in 0..6 {
-            let row = index / 3;
-            let column = index % 3;
+            let row = index / columns;
+            let column = index % columns;
             let min = Pos2::new(
                 available.left() + column as f32 * (cell_width + gap),
                 available.top() + row as f32 * (cell_height + gap),
@@ -1917,11 +1922,31 @@ struct InputGridMetrics {
     gap: f32,
 }
 
+fn calculator_grid_shape(available_width: f32) -> (usize, usize) {
+    let columns = if available_width >= 1260.0 {
+        3
+    } else if available_width >= 720.0 {
+        2
+    } else {
+        1
+    };
+    (columns, 6_usize.div_ceil(columns))
+}
+
 fn input_grid_metrics(available_width: f32) -> InputGridMetrics {
-    let gap = 5.0;
-    let unit_width = (available_width * 0.25).clamp(50.0, 58.0);
-    let label_width = (available_width * 0.31).clamp(58.0, 82.0);
-    let value_width = (available_width - label_width - unit_width - gap * 2.0).max(58.0);
+    let available_width = available_width.max(1.0);
+    let gap = if available_width >= 150.0 { 5.0 } else { 2.0 };
+    let unit_width = if available_width >= 150.0 {
+        (available_width * 0.25).clamp(50.0, 58.0)
+    } else {
+        (available_width * 0.25).clamp(24.0, 42.0)
+    };
+    let label_width = if available_width >= 150.0 {
+        (available_width * 0.31).clamp(58.0, 82.0)
+    } else {
+        (available_width * 0.31).clamp(32.0, 52.0)
+    };
+    let value_width = (available_width - label_width - unit_width - gap * 2.0).max(1.0);
     InputGridMetrics {
         label_width,
         value_width,
@@ -1940,7 +1965,10 @@ fn compact_grid_row<U: Copy + PartialEq>(
     unit_label: impl Fn(U) -> &'static str,
     id: &'static str,
 ) {
-    ui.add_sized([metrics.label_width, 26.0], egui::Label::new(label));
+    ui.add_sized(
+        [metrics.label_width, 26.0],
+        egui::Label::new(label).truncate(),
+    );
     ui.add_sized(
         [metrics.value_width, 26.0],
         egui::TextEdit::singleline(value),
@@ -1963,7 +1991,10 @@ fn compact_plain_grid_row(
     value: &mut String,
     suffix: &str,
 ) {
-    ui.add_sized([metrics.label_width, 26.0], egui::Label::new(label));
+    ui.add_sized(
+        [metrics.label_width, 26.0],
+        egui::Label::new(label).truncate(),
+    );
     ui.add_sized(
         [metrics.value_width, 26.0],
         egui::TextEdit::singleline(value),
@@ -2719,5 +2750,22 @@ mod tests {
         assert!(nodes.windows(2).all(|pair| pair[0].x < pair[1].x));
         assert!(geometry.ground_y > geometry.vin.y);
         assert!(nodes.iter().all(|point| rect.contains(*point)));
+    }
+
+    #[test]
+    fn calculator_grid_uses_wider_cards_at_minimum_window_width() {
+        assert_eq!(calculator_grid_shape(1424.0), (3, 2));
+        assert_eq!(calculator_grid_shape(1084.0), (2, 3));
+        assert_eq!(calculator_grid_shape(640.0), (1, 6));
+    }
+
+    #[test]
+    fn calculator_input_columns_never_exceed_available_width() {
+        for width in [96.0, 140.0, 160.0, 240.0] {
+            let m = input_grid_metrics(width);
+            let total = m.label_width + m.value_width + m.unit_width + m.gap * 2.0;
+            assert!(total <= width + 0.001, "{width}: {m:?}");
+            assert!(m.value_width > 0.0);
+        }
     }
 }

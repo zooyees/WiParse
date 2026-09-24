@@ -46,6 +46,7 @@ if (-not $SkipBuild) {
 
 $GuiExe = Join-Path $Root "target\release\wiparse-gui.exe"
 $CliExe = Join-Path $Root "target\release\wiparse.exe"
+$GuiPdb = Join-Path $Root "target\release\wiparse_gui.pdb"
 if (-not (Test-Path $GuiExe)) { throw "missing $GuiExe" }
 if (-not (Test-Path $CliExe)) { throw "missing $CliExe" }
 
@@ -68,6 +69,17 @@ foreach ($pair in @(
     } catch {
         Write-Host "[package] skip $($pair.Dst) (in use): $($_.Exception.Message)"
     }
+}
+if (Test-Path -LiteralPath $GuiPdb) {
+    $DistPdb = Join-Path $Root "dist\WiParse.pdb"
+    Copy-Item -LiteralPath $GuiPdb -Destination $DistPdb -Force
+    $symbolManifest = @{
+        exe_sha256 = (Get-FileHash -LiteralPath $GuiExe -Algorithm SHA256).Hash
+        pdb_sha256 = (Get-FileHash -LiteralPath $GuiPdb -Algorithm SHA256).Hash
+        note = "Keep this PDB with the EXE build identified by exe_sha256. It cannot symbolize a different build."
+    } | ConvertTo-Json
+    Write-Utf8NoBom (Join-Path $Root "dist\WiParse.symbols.json") $symbolManifest
+    Write-Host "[package] saved matching GUI symbols -> $DistPdb"
 }
 Copy-Tree (Join-Path $Root "test-tools") (Join-Path $Root "dist\test-tools")
 

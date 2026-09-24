@@ -17,12 +17,13 @@ pub const SPACE_LG: f32 = 16.0;
 
 /// Unified control height.
 pub const CTRL_H: f32 = 28.0;
+pub const SIDEBAR_W: f32 = 272.0;
 
 /// Type scale.
-pub const FONT_CAPTION: f32 = 11.0;
-pub const FONT_BODY: f32 = 12.0;
-pub const FONT_TITLE: f32 = 13.0;
-pub const FONT_SECTION: f32 = 15.0;
+pub const FONT_CAPTION: f32 = 12.0;
+pub const FONT_BODY: f32 = 13.0;
+pub const FONT_TITLE: f32 = 14.0;
+pub const FONT_SECTION: f32 = 16.0;
 
 #[derive(Clone, Copy)]
 pub struct Tokens {
@@ -196,7 +197,8 @@ pub fn apply_tokens(ctx: &egui::Context, t: Tokens) -> Tokens {
 
     let mut style = (*ctx.style()).clone();
     style.spacing.item_spacing = egui::vec2(SPACE_SM, SPACE_XS + 1.0);
-    style.spacing.button_padding = egui::vec2(10.0, 6.0);
+    // Vertical pad must not push a CTRL_H button past 28.
+    style.spacing.button_padding = egui::vec2(8.0, 4.0);
     style.spacing.window_margin = egui::Margin::same(SPACE_SM as i8);
     style.interaction.show_tooltips_only_when_still = true;
     style.visuals = visuals;
@@ -643,4 +645,51 @@ pub fn mono_body(text: impl Into<String>, t: &Tokens) -> RichText {
     RichText::new(text.into())
         .font(FontId::monospace(FONT_BODY))
         .color(t.text_primary)
+}
+
+/// Equal column widths for one row. `sum(widths) + SPACE_SM * (n - 1) == row_width`
+/// when `row_width` is large enough; otherwise each column is at least 1.
+pub fn equal_widths(row_width: f32, n: usize) -> Vec<f32> {
+    if n == 0 {
+        return Vec::new();
+    }
+    let gaps = SPACE_SM * (n.saturating_sub(1) as f32);
+    let each = ((row_width - gaps) / n as f32).max(1.0);
+    vec![each; n]
+}
+
+/// Text field whose outer frame is `outer_w` by `CTRL_H`.
+/// `TextEdit::desired_width` is the text area; margin sits outside it.
+pub fn singleline_sized<'a>(
+    text: &'a mut String,
+    outer_w: f32,
+) -> egui::TextEdit<'a> {
+    const MARGIN_X: f32 = 6.0;
+    egui::TextEdit::singleline(text)
+        .desired_width((outer_w - MARGIN_X * 2.0).max(1.0))
+        .margin(egui::vec2(MARGIN_X, 4.0))
+}
+
+pub fn add_singleline(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    outer_w: f32,
+) -> egui::Response {
+    ui.add_sized([outer_w, CTRL_H], singleline_sized(text, outer_w))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{equal_widths, SPACE_SM};
+
+    #[test]
+    fn equal_widths_fill_the_row() {
+        for n in [2usize, 4] {
+            let row = 272.0;
+            let parts = equal_widths(row, n);
+            assert_eq!(parts.len(), n);
+            let sum = parts.iter().sum::<f32>() + SPACE_SM * (n - 1) as f32;
+            assert!((sum - row).abs() < 0.02, "n={n} sum={sum}");
+        }
+    }
 }

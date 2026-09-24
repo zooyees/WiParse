@@ -1,9 +1,9 @@
 {
   "sop": {
     "id": "WI-NETCFG-001",
-    "rev": "A",
+    "rev": "B",
     "title": "Dongle 网络配置",
-    "effective": "2026-09-16"
+    "effective": "2026-09-24"
   },
   "station": {
     "id": "STATION-NETCFG",
@@ -16,29 +16,29 @@
   },
   "channel": {
     "transport": "usb",
-    "host": "dap.local",
+    "host": "",
     "tcp_port": 1238,
     "vid": "C251",
     "pid": "F01A",
-    "fallback_host": "192.168.137.123",
+    "fallback_host": "",
     "usb_mi": 5,
     "usb_guid": "{7B3E9C41-2A18-4F6D-9E50-1C8A6D4B0105}",
     "usb_name": "",
     "connect_timeout_ms": 4000
   },
   "wifi": {
-    "ssid": "WINDLINK",
+    "ssid": "",
     "psk": "",
-    "dhcp": false,
-    "ip": "192.168.137.123",
-    "gateway": "192.168.137.1",
-    "netmask": "255.255.255.0",
-    "hostname": "dap"
+    "dhcp": true,
+    "ip": "",
+    "gateway": "",
+    "netmask": "",
+    "hostname": ""
   },
   "run": {
     "op": "apply",
     "script": "",
-    "wait_got_ip_ms": 15000
+    "wait_got_ip_ms": 30000
   },
   "paths": {
     "file_prefix": "WiparseNetcfg",

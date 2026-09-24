@@ -14,18 +14,18 @@ mod ui;
 
 pub use capabilities::capabilities_json;
 pub use dispatch::{err as invoke_err, ok as invoke_ok};
-pub use events::{EventBus, EventEnvelope};
+pub use events::EventBus;
 pub use stateful::drain_api_requests;
 pub use ui::UiHost;
 
 use chrono::Local;
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use serde_json::{json, Value};
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 pub const DEFAULT_BIND: &str = "127.0.0.1:7878";
@@ -56,6 +56,7 @@ pub struct PendingRequest {
     pub method: String,
     pub params: Value,
     pub reply: Sender<InvokeReply>,
+    pub deadline: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -76,11 +77,14 @@ pub struct ApiBridge {
     pub serial_write: Arc<Mutex<Option<Sender<Vec<u8>>>>>,
     pub running: Arc<AtomicBool>,
     egui_ctx: Arc<Mutex<Option<egui::Context>>>,
+    active_invokes: Arc<AtomicUsize>,
 }
 
 impl ApiBridge {
     pub fn new() -> Self {
-        let (request_tx, requests) = unbounded();
+        // Keep overload visible to callers instead of allowing an unbounded
+        // queue to consume memory while the GUI is busy.
+        let (request_tx, requests) = bounded(256);
         Self {
             status: Arc::new(Mutex::new(BackendStatus::default())),
             events: EventBus::new(),
@@ -89,6 +93,7 @@ impl ApiBridge {
             serial_write: Arc::new(Mutex::new(None)),
             running: Arc::new(AtomicBool::new(true)),
             egui_ctx: Arc::new(Mutex::new(None)),
+            active_invokes: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -201,15 +206,24 @@ fn handle_request(mut request: Request, bridge: &ApiBridge) -> Result<(), String
             respond_json(request, 200, &envelope_ok("capabilities", capabilities_json()))
         }
         (Method::Post, "/v1/invoke") => {
+            if bridge.active_invokes.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| (n < 32).then_some(n + 1)).is_err() {
+                return respond_json(request, 503, &envelope_err("invoke", "too many concurrent requests"));
+            }
             let bridge = bridge.clone();
-            thread::Builder::new()
+            let active = bridge.active_invokes.clone();
+            let active_thread = active.clone();
+            let spawn = thread::Builder::new()
                 .name("wiparse-api-invoke".into())
                 .spawn(move || {
                     if let Err(e) = handle_invoke(request, &bridge) {
                         tracing::warn!("API invoke error: {e}");
                     }
-                })
-                .map_err(|e| e.to_string())?;
+                    active_thread.fetch_sub(1, Ordering::SeqCst);
+                });
+            if let Err(e) = spawn {
+                active.fetch_sub(1, Ordering::SeqCst);
+                return Err(e.to_string());
+            }
             Ok(())
         }
         (Method::Get, "/v1/events") => {
@@ -302,7 +316,7 @@ fn serve_events(request: Request, bridge: &ApiBridge) -> Result<(), String> {
         })
         .unwrap_or(0);
 
-    let rx = bridge.events.subscribe(since);
+    let rx = bridge.events.subscribe(since).map_err(str::to_string)?;
     let mut writer = request.into_writer();
     write!(
         writer,

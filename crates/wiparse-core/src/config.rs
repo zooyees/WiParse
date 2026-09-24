@@ -661,8 +661,42 @@ pub fn save_config(cfg: &AppConfig) -> Result<(), ConfigError> {
         fs::create_dir_all(parent)?;
     }
     let text = serde_json::to_string_pretty(cfg)?;
-    fs::write(path, text)?;
+    let tmp = path.with_extension(format!("json.tmp.{}", std::process::id()));
+    let backup = path.with_extension("json.bak");
+    {
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new().create(true).truncate(true).write(true).open(&tmp)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+    }
+    if path.exists() { fs::copy(&path, &backup)?; }
+    atomic_replace(&tmp, &path)?;
     Ok(())
+}
+
+#[cfg(windows)]
+fn atomic_replace(source: &std::path::Path, destination: &std::path::Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{ReplaceFileW, REPLACEFILE_WRITE_THROUGH};
+    if !destination.exists() { return fs::rename(source, destination); }
+    let src: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let dst: Vec<u16> = destination.as_os_str().encode_wide().chain(Some(0)).collect();
+    let ok = unsafe {
+        ReplaceFileW(
+            dst.as_ptr(),
+            src.as_ptr(),
+            std::ptr::null(),
+            REPLACEFILE_WRITE_THROUGH,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if ok == 0 { Err(std::io::Error::last_os_error()) } else { Ok(()) }
+}
+
+#[cfg(not(windows))]
+fn atomic_replace(source: &std::path::Path, destination: &std::path::Path) -> std::io::Result<()> {
+    fs::rename(source, destination)
 }
 
 #[cfg(test)]

@@ -25,7 +25,7 @@
 - `plugins/wiparse-dap` — CMSIS-DAP v2（USB / USB-IP / GUI probe-rs）
 - `plugins/wiparse-uart-bridge` — UART 透传（WinUSB / TCP :1234）
 - `plugins/wiparse-i2c-rpc` — I2C 文本 RPC（WinUSB / TCP :1236）
-- `plugins/wiparse-netcfg` — CH-NETCFG 配网（USB MI_05 EP0 / TCP :1238）
+- `plugins/wiparse-netcfg` — CH-NETCFG 配网（USB MI_05 EP0 优先，DHCP 默认；TCP :1238 仅 GOT_IP 后）
 
 ---
 

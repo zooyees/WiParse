@@ -12,6 +12,7 @@ pub mod i18n;
 pub mod instrument;
 pub mod log;
 pub mod marketplace;
+pub mod mdns_browse;
 pub mod metrics;
 pub mod native_lib;
 pub mod paths;

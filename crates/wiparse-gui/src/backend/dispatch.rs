@@ -5,15 +5,18 @@ use super::{ApiBridge, InvokeReply, PendingRequest};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use wiparse_core::config::load_config;
-use wiparse_core::db::{get_session, list_sessions, open_db, session_log_count, session_metric_count};
+use wiparse_core::db::{
+    get_session, list_sessions, open_db, session_log_count, session_metric_count,
+};
 use wiparse_core::metrics::parse_metric_frame;
 use wiparse_core::protocol::parse_qi_line;
 use wiparse_core::scope::{self, scope_capabilities};
 use wiparse_core::serial::list_ports;
 use wiparse_core::wave::{
-    export_metrics_csv, export_metrics_json, fetch_session_metrics, metrics_to_wave, DEFAULT_CHANNELS,
+    export_metrics_csv, export_metrics_json, fetch_session_metrics, metrics_to_wave,
+    DEFAULT_CHANNELS,
 };
 use wiparse_core::VERSION;
 
@@ -53,10 +56,7 @@ pub fn invoke(bridge: &ApiBridge, method: &str, params: Value) -> InvokeReply {
         "parse.metrics" => {
             let text = params_str(&params, "text").unwrap_or("");
             match parse_metric_frame(text) {
-                Some(m) => ok(
-                    method,
-                    serde_json::to_value(m).unwrap_or(json!(null)),
-                ),
+                Some(m) => ok(method, serde_json::to_value(m).unwrap_or(json!(null))),
                 None => err(method, "invalid AA55 frame"),
             }
         }
@@ -83,9 +83,10 @@ fn invoke_stateful(bridge: &ApiBridge, method: &str, params: Value) -> InvokeRep
         method: method.to_string(),
         params,
         reply: tx,
+        deadline: Instant::now() + Duration::from_secs(15),
     };
-    if bridge.request_tx.send(pending).is_err() {
-        return err(method, "GUI API bridge closed");
+    if bridge.request_tx.try_send(pending).is_err() {
+        return err(method, "GUI API bridge busy or closed");
     }
     bridge.wake_ui();
     match rx.recv_timeout(Duration::from_secs(15)) {
@@ -136,10 +137,7 @@ fn db_conn() -> Result<rusqlite::Connection, String> {
 }
 
 fn session_list(method: &str, params: &Value) -> InvokeReply {
-    let limit = params
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(20) as usize;
+    let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
     match db_conn().and_then(|c| list_sessions(&c, limit).map_err(|e| e.to_string())) {
         Ok(rows) => ok(method, serde_json::to_value(rows).unwrap_or(json!([]))),
         Err(e) => err(method, &e),

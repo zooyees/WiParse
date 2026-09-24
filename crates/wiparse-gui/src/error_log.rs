@@ -100,14 +100,15 @@ fn install_panic_hook(crash_log: PathBuf) {
             .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
             .unwrap_or_else(|| "<unknown>".into());
         let payload = panic_payload(info);
+        let header = format!("PANIC at {location}\n{payload}");
+        // Persist the small, useful part first. Capturing/formatting a backtrace
+        // allocates memory and may itself fail when the panic is resource-related.
+        append_crash_to(&crash_log, &header);
         let backtrace = std::backtrace::Backtrace::force_capture();
-        let body = format!(
-            "PANIC at {location}\n{payload}\n\nBacktrace:\n{backtrace}"
-        );
-        // Write before chaining so we keep a record even if the previous hook aborts.
-        append_crash_to(&crash_log, &body);
+        let backtrace_text = format!("Backtrace:\n{backtrace}");
+        append_crash_to(&crash_log, &backtrace_text);
         let _ = writeln!(io::stderr(), "WiParse panic written to {}", crash_log.display());
-        let _ = writeln!(io::stderr(), "{body}");
+        let _ = writeln!(io::stderr(), "{header}\n{backtrace_text}");
         previous(info);
     }));
 }

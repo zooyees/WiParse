@@ -120,6 +120,16 @@ test("all bundled plugins declare report_name and 1.1.16 engines", () => {
   }
 });
 
+test("discoverPlugins keeps report_name and outputs", async () => {
+  const { discoverPlugins } = await import("../runner.mjs");
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const plugins = discoverPlugins(path.join(here, "..", "plugins"));
+  const smoke = plugins.find((p) => p.id === "example-smoke");
+  assert.ok(smoke, "example-smoke");
+  assert.equal(smoke.report_name, "ExampleSmoke");
+  assert.ok(Array.isArray(smoke.outputs) && smoke.outputs.length >= 1);
+});
+
 test("applyParamPaths parses json overlay onto station", () => {
   const station = {
     gui: { api: "http://127.0.0.1:7878" },

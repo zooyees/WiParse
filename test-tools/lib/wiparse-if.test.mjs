@@ -125,6 +125,17 @@ test("NETCFG EP0 chunks, STATUS parse, PSK redact, apply recipe", () => {
   assert.equal(redactNetcfgLine("PSK secret-pass"), "PSK ***");
   assert.equal(redactNetcfgLine("STATUS"), "STATUS");
   assert.equal(formatNetcfgCommand({ cmd: "STATIC", ip: "1.2.3.4", gw: "1.2.3.1", mask: "255.255.255.0" }), "STATIC 1.2.3.4 1.2.3.1 255.255.255.0");
+  assert.deepEqual(buildNetcfgRecipe({ dhcp: true }, "apply"), ["DHCP", "APPLY"]);
+  assert.deepEqual(buildNetcfgRecipe({}, "apply"), ["DHCP", "APPLY"]);
+  assert.deepEqual(
+    buildNetcfgRecipe({ ssid: "WINDLINK", psk: "abcdefgh", dhcp: true }, "apply"),
+    ["SSID WINDLINK", "PSK abcdefgh", "DHCP", "APPLY"]
+  );
+  assert.deepEqual(buildNetcfgRecipe({ ssid: "WINDLINK", dhcp: true }, "apply"), [
+    "SSID WINDLINK",
+    "DHCP",
+    "APPLY",
+  ]);
   const recipe = buildNetcfgRecipe(
     {
       ssid: "WINDLINK",
@@ -133,7 +144,7 @@ test("NETCFG EP0 chunks, STATUS parse, PSK redact, apply recipe", () => {
       ip: "192.168.137.123",
       gateway: "192.168.137.1",
       netmask: "255.255.255.0",
-      hostname: "dap",
+      hostname: "lab-ap",
     },
     "apply"
   );
@@ -141,9 +152,17 @@ test("NETCFG EP0 chunks, STATUS parse, PSK redact, apply recipe", () => {
     "SSID WINDLINK",
     "PSK abcdefgh",
     "STATIC 192.168.137.123 192.168.137.1 255.255.255.0",
-    "HOSTNAME dap",
+    "HOSTNAME lab-ap",
     "APPLY",
   ]);
+  assert.throws(
+    () => buildNetcfgRecipe({ dhcp: false, ssid: "WINDLINK" }, "apply"),
+    /STATIC needs ip, gateway and netmask/
+  );
+  assert.throws(
+    () => buildNetcfgRecipe({ dhcp: false, ip: "10.0.0.8", gateway: "10.0.0.1" }, "apply"),
+    /STATIC needs ip, gateway and netmask/
+  );
   const net = resolveChannel("netcfg", {});
   assert.equal(net.tcp_port, 1238);
   assert.equal(net.guid, "{7B3E9C41-2A18-4F6D-9E50-1C8A6D4B0105}");
@@ -197,5 +216,30 @@ for (const id of ["wiparse-dap", "wiparse-uart-bridge", "wiparse-i2c-rpc", "wipa
     assert.equal(station.gui?.min_version, "1.1.16");
     assert.match(station.paths.lock_file, /test_dir/);
     assert.doesNotMatch(station.paths.lock_file, /plugin_dir/);
+    if (id === "wiparse-netcfg") {
+      assert.equal(plugin.version, "1.2.0");
+      const byName = Object.fromEntries(plugin.params.map((x) => [x.name, x]));
+      assert.equal(byName.ssid.default, "");
+      assert.equal(byName.host.default, "");
+      assert.equal(byName.hostname.default, "");
+      assert.equal(byName.ip.default, "");
+      assert.equal(byName.dhcp.default, "true");
+      assert.equal(byName.wait_got_ip_ms.default, 30000);
+      assert.equal(byName.file_prefix.advanced, true);
+      assert.equal(byName.transport.advanced, true);
+      assert.deepEqual(
+        byName.op.options.map((o) => o.value),
+        ["apply", "status"]
+      );
+      assert.equal(
+        plugin.params.some((x) => x.name === "fallback_host"),
+        false
+      );
+      assert.equal(station.wifi.dhcp, true);
+      assert.equal(station.wifi.ssid, "");
+      assert.equal(station.channel.host, "");
+      assert.equal(station.channel.fallback_host, "");
+      assert.equal(station.run.wait_got_ip_ms, 30000);
+    }
   });
 }

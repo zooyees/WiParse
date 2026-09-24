@@ -95,11 +95,17 @@ fn main() -> eframe::Result<()> {
     error_log::init();
     windows_icon::set_process_app_id();
 
-    let cfg = load_config().unwrap_or_default();
+    let (cfg, config_warning) = match load_config() {
+        Ok(cfg) => (cfg, None),
+        Err(e) => {
+            tracing::error!("Configuration load failed; original file preserved: {e}");
+            (Default::default(), Some(format!("配置加载失败，原文件已保留；本次临时使用默认值 / Configuration load failed; the original file was preserved: {e}")))
+        }
+    };
     let icon = load_window_icon();
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1440.0, 900.0])
-        .with_min_inner_size([1280.0, 720.0])
+        .with_min_inner_size([1100.0, 720.0])
         .with_title("WiParse");
     if let Some(ref icon) = icon {
         viewport = viewport.with_icon(Arc::new(icon.clone()));
@@ -119,7 +125,7 @@ fn main() -> eframe::Result<()> {
                 cc.egui_ctx
                     .send_viewport_cmd(egui::ViewportCommand::Icon(Some(Arc::new(icon))));
             }
-            Ok(Box::new(WiParseApp::new(cfg)))
+            Ok(Box::new(WiParseApp::new_with_warning(cfg, config_warning)))
         }),
     ) {
         Ok(()) => Ok(()),

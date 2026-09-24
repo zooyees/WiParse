@@ -47,8 +47,9 @@ impl LogicLevels {
         let vdd = infer_vdd(trace);
         let (mut vil, mut vih) = match threshold.filter(|t| t.is_finite()) {
             Some(thr) => {
-                let thr = sample_volts(thr, &trace.y_unit);
-                (thr - CMOS_UNDEF_HALF * vdd, thr + CMOS_UNDEF_HALF * vdd)
+                // Manual thresholds also support low-swing logic below CMOS rails.
+                let half = (CMOS_UNDEF_HALF * vdd).min((thr.abs() * 0.2).max(0.02));
+                (thr - half, thr + half)
             }
             None => (CMOS_VIL_FRAC * vdd, CMOS_VIH_FRAC * vdd),
         };
@@ -90,6 +91,10 @@ pub struct LogicWave<'a> {
 impl<'a> LogicWave<'a> {
     pub fn new(trace: &'a WaveformTrace, threshold: Option<f64>) -> Self {
         let levels = LogicLevels::from_trace(trace, threshold);
+        Self::with_levels(trace, levels)
+    }
+
+    pub(crate) fn with_levels(trace: &'a WaveformTrace, levels: LogicLevels) -> Self {
         Self {
             bits: digitize(trace, levels),
             trace,
@@ -234,7 +239,7 @@ pub fn analog_to_edges(
 
 fn digital_at_or_before(x: &[f64], bits: &[bool], t: f64) -> Option<bool> {
     let n = x.len().min(bits.len());
-    if n == 0 {
+    if n == 0 || !t.is_finite() || t < x[0] || t > x[n - 1] {
         return None;
     }
     if t <= x[0] {
@@ -255,7 +260,7 @@ fn digital_at_or_before(x: &[f64], bits: &[bool], t: f64) -> Option<bool> {
 
 fn digital_before(x: &[f64], bits: &[bool], t: f64) -> Option<bool> {
     let n = x.len().min(bits.len());
-    if n == 0 {
+    if n == 0 || !t.is_finite() || t <= x[0] || t > x[n - 1] {
         return None;
     }
     let idx = x[..n].partition_point(|&xi| xi < t);
@@ -345,5 +350,11 @@ mod tests {
         assert!((lv.vil - 0.99).abs() < 0.05, "{lv:?}");
         let edges = analog_to_edges(&t, None);
         assert!(edges.len() >= 2);
+    }
+
+    #[test]
+    fn manual_threshold_decodes_one_volt_logic() {
+        let trace = WaveformTrace { channel: "SIG".into(), x: vec![0., 1., 2., 3.].into(), y: vec![0., 1., 1., 0.].into(), x_unit: "s".into(), y_unit: "V".into() };
+        assert_eq!(analog_to_edges(&trace, Some(0.5)).len(), 2);
     }
 }

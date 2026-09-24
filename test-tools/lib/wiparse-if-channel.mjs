@@ -457,6 +457,7 @@ class WinusbNetcfgChannel {
     this.transport = "usb";
     this.session = session;
     this.spec = spec;
+    this.peer = { name: spec?.name || "WIPARSE NET", mi: spec?.mi ?? 5 };
   }
   async rpc(line, { timeoutMs = 8000 } = {}) {
     const body = String(line || "").replace(/[\r\n]+$/g, "");
@@ -518,15 +519,21 @@ class WinusbNetcfgChannel {
 export async function openNetcfgChannel(args) {
   const spec = resolveChannel("netcfg", args);
   const transport = String(args.transport || "usb").toLowerCase();
-  const host = args.host || IF_SPEC.mdns;
+  const host = String(args.host || "").trim();
+  const fallback = String(args.fallback_host ?? "").trim();
   const port = spec.tcp_port;
   const timeoutMs = Number(args.connect_timeout_ms || 4000);
   const tryTcp = async () => {
+    if (!host && !fallback) {
+      throw new Error(
+        "NETCFG TCP needs Host (STATUS ip= or wiparsedongle-xxxx.local); USB required while STA is down"
+      );
+    }
     const sock = await connectTcp({
-      host,
+      host: host || fallback,
       port,
       timeoutMs,
-      fallbackHost: spec.fallback_host,
+      fallbackHost: fallback,
     });
     return new TcpByteChannel(sock, "netcfg");
   };
@@ -540,7 +547,8 @@ export async function openNetcfgChannel(args) {
   if (transport === "auto") {
     try {
       return await tryUsb();
-    } catch {
+    } catch (usbErr) {
+      if (!host && !fallback) throw usbErr;
       return tryTcp();
     }
   }
@@ -565,7 +573,7 @@ export async function runNetcfgRecipe(ch, items, { onLine, timeoutMs = 8000 } = 
   return { ok: results.every((r) => r.parsed?.ok !== false), results };
 }
 
-export async function waitNetcfgGotIp(ch, { timeoutMs = 15000, intervalMs = 500, stop, onTick } = {}) {
+export async function waitNetcfgGotIp(ch, { timeoutMs = 30000, intervalMs = 500, stop, onTick } = {}) {
   const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
   let last = null;
   while (Date.now() <= deadline) {

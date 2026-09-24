@@ -20,7 +20,7 @@ use wiparse_core::i18n::{tr, Lang};
 use wiparse_core::paths::project_path;
 use wiparse_core::marketplace::CHANNELS;
 
-const SIDE_W: f32 = 248.0;
+const SIDE_W: f32 = ui_theme::SIDEBAR_W;
 const PANEL_GAP: f32 = 8.0;
 const CARD_MARGIN_X: i8 = 8;
 const MAX_LOG_CHARS: usize = 200_000;
@@ -516,7 +516,7 @@ impl TestToolPanel {
 
     pub fn api_stop(&mut self) -> crate::backend::InvokeReply {
         use crate::backend::invoke_ok as ok;
-        self.stop_job();
+        self.stop_job(Lang::En);
         self.status = "stopped".into();
         self.loop_hud = LoopHud {
             step: "stopped".into(),
@@ -623,6 +623,10 @@ impl TestToolPanel {
     }
 
     fn paint_project_combo(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens, width: f32) {
+        let was_enabled = ui.is_enabled();
+        if self.job.is_some() {
+            ui.set_enabled(false);
+        }
         let root = self.data_root_path();
         let mut projects = wiparse_core::project::list_projects(&root);
         let current = self.effective_project_id();
@@ -686,7 +690,7 @@ impl TestToolPanel {
                     });
             },
         );
-        if picked != current {
+        if picked != current && self.job.is_none() {
             self.set_project_id(picked);
         }
 
@@ -715,9 +719,10 @@ impl TestToolPanel {
                 ui_theme::secondary_btn_sized(ui, tokens, new_lbl, btn_rect.size()).clicked()
             },
         );
-        if clicked {
+        if clicked && self.job.is_none() {
             self.create_hub_project(lang);
         }
+        ui.set_enabled(was_enabled);
     }
 
     fn create_hub_project(&mut self, lang: Lang) {
@@ -751,6 +756,7 @@ impl TestToolPanel {
                 self.paint_hub_mode_tabs(ui, lang, tokens, ctrl_w);
                 self.paint_project_combo(ui, lang, tokens, ctrl_w);
 
+                let running = self.job.is_some();
                 let refresh_lbl = tr(lang, "btn.refresh_browser");
                 let search_hint = tr(lang, "test_tool.search");
                 let (_, refresh) = hub_edit_with_btn(
@@ -761,17 +767,27 @@ impl TestToolPanel {
                     &refresh_lbl,
                     ctrl_w,
                 );
-                if refresh {
+                if refresh && !running {
                     self.refresh_plugins();
                 }
 
-                egui::CollapsingHeader::new(
+                let path_bad = host_paths_unhealthy(&self.node_path, &self.cli_path, &self.data_root);
+                let folder_color = if path_bad {
+                    tokens.warning
+                } else {
+                    tokens.text_muted
+                };
+                let mut folder = egui::CollapsingHeader::new(
                     RichText::new(tr(lang, "test_tool.folder"))
                         .size(ui_theme::FONT_CAPTION)
-                        .color(tokens.text_muted),
+                        .color(folder_color),
                 )
-                .default_open(false)
-                .show(ui, |ui| {
+                .default_open(false);
+                if path_bad {
+                    folder = folder.open(Some(true));
+                }
+                folder.show(ui, |ui| {
+                    ui.add_enabled_ui(!running, |ui| {
                     let browse_lbl = tr(lang, "test_tool.browse");
                     let hint = tr(lang, "test_tool.plugins_hint");
                     let (path_edit, browse) = hub_edit_with_btn(
@@ -827,6 +843,7 @@ impl TestToolPanel {
                     if persist_host {
                         self.persist_config();
                     }
+                    });
                 });
 
                 let search = self.type_filter.trim().to_ascii_lowercase();
@@ -961,11 +978,15 @@ impl TestToolPanel {
                             }
                         });
                     if let Some(id) = pick {
-                        self.select_plugin(id);
-                        ui.ctx().request_repaint();
+                        if self.job.is_none() {
+                            self.select_plugin(id);
+                            ui.ctx().request_repaint();
+                        }
                     }
                     if let Some(id) = uninstall_id {
-                        self.uninstall_marketplace_plugin(&id, lang);
+                        if self.job.is_none() {
+                            self.uninstall_marketplace_plugin(&id, lang);
+                        }
                     }
                 }
             });
@@ -1050,32 +1071,56 @@ impl TestToolPanel {
             .unwrap_or(false)
             && !running
             && !self.catalog_busy;
-        let run_w = text_btn_w(ui, &run_lbl);
-        let pre_w = if running { 0.0 } else { text_btn_w(ui, &pre_lbl) };
-        let un_w = if can_uninstall {
+        let mut run_w = text_btn_w(ui, &run_lbl);
+        let mut pre_w = if running { 0.0 } else { text_btn_w(ui, &pre_lbl) };
+        let mut un_w = if can_uninstall {
             text_btn_w(ui, &un_lbl)
         } else {
             0.0
         };
-        let clear_w = text_btn_w(ui, &clear_lbl);
+        let mut clear_w = text_btn_w(ui, &clear_lbl);
         let gap = 6.0;
-        let cluster_w = run_w
+        let mut cluster_w = run_w
             + clear_w
             + gap
             + if pre_w > 0.0 { pre_w + gap } else { 0.0 }
             + if un_w > 0.0 { un_w + gap } else { 0.0 };
 
-        let row_w = ui.available_width().max(cluster_w + 80.0);
+        let row_w = ui.available_width().max(1.0);
         let row_h = ui_theme::CTRL_H;
-        let (row, _) = ui.allocate_exact_size(egui::vec2(row_w, row_h), egui::Sense::hover());
+        let compact = row_w < cluster_w + 160.0;
+        if cluster_w > row_w {
+            let button_count = 2 + usize::from(pre_w > 0.0) + usize::from(un_w > 0.0);
+            let gap_total = gap * button_count.saturating_sub(1) as f32;
+            let natural_buttons = (cluster_w - gap_total).max(1.0);
+            let scale = ((row_w - gap_total).max(1.0) / natural_buttons).min(1.0);
+            run_w *= scale;
+            pre_w *= scale;
+            un_w *= scale;
+            clear_w *= scale;
+            cluster_w = run_w
+                + clear_w
+                + gap
+                + if pre_w > 0.0 { pre_w + gap } else { 0.0 }
+                + if un_w > 0.0 { un_w + gap } else { 0.0 };
+        }
+        let total_h = if compact { row_h * 2.0 + 4.0 } else { row_h };
+        let (row, _) = ui.allocate_exact_size(egui::vec2(row_w, total_h), egui::Sense::hover());
         let btn_rect = egui::Rect::from_min_size(
-            egui::pos2(row.max.x - cluster_w, row.min.y),
+            egui::pos2(
+                row.max.x - cluster_w,
+                if compact { row.max.y - row_h } else { row.min.y },
+            ),
             egui::vec2(cluster_w, row_h),
         );
-        let left_rect = egui::Rect::from_min_max(
-            row.min,
-            egui::pos2((btn_rect.min.x - 8.0).max(row.min.x), row.max.y),
-        );
+        let left_rect = if compact {
+            egui::Rect::from_min_size(row.min, egui::vec2(row_w, row_h))
+        } else {
+            egui::Rect::from_min_max(
+                row.min,
+                egui::pos2((btn_rect.min.x - 8.0).max(row.min.x), row.max.y),
+            )
+        };
 
         let title = if let Some(i) = sel_idx {
             let p = &self.plugins[i];
@@ -1119,6 +1164,14 @@ impl TestToolPanel {
                 self.paint_status_chip(ui, lang, tokens);
             },
         );
+        if let Some(i) = sel_idx {
+            let slug = case_slug(self, i);
+            ui.label(
+                RichText::new(format!("{}  {slug}", tr(lang, "test_tool.case")))
+                    .size(ui_theme::FONT_CAPTION)
+                    .color(tokens.text_muted),
+            );
+        }
 
         let mut run_clicked = false;
         let mut pre_clicked = false;
@@ -1184,7 +1237,7 @@ impl TestToolPanel {
             self.log.clear();
         }
         if stop_clicked {
-            self.stop_job();
+            self.stop_job(lang);
             self.status = tr(lang, "test_tool.status_stopped");
             self.loop_hint.clear();
             self.loop_hud = LoopHud {
@@ -1233,11 +1286,15 @@ impl TestToolPanel {
             return;
         };
 
+        self.paint_case_row(ui, lang, tokens, sel_idx);
+
         let param_idxs: Vec<usize> = self.plugins[sel_idx]
             .params
             .iter()
             .enumerate()
-            .filter(|(_, p)| p.name != "preflight_only" && !p.hidden)
+            .filter(|(_, p)| {
+                p.name != "preflight_only" && p.name != "file_prefix" && !p.hidden
+            })
             .map(|(i, _)| i)
             .collect();
 
@@ -1273,6 +1330,7 @@ impl TestToolPanel {
             .max_height(param_h)
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                ui.set_enabled(self.job.is_none());
                 ui.set_width(ui.available_width());
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 8.0);
                 ui.spacing_mut().indent = 0.0;
@@ -1357,6 +1415,59 @@ impl TestToolPanel {
                         }
                     });
             });
+    }
+
+    fn paint_case_row(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens, sel_idx: usize) {
+        let hint = self
+            .plugins
+            .get(sel_idx)
+            .map(|p| p.report_name_or_fallback().to_owned())
+            .unwrap_or_default();
+        let running = self.job.is_some();
+        let mut touched = false;
+        ui.add_enabled_ui(!running, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.set_min_height(ui_theme::CTRL_H);
+                ui.label(
+                    RichText::new(tr(lang, "test_tool.case"))
+                        .size(ui_theme::FONT_CAPTION)
+                        .color(tokens.text_muted),
+                );
+                let w = ui.available_width().max(80.0);
+                let value = self.param_values.entry("file_prefix".into()).or_default();
+                let edit = ui.add_sized(
+                    [w, ui_theme::CTRL_H],
+                    ui_theme::singleline_sized(value, w).hint_text(&hint),
+                );
+                touched = edit.changed();
+            });
+        });
+        if touched {
+            self.param_touched.insert("file_prefix".into());
+        }
+        let slug = case_slug(self, sel_idx);
+        let exists = wiparse_core::project::test_dir(
+            &self.data_root_path(),
+            &self.effective_project_id(),
+            &slug,
+        )
+        .is_dir();
+        let mark = if exists {
+            tr(lang, "test_tool.case_existing")
+        } else {
+            tr(lang, "test_tool.case_new")
+        };
+        let mark_color = if exists {
+            tokens.text_muted
+        } else {
+            tokens.warning
+        };
+        ui.label(
+            RichText::new(format!("tests/{slug}/  ·  {mark}"))
+                .size(ui_theme::FONT_CAPTION)
+                .color(mark_color),
+        );
     }
 
     fn paint_param_field(
@@ -2137,7 +2248,9 @@ impl TestToolPanel {
             cfg.apps.test_tool.marketplace.base_url = self.marketplace_base_url.clone();
             cfg.apps.test_tool.marketplace.channel = self.marketplace_channel.clone();
             cfg.apps.project.active_id = self.project_id.clone();
-            let _ = wiparse_core::config::save_config(&cfg);
+            if let Err(error) = wiparse_core::config::save_config(&cfg) {
+                tracing::warn!("failed to save test-tool config: {error}");
+            }
         }
     }
 
@@ -2174,6 +2287,9 @@ impl TestToolPanel {
     }
 
     fn install_selected_catalog_plugin(&mut self, lang: Lang) {
+        if self.job.is_some() {
+            return;
+        }
         let Some(id) = self.catalog_selected.clone() else {
             return;
         };
@@ -2225,11 +2341,7 @@ impl TestToolPanel {
 
     /// Uninstall a marketplace install. Bundled plugins stay on disk.
     fn uninstall_marketplace_plugin(&mut self, id: &str, lang: Lang) {
-        if self.catalog_busy || self.market_job.is_some() {
-            return;
-        }
-        if self.job.as_ref().is_some_and(|j| j.plugin_id == id) {
-            self.status = tr(lang, "test_tool.status_busy");
+        if self.catalog_busy || self.market_job.is_some() || self.job.is_some() {
             return;
         }
         let plugin = self.plugins.iter().find(|p| p.id == id);
@@ -2624,7 +2736,7 @@ impl TestToolPanel {
                     row.name.clone()
                 };
                 let update_available = row.has_update();
-                let busy = self.catalog_busy;
+                let busy = self.catalog_busy || self.job.is_some();
 
                 ui.horizontal(|ui| {
                     ui.add(
@@ -3126,7 +3238,7 @@ impl TestToolPanel {
         }
     }
 
-    fn stop_job(&mut self) {
+    fn stop_job(&mut self, lang: Lang) {
         let marketplace_dir = self.resolve_marketplace_root().display().to_string();
         let plugins_dir = self.plugins_dir.trim().to_owned();
         let node = self.node_path.trim().to_owned();
@@ -3139,8 +3251,11 @@ impl TestToolPanel {
         let Some(job) = self.job.as_mut() else {
             return;
         };
-        if job.kill_after.is_some() {
-            // Stop already requested; keep waiting / force deadline.
+        if let Some(deadline) = job.kill_after {
+            let left = deadline.saturating_duration_since(Instant::now()).as_secs();
+            let line = tr(lang, "test_tool.stop_grace").replace("{secs}", &left.to_string());
+            drop(job);
+            self.append_log(LogKind::System, &format!("—— {line} ——\n"));
             return;
         }
         let wrote_stop = if let Some(ref stop) = job.stop_file {
@@ -3790,6 +3905,71 @@ fn resolve_dir(raw: &str) -> PathBuf {
     } else {
         project_path(raw)
     }
+}
+
+fn case_slug(panel: &TestToolPanel, sel_idx: usize) -> String {
+    let Some(plugin) = panel.plugins.get(sel_idx) else {
+        return String::new();
+    };
+    let typed = panel
+        .param_values
+        .get("file_prefix")
+        .map(|s| s.as_str())
+        .filter(|s| !s.trim().is_empty());
+    let name = typed.unwrap_or_else(|| plugin.report_name_or_fallback());
+    wiparse_core::project::sanitize_test_id(name, &plugin.id)
+}
+
+fn command_on_path(name: &str) -> bool {
+    let Some(path_var) = std::env::var_os("PATH") else {
+        return false;
+    };
+    let exts: &[&str] = if cfg!(windows) {
+        &[".exe", ".cmd", ".bat", ""]
+    } else {
+        &[""]
+    };
+    for dir in std::env::split_paths(&path_var) {
+        for ext in exts {
+            if dir.join(format!("{name}{ext}")).is_file() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn node_resolves(raw: &str) -> bool {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return false;
+    }
+    if Path::new(raw).is_file() || resolve_dir(raw).is_file() {
+        return true;
+    }
+    if !raw.contains('/') && !raw.contains('\\') {
+        return command_on_path(raw);
+    }
+    false
+}
+
+fn host_paths_unhealthy(node: &str, cli: &str, data_root: &str) -> bool {
+    if !node_resolves(node) {
+        return true;
+    }
+    let cli = cli.trim();
+    if cli.is_empty() {
+        if !Path::new(&default_cli_path()).is_file() {
+            return true;
+        }
+    } else if !Path::new(cli).is_file() && !resolve_dir(cli).is_file() {
+        return true;
+    }
+    let root = data_root.trim();
+    if !root.is_empty() && root != "." && !resolve_dir(root).is_dir() {
+        return true;
+    }
+    false
 }
 
 fn default_cli_path() -> String {

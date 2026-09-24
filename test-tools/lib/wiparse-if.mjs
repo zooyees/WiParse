@@ -426,8 +426,10 @@ export function buildNetcfgRecipe(wifi = {}, op = "apply") {
   const ssid = String(wifi.ssid ?? "").trim();
   const psk = String(wifi.psk ?? wifi.password ?? "");
   const hostname = String(wifi.hostname ?? "").trim();
-  const dhcp =
-    wifi.dhcp === true || wifi.dhcp === "true" || wifi.dhcp === "1" || wifi.dhcp === 1;
+  const dhcpExplicit = wifi.dhcp !== undefined && wifi.dhcp !== null && wifi.dhcp !== "";
+  const dhcp = dhcpExplicit
+    ? wifi.dhcp === true || wifi.dhcp === "true" || wifi.dhcp === "1" || wifi.dhcp === 1
+    : true;
   const lines = [];
   if (ssid) {
     if (ssid.length < 1 || ssid.length > 32) throw new Error("ssid 1-32");
@@ -442,10 +444,8 @@ export function buildNetcfgRecipe(wifi = {}, op = "apply") {
     const ip = String(wifi.ip ?? "").trim();
     const gw = String(wifi.gateway ?? wifi.gw ?? "").trim();
     const mask = String(wifi.netmask ?? wifi.mask ?? "").trim();
-    if (ip) {
-      if (!gw || !mask) throw new Error("STATIC needs gateway and netmask");
-      lines.push(`STATIC ${ip} ${gw} ${mask}`);
-    }
+    if (!ip || !gw || !mask) throw new Error("STATIC needs ip, gateway and netmask");
+    lines.push(`STATIC ${ip} ${gw} ${mask}`);
   }
   if (hostname) {
     if (hostname.length < 1 || hostname.length > 32) throw new Error("hostname 1-32");

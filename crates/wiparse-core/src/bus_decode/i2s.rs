@@ -5,7 +5,7 @@
 //! Sample SD on BCLK rising (data launched on falling, per NXP I2S spec).
 
 use super::digital::{EdgeKind, LogicWave};
-use super::{try_push_frame, BusDecodeResult, BusFrame, MAX_DECODE_BYTES};
+use super::{try_push_frame, BusDecodeResult, BusFrame, BusFrameError, MAX_DECODE_BYTES};
 use crate::instrument::WaveformTrace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -158,6 +158,16 @@ pub fn decode_i2s(
                 }
             }
             Evt::Bclk(t) => {
+                if data_w.before(t).is_none() || ws_w.at(t).is_none() {
+                    if collecting && bit_count > 0 {
+                        truncated |= !push_sample(&mut frames, &mut used, word, bit_count, bits, t_word_start, t, ws_high, true);
+                    }
+                    collecting = false;
+                    bit_count = 0;
+                    have_ws = false;
+                    pending_new = false;
+                    continue;
+                }
                 if !have_ws {
                     continue;
                 }
@@ -170,7 +180,14 @@ pub fn decode_i2s(
                     if pending_new && skip > 0 {
                         skip -= 1;
                     }
-                    if bit_count >= bits {
+                    if pending_new && skip == 0 && bit_count < bits {
+                        // Only the first Philips delay clock belongs to the old
+                        // slot. A short slot must not consume the new channel MSBs.
+                        truncated |= !push_sample(&mut frames, &mut used, word, bit_count, bits, t_word_start, t, ws_high, true);
+                        word = 0;
+                        bit_count = 0;
+                        collecting = false;
+                    } else if bit_count >= bits {
                         truncated |= !push_sample(
                             &mut frames,
                             &mut used,
@@ -231,6 +248,9 @@ pub fn decode_i2s(
         }
     }
 
+    if collecting && bit_count > 0 && !truncated {
+        truncated |= !push_sample(&mut frames, &mut used, word, bit_count, bits, t_word_start, bclk.x.last().copied().unwrap_or(t_word_start), ws_high, true);
+    }
     let mut info = format!(
         "I2S {} {bits}-bit: {} sample(s)",
         cfg.format.label(),
@@ -282,7 +302,7 @@ fn push_sample(
             t_end: t1,
             summary,
             bytes: sample_to_bytes(word, bits),
-            ..Default::default()
+            error: if partial || bit_count < bits { BusFrameError::Framing } else { BusFrameError::None },
         },
     )
 }
@@ -431,5 +451,34 @@ mod tests {
             "Left-J must not match Philips alignment: {:?}",
             r.frames.iter().map(|f| &f.summary).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn capture_ending_mid_sample_reports_framing() {
+        let (mut bclk, mut ws, mut data) = synth_philips_left(0x55AA);
+        for trace in [&mut bclk, &mut ws, &mut data] {
+            let n = trace.x.len() / 2;
+            trace.x = trace.x[..n].to_vec().into(); trace.y = trace.y[..n].to_vec().into();
+        }
+        let r = decode_i2s(&bclk, &ws, &data, None, &I2sConfig::default());
+        assert!(r.frames.iter().any(|f| f.error == BusFrameError::Framing), "{r:?}");
+    }
+
+
+    #[test]
+    fn short_philips_slot_does_not_consume_next_channel() {
+        let mut x = Vec::new(); let mut b = Vec::new(); let mut w = Vec::new(); let mut d = Vec::new(); let mut t = 0.0;
+        hold(&mut x, &mut b, &mut w, &mut d, &mut t, 1e-7, 8, 0.0, 3.3, 0.0);
+        for _ in 0..9 { clock_bit(&mut x, &mut b, &mut w, &mut d, &mut t, 1e-7, 4, 0.0, false); }
+        clock_bit(&mut x, &mut b, &mut w, &mut d, &mut t, 1e-7, 4, 3.3, false);
+        for bit in (0..16).rev() {
+            clock_bit(&mut x, &mut b, &mut w, &mut d, &mut t, 1e-7, 4, 3.3, (0xBEEFu16 >> bit) & 1 != 0);
+        }
+        let (b, w, d) = mk(x, b, w, d);
+        let r = decode_i2s(&b, &w, &d, None, &I2sConfig::default());
+        assert_eq!(r.frames.len(), 2, "{r:?}");
+        assert!(r.frames[0].has_error());
+        assert_eq!(r.frames[1].bytes, [0xBE, 0xEF]);
+        assert!(!r.frames[1].has_error());
     }
 }

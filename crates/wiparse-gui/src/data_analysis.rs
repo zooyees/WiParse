@@ -29,7 +29,7 @@ use wiparse_core::i18n::{tr, tr_fmt, Lang};
 use wiparse_core::paths::project_path;
 
 const TOOLBAR_H: f32 = 40.0;
-const SIDE_W: f32 = 280.0;
+const SIDE_W: f32 = ui_theme::SIDEBAR_W;
 const PANEL_GAP: f32 = 8.0;
 const CARD_MARGIN_X: i8 = 10;
 const MAX_SERIES: usize = 8;
@@ -678,6 +678,12 @@ impl DataAnalysisPanel {
                 ui.set_min_height(ui.available_height());
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 5.0);
 
+                egui::ScrollArea::vertical()
+                    .id_salt("data-rules-scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                ui.set_max_width(inner_w);
+
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new(tr(lang, "data.rules"))
@@ -774,12 +780,7 @@ impl DataAnalysisPanel {
                     }
                 });
 
-                let list_h = (ui.available_height() - 90.0).max(48.0);
-                egui::ScrollArea::vertical()
-                    .id_salt("data_filters_scroll")
-                    .max_height(list_h)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
+                ui.vertical(|ui| {
                         ui.set_max_width(inner_w);
                         for i in 0..self.series_count {
                             let color = series_color(i);
@@ -871,6 +872,7 @@ impl DataAnalysisPanel {
                 if thr_dirty {
                     self.persist_rules();
                 }
+                    });
             });
 
         if source_changed {
@@ -2315,7 +2317,9 @@ impl DataAnalysisPanel {
     fn persist_browser_dir(&self) {
         if let Ok(mut cfg) = load_config() {
             cfg.apps.data_analysis.browser_dir = self.browser_dir.clone();
-            let _ = save_config(&cfg);
+            if let Err(error) = save_config(&cfg) {
+                tracing::warn!("failed to save data-analysis browser config: {error}");
+            }
         }
     }
 
@@ -2336,7 +2340,9 @@ impl DataAnalysisPanel {
             cfg.apps.data_analysis.threshold_current_on = self.thr_current_on;
             cfg.apps.data_analysis.threshold_temperature = self.thr_temperature;
             cfg.apps.data_analysis.threshold_temperature_on = self.thr_temperature_on;
-            let _ = save_config(&cfg);
+            if let Err(error) = save_config(&cfg) {
+                tracing::warn!("failed to save data-analysis thresholds: {error}");
+            }
         }
     }
 

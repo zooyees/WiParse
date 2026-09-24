@@ -1,12 +1,14 @@
 //! Serial port helpers.
 
-use crate::dongle::{discover_wifi_uart, uart_tcp_baud_preamble};
+use crate::dongle::uart_tcp_baud_preamble;
+use crate::mdns_browse::{self, UartBridgeRecord};
+use crate::paths::app_root;
 use crate::metrics::{parse_metric_frame, MetricSample};
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use thiserror::Error;
 
 #[cfg(windows)]
@@ -16,22 +18,11 @@ mod serial_windows;
 mod serial_winusb;
 pub use serial_winusb::{open_winusb_i2c, open_winusb_uart, WinUsbI2c, WinUsbUart, WINUSB_UART_PREFIX};
 
-const WIFI_PROBE_TIMEOUT: Duration = Duration::from_millis(400);
-const WIFI_PROBE_TIMEOUT_FORCE: Duration = Duration::from_millis(900);
-const WIFI_CACHE_TTL: Duration = Duration::from_secs(4);
-const WIFI_NEG_TTL: Duration = Duration::from_millis(800);
-
 struct WifiUartCache {
-    at: Option<Instant>,
-    port: Option<PortInfo>,
-    probing: bool,
+    revision: u64,
 }
 
-static WIFI_UART_CACHE: Mutex<WifiUartCache> = Mutex::new(WifiUartCache {
-    at: None,
-    port: None,
-    probing: false,
-});
+static WIFI_UART_CACHE: Mutex<WifiUartCache> = Mutex::new(WifiUartCache { revision: 0 });
 
 #[derive(Debug, Error)]
 pub enum SerialError {
@@ -54,6 +45,12 @@ pub struct PortInfo {
     /// Combo-box text; falls back to `device` when empty.
     #[serde(default)]
     pub label: String,
+    /// mDNS instance, for example `WiParseDongle_2600`. Empty for COM ports.
+    #[serde(default)]
+    pub instance: String,
+    /// TXT `usb=1`: the target UART is held by USB, so this Wi-Fi row receives nothing.
+    #[serde(default)]
+    pub usb_busy: bool,
 }
 
 impl PortInfo {
@@ -100,6 +97,8 @@ impl PortInfo {
                 hwid: "USB VID:PID=C251:F01A MI_01".into(),
                 transport: "usb".into(),
                 device,
+                instance: String::new(),
+                usb_busy: false,
             };
         }
         if parse_tcp_uart_device(&device).is_some() {
@@ -114,6 +113,8 @@ impl PortInfo {
                 hwid: "WIFI".into(),
                 transport: "wifi".into(),
                 device,
+                instance: String::new(),
+                usb_busy: false,
             };
         }
         Self {
@@ -122,6 +123,8 @@ impl PortInfo {
             transport: String::new(),
             label: device.clone(),
             device,
+            instance: String::new(),
+            usb_busy: false,
         }
     }
 }
@@ -150,19 +153,19 @@ pub fn refresh_ports() -> Result<Vec<PortInfo>, SerialError> {
 
 /// Background WiFi TCP probe still running. GUI should repaint and merge `list_ports`.
 pub fn wifi_uart_discovery_pending() -> bool {
-    WIFI_UART_CACHE
-        .lock()
-        .ok()
-        .map(|c| c.probing)
-        .unwrap_or(false)
+    false
+}
+
+pub fn wifi_uart_revision() -> u64 {
+    mdns_browse::uart_bridge_revision()
 }
 
 /// Start a background WiFi UART probe if the cache is stale. Does not enumerate COM ports.
 pub fn kick_wifi_uart_discovery() {
-    let _ = wifi_uart_port(false);
+    mdns_browse::start_uart_bridge_browse();
 }
 
-fn list_ports_inner(force_wifi: bool) -> Result<Vec<PortInfo>, SerialError> {
+fn list_ports_inner(_force_wifi: bool) -> Result<Vec<PortInfo>, SerialError> {
     let mut out = Vec::new();
     for p in serialport::available_ports()? {
         out.push(port_from_available(&p));
@@ -173,7 +176,7 @@ fn list_ports_inner(force_wifi: bool) -> Result<Vec<PortInfo>, SerialError> {
             out.push(usb);
         }
     }
-    if let Some(wifi) = wifi_uart_port(force_wifi) {
+    for wifi in wifi_uart_ports() {
         if !out.iter().any(|p| p.device == wifi.device) {
             out.push(wifi);
         }
@@ -293,6 +296,8 @@ fn port_from_available(p: &serialport::SerialPortInfo) -> PortInfo {
                     description,
                     hwid,
                     transport: "usb".into(),
+                    instance: String::new(),
+                    usb_busy: false,
                 }
             } else {
                 PortInfo {
@@ -305,6 +310,8 @@ fn port_from_available(p: &serialport::SerialPortInfo) -> PortInfo {
                     description,
                     hwid,
                     transport: "usb".into(),
+                    instance: String::new(),
+                    usb_busy: false,
                 }
             }
         }
@@ -318,6 +325,8 @@ fn port_from_available(p: &serialport::SerialPortInfo) -> PortInfo {
                     description: "WIPARSE UART".into(),
                     hwid: "WIFI".into(),
                     transport: "wifi".into(),
+                    instance: String::new(),
+                    usb_busy: false,
                 }
             } else {
                 PortInfo {
@@ -326,6 +335,8 @@ fn port_from_available(p: &serialport::SerialPortInfo) -> PortInfo {
                     hwid: String::new(),
                     transport: String::new(),
                     label: name,
+                    instance: String::new(),
+                    usb_busy: false,
                 }
             }
         }
@@ -354,68 +365,71 @@ pub fn is_wiparse_uart_usb(
     false
 }
 
-fn wifi_port_info(host: &str, tcp_port: u16) -> PortInfo {
-    let device = format!("tcp://{host}:{tcp_port}");
+fn wifi_port_from_record(row: &UartBridgeRecord) -> PortInfo {
+    let device = row.device();
+    let instance = if row.instance.is_empty() {
+        row.ipv4.to_string()
+    } else {
+        row.instance.clone()
+    };
+    let mut label = format!(
+        "WIPARSE UART · WiFi · {instance} · {}:{}",
+        row.ipv4, row.port
+    );
+    if row.usb_busy {
+        label.push_str(" · usb=1");
+    }
     PortInfo {
-        label: format!("WIPARSE UART · WiFi · {host}:{tcp_port}"),
+        label,
         description: "WIPARSE UART".into(),
-        hwid: format!("WIFI {host}:{tcp_port}"),
+        hwid: format!("WIFI {}:{}", row.ipv4, row.port),
         transport: "wifi".into(),
         device,
+        instance: row.instance.clone(),
+        usb_busy: row.usb_busy,
     }
 }
 
-fn wifi_uart_port(force: bool) -> Option<PortInfo> {
-    if force {
-        return probe_wifi_uart_sync(WIFI_PROBE_TIMEOUT_FORCE);
-    }
-
-    let mut cache = WIFI_UART_CACHE.lock().ok()?;
-    if let Some(at) = cache.at {
-        if cache.port.is_some() && at.elapsed() < WIFI_CACHE_TTL {
-            return cache.port.clone();
-        }
-        if cache.port.is_none() && at.elapsed() < WIFI_NEG_TTL && !cache.probing {
-            return None;
+fn wifi_uart_ports() -> Vec<PortInfo> {
+    mdns_browse::start_uart_bridge_browse();
+    let mut out: Vec<PortInfo> = mdns_browse::uart_bridge_rows()
+        .iter()
+        .map(wifi_port_from_record)
+        .collect();
+    for remembered in load_recent_wifi() {
+        let same_endpoint = out.iter().any(|p| p.device == remembered.device);
+        if !same_endpoint {
+            out.push(remembered);
         }
     }
-    if cache.probing {
-        return cache.port.clone();
+    if let Ok(mut cache) = WIFI_UART_CACHE.lock() {
+        cache.revision = mdns_browse::uart_bridge_revision();
     }
-    cache.probing = true;
-    drop(cache);
+    out
+}
 
-    let usb = crate::usb::wiparse_dongle_connected();
-    let timeout = if usb {
-        WIFI_PROBE_TIMEOUT_FORCE
-    } else {
-        WIFI_PROBE_TIMEOUT
+fn recent_wifi_path() -> std::path::PathBuf {
+    app_root().join("wifi-uart-recent.json")
+}
+
+fn load_recent_wifi() -> Vec<PortInfo> {
+    let Ok(text) = std::fs::read_to_string(recent_wifi_path()) else {
+        return Vec::new();
     };
-    let _ = std::thread::Builder::new()
-        .name("wiparse-uart-wifi".into())
-        .spawn(move || {
-            let found = discover_wifi_uart(timeout).map(|(host, port)| wifi_port_info(&host, port));
-            if let Ok(mut c) = WIFI_UART_CACHE.lock() {
-                c.at = Some(Instant::now());
-                c.port = found;
-                c.probing = false;
-            }
-        });
-
-    WIFI_UART_CACHE.lock().ok().and_then(|c| c.port.clone())
+    serde_json::from_str(&text).unwrap_or_default()
 }
 
-fn probe_wifi_uart_sync(timeout: Duration) -> Option<PortInfo> {
-    if let Ok(mut cache) = WIFI_UART_CACHE.lock() {
-        cache.probing = true;
+pub fn remember_wifi_uart(info: &PortInfo) {
+    if info.transport != "wifi" && parse_tcp_uart_device(&info.device).is_none() {
+        return;
     }
-    let found = discover_wifi_uart(timeout).map(|(host, port)| wifi_port_info(&host, port));
-    if let Ok(mut cache) = WIFI_UART_CACHE.lock() {
-        cache.at = Some(Instant::now());
-        cache.port = found.clone();
-        cache.probing = false;
+    let mut rows = load_recent_wifi();
+    rows.retain(|p| p.device != info.device);
+    rows.insert(0, info.clone());
+    rows.truncate(8);
+    if let Ok(text) = serde_json::to_string_pretty(&rows) {
+        let _ = std::fs::write(recent_wifi_path(), text);
     }
-    found
 }
 
 /// `tcp://host:port` (IPv4 / hostname). Used by the serial monitor for WiFi UART.
@@ -501,18 +515,7 @@ impl SerialSession {
                         device: device.to_string(),
                     });
                 }
-                Err(usb_err) => {
-                    if let Some(wifi) = probe_wifi_uart_sync(WIFI_PROBE_TIMEOUT_FORCE) {
-                        tracing::warn!(
-                            "WinUSB UART open failed ({usb_err}); falling back to {}",
-                            wifi.device
-                        );
-                        let mut sess = open_tcp_uart_from_info(&wifi, baud)?;
-                        sess.device = wifi.device;
-                        return Ok(sess);
-                    }
-                    return Err(usb_err);
-                }
+                Err(usb_err) => return Err(usb_err),
             }
         }
         let port = serialport::new(device, baud)
@@ -580,7 +583,10 @@ impl SerialSession {
 }
 
 fn open_tcp_uart(host: &str, port: u16, baud: u32, device: &str) -> Result<SerialSession, SerialError> {
-    let addr = (host, port)
+    let resolved = mdns_browse::resolve_uart_ipv4(host)
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|| host.to_owned());
+    let addr = (resolved.as_str(), port)
         .to_socket_addrs()?
         .next()
         .ok_or_else(|| SerialError::Message(format!("no address for {host}:{port}")))?;
@@ -591,6 +597,8 @@ fn open_tcp_uart(host: &str, port: u16, baud: u32, device: &str) -> Result<Seria
     if let Some(pkt) = uart_tcp_baud_preamble(baud) {
         let _ = (&stream).write_all(&pkt);
     }
+    let opened = format!("tcp://{resolved}:{port}");
+    remember_wifi_uart(&PortInfo::from_device(opened));
     Ok(SerialSession {
         port: PortBackend::Tcp(stream),
         buf: Vec::with_capacity(4096),
@@ -676,6 +684,8 @@ mod tests {
             description: "USB-Enhanced-SERIAL CH3 (COM8)".into(),
             hwid: "USB VID:PID=1A86:55D3".into(),
             transport: "usb".into(),
+            instance: String::new(),
+            usb_busy: false,
             label: "COM8 · USB-Enhanced-SERIAL CH3 (COM8)".into(),
         };
         assert_eq!(long.compact_label(), "COM8");
@@ -686,6 +696,8 @@ mod tests {
             description: "WIPARSE UART".into(),
             hwid: "USB VID:PID=C251:F01A".into(),
             transport: "usb".into(),
+            instance: String::new(),
+            usb_busy: false,
             label: "COM5 · WIPARSE UART · USB".into(),
         };
         assert_eq!(wiparse.compact_label(), "COM5 · USB");
@@ -695,6 +707,8 @@ mod tests {
             description: "WIPARSE UART".into(),
             hwid: "WIFI 192.168.137.123:1234".into(),
             transport: "wifi".into(),
+            instance: String::new(),
+            usb_busy: false,
             label: "WIPARSE UART · WiFi · 192.168.137.123:1234".into(),
         };
         assert_eq!(wifi.compact_label(), "WiFi · 192.168.137.123");
@@ -704,6 +718,8 @@ mod tests {
             description: "WIPARSE UART".into(),
             hwid: "USB VID:PID=C251:F01A MI_01".into(),
             transport: "usb".into(),
+            instance: String::new(),
+            usb_busy: false,
             label: "WIPARSE UART · USB".into(),
         };
         assert_eq!(winusb.compact_label(), "WIPARSE UART · USB");
@@ -723,6 +739,8 @@ mod tests {
             description: "USB-Enhanced-SERIAL CH3".into(),
             hwid: "USB VID:PID=1A86:55D3".into(),
             transport: "usb".into(),
+            instance: String::new(),
+            usb_busy: false,
             label: "COM8 · USB-Enhanced-SERIAL CH3".into(),
         };
         assert!(port_is_wiparse_uart(&p, &extra));
@@ -735,6 +753,8 @@ mod tests {
             description: "WIPARSE I2C".into(),
             hwid: "USB VID:PID=C251:F01A".into(),
             transport: "usb".into(),
+            instance: String::new(),
+            usb_busy: false,
             label: "COM14 · WIPARSE I2C".into(),
         };
         assert!(!port_is_wiparse_uart(&i2c, &[]));
@@ -747,6 +767,8 @@ mod tests {
             description: "WIPARSE UART".into(),
             hwid: "USB VID:PID=C251:F01A".into(),
             transport: "usb".into(),
+            instance: String::new(),
+            usb_busy: false,
             label: "COM5 · WIPARSE UART · USB".into(),
         };
         assert_eq!(p.display_label(), "COM5 · WIPARSE UART · USB");
@@ -755,6 +777,8 @@ mod tests {
             description: "WIPARSE UART".into(),
             hwid: "WIFI 192.168.137.123:1234".into(),
             transport: "wifi".into(),
+            instance: String::new(),
+            usb_busy: false,
             label: "WIPARSE UART · WiFi · 192.168.137.123:1234".into(),
         };
         assert_eq!(

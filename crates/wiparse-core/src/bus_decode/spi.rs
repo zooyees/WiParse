@@ -1,7 +1,7 @@
 //! SPI decode: 2-wire / 4-wire / Dual / Quad, modes 0–3.
 
 use super::digital::{EdgeKind, LogicWave};
-use super::{try_push_frame, BusDecodeResult, BusFrame, MAX_DECODE_BYTES};
+use super::{try_push_frame, BusDecodeResult, BusFrame, BusFrameError, MAX_DECODE_BYTES};
 use crate::instrument::WaveformTrace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -192,7 +192,7 @@ pub fn decode_spi(
     let mut truncated = false;
     let mut cs_on = if let Some(cs_wave) = cs_w.as_ref() {
         let t0 = clk.x.first().copied().unwrap_or(0.0);
-        let high = cs_wave.before(t0 + 1e-30).unwrap_or(!cfg.cs_active_low);
+        let high = cs_wave.at(t0).unwrap_or(cfg.cs_active_low);
         if cfg.cs_active_low {
             !high
         } else {
@@ -210,6 +210,7 @@ pub fn decode_spi(
     let bpc = cfg.wire.bits_per_clock();
     let packed = cfg.wire.is_packed();
     let has_miso = lane1.is_some() && cfg.wire == SpiWire::FourWire;
+    let mut missing_sample = false;
 
     for ev in &events {
         if truncated {
@@ -231,6 +232,7 @@ pub fn decode_spi(
                     t,
                 );
                 bit_count = 0;
+                missing_sample = false;
                 mosi_word = 0;
                 miso_word = 0;
                 packed_word = 0;
@@ -263,6 +265,7 @@ pub fn decode_spi(
                     t,
                 );
                 bit_count = 0;
+                missing_sample = false;
                 mosi_word = 0;
                 miso_word = 0;
                 packed_word = 0;
@@ -287,6 +290,10 @@ pub fn decode_spi(
                 if bit_count == 0 {
                     t_word0 = t;
                 }
+                missing_sample |= lane0.wave.before(t).is_none()
+                    || ((packed || has_miso) && lane1.as_ref().is_some_and(|l| l.wave.before(t).is_none()))
+                    || (bpc == 4 && [lane2.as_ref(), lane3.as_ref()].iter().flatten().any(|l| l.wave.before(t).is_none()))
+                    || cs_w.as_ref().is_some_and(|w| w.at(t).is_none());
                 if packed {
                     let chunk = sample_packed(bpc, &lane0, lane1.as_ref(), lane2.as_ref(), lane3.as_ref(), t);
                     shift_in(cfg, &mut packed_word, chunk, bpc, &mut bit_count);
@@ -301,7 +308,7 @@ pub fn decode_spi(
                                 t_end: t,
                                 summary,
                                 bytes,
-            ..Default::default()
+                                error: if missing_sample { BusFrameError::Framing } else { BusFrameError::None },
         },
                         ) {
                             truncated = true;
@@ -309,6 +316,7 @@ pub fn decode_spi(
                         }
                         packed_word = 0;
                         bit_count = 0;
+                        missing_sample = false;
                     }
                 } else {
                     let mosi_bit = u32::from(sample_lane(Some(&lane0), t));
@@ -352,7 +360,7 @@ pub fn decode_spi(
                                 t_end: t,
                                 summary,
                                 bytes,
-            ..Default::default()
+                                error: if missing_sample { BusFrameError::Framing } else { BusFrameError::None },
         },
                         ) {
                             truncated = true;
@@ -361,6 +369,7 @@ pub fn decode_spi(
                         mosi_word = 0;
                         miso_word = 0;
                         bit_count = 0;
+                        missing_sample = false;
                     }
                 }
             }
@@ -507,16 +516,16 @@ fn flush_partial(
                 t_start: t0,
                 t_end: t1,
                 summary: format!("DATA 0x{packed_word:X} (partial {bit_count}b)"),
-                bytes: vec![(packed_word & 0xFF) as u8],
-            ..Default::default()
+                bytes: word_bytes(packed_word, bit_count),
+                error: BusFrameError::Framing,
         },
         )
     } else {
         let mut summary = format!("MOSI 0x{mosi_word:X} (partial {bit_count}b)");
-        let mut bytes = vec![(mosi_word & 0xFF) as u8];
+        let mut bytes = word_bytes(mosi_word, bit_count);
         if has_miso {
             summary.push_str(&format!(" / MISO 0x{miso_word:X}"));
-            bytes.push((miso_word & 0xFF) as u8);
+            bytes.extend(word_bytes(miso_word, bit_count));
         }
         let _ = cfg;
         try_push_frame(
@@ -527,7 +536,7 @@ fn flush_partial(
                 t_end: t1,
                 summary,
                 bytes,
-            ..Default::default()
+                error: BusFrameError::Framing,
         },
         )
     }
@@ -762,4 +771,30 @@ mod tests {
             r.frames.iter().map(|f| &f.summary).collect::<Vec<_>>()
         );
     }
+
+    #[test]
+    fn active_cs_at_negative_capture_start_is_respected() {
+        let mut w = synth_dual(0xA5);
+        for trace in &mut w { trace.x = trace.x.iter().map(|t| t - 5.0).collect::<Vec<_>>().into(); }
+        let cfg = SpiConfig { wire: SpiWire::Dual, ..Default::default() };
+        let r = decode_spi(&w[0], Some(&w[1]), Some(&w[2]), None, None, Some(&w[3]), None, &cfg);
+        assert!(r.frames.iter().any(|f| f.bytes == [0xA5] && !f.has_error()), "{r:?}");
+    }
+    #[test]
+    fn missing_lane_samples_are_not_valid_data() {
+        let mut w = synth_dual(0xA5);
+        let n = w[2].x.len() / 2;
+        w[2].x = w[2].x[..n].to_vec().into(); w[2].y = w[2].y[..n].to_vec().into();
+        let cfg = SpiConfig { wire: SpiWire::Dual, ..Default::default() };
+        let r = decode_spi(&w[0], Some(&w[1]), Some(&w[2]), None, None, Some(&w[3]), None, &cfg);
+        assert!(r.frames.iter().any(|f| f.error == BusFrameError::Framing), "{r:?}");
+    }
+    #[test]
+    fn partial_sixteen_bit_word_retains_both_bytes() {
+        let w = synth_4wire(&[0xAB, 0xCD], &[0, 0]);
+        let cfg = SpiConfig { word_bits: 24, wire: SpiWire::TwoWire, ..Default::default() };
+        let r = decode_spi(&w[0], Some(&w[1]), None, None, None, Some(&w[3]), None, &cfg);
+        assert!(r.frames.iter().any(|f| f.bytes == [0xAB, 0xCD] && f.has_error()), "{r:?}");
+    }
+
 }

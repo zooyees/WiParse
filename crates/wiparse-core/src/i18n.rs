@@ -54,12 +54,14 @@ pub fn tr(lang: Lang, key: &str) -> String {
         (Lang::Zh, "about.notes_section") => "本版更新",
         (Lang::En, "about.notes_section") => "What's New",
         (Lang::Zh, "about.notes") => "\
-• 测试报告用例名用插件 report_name；结果层才显示时间戳\n\
-• 设备控制 dongle：DAP 先占用 USB 再 Attach；I2C 优先 WinUSB MI_03\n\
+• 波形分析新增并修正 USB PD、SCP、UFCS 与通用总线解析\n\
+• 修复缩放崩溃、Windows 错误记录以及窄窗口控件重叠\n\
+• 协议标注缩小时自动降密度，发布包附匹配调试符号\n\
 详细记录见 docs/CHANGELOG.md",
         (Lang::En, "about.notes") => "\
-• Test Report cases use the plugin report_name; timestamps stay on result rows\n\
-• Dongle DAP claims USB first then Attach; I2C prefers WinUSB MI_03\n\
+• Added and corrected USB PD, SCP, UFCS, and common bus decoding\n\
+• Fixed zoom crashes, Windows error capture, and narrow-window overlaps\n\
+• Protocol overlays reduce detail when zoomed out; release symbols included\n\
 Details: docs/CHANGELOG.md",
         (Lang::Zh, "about.close") => "关闭",
         (Lang::En, "about.close") => "Close",
@@ -123,6 +125,8 @@ Details: docs/CHANGELOG.md",
         (Lang::En, "report.project") => "Project",
         (Lang::Zh, "report.project_new") => "新建",
         (Lang::En, "report.project_new") => "New",
+        (Lang::Zh, "report.project_new_item") => "新建项目",
+        (Lang::En, "report.project_new_item") => "New project",
         (Lang::Zh, "report.project_new_hint") => "项目 id（字母数字._-）",
         (Lang::En, "report.project_new_hint") => "Project id (alnum._-)",
         (Lang::Zh, "report.project_id_invalid") => "项目 id 只能用字母、数字、点、下划线和连字符",
@@ -332,6 +336,16 @@ Details: docs/CHANGELOG.md",
         (Lang::En, "test_tool.param_advanced") => "Advanced parameters",
         (Lang::Zh, "test_tool.preflight") => "预检",
         (Lang::En, "test_tool.preflight") => "Preflight",
+        (Lang::Zh, "test_tool.preflight_help") => "只检查连接和参数，不启动运行循环",
+        (Lang::En, "test_tool.preflight_help") => "Check connections and parameters without starting the run loop",
+        (Lang::Zh, "test_tool.case") => "用例",
+        (Lang::En, "test_tool.case") => "Case",
+        (Lang::Zh, "test_tool.case_new") => "新用例",
+        (Lang::En, "test_tool.case_new") => "New",
+        (Lang::Zh, "test_tool.case_existing") => "已有",
+        (Lang::En, "test_tool.case_existing") => "Exists",
+        (Lang::Zh, "test_tool.stop_grace") => "仍在停止宽限，还剩 {secs} 秒",
+        (Lang::En, "test_tool.stop_grace") => "Still stopping, {secs}s left",
         (Lang::Zh, "test_tool.preflight_only") => "仅预检（不启动循环）",
         (Lang::En, "test_tool.preflight_only") => "Preflight only (do not start loop)",
         (Lang::Zh, "test_tool.status_ready") => "就绪",

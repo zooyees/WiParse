@@ -2,8 +2,6 @@
   "id": "market-counter",
   "name": "Market Counter",
   "name_zh": "市场计数器",
-  "report_name": "MarketCounter",
-  "report_name_zh": "市场计数",
   "type": "smoke",
   "version": "1.1.0",
   "entry": "index.mjs",
@@ -23,8 +21,7 @@
     ]
   },
   "engines": {
-    "node": ">=18",
-    "wiparse": ">=1.1.16"
+    "node": ">=18"
   },
   "params": [
     {

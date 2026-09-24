@@ -183,9 +183,9 @@ impl EvidencePack {
         live_log: Option<&Path>,
     ) -> Result<Value, String> {
         self.close_pending(brief.elapsed_s() + POST_S, |a, b| brief.metrics_window(a, b));
-        let _ = self.events.flush();
-        let _ = self.metrics.flush();
-        let _ = self.serial.flush();
+        self.events.flush().map_err(|e| format!("events flush: {e}"))?;
+        self.metrics.flush().map_err(|e| format!("metrics flush: {e}"))?;
+        self.serial.flush().map_err(|e| format!("serial flush: {e}"))?;
         let brief_json = brief.snapshot_json(0, None);
         fs::write(
             self.dir.join("brief_final.json"),

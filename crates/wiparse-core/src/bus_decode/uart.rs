@@ -1,7 +1,7 @@
 //! UART (async NRZ) decode from a single analog trace.
 
 use super::digital::{edge_intervals, EdgeKind, LogicWave};
-use super::{try_push_frame, BusDecodeResult, BusFrame, MAX_DECODE_BYTES};
+use super::{try_push_frame, BusDecodeResult, BusFrame, BusFrameError, MAX_DECODE_BYTES};
 use crate::instrument::WaveformTrace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -74,7 +74,7 @@ pub fn decode_uart(
     let wave = LogicWave::new(trace, threshold);
     let edges = wave.edges();
     // A 0x00 / 0xFF frame has only two edges (start + stop). Require a start edge.
-    if edges.len() < 2 {
+    if edges.is_empty() || (edges.len() < 2 && cfg.baud.is_none()) {
         return BusDecodeResult {
             frames: Vec::new(),
             info: String::new(),
@@ -286,7 +286,7 @@ fn decode_frame_at(
     }
 
     let db = cfg.normalized_data_bits();
-    let t_end = t_start + bits_total * bit_time;
+    let t_end = (t_start + bits_total * bit_time).min(wave.trace.x.last().copied().unwrap_or(t_start));
 
     let mut all_zero = true;
     let mut data: u16 = 0;
@@ -327,10 +327,10 @@ fn decode_frame_at(
 
     let stop_offset = 1.5 + f64::from(db) + parity_bits(cfg.parity);
     let t_stop = t_start + stop_offset * bit_time;
-    let stop_ok = wave
-        .at(t_stop)
-        .map(|lvl| logic_one(lvl, idle_high))
-        .unwrap_or(false);
+    let stop_ok = (0..cfg.normalized_stop_bits()).all(|i| {
+        wave.at(t_stop + f64::from(i) * bit_time)
+            .is_some_and(|lvl| logic_one(lvl, idle_high))
+    });
 
     // A real BREAK holds the line low through the stop bit and at least one extra
     // bit-time. `all_zero && !stop_ok` alone matches 0x00 when baud is slightly high.
@@ -339,7 +339,7 @@ fn decode_frame_at(
         let still_low = wave
             .at(t_confirm)
             .map(|lvl| !logic_one(lvl, idle_high))
-            .unwrap_or(true);
+            .unwrap_or(false);
         if still_low {
             return FrameKind::Break(BusFrame {
                 t_start,
@@ -376,7 +376,9 @@ fn decode_frame_at(
         t_end,
         summary,
         bytes,
-            ..Default::default()
+        error: if !stop_ok { BusFrameError::Framing }
+            else if !parity_ok { BusFrameError::Parity }
+            else { BusFrameError::None },
         })
 }
 
@@ -624,4 +626,16 @@ mod tests {
             .collect();
         assert_eq!(data, vec![0x55], "{:?}", r.frames.iter().map(|f| &f.summary).collect::<Vec<_>>());
     }
+
+    #[test]
+    fn truncated_zero_byte_does_not_manufacture_break() {
+        let mut trace = synth_uart_byte(0, 9600.0, 32);
+        let n = 32 * 10; // idle + start + 8 data bits, no stop captured
+        trace.x = trace.x[..n].to_vec().into(); trace.y = trace.y[..n].to_vec().into();
+        let cfg = UartConfig { baud: Some(9600.0), ..Default::default() };
+        let r = decode_uart(&trace, None, true, &cfg);
+        assert!(!r.frames.iter().any(|f| f.summary == "BREAK"), "{r:?}");
+        assert!(r.frames.iter().any(|f| f.error == BusFrameError::Framing), "{r:?}");
+    }
+
 }

@@ -80,3 +80,24 @@ test("first_match: earlier rule wins on the same line", () => {
   });
   assert.equal(c.classify("ASK 2"), "A");
 });
+
+test("global and sticky regexes do not leak lastIndex across lines", () => {
+  for (const flags of ["g", "y"]) {
+    const c = createLineClassifier({
+      items: [{ id: "T", type: "regex", pattern: "ASK", flags }],
+    });
+    assert.equal(c.classify("ASK"), "T");
+    assert.equal(c.classify("ASK"), null);
+    assert.equal(c.classify("ASK"), null);
+    assert.equal(c.classify("idle"), null);
+    assert.equal(c.classify("ASK"), "T");
+  }
+});
+
+test("global exclude regex is reset before every line", () => {
+  const [trigger] = compileTriggers({
+    items: [{ id: "T", pattern: "ASK", exclude: "BAD", exclude_flags: "g" }],
+  });
+  assert.equal(trigger.match("ASK BAD"), false);
+  assert.equal(trigger.match("ASK BAD"), false);
+});

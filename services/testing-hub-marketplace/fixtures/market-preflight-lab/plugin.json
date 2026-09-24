@@ -2,8 +2,6 @@
   "id": "market-preflight-lab",
   "name": "Market Preflight Lab",
   "name_zh": "市场预检实验",
-  "report_name": "MarketPreflight",
-  "report_name_zh": "市场预检",
   "type": "smoke",
   "version": "0.9.0",
   "entry": "index.mjs",
@@ -23,7 +21,6 @@
     ]
   },
   "engines": {
-    "node": ">=18",
-    "wiparse": ">=1.1.16"
+    "node": ">=18"
   }
 }

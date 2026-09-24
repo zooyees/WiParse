@@ -5,10 +5,10 @@
   "report_name": "WiparseNetcfg",
   "report_name_zh": "Dongle 配网",
   "type": "instrument",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "entry": "index.mjs",
   "config": "station.json",
-  "description": "WIPARSE-IF CH-NETCFG (ICD v1.4). Write STA SSID/PSK/IP to NVS and APPLY without flashing. USB MI_05 EP0 vendor 0x20/0x21 (STA down OK), or TCP :1238 after GOT_IP. Firmware bcdDevice 0x0208.",
+  "description": "WIPARSE-IF CH-NETCFG. Fill 2.4 GHz SSID/PSK, keep DHCP on, APPLY over USB MI_05 EP0 without flashing. Empty SSID/PSK leave NVS unchanged. TCP :1238 is only after GOT_IP.",
   "capabilities": ["preflight", "run", "stop"],
   "engines": {
     "node": ">=18",
@@ -37,15 +37,110 @@
   ],
   "params": [
     {
-      "name": "file_prefix",
+      "name": "ssid",
       "type": "string",
-      "path": "paths.file_prefix",
-      "default": "WiparseNetcfg",
-      "group": "paths",
-      "group_zh": "路径",
-      "label": "Report name / prefix",
-      "label_zh": "报告名称/前缀",
-      "help": "Optional override of plugin.json report_name. Sanitized value is tests/{test_id}/."
+      "path": "wifi.ssid",
+      "default": "",
+      "group": "wifi",
+      "group_zh": "Wi-Fi",
+      "label": "Wi-Fi name",
+      "label_zh": "Wi-Fi 名称",
+      "help": "2.4 GHz SSID only (e.g. WINDLINK, not WINDLINK-5G). Empty = do not overwrite the SSID already stored on the device."
+    },
+    {
+      "name": "psk",
+      "type": "string",
+      "path": "wifi.psk",
+      "default": "",
+      "group": "wifi",
+      "group_zh": "Wi-Fi",
+      "label": "Password",
+      "label_zh": "密码",
+      "help": "2.4 GHz, 8–63 bytes, never written to logs. Empty = do not overwrite the stored PSK."
+    },
+    {
+      "name": "dhcp",
+      "type": "boolean",
+      "path": "wifi.dhcp",
+      "default": "true",
+      "group": "wifi",
+      "group_zh": "Wi-Fi",
+      "label": "Obtain IP automatically",
+      "label_zh": "自动获取 IP",
+      "help": "Keep on for a router DHCP lease. Turning it off requires static IPv4, gateway, and netmask in Advanced."
+    },
+    {
+      "name": "op",
+      "type": "enum",
+      "path": "run.op",
+      "default": "apply",
+      "group": "wifi",
+      "group_zh": "Wi-Fi",
+      "label": "Operation",
+      "label_zh": "操作",
+      "help": "Apply writes NVS and reconnects, then polls STATUS. Query only sends STATUS. SAVE / REVERT / HELP go in the Advanced script.",
+      "options": [
+        { "value": "apply", "label": "Apply and reconnect", "label_zh": "下发并生效" },
+        { "value": "status", "label": "Query STATUS", "label_zh": "查询" }
+      ]
+    },
+    {
+      "name": "script",
+      "type": "text",
+      "path": "run.script",
+      "default": "",
+      "group": "script",
+      "group_zh": "脚本",
+      "advanced": true,
+      "label": "Script (one cmd/line)",
+      "label_zh": "脚本（一行一条）",
+      "help": "Non-empty lines (not # comments) are sent as-is and skip the op recipe. Use this for SAVE, REVERT, HELP. APPLY writes NVS and reconnects; do not flash."
+    },
+    {
+      "name": "ip",
+      "type": "string",
+      "path": "wifi.ip",
+      "default": "",
+      "group": "wifi",
+      "group_zh": "Wi-Fi",
+      "advanced": true,
+      "label": "Static IPv4",
+      "label_zh": "静态 IPv4",
+      "help": "Used only when DHCP is off. All three of IPv4, gateway, and netmask are required."
+    },
+    {
+      "name": "gateway",
+      "type": "string",
+      "path": "wifi.gateway",
+      "default": "",
+      "group": "wifi",
+      "group_zh": "Wi-Fi",
+      "advanced": true,
+      "label": "Gateway",
+      "label_zh": "网关"
+    },
+    {
+      "name": "netmask",
+      "type": "string",
+      "path": "wifi.netmask",
+      "default": "",
+      "group": "wifi",
+      "group_zh": "Wi-Fi",
+      "advanced": true,
+      "label": "Netmask",
+      "label_zh": "掩码"
+    },
+    {
+      "name": "hostname",
+      "type": "string",
+      "path": "wifi.hostname",
+      "default": "",
+      "group": "wifi",
+      "group_zh": "Wi-Fi",
+      "advanced": true,
+      "label": "DHCP display name",
+      "label_zh": "DHCP 显示名",
+      "help": "Empty = do not send HOSTNAME (firmware uses WiParseDongle_XXXX). Filling this only changes the router DHCP client name, not mDNS."
     },
     {
       "name": "transport",
@@ -54,9 +149,10 @@
       "default": "usb",
       "group": "transport",
       "group_zh": "传输",
+      "advanced": true,
       "label": "Transport",
       "label_zh": "传输",
-      "help": "usb = WinUSB MI_05 EP0 (works when STA is down). tcp = :1238 after GOT_IP. auto = USB then TCP. APPLY over TCP may drop the socket while Wi-Fi reconnects.",
+      "help": "usb = WinUSB MI_05 EP0 (works when STA is down). auto = USB then TCP only if Host is set. tcp = :1238 after GOT_IP. APPLY over TCP may drop the socket — use USB while disconnected or about to reconnect.",
       "options": [
         { "value": "usb", "label": "USB WinUSB MI_05", "label_zh": "USB（推荐）" },
         { "value": "auto", "label": "Auto USB then TCP", "label_zh": "自动 USB→TCP" },
@@ -67,11 +163,13 @@
       "name": "host",
       "type": "string",
       "path": "channel.host",
-      "default": "dap.local",
+      "default": "",
       "group": "transport",
       "group_zh": "传输",
+      "advanced": true,
       "label": "Host",
-      "label_zh": "主机"
+      "label_zh": "主机",
+      "help": "TCP backup only. Use STATUS ip= or wiparsedongle-xxxx.local. Leave empty; do not use dap.local."
     },
     {
       "name": "tcp_port",
@@ -80,8 +178,33 @@
       "default": 1238,
       "group": "transport",
       "group_zh": "传输",
+      "advanced": true,
       "label": "TCP port",
       "label_zh": "TCP 端口"
+    },
+    {
+      "name": "wait_got_ip_ms",
+      "type": "number",
+      "path": "run.wait_got_ip_ms",
+      "default": 30000,
+      "group": "wifi",
+      "group_zh": "Wi-Fi",
+      "advanced": true,
+      "label": "Wait for GOT_IP (ms)",
+      "label_zh": "等待入网 ms",
+      "help": "After APPLY/REVERT, poll STATUS until wifi=1 and ip is not 0.0.0.0. 0 skips the wait."
+    },
+    {
+      "name": "file_prefix",
+      "type": "string",
+      "path": "paths.file_prefix",
+      "default": "WiparseNetcfg",
+      "group": "paths",
+      "group_zh": "路径",
+      "advanced": true,
+      "label": "Report name / prefix",
+      "label_zh": "报告名称/前缀",
+      "help": "Optional override of plugin.json report_name. Sanitized value is tests/{test_id}/."
     },
     {
       "name": "vid",
@@ -104,18 +227,6 @@
       "advanced": true,
       "label": "USB PID",
       "label_zh": "USB PID"
-    },
-    {
-      "name": "fallback_host",
-      "type": "string",
-      "path": "channel.fallback_host",
-      "default": "192.168.137.123",
-      "group": "transport",
-      "group_zh": "传输",
-      "advanced": true,
-      "label": "Fallback IPv4",
-      "label_zh": "备用 IPv4",
-      "help": "Tried only when Host is empty or dap.local. Clear to disable."
     },
     {
       "name": "usb_mi",
@@ -160,118 +271,6 @@
       "advanced": true,
       "label": "Connect timeout (ms)",
       "label_zh": "连接超时 ms"
-    },
-    {
-      "name": "op",
-      "type": "enum",
-      "path": "run.op",
-      "default": "apply",
-      "group": "action",
-      "group_zh": "动作",
-      "label": "Operation",
-      "label_zh": "操作",
-      "options": [
-        { "value": "status", "label": "STATUS", "label_zh": "查询" },
-        { "value": "apply", "label": "Set + APPLY", "label_zh": "下发并生效" },
-        { "value": "save", "label": "Set + SAVE", "label_zh": "仅保存 NVS" },
-        { "value": "revert", "label": "REVERT", "label_zh": "恢复固件默认" },
-        { "value": "help", "label": "HELP", "label_zh": "帮助" },
-        { "value": "discover", "label": "Discover", "label_zh": "发现" },
-        { "value": "script", "label": "Script text", "label_zh": "脚本文本" }
-      ]
-    },
-    {
-      "name": "ssid",
-      "type": "string",
-      "path": "wifi.ssid",
-      "default": "WINDLINK",
-      "group": "wifi",
-      "group_zh": "Wi-Fi",
-      "label": "SSID",
-      "label_zh": "SSID"
-    },
-    {
-      "name": "psk",
-      "type": "string",
-      "path": "wifi.psk",
-      "default": "",
-      "group": "wifi",
-      "group_zh": "Wi-Fi",
-      "label": "Password",
-      "label_zh": "密码",
-      "help": "WPA PSK, 8–63 bytes. Never logged. Sent as PSK <value>."
-    },
-    {
-      "name": "dhcp",
-      "type": "boolean",
-      "path": "wifi.dhcp",
-      "default": "false",
-      "group": "wifi",
-      "group_zh": "Wi-Fi",
-      "label": "DHCP",
-      "label_zh": "DHCP"
-    },
-    {
-      "name": "ip",
-      "type": "string",
-      "path": "wifi.ip",
-      "default": "192.168.137.123",
-      "group": "wifi",
-      "group_zh": "Wi-Fi",
-      "label": "Static IPv4",
-      "label_zh": "静态 IPv4"
-    },
-    {
-      "name": "gateway",
-      "type": "string",
-      "path": "wifi.gateway",
-      "default": "192.168.137.1",
-      "group": "wifi",
-      "group_zh": "Wi-Fi",
-      "label": "Gateway",
-      "label_zh": "网关"
-    },
-    {
-      "name": "netmask",
-      "type": "string",
-      "path": "wifi.netmask",
-      "default": "255.255.255.0",
-      "group": "wifi",
-      "group_zh": "Wi-Fi",
-      "label": "Netmask",
-      "label_zh": "掩码"
-    },
-    {
-      "name": "hostname",
-      "type": "string",
-      "path": "wifi.hostname",
-      "default": "dap",
-      "group": "wifi",
-      "group_zh": "Wi-Fi",
-      "label": "mDNS hostname",
-      "label_zh": "mDNS 主机名"
-    },
-    {
-      "name": "script",
-      "type": "text",
-      "path": "run.script",
-      "default": "",
-      "group": "script",
-      "group_zh": "脚本",
-      "label": "Script (one cmd/line)",
-      "label_zh": "脚本（一行一条）",
-      "help": "Raw ICD lines. Comments start with #. APPLY writes NVS and reconnects; do not flash."
-    },
-    {
-      "name": "wait_got_ip_ms",
-      "type": "number",
-      "path": "run.wait_got_ip_ms",
-      "default": 15000,
-      "group": "action",
-      "group_zh": "动作",
-      "label": "Wait GOT_IP (ms)",
-      "label_zh": "等待入网 ms",
-      "help": "After APPLY/REVERT, poll STATUS until wifi=1 or this timeout. 0 skips the wait."
     }
   ]
 }

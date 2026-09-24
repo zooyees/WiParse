@@ -2,9 +2,9 @@
 
 **[中文](#中文)** · **[English](#english)**
 
-无线充电（Qi）测试与工位工具。当前版本 **1.1.26**（以工作区 `Cargo.toml` 的 `workspace.package.version` 为准）。
+无线充电（Qi）测试与工位工具。当前版本 **1.1.27**（以工作区 `Cargo.toml` 的 `workspace.package.version` 为准）。
 
-Wireless charging (Qi) lab and station utility. Current version **1.1.26**.
+Wireless charging (Qi) lab and station utility. Current version **1.1.27**.
 
 许可：**Proprietary**。本仓库不是通用示波器软件，也不是面向公网的服务。
 
@@ -33,7 +33,7 @@ WiParse 面向 **Qi 无线充电研发台、产线工位和闭环测试**：把�
 - 看清 ASK / FSK 报文，并按 Qi 包名做协议解析（例如 ID / CE / RP，而不是把某个 header 写死进引擎）。
 - 在报文出现的上升沿停示波器、截图、读取波形源文件（ISF），形成可复查的证据包。
 - 在仪表页 **设备总览** 里看数字孪生工位：电源按真实通道画 LCD（实测 V/A/W），示波器 / 负载 / 万用表 / 探针 / FT4222 / WiParse-dongle 同步前面板状态。
-- 离线打开 Tek / Rigol 波形，做 I2C / SPI / UART / I2S / **DDSSS** 总线解码。
+- 离线打开 Tek / Rigol 波形，做 I2C / SPI / UART / I2S / **DDSSS / USB PD / SCP / UFCS** 总线解码。
 - 用 Node 插件把“预检 / 运行 / 停止”做成产线配方，而不是把示波器型号写进 GUI。
 
 长驻进程是 **`WiParse.exe`（GUI）**：独占串口和 VISA 仪器，画面走进程内通道。CLI / MCP **默认只 attach** 到 GUI 的 `http://127.0.0.1:7878`，不会在 GUI 未开时悄悄打开本机串口。
@@ -45,7 +45,7 @@ WiParse 面向 **Qi 无线充电研发台、产线工位和闭环测试**：把�
 | 场景 | 说明 |
 |------|------|
 | 研发台 | 串口实时监控、Qi 协议解析、LiveBrief、仪表联调 |
-| 波形实验室 | 打开 ISF / WFM / CSV，总线解码（含 Qi DDSSS Draft 5） |
+| 波形实验室 | 打开 ISF / WFM / CSV，总线解码（含 Qi DDSSS Draft 5、USB PD、SCP、UFCS） |
 | 产线工位 | 计划 JSON + `wait` 上升沿 + 示波器停采 / 截图 / 波形源；目录式部署，无 MSI |
 | 自动化 / Agent | CLI attach、HTTP `/v1/invoke`、Cursor MCP（6 个工具） |
 | 插件化测试 | Testing Hub：`preflight` / `run` / `stop`；本机或远程插件市场 |
@@ -138,7 +138,7 @@ GUI 顶栏标签（设置菜单可显隐各页）：
 - Rigol 系列 WFM
 - 可另存为 ISF / WFM
 
-**总线解码**（叠在波形上，后台计算）：I2C、SPI、UART、I2S、**DDSSS**（Qi PRx→PTx DSSS ASK，规范为 Qi *DDSSS Communications* Draft 5）。UART 波特率与 DDSSS FOP 可手动或自动。示例文件：`docs/examples/ddsss_vctx.isf`。
+**总线解码**（叠在波形上，后台计算）：I2C、SPI、UART、I2S、**DDSSS**（Qi PRx→PTx DSSS ASK）、**USB PD**（CC BMC / 4b5b / CRC32）、**SCP**（单线 NRZ / 奇校验 / CRC8）和 **UFCS**（UART 帧 / CRC8）。UART 波特率与 DDSSS FOP 可手动或自动；UFCS 可选标准波特率，SCP 可设置 UI。示例文件：`docs/examples/ddsss_vctx.isf`。
 
 闭环路径 **不会** 调用本页浏览器去改目录；工位保存的是路径 + 字节数，不把几十 MB 点列塞进 MCP。
 
@@ -425,7 +425,7 @@ The long-lived process is **`WiParse.exe`**. It owns the serial port and VISA de
 
 ### 2. Scope
 
-**In scope:** Qi ASK/FSK decode and LiveBrief; scope stop / screenshot / ISF on a rising-edge wait; digital-twin **instrument overview** (per-device LCD); Tek/Rigol waveforms with I2C, SPI, UART, I2S, and **DDSSS** (Qi Draft 5); Node Testing Hub plugins; directory-style station deploy (no MSI); Cursor MCP.
+**In scope:** Qi ASK/FSK decode and LiveBrief; scope stop / screenshot / ISF on a rising-edge wait; digital-twin **instrument overview** (per-device LCD); Tek/Rigol waveforms with I2C, SPI, UART, I2S, **DDSSS**, USB PD, SCP, and UFCS decode; Node Testing Hub plugins; directory-style station deploy (no MSI); Cursor MCP.
 
 **Environment:** Windows x64 primary; VISA for bench instruments plus USB debug probes (J-Link / ST-Link / CMSIS-DAP via probe-rs) and FT4222; Node.js 18+ for Hub and MCP; UI zh/en, dark/light.
 
@@ -459,7 +459,7 @@ Tabs: **Serial Tool** · **Instrument Control** · **Waveform Analysis** · **Da
 |-------|----------------|
 | Serial | COM monitor, filters, ASK/FSK click-to-parse, LiveBrief, large-file virtualization |
 | Instruments | Cards by kind (scope / DC source / load / DMM / debug probe / FT4222 / generic SCPI). Default **device overview** twin with live LCD (PSU channels show measured V/A/W). Connect-all on the discovery list. Scope: stop, PNG, CURVe, **waveform source (ISF)**. `waveform_source_dir` is separate from the analysis browser dir |
-| Waveform | Offline ISF / Tek WFM / CSV / Rigol WFM; pan/cursors; bus decode including DDSSS |
+| Waveform | Offline ISF / Tek WFM / CSV / Rigol WFM; pan/cursors; bus decode including DDSSS, USB PD, SCP, and UFCS |
 | Data analysis | Frame header + up to 8 filter series from Live serial or files; WIDA cache + LOD |
 | Testing Hub | Plugins \| Market; `preflight` / `run` / `stop`; generic `device` params (no scope type hardcoded in the GUI). Shares the active **project** with Test Report (`apps.project.active_id` / `--project`) |
 | Test report | Project playback index: test case → result (`runs/{stamp}`) → wave / report / capture files. Markdown, waveform, image, and text preview in-pane; PDF/HTML open in the system viewer. Not an in-app HTML/PDF engine |

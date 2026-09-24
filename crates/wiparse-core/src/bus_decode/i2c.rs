@@ -5,7 +5,7 @@
 //! Data:  SDA sampled on SCL rising edge (MSB first, 8 bits + ACK).
 
 use super::digital::{EdgeKind, LogicWave};
-use super::{try_push_frame, BusDecodeResult, BusFrame, MAX_DECODE_BYTES};
+use super::{try_push_frame, BusDecodeResult, BusFrame, BusFrameError, MAX_DECODE_BYTES};
 use crate::instrument::WaveformTrace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -275,11 +275,14 @@ fn read_transaction(
         let ev = &events[i];
         match ev.kind {
             EvtKind::SdaFall if scl_stable_high(scl, ev.t) => {
+                flush_partial_reg(frames, used, cfg, &mut reg_needed, reg_value, reg_t0, ev.t);
+                flush_partial_byte(frames, used, bits, value, t_byte0, ev.t);
                 // Repeated START: leave this event for the outer loop.
                 return Some((i, truncated));
             }
             EvtKind::SdaRise if scl_stable_high(scl, ev.t) => {
                 flush_partial_reg(frames, used, cfg, &mut reg_needed, reg_value, reg_t0, ev.t);
+                flush_partial_byte(frames, used, bits, value, t_byte0, ev.t);
                 let _ = try_push_frame(
                     frames,
                     used,
@@ -300,7 +303,11 @@ fn read_transaction(
                 if bits == 0 {
                     t_byte0 = ev.t;
                 }
-                let sample = sda.before(ev.t).unwrap_or(true);
+                let Some(sample) = sda.before(ev.t) else {
+                    flush_partial_byte(frames, used, bits, value, t_byte0, ev.t);
+                    flush_partial_reg(frames, used, cfg, &mut reg_needed, reg_value, reg_t0, ev.t);
+                    return Some((i + 1, truncated));
+                };
                 if bits < 8 {
                     value = (value << 1) | u8::from(sample);
                     bits += 1;
@@ -385,7 +392,19 @@ fn read_transaction(
     }
 
     flush_partial_reg(frames, used, cfg, &mut reg_needed, reg_value, reg_t0, t_byte0);
+    flush_partial_byte(frames, used, bits, value, t_byte0, events.last().map_or(t_byte0, |e| e.t));
     Some((i, truncated))
+}
+
+fn flush_partial_byte(frames: &mut Vec<BusFrame>, used: &mut usize, bits: u8, value: u8, t0: f64, t1: f64) {
+    // One high clock preceding STOP / Sr is bus control, not a partial byte.
+    if bits < 2 { return; }
+    let _ = try_push_frame(frames, used, BusFrame {
+        t_start: t0, t_end: t1,
+        summary: format!("Incomplete byte ({bits}/9 clocks)"),
+        bytes: if bits == 8 { vec![value] } else { vec![] },
+        error: BusFrameError::Framing,
+    });
 }
 
 fn emit_i2c_byte(
@@ -542,7 +561,7 @@ fn flush_partial_reg(
             t_start: t0,
             t_end: t1,
             summary: format!("Reg 0x{reg_value:02X} (incomplete)"),
-            bytes: vec![reg_value as u8], ..Default::default()
+            bytes: vec![reg_value as u8], error: BusFrameError::Framing
         },
     );
     *reg_needed = 0;
@@ -924,4 +943,24 @@ mod tests {
             r.frames.iter().map(|f| &f.summary).collect::<Vec<_>>()
         );
     }
+
+    #[test]
+    fn incomplete_register_is_flagged() {
+        let (scl, sda) = synth_write(0x50, &[0x12]);
+        let r = decode_i2c(&scl, &sda, None, &I2cConfig { reg_addr_bits: 16 });
+        assert!(r.frames.iter().any(|f| f.bytes == [0x12] && f.has_error()), "{r:?}");
+    }
+    #[test]
+    fn capture_ending_before_ack_is_flagged() {
+        let (mut scl, mut sda) = synth_write(0x50, &[0x12]);
+        let edges = LogicWave::new(&scl, None).edges();
+        let ninth = edges.iter().filter(|e| e.kind == EdgeKind::Rising).nth(8).unwrap().time;
+        for trace in [&mut scl, &mut sda] {
+            let n = trace.x.partition_point(|&t| t < ninth);
+            trace.x = trace.x[..n].to_vec().into(); trace.y = trace.y[..n].to_vec().into();
+        }
+        let r = decode_i2c(&scl, &sda, None, &I2cConfig::default());
+        assert!(r.frames.iter().any(|f| f.has_error()), "{r:?}");
+    }
+
 }
