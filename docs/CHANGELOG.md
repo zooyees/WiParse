@@ -8,18 +8,23 @@
 
 ## Unreleased
 
-### Testing Hub
-
-- `wiparse-netcfg` **v1.2.0**：主界面只保留 SSID / PSK / DHCP / `apply|status`；默认不再下发出厂静态地址、`dap` 或 `dap.local`。空 SSID/PSK 不覆盖 NVS。高级脚本可发 `SAVE`/`REVERT`/`HELP`。USB 打不开且 Host 为空时 `auto` 直接失败。取消 DHCP 但静态三项不齐则拒绝发送。入网等待默认 30 s。
-
 ---
 
-## 1.1.27 — 2026-09-24
+## 1.1.27 — 2026-09-25
 
 ### 波形协议解析
 
-- 协议解析复核：修正 SCP 混合电压门限、PING 校准与漏字节、读写命令标签并加入 Normal.isf 实测回归；修正 SPI/I2C/I2S/UART 截断与缺失采样处理、USB PD 未分块扩展报文长度，以及非 DDSSS 报文误用 Qi 描述。详见 `protocol-decoder-audit-2026-09-23.md`。
+- 协议解析复核：修正 SCP 混合电压门限、PING 校准与漏字节、读写命令标签；修正 SPI/I2C/I2S/UART 截断与缺失采样处理、USB PD 未分块扩展报文长度，以及非 DDSSS 报文误用 Qi 描述。
 - 波形分析新增 USB PD、SCP、UFCS 解码：支持 USB PD BMC/4b5b/SOP/header/CRC32 与 PDO 摘要，SCP 单线 NRZ/奇校验/CRC8，UFCS UART 分帧/消息类型/CRC8；同时修正数字阈值单位、UART 截断与停止位错误传播。
+
+### 串口
+
+- Wi-Fi UART 改为后台浏览 `_uart-bridge._tcp`。有 A 记录才进入列表；不再探测出厂地址，WinUSB 打开失败也不再自动改走 Wi-Fi。同一分钟内可保持多路会话。mDNS 压缩名称能解析出主机地址。
+
+### 测试报告
+
+- 左侧目录：项目下拉加刷新图标，添加测试单独成钮，新建项目收进下拉。用例行不再显示结果个数；运行行用时间，同一分钟补秒，同一秒再补序号，通过/失败灯只在运行行。
+- 报告不再单列文件名。一份报告的选中态画在该次运行上；多份报告用分组标签加序号。附件按角色列出，重名才加扩展名和序号。
 
 ### 稳定性与架构
 
@@ -30,14 +35,14 @@
 ### UI 与发布
 
 - 串口工具按统一行网格对齐：控件高 28、行距 8、同一行等分并共用右缘；扫描保持次按钮。仪器控制页保持上一版布局。
-- 串口、仪器控制、计算器、测试运行、测试报告、波形协议设置和数据规则面板改为响应式布局；窄窗口下按钮不再重叠，长标题裁切，超长参数区域可滚动。
+- 串口、计算器、测试运行、测试报告、波形协议设置和数据规则面板改为响应式布局；窄窗口下按钮不再重叠，长标题裁切，超长参数区域可滚动。
 - 协议波形标注按屏幕密度聚合，缩小时隐藏密集位宽竖线和重复文字，保留简洁的帧级信息。
 - 发布版保留行号调试信息并生成匹配 PDB、符号清单与 SHA-256，可直接对应 Windows 异机崩溃转储。
 
 ### Testing Hub
 
 - 捆绑插件对齐 **1.1.26** 契约：清单均有 `report_name` / `report_name_zh`；表单可选 `file_prefix` 覆盖用例目录；`engines.wiparse >=1.1.16`。`example-smoke` **v0.2.1** 声明 `outputs[]` 并写入 `tests/{report_name}/runs/{stamp}/`。`wiparse-dap` / `wiparse-uart-bridge` / `wiparse-i2c-rpc` **v1.0.1**。
-- `wiparse-netcfg` **v1.1.0**：对齐 DAP-Link ICD **v1.4** / 固件 `bcdDevice 0x0208`。USB `MI_05` EP0 优先，TCP `:1238` 仅 GOT_IP 后可用。PSK 不落日志。
+- `wiparse-netcfg` **v1.2.0**：对齐 DAP-Link ICD **v1.4** / 固件 `bcdDevice 0x0208`。USB `MI_05` EP0 优先，TCP `:1238` 仅 GOT_IP 后可用，PSK 不落日志。主界面只保留 SSID / PSK / DHCP / `apply|status`；默认不再下发出厂静态地址、`dap` 或 `dap.local`。空 SSID/PSK 不覆盖 NVS。取消 DHCP 但静态三项不齐则拒绝发送。入网等待默认 30 s。
 
 ---
 
