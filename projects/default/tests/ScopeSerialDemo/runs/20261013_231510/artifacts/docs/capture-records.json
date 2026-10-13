@@ -1,0 +1,76 @@
+{
+  "run_dir": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261013_231510",
+  "stamp": "20261013_231510",
+  "records": [
+    {
+      "cycle": 1,
+      "trigger": "PING_START",
+      "stamp": "20261013_231510",
+      "timeText": "2026-10-13 12:00:01 (模拟)",
+      "line": "[SIM] [12:00:01.020] EVENT=PING_START PWM_HZ=125000",
+      "context": [
+        "[SIM] [12:00:01.000] RX_DETECT=1 VIN=9.00V",
+        "[SIM] [12:00:01.020] EVENT=PING_START PWM_HZ=125000",
+        "[SIM] [12:00:01.021] CAPTURE_REQUEST cycle=1",
+        "[SIM] [12:00:01.100] VIN=9.00V CAPTURE_OK=1"
+      ],
+      "isfPath": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261013_231510\\artifacts\\waves\\ScopeSerialDemo_PING_START_20261013_231510.isf",
+      "screenshot": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261013_231510\\artifacts\\shots\\ScopeSerialDemo_PING_START_20261013_231510.png",
+      "csvPath": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261013_231510\\artifacts\\waves\\ScopeSerialDemo_PING_START_20261013_231510.csv",
+      "pdfPath": null,
+      "guiVersion": "1.1.29 (模拟)",
+      "scopeId": "SIM-SCOPE-001",
+      "scopeModel": "SIMULATED OSCILLOSCOPE",
+      "serialMonitoring": true,
+      "preset_frequency_hz": 125000,
+      "simulated_fault": false
+    },
+    {
+      "cycle": 2,
+      "trigger": "POWER_TRANSFER",
+      "stamp": "20261013_231510",
+      "timeText": "2026-10-13 12:00:02 (模拟)",
+      "line": "[SIM] [12:00:02.020] EVENT=POWER_TRANSFER PWM_HZ=150000",
+      "context": [
+        "[SIM] [12:00:02.000] RX_DETECT=1 VIN=9.00V",
+        "[SIM] [12:00:02.020] EVENT=POWER_TRANSFER PWM_HZ=150000",
+        "[SIM] [12:00:02.021] CAPTURE_REQUEST cycle=2",
+        "[SIM] [12:00:02.100] VIN=9.00V CAPTURE_OK=1"
+      ],
+      "isfPath": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261013_231510\\artifacts\\waves\\ScopeSerialDemo_POWER_TRANSFER_20261013_231510.isf",
+      "screenshot": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261013_231510\\artifacts\\shots\\ScopeSerialDemo_POWER_TRANSFER_20261013_231510.png",
+      "csvPath": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261013_231510\\artifacts\\waves\\ScopeSerialDemo_POWER_TRANSFER_20261013_231510.csv",
+      "pdfPath": null,
+      "guiVersion": "1.1.29 (模拟)",
+      "scopeId": "SIM-SCOPE-001",
+      "scopeModel": "SIMULATED OSCILLOSCOPE",
+      "serialMonitoring": true,
+      "preset_frequency_hz": 150000,
+      "simulated_fault": false
+    },
+    {
+      "cycle": 3,
+      "trigger": "VIN_UV_FAULT",
+      "stamp": "20261013_231510",
+      "timeText": "2026-10-13 12:00:03 (模拟)",
+      "line": "[SIM] [12:00:03.020] EVENT=VIN_UV_FAULT PWM_HZ=150000",
+      "context": [
+        "[SIM] [12:00:03.000] RX_DETECT=1 VIN=9.00V",
+        "[SIM] [12:00:03.020] EVENT=VIN_UV_FAULT PWM_HZ=150000",
+        "[SIM] [12:00:03.021] CAPTURE_REQUEST cycle=3",
+        "[SIM] [12:00:03.100] VIN=4.80V FAULT=UV PWM=OFF"
+      ],
+      "isfPath": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261013_231510\\artifacts\\waves\\ScopeSerialDemo_VIN_UV_FAULT_20261013_231510.isf",
+      "screenshot": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261013_231510\\artifacts\\shots\\ScopeSerialDemo_VIN_UV_FAULT_20261013_231510.png",
+      "csvPath": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261013_231510\\artifacts\\waves\\ScopeSerialDemo_VIN_UV_FAULT_20261013_231510.csv",
+      "pdfPath": null,
+      "guiVersion": "1.1.29 (模拟)",
+      "scopeId": "SIM-SCOPE-001",
+      "scopeModel": "SIMULATED OSCILLOSCOPE",
+      "serialMonitoring": true,
+      "preset_frequency_hz": 150000,
+      "simulated_fault": true
+    }
+  ],
+  "simulation_only": true
+}

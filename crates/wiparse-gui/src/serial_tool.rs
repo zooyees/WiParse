@@ -1891,16 +1891,15 @@ impl SerialToolPanel {
             self.handle_dropped_files(&dropped);
         }
 
-        // Python log_panel: fixed left sidebar + content (must force top-down
+        // Independent left sidebar + content (must force top-down
         // layouts). Independent max_rects so ComboBox selected_text cannot leak
         // width into the parent and open a gap beside the card.
-        let sidebar_w = ui_theme::SIDEBAR_W;
-        let avail_h = ui.available_height();
-        const SIDE_MAIN_GAP: f32 = 4.0;
+        const SIDE_MAIN_GAP: f32 = 8.0;
 
         let full = ui.available_rect_before_wrap();
         let _ = ui.allocate_exact_size(full.size(), egui::Sense::hover());
-        let side_w = sidebar_w.min(full.width());
+        let side_w = ui_theme::resizable_sidebar_width(ui, "serial_tool", full,
+            ui_theme::SIDEBAR_W, 230.0, 200.0, SIDE_MAIN_GAP, t);
         let side_rect = egui::Rect::from_min_size(full.min, egui::vec2(side_w, full.height()));
         let content_rect = egui::Rect::from_min_max(
             egui::pos2((side_rect.max.x + SIDE_MAIN_GAP).min(full.max.x), full.min.y),
@@ -1913,7 +1912,7 @@ impl SerialToolPanel {
                 egui::pos2(side_rect.min.x + SIDE_PAD, side_rect.min.y),
                 egui::pos2(side_rect.max.x - SIDE_PAD, side_rect.max.y),
             );
-            ui.scope_builder(
+            crate::theme::scope_in_allocated_rect(ui,
                 egui::UiBuilder::new()
                     .max_rect(side_inner)
                     .layout(egui::Layout::top_down(egui::Align::Min)),
@@ -2217,7 +2216,7 @@ impl SerialToolPanel {
                         egui::vec2(card_w, browser_h),
                     );
                     ui.advance_cursor_after_rect(browser_rect);
-                    ui.scope_builder(
+                    crate::theme::scope_in_allocated_rect(ui,
                         egui::UiBuilder::new()
                             .max_rect(browser_rect)
                             .layout(egui::Layout::top_down(egui::Align::Min)),
@@ -2242,7 +2241,7 @@ impl SerialToolPanel {
                                 1.0 + f32::from(CARD_MARGIN_X),
                                 1.0 + 6.0,
                             ));
-                            ui.scope_builder(
+                            crate::theme::scope_in_allocated_rect(ui,
                                 egui::UiBuilder::new()
                                     .max_rect(content)
                                     .layout(egui::Layout::top_down(egui::Align::Min)),
@@ -2379,7 +2378,7 @@ impl SerialToolPanel {
             ); // end sidebar scope_builder
 
             // ── Right: file tabs + LogTabPage ─────────────────────────
-            ui.scope_builder(
+            crate::theme::scope_in_allocated_rect(ui,
                 egui::UiBuilder::new()
                     .max_rect(content_rect)
                     .layout(egui::Layout::top_down(egui::Align::Min)),
@@ -2392,7 +2391,7 @@ impl SerialToolPanel {
                         .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
                         .stroke(Stroke::new(1.0_f32, t.border))
                         .show(ui, |ui| {
-                            ui.set_min_height(avail_h - 4.0);
+                            ui.set_min_height(ui.available_height().max(1.0));
                             ui.set_width(ui.available_width());
 
                             // Tab strip: titles scroll in a fixed-width lane; ◀▶ pinned
@@ -2937,7 +2936,7 @@ fn log_browser_file_row(
             );
         }
         // Left-aligned single-line label; truncate overflow with ellipsis.
-        ui.scope_builder(
+        crate::theme::scope_in_allocated_rect(ui,
             egui::UiBuilder::new()
                 .max_rect(rect)
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),

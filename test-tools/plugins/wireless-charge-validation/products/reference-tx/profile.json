@@ -1,0 +1,18 @@
+{
+  "schema_version": "wiparse.wireless-plugin/1",
+  "version": "0.1.0",
+  "id": "reference-tx",
+  "simulation_only": true,
+  "topology": "TX-reference-not-approved",
+  "protocols": [
+    "USBPD",
+    "SCP",
+    "UFCS",
+    "Qi"
+  ],
+  "vin_mapping": "external-input",
+  "vbrg_mapping": "external-bridge",
+  "power_w": null,
+  "dut_fields": {},
+  "approved": false
+}

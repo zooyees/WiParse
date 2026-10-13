@@ -491,6 +491,13 @@ export function writeRunJson(layout, plugin, result) {
     lifecycle: result?.lifecycle || "run",
     session: result?.session || layout.stamp,
     ended: new Date().toISOString(),
+    // Lifecycle success is distinct from a product acceptance verdict.
+    execution_status: result?.execution_status ?? null,
+    product_verdict: result?.product_verdict ?? null,
+    validation_verdict: result?.validation_verdict ?? null,
+    industrial_approved: result?.industrial_approved === true,
+    run_id: result?.run_id ?? null,
+    attempt_id: result?.attempt_id ?? null,
     artifacts,
   };
   const dest = path.join(layout.run_dir, "run.json");
@@ -761,6 +768,13 @@ export function normalizeResult(raw, lifecycle = "run") {
     "suggested_params",
     "suggested_params_policy",
     "scope",
+    "execution_status",
+    "product_verdict",
+    "validation_verdict",
+    "industrial_approved",
+    "run_id",
+    "attempt_id",
+    "first_error_id",
   ]) {
     if (raw[key] !== undefined) out[key] = raw[key];
   }

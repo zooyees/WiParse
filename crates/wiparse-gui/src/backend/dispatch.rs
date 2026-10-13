@@ -27,12 +27,43 @@ fn canonical_method(method: &str) -> &str {
     }
 }
 
+fn automation_service(method: &str, params: &Value) -> InvokeReply {
+    let root = std::env::var_os("WIPARSE_SERVICE_ROOT")
+        .map(PathBuf::from).unwrap_or_else(|| PathBuf::from("automation-data"));
+    let token_path = root.join("service-token.json");
+    let config = fs::read(&token_path).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+    let Some(config) = config else {
+        return err(method, "AUTOMATION.SERVICE_OFFLINE: start WiParse-Service with the same WIPARSE_SERVICE_ROOT");
+    };
+    let (Some(token), Some(port)) = (config["token"].as_str(), config["port"].as_u64()) else {
+        return err(method, "AUTOMATION.INVALID_SERVICE_CONFIG");
+    };
+    if !(1..=65535).contains(&port) { return err(method, "AUTOMATION.INVALID_SERVICE_PORT"); }
+    let service_method = if method == "automation.capabilities" { "system.capabilities" } else { method };
+    let response = ureq::post(&format!("http://127.0.0.1:{port}/v1/invoke"))
+        .timeout(Duration::from_secs(5)).set("Authorization", &format!("Bearer {token}"))
+        .set("Content-Type", "application/json")
+        .send_string(&json!({"method": service_method, "params": params}).to_string());
+    match response {
+        Ok(r) => match r.into_string().ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
+            Some(v) if v["ok"] == true => ok(method, v["data"].clone()),
+            Some(v) => err(method, v["error"].as_str().unwrap_or("AUTOMATION.SERVICE_ERROR")),
+            None => err(method, "AUTOMATION.INVALID_RESPONSE"),
+        },
+        Err(_) => err(method, "AUTOMATION.SERVICE_UNAVAILABLE"),
+    }
+}
+
 pub fn invoke(bridge: &ApiBridge, method: &str, params: Value) -> InvokeReply {
     let method = canonical_method(method);
     if is_stateful(method) {
         return invoke_stateful(bridge, method, params);
     }
     match method {
+        "wave.analyze" | "protocol.decode" | "check.evaluate" | "job.get" | "job.cancel"
+        | "device.lease.acquire" | "device.lease.release" | "uart.capture" | "stream.validate"
+        | "device.capabilities" | "time.mapping.fit" | "time.mapping.convert"
+        | "automation.capabilities" => automation_service(method, &params),
         "system.version" => ok(
             method,
             json!({

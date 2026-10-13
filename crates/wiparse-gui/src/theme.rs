@@ -19,6 +19,54 @@ pub const SPACE_LG: f32 = 16.0;
 pub const CTRL_H: f32 = 28.0;
 pub const SIDEBAR_W: f32 = 272.0;
 
+/// Width bounds always fit both panes, including unusually small windows.
+fn sidebar_width_bounds(total: f32, gap: f32, min_side: f32, min_main: f32) -> (f32, f32) {
+    let budget = (total - gap).max(0.0);
+    let main = min_main.max(budget * 0.30).min(budget * 0.55);
+    let max = (budget - main).max(0.0);
+    (min_side.min(max).max(0.0), max)
+}
+
+/// Shared draggable gutter for manually allocated tool layouts. Context memory
+/// keeps an independent preferred width per tool without changing config files.
+pub fn resizable_sidebar_width(
+    ui: &mut egui::Ui,
+    key: &str,
+    body: Rect,
+    default: f32,
+    min_side: f32,
+    min_main: f32,
+    gap: f32,
+    tokens: &Tokens,
+) -> f32 {
+    let id = ui.make_persistent_id(("tool_sidebar_width", key));
+    let preferred = ui.ctx().data(|data| data.get_temp::<f32>(id)).unwrap_or(default);
+    let (min, max) = sidebar_width_bounds(body.width(), gap, min_side, min_main);
+    let mut width = preferred.clamp(min, max);
+    let gutter = Rect::from_min_max(
+        egui::pos2(body.left() + width, body.top()),
+        egui::pos2((body.left() + width + gap).min(body.right()), body.bottom()),
+    );
+    let response = ui.interact(gutter, id.with("drag"), Sense::click_and_drag())
+        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+        .on_hover_text("拖动调整侧栏宽度 / Drag to resize\n双击恢复默认 / Double-click to reset");
+    if response.double_clicked() {
+        ui.ctx().data_mut(|data| data.insert_temp(id, default));
+        width = default.clamp(min, max);
+    } else if response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        width = (width + response.drag_delta().x).clamp(min, max);
+        ui.ctx().data_mut(|data| data.insert_temp(id, width));
+    }
+    let x = body.left() + width + gap * 0.5;
+    ui.painter().line_segment(
+        [egui::pos2(x, body.top()), egui::pos2(x, body.bottom())],
+        Stroke::new(if response.hovered() || response.dragged() { 2.0 } else { 1.0 },
+            if response.hovered() || response.dragged() { tokens.accent } else { tokens.divider }),
+    );
+    width
+}
+
 /// Type scale.
 pub const FONT_CAPTION: f32 = 12.0;
 pub const FONT_BODY: f32 = 13.0;
@@ -518,21 +566,44 @@ fn ghost_btn_in_rect(
     rect: Rect,
     selected: bool,
 ) -> egui::Response {
-    ui.scope_builder(
-        egui::UiBuilder::new()
-            .max_rect(rect)
-            .layout(egui::Layout::centered_and_justified(
-                egui::Direction::LeftToRight,
-            )),
+    in_allocated_rect(
+        ui,
+        rect,
+        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
         |ui| {
-            ui.set_clip_rect(rect.intersect(ui.clip_rect()));
-            ui.set_min_size(rect.size());
-            ui.set_max_size(rect.size());
             ui.spacing_mut().item_spacing = Vec2::ZERO;
             ghost_btn_sized(ui, t, label, rect.size(), selected)
         },
     )
-    .inner
+}
+
+/// Paint into a rectangle already reserved by the caller. Unlike scope_builder,
+/// this does not allocate again or move the parent's cursor backwards when a
+/// title, inset, or first column is shorter than the reserved row.
+/// Draw an absolute child without advancing its parent's already reserved area.
+/// Use normal `scope_builder` for children that should allocate flow space.
+pub fn scope_in_allocated_rect<R>(
+    ui: &mut egui::Ui,
+    builder: egui::UiBuilder,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let mut child = ui.new_child(builder);
+    child.set_clip_rect(child.max_rect().intersect(ui.clip_rect()));
+    let inner = add(&mut child);
+    egui::InnerResponse::new(inner, child.response())
+}
+
+pub fn in_allocated_rect<R>(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    layout: egui::Layout,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout));
+    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+    child.set_min_size(rect.size());
+    child.set_max_size(rect.size());
+    add(&mut child)
 }
 
 /// Status dot + caption for the bottom bar.
@@ -681,6 +752,77 @@ pub fn add_singleline(
 #[cfg(test)]
 mod tests {
     use super::{equal_widths, SPACE_SM};
+
+    #[test]
+    fn sidebar_bounds_fit_small_windows_and_reserve_main_content() {
+        for total in [0.0, 4.0, 8.0, 40.0, 160.0, 640.0, 1920.0] {
+            let (min, max) = super::sidebar_width_bounds(total, 8.0, 220.0, 280.0);
+            assert!(min >= 0.0 && max >= min);
+            assert!(max <= (total - 8.0_f32).max(0.0));
+            if total > 8.0 { assert!(max < total - 8.0); }
+        }
+    }
+
+    #[test]
+    fn sidebar_drag_remembers_independent_widths_and_double_click_resets() {
+        use egui::{Event, PointerButton, Pos2, RawInput, Rect, Vec2};
+        let ctx = egui::Context::default();
+        let tokens = super::Tokens::dark();
+        let mut time = 0.0;
+        let mut frame = |key: &str, screen_w: f32, events: Vec<Event>| {
+            time += 0.05;
+            let mut width = 0.0;
+            let output = ctx.run(RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(screen_w, 600.0))),
+                time: Some(time), events, ..Default::default()
+            }, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let (body, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
+                    width = super::resizable_sidebar_width(ui, key, body, 272.0, 220.0, 200.0, 8.0, &tokens);
+                });
+            });
+            (width, output.platform_output.cursor_icon)
+        };
+        let button = |pos, pressed| Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: egui::Modifiers::default() };
+        let start = Pos2::new(8.0 + 272.0 + 4.0, 100.0);
+        assert_eq!(frame("wave", 900.0, vec![]).0, 272.0);
+        assert_eq!(frame("wave", 900.0, vec![Event::PointerMoved(start)]).1, egui::CursorIcon::ResizeHorizontal);
+        frame("wave", 900.0, vec![button(start, true)]);
+        let end = start + Vec2::new(60.0, 0.0);
+        assert_eq!(frame("wave", 900.0, vec![Event::PointerMoved(end)]).0, 332.0);
+        frame("wave", 900.0, vec![button(end, false)]);
+        assert_eq!(frame("wave", 900.0, vec![]).0, 332.0);
+        assert_eq!(frame("serial", 900.0, vec![]).0, 272.0);
+        assert!(frame("wave", 160.0, vec![]).0 < 160.0);
+        assert_eq!(frame("wave", 900.0, vec![]).0, 332.0);
+        frame("wave", 900.0, vec![Event::PointerMoved(end), button(end, true)]);
+        frame("wave", 900.0, vec![button(end, false)]);
+        frame("wave", 900.0, vec![button(end, true)]);
+        assert_eq!(frame("wave", 900.0, vec![button(end, false)]).0, 272.0);
+    }
+
+    #[test]
+    fn inset_children_do_not_rewind_reserved_rows() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let (row, _) = ui.allocate_exact_size(egui::vec2(360.0, 60.0), egui::Sense::hover());
+                let after = ui.cursor();
+                for inset in [0.0, 4.0, 10.0] {
+                    super::scope_in_allocated_rect(ui,
+                        egui::UiBuilder::new().max_rect(row.shrink(inset)), |ui| {
+                            ui.label("short child");
+                        });
+                    assert_eq!(ui.cursor(), after);
+                }
+                super::in_allocated_rect(ui, row.shrink(8.0),
+                    egui::Layout::left_to_right(egui::Align::Center), |ui| { ui.button("button"); });
+                assert_eq!(ui.cursor(), after);
+                let next = ui.label("next row");
+                assert!(next.rect.top() >= row.bottom());
+            });
+        });
+    }
 
     #[test]
     fn equal_widths_fill_the_row() {

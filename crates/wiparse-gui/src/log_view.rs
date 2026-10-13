@@ -473,7 +473,7 @@ pub fn show_virtual_log_pane<S: LogStore + ?Sized>(
         return;
     }
     let mut gutter_rows: Vec<(f32, f32, usize)> = Vec::new();
-    ui.scope_builder(
+    crate::theme::scope_in_allocated_rect(ui,
         UiBuilder::new()
             .max_rect(viewport_rect)
             .layout(Layout::top_down(Align::Min)),
@@ -1026,7 +1026,7 @@ pub fn show_virtual_search_pane<S: LogStore + ?Sized>(
     }
     let mut frozen_rows = Vec::<FrozenRow>::new();
 
-    ui.scope_builder(
+    crate::theme::scope_in_allocated_rect(ui,
         UiBuilder::new()
             .max_rect(viewport_rect)
             .layout(Layout::top_down(Align::Min)),
@@ -1780,7 +1780,7 @@ pub fn show_virtual_line_editor(
     }
 
     let mut gutter_rows: Vec<(f32, f32, usize)> = Vec::new();
-    ui.scope_builder(
+    crate::theme::scope_in_allocated_rect(ui,
         UiBuilder::new()
             .max_rect(viewport_rect)
             .layout(Layout::top_down(Align::Min)),
@@ -1858,7 +1858,7 @@ pub fn show_virtual_line_editor(
                         let prev_len = session.lines[row].chars().count();
                         let mut line = std::mem::take(&mut session.lines[row]);
                         let editor_id = ui.id().with(("line-edit-row", salt));
-                        let inner = ui.allocate_new_ui(
+                        let inner = crate::theme::scope_in_allocated_rect(ui,
                             UiBuilder::new()
                                 .max_rect(text_rect)
                                 .layout(Layout::left_to_right(Align::Center)),

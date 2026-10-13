@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "plugin_version": "0.1.1",
+  "cases": 37,
+  "sys_requirements": 10,
+  "matching_source_files": 25,
+  "sha256": "9dced04158cdd478a3bd5544d8f4c364646d0a3cb923bd8b215c057ad54b2e0f",
+  "industrial_approved": false
+}

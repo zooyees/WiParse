@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>WiParse 总览效果</title>
+<style>
+  :root { --cyan:#4ae3ff; --green:#30d158; --amber:#e2b15a; --bg:#061018; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:#04080c; color:#d5e6ee; font-family:"Segoe UI","Microsoft YaHei UI",sans-serif; }
+  .app { width:1440px; height:810px; background:var(--bg); display:grid; grid-template-rows:44px 1fr 32px; overflow:hidden; }
+  .tabs { display:flex; align-items:flex-end; gap:26px; padding:0 18px; border-bottom:1px solid rgba(74,227,255,.12); }
+  .tabs span { font-size:13px; color:#4e6874; padding-bottom:10px; }
+  .tabs .on { color:#e7f6fb; box-shadow:inset 0 -2px 0 var(--cyan); }
+  .body { display:grid; grid-template-columns:188px 1fr; min-height:0; }
+  aside { border-right:1px solid rgba(74,227,255,.1); padding:10px 8px; background:#07131c; }
+  aside div { font-size:13px; color:#7f9aa6; padding:7px 10px; white-space:nowrap; }
+  aside .sel { color:#e7f6fb; background:rgba(74,227,255,.08); box-shadow:inset 2px 0 0 var(--cyan); }
+  main { position:relative; overflow:hidden; }
+  .head { position:relative; z-index:3; display:grid; grid-template-columns:1fr auto 1fr; align-items:center; padding:12px 22px 0; }
+  h1 { font-size:15px; letter-spacing:.16em; font-weight:560; }
+  .scene { color:#7f9aa6; letter-spacing:.2em; font-size:14px; }
+  .scene.ai { color:var(--cyan); font-size:18px; }
+  .lamp { justify-self:end; display:flex; gap:8px; align-items:center; color:var(--green); font-size:13px; letter-spacing:.12em; }
+  .lamp.amber { color:var(--amber); }
+  .dot { width:7px; height:7px; border-radius:50%; background:currentColor; box-shadow:0 0 8px currentColor; }
+  .steps { display:none; position:absolute; z-index:3; left:0; right:0; top:46px; text-align:center; }
+  .ai .steps { display:block; }
+  .steps ol { list-style:none; display:flex; justify-content:center; gap:32px; color:#4e6874; font-size:13px; letter-spacing:.14em; }
+  .steps .now { color:var(--cyan); }
+  .steps p { margin-top:6px; color:#8aa0aa; font-size:12px; }
+  .floor { position:absolute; left:0; right:0; bottom:0; height:430px; perspective:700px; }
+  .grid {
+    position:absolute; left:-12%; right:-12%; top:80px; bottom:-30px;
+    transform:rotateX(68deg); transform-origin:center bottom;
+    background-image:linear-gradient(rgba(74,227,255,.2) 1px,transparent 1px),linear-gradient(90deg,rgba(74,227,255,.2) 1px,transparent 1px);
+    background-size:72px 72px; background-position:center bottom;
+    mask-image:linear-gradient(to top,#000 18%,transparent 90%);
+  }
+  .bench { position:absolute; z-index:2; left:16px; right:12px; bottom:196px; display:flex; align-items:flex-end; gap:14px; }
+  .gap { width:18px; }
+  .unit { position:relative; flex:0 0 auto; }
+  .top, .side { position:absolute; background:#12181e; }
+  .top { left:8px; right:-8px; top:-8px; height:8px; transform:skewX(-42deg); transform-origin:left bottom; border:1px solid rgba(74,227,255,.25); }
+  .side { top:0; right:-8px; bottom:8px; width:8px; transform:skewY(-42deg); transform-origin:left top; background:#0c1218; border:1px solid rgba(74,227,255,.18); }
+  .face { position:relative; background:#10161c; border:1px solid rgba(74,227,255,.35); padding:6px 8px 8px; min-height:118px; }
+  .unit.scope .face { background:#071018; width:210px; }
+  .unit.src .face { width:196px; }
+  .unit.load .face { background:#140e0c; width:168px; }
+  .unit.dmm .face { background:#141208; width:150px; }
+  .unit.probe .face { background:#0c1412; width:132px; }
+  .unit.dongle .face, .unit.bridge .face { width:132px; }
+  .fh { display:flex; justify-content:space-between; font:10px/1.2 Consolas,monospace; color:#9fb4be; margin-bottom:6px; }
+  .fh b { color:#d5e6ee; font-weight:500; }
+  .ok { color:var(--green); } .dim { color:#5c7380; } .hot { color:var(--cyan); }
+  .ch { display:grid; grid-template-columns:28px 1fr 1fr 10px; gap:4px; font:11px/1.5 Consolas,monospace; color:#c5d5de; }
+  .led { width:6px; height:6px; border-radius:50%; background:#2a3540; align-self:center; }
+  .led.on { background:var(--green); box-shadow:0 0 6px var(--green); }
+  .screen { height:72px; background:#041018; border:1px solid rgba(74,227,255,.25); position:relative; overflow:hidden; }
+  .screen svg { width:100%; height:100%; }
+  .meta { display:flex; justify-content:space-between; margin-top:4px; font:10px Consolas,monospace; color:#7f9aa6; }
+  .lcd { margin-top:8px; font:28px/1 Consolas,monospace; color:#d6ff6a; letter-spacing:-.04em; }
+  .sub { font:10px Consolas,monospace; color:#8a7a40; margin-top:4px; }
+  .kv { font:11px/1.55 Consolas,monospace; color:#b7c9c4; }
+  .pin { position:absolute; left:50%; top:100%; width:1px; height:46px; background:linear-gradient(rgba(74,227,255,.45), transparent); }
+  .unit.lit .pin { background:linear-gradient(var(--green), transparent); }
+  .unit.acq .pin { background:linear-gradient(var(--cyan), transparent); }
+  .unit.acq .face { box-shadow:inset 3px 0 0 var(--cyan); }
+  footer { display:flex; align-items:center; padding:0 18px; border-top:1px solid rgba(74,227,255,.12); color:#4e6874; font-size:12px; letter-spacing:.06em; }
+  .link { position:absolute; z-index:1; left:0; right:0; bottom:168px; height:40px; pointer-events:none; }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <nav class="tabs"><span class="on">仪器</span><span>串口</span><span>波形</span><span>报告</span></nav>
+  <div class="body">
+    <aside>
+      <div class="sel">总览</div><div>示波器</div><div>直流电源</div><div>电子负载</div>
+      <div>万用表</div><div>探针</div><div>Dongle</div><div>桥</div>
+    </aside>
+    <main>
+      <div class="head">
+        <h1>总览</h1>
+        <div class="scene" id="scene">待机</div>
+        <div class="lamp" id="lamp"><i class="dot"></i><span id="lw">稳定</span></div>
+      </div>
+      <div class="steps">
+        <ol><li>供能</li><li class="now">采集</li><li>拉载</li><li>判定</li></ol>
+        <p>电源已稳在 5.000 V · 示波器正在采集 · 负载待命</p>
+      </div>
+      <div class="floor"><div class="grid"></div></div>
+      <svg class="link" id="link" viewBox="0 0 1200 40" preserveAspectRatio="none"></svg>
+      <div class="bench">
+        <div class="unit src lit" id="u0"><i class="top"></i><i class="side"></i>
+          <div class="face">
+            <div class="fh"><b>SRC  DP832</b><span class="ok">输出</span></div>
+            <div class="ch"><span>CH1</span><span>5.000 V</span><span>0.102 A</span><i class="led on"></i></div>
+            <div class="ch"><span>CH2</span><span>3.300 V</span><span>0.040 A</span><i class="led on"></i></div>
+            <div class="ch"><span>CH3</span><span>0.000 V</span><span>0.000 A</span><i class="led"></i></div>
+          </div><i class="pin"></i>
+        </div>
+        <div class="unit load" id="u1"><i class="top"></i><i class="side"></i>
+          <div class="face">
+            <div class="fh"><b>LOAD  IT8511A+</b><span class="dim" id="loadst">开路</span></div>
+            <div class="kv">CC  1.000 A</div>
+            <div class="kv" id="loadv">0.000 V</div>
+            <div class="kv">0.000 W</div>
+          </div><i class="pin"></i>
+        </div>
+        <div class="gap"></div>
+        <div class="unit scope" id="u2"><i class="top"></i><i class="side"></i>
+          <div class="face">
+            <div class="fh"><b>OSC  DS1054Z</b><span class="dim" id="scopest">停止</span></div>
+            <div class="screen">
+              <svg viewBox="0 0 200 72">
+                <g stroke="rgba(74,227,255,.18)" stroke-width="1">
+                  <path d="M0 18 H200 M0 36 H200 M0 54 H200 M40 0 V72 M80 0 V72 M120 0 V72 M160 0 V72"/>
+                </g>
+                <path id="trace" d="M0 48 C 30 48, 40 22, 70 24 S 110 58, 140 40 180 20, 200 28" fill="none" stroke="#e6c84a" stroke-width="1.6"/>
+              </svg>
+            </div>
+            <div class="meta"><span>1.000 ms</span><span>CH1 1.00 V</span></div>
+          </div><i class="pin"></i>
+        </div>
+        <div class="unit dmm" id="u3"><i class="top"></i><i class="side"></i>
+          <div class="face">
+            <div class="fh"><b>DMM  34461A</b><span class="dim">DC V</span></div>
+            <div class="lcd">0.000</div>
+            <div class="sub">V  AUTO</div>
+          </div><i class="pin"></i>
+        </div>
+        <div class="gap"></div>
+        <div class="unit probe"><i class="top"></i><i class="side"></i>
+          <div class="face"><div class="fh"><b>PROBE</b><span class="dim">J-Link</span></div>
+            <div class="kv">TGT  AUTO</div><div class="kv">4.000 kHz</div><div class="kv">RTT OFF</div>
+          </div><i class="pin"></i>
+        </div>
+        <div class="unit dongle"><i class="top"></i><i class="side"></i>
+          <div class="face"><div class="fh"><b>DONGLE</b><span class="ok">在线</span></div>
+            <div class="kv">DAP</div><div class="kv">192.168.137.123</div><div class="kv">IDLE</div>
+          </div><i class="pin"></i>
+        </div>
+        <div class="unit bridge"><i class="top"></i><i class="side"></i>
+          <div class="face"><div class="fh"><b>FT4222</b><span class="dim">桥</span></div>
+            <div class="kv">SPI</div><div class="kv">1.000 MHz</div><div class="kv">MODE 0</div>
+          </div><i class="pin"></i>
+        </div>
+      </div>
+    </main>
+  </div>
+  <footer id="foot">点击设备进入控制台</footer>
+</div>
+<script>
+  const ai = location.search.includes("ai");
+  if (ai) {
+    document.getElementById("app").classList.add("ai");
+    document.getElementById("scene").textContent = "充电闭环";
+    document.getElementById("scene").classList.add("ai");
+    document.getElementById("lamp").classList.add("amber");
+    document.getElementById("lw").textContent = "采集中";
+    document.getElementById("u2").classList.add("acq");
+    document.getElementById("scopest").textContent = "采集";
+    document.getElementById("scopest").className = "hot";
+    document.getElementById("loadst").textContent = "待命";
+    document.getElementById("trace").setAttribute("stroke", "#5ee7ff");
+  }
+</script>
+</body>
+</html>

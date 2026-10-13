@@ -32,6 +32,19 @@ pub fn capabilities_json() -> Value {
 
 fn method_catalog() -> Vec<Value> {
     vec![
+        json!({"method":"automation.capabilities","params":{},"service_required":true}),
+        json!({"method":"device.capabilities","params":{},"service_required":true}),
+        json!({"method":"device.lease.acquire","params":{"resource":"COM3","ttl_s":60},"service_required":true}),
+        json!({"method":"device.lease.release","service_required":true}),
+        json!({"method":"job.get","params":{"job_id":"uuid"},"service_required":true}),
+        json!({"method":"job.cancel","params":{"job_id":"uuid"},"service_required":true}),
+        json!({"method":"wave.analyze","service_required":true}),
+        json!({"method":"protocol.decode","service_required":true,"mode":"bounded_offline"}),
+        json!({"method":"stream.validate","service_required":true}),
+        json!({"method":"uart.capture","service_required":true,"verification":"experimental"}),
+        json!({"method":"check.evaluate","service_required":true}),
+        json!({"method":"time.mapping.fit","service_required":true}),
+        json!({"method":"time.mapping.convert","service_required":true}),
         json!({"method": "system.version", "params": {}}),
         json!({"method": "system.ui.state", "params": {}, "stateful": true}),
         json!({"method": "ui.state", "params": {}, "stateful": true, "alias_of": "system.ui.state"}),

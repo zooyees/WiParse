@@ -1,0 +1,5 @@
+{
+    "note":  "Keep this PDB with the EXE build identified by exe_sha256. It cannot symbolize a different build.",
+    "exe_sha256":  "B2DCA70477BD652A0201CA1B8941A1060F45184AF2913FE70C20527AC36EDB3C",
+    "pdb_sha256":  "777302F1030A461375E51D7CFBFAC15A50CCF0E9CC16AC1E8E3C5237AEAC1625"
+}

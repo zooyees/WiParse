@@ -1,0 +1,38 @@
+{
+  "schema_version": "wiparse.wireless-plugin/1",
+  "version": "0.1.0",
+  "objects": [
+    {
+      "id": "usbpd",
+      "type": "protocol-emulator-placeholder",
+      "protocol": "USBPD",
+      "verified": false,
+      "real_adapter": false,
+      "serial": null
+    },
+    {
+      "id": "scp",
+      "type": "protocol-emulator-placeholder",
+      "protocol": "SCP",
+      "verified": false,
+      "real_adapter": false,
+      "serial": null
+    },
+    {
+      "id": "ufcs",
+      "type": "protocol-emulator-placeholder",
+      "protocol": "UFCS",
+      "verified": false,
+      "real_adapter": false,
+      "serial": null
+    },
+    {
+      "id": "fixeddc",
+      "type": "protocol-emulator-placeholder",
+      "protocol": "FixedDC",
+      "verified": false,
+      "real_adapter": false,
+      "serial": null
+    }
+  ]
+}

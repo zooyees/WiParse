@@ -1,5 +1,7 @@
 # WiParse 在线更新架构与服务器部署
 
+1.1.30 开发验证包及变更说明见 [版本说明](releases/1.1.30.md)。本次只更新 Git 版本及本地发布文件，尚未向在线更新服务器发布 stable 清单。
+
 本文档描述 WiParse 通过 HTTPS 服务器分发版本的架构、客户端行为，以及服务器侧部署要求。
 
 ## 1. 总体架构
@@ -216,4 +218,4 @@ python -m http.server 8443
 
 ---
 
-**当前版本号来源**：工作区 `Cargo.toml` → `1.1.27`。发布新版本前请 bump workspace `version`、更新 [`CHANGELOG.md`](CHANGELOG.md)、同步关于页 `about.notes`，并重新编译。
+**当前版本号来源**：工作区 `Cargo.toml` → `1.1.29`。发布新版本前请 bump workspace `version`、更新 [`CHANGELOG.md`](CHANGELOG.md)、同步关于页 `about.notes`，并重新编译。

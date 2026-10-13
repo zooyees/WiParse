@@ -1,3 +1,4 @@
+import { writeReportWithEvidence } from "../../lib/plugin-session.mjs";
 /**
  * UART transparent bridge (WIPARSE-IF CH-UART).
  */
@@ -32,7 +33,6 @@ import {
   truthy,
   writeHud,
   writeJson,
-  writeText,
 } from "../../lib/plugin-session.mjs";
 
 function mergeArgs(config, args) {
@@ -277,7 +277,7 @@ export default async function run(ctx) {
       const d = await discover(ctx, args);
       writeJson(path.join(logsDir, `uart_discover_${stamp}.json`), d);
       const md = config.paths.summary_md;
-      writeText(
+      writeReportWithEvidence(ctx.plugin, layout,
         md,
         `# UART discover ${stamp}\n\n${d.checks.map((c) => `- ${c.ok ? "OK" : "X"} ${c.id}: ${c.detail}`).join("\n")}\n`
       );
@@ -316,8 +316,9 @@ export default async function run(ctx) {
     } else {
       result = await runByteChannel(ctx, { ...args, duration_s: args.op === "send" ? Math.max(args.duration_s, 0.5) : args.duration_s }, session);
     }
+    writeJson(path.join(logsDir, `uart_${stamp}.json`), { args, result });
     const md = config.paths.summary_md;
-    writeText(
+    writeReportWithEvidence(ctx.plugin, layout,
       md,
       [
         `# UART ${args.op} ${stamp}`,
@@ -329,7 +330,6 @@ export default async function run(ctx) {
         "",
       ].join("\n")
     );
-    writeJson(path.join(logsDir, `uart_${stamp}.json`), { args, result });
     return normalizeResult(
       attachArtifacts(
         { ok: result.ok !== false, step: args.op, error: result.error, summary_md: md },

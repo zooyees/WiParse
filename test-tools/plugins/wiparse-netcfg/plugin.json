@@ -5,7 +5,7 @@
   "report_name": "WiparseNetcfg",
   "report_name_zh": "Dongle 配网",
   "type": "instrument",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "entry": "index.mjs",
   "config": "station.json",
   "description": "WIPARSE-IF CH-NETCFG. Fill 2.4 GHz SSID/PSK, keep DHCP on, APPLY over USB MI_05 EP0 without flashing. Empty SSID/PSK leave NVS unchanged. TCP :1238 is only after GOT_IP.",

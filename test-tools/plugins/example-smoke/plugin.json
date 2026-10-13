@@ -5,7 +5,7 @@
   "report_name": "ExampleSmoke",
   "report_name_zh": "示例冒烟",
   "type": "smoke",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "entry": "index.mjs",
   "description": "Framework demo: CLI version + optional API health (preflight/run/stop). Writes a Markdown report under tests/{report_name}/runs/{stamp}/.",
   "capabilities": ["preflight", "run", "stop"],

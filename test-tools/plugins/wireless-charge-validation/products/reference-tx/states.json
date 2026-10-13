@@ -1,0 +1,79 @@
+{
+  "schema_version": "wiparse.wireless-plugin/1",
+  "version": "0.1.0",
+  "layers": {
+    "input": [
+      "OFF",
+      "NEGOTIATING",
+      "READY",
+      "FAULT"
+    ],
+    "tx": [
+      "IDLE",
+      "PING",
+      "IDENTIFY",
+      "PT",
+      "EPT",
+      "FAULT"
+    ],
+    "battery": [
+      "UNKNOWN",
+      "CC",
+      "CV",
+      "DONE"
+    ]
+  },
+  "transitions": {
+    "input": {
+      "OFF": [
+        "NEGOTIATING"
+      ],
+      "NEGOTIATING": [
+        "READY",
+        "FAULT"
+      ],
+      "READY": [
+        "OFF",
+        "FAULT"
+      ],
+      "FAULT": [
+        "OFF"
+      ]
+    },
+    "tx": {
+      "IDLE": [
+        "PING"
+      ],
+      "PING": [
+        "IDENTIFY",
+        "IDLE",
+        "FAULT"
+      ],
+      "IDENTIFY": [
+        "PT",
+        "FAULT"
+      ],
+      "PT": [
+        "EPT",
+        "FAULT"
+      ],
+      "EPT": [
+        "IDLE"
+      ],
+      "FAULT": [
+        "IDLE"
+      ]
+    },
+    "battery": {
+      "UNKNOWN": [
+        "CC"
+      ],
+      "CC": [
+        "CV"
+      ],
+      "CV": [
+        "DONE"
+      ]
+    }
+  }
+}

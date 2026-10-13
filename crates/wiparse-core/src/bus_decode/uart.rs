@@ -1,7 +1,7 @@
 //! UART (async NRZ) decode from a single analog trace.
 
 use super::digital::{edge_intervals, EdgeKind, LogicWave};
-use super::{try_push_frame, BusDecodeResult, BusFrame, BusFrameError, MAX_DECODE_BYTES};
+use super::{try_push_frame, BusDecodeResult, BusFrame, BusFrameError};
 use crate::instrument::WaveformTrace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -118,7 +118,7 @@ pub fn decode_uart(
         if !is_start || e.time < next_t {
             continue;
         }
-        if used >= MAX_DECODE_BYTES {
+        if used >= super::decode_byte_limit() {
             truncated = true;
             break;
         }
@@ -161,7 +161,7 @@ pub fn decode_uart(
         frames.len()
     );
     if truncated {
-        info.push_str(&format!("; truncated at {MAX_DECODE_BYTES} bytes"));
+        info.push_str(&format!("; truncated by decode budget ({} bytes)", super::decode_byte_limit()));
     }
 
     let empty = frames.is_empty();
@@ -625,6 +625,18 @@ mod tests {
             .map(|f| f.bytes[0])
             .collect();
         assert_eq!(data, vec![0x55], "{:?}", r.frames.iter().map(|f| &f.summary).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn offline_budget_exceeds_display_budget_and_is_restored() {
+        use super::super::{decode_bus,decode_bus_offline,BusDecodeSettings,BusKind};
+        let trace=synth_uart_break_then_bytes(13,&vec![0x55;700],115200.0,8);
+        let mut s=BusDecodeSettings::default();s.kind=BusKind::Uart;s.channels.uart_signal=Some(0);s.uart.baud=Some(115200.0);
+        let full=decode_bus_offline(&[trace.clone()],&s,1024,4096).unwrap();
+        assert_eq!(full.frames.iter().filter(|f|!f.bytes.is_empty()).count(),700);
+        assert!(!full.truncated);
+        let display=decode_bus(&[trace.clone()],&s);assert!(display.truncated);assert!(display.frames.len()<=513);
+        assert!(decode_bus_offline(&[trace],&s,usize::MAX,4096).is_err());
     }
 
     #[test]

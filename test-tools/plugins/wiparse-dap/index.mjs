@@ -1,3 +1,4 @@
+import { writeReportWithEvidence } from "../../lib/plugin-session.mjs";
 /**
  * CMSIS-DAP v2 channel plugin (WIPARSE-IF CH-DAP).
  */
@@ -304,7 +305,7 @@ export default async function run(ctx) {
     writeJson(path.join(logsDir, `dap_${stamp}.json`), { args, discovered, results });
     writeText(path.join(logsDir, `dap_${stamp}.jsonl`), logLines.map((l) => JSON.stringify({ t: Date.now(), l })).join("\n"));
     const md = config.paths.summary_md || path.join(config.paths.report_dir, `WiparseDap_${stamp}.md`);
-    writeText(md, renderReport({ stamp, args, discovered, results }));
+    writeReportWithEvidence(ctx.plugin, layout,md, renderReport({ stamp, args, discovered, results }));
     const fail = results.find((r) => r.ok === false);
     const raw = attachArtifacts(
       {

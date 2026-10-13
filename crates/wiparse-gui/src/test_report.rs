@@ -79,6 +79,7 @@ pub struct TestReportPanel {
     index: IndexedProject,
     selected: Option<PathBuf>,
     preview_title: String,
+    return_report: Option<PathBuf>,
     preview: Option<PreviewKind>,
     status: String,
     /// Textures for `![alt](path)` relative to the open report file.
@@ -104,6 +105,7 @@ impl TestReportPanel {
             },
             selected: None,
             preview_title: String::new(),
+            return_report: None,
             preview: None,
             status: String::new(),
             image_textures: HashMap::new(),
@@ -180,11 +182,9 @@ impl TestReportPanel {
             return ReportAction::None;
         }
 
-        let side_w = SIDE_W
-            .min(full.width() * 0.38)
-            .max(250.0)
-            .min((full.width() - 180.0).max(200.0));
-        let view_w = (full.width() - side_w - PANEL_GAP).max(160.0);
+        let side_w = ui_theme::resizable_sidebar_width(ui, "test_report", full,
+            SIDE_W, 220.0, 220.0, PANEL_GAP, tokens);
+        let view_w = (full.width() - side_w - PANEL_GAP).max(0.0);
         let side_rect = egui::Rect::from_min_size(full.min, egui::vec2(side_w, full.height()));
         let view_rect = egui::Rect::from_min_size(
             egui::pos2(full.min.x + side_w + PANEL_GAP, full.min.y),
@@ -313,12 +313,14 @@ impl TestReportPanel {
         lang: Lang,
         action: &mut ReportAction,
     ) {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        let view = open_view_for_file(view, view, name);
         self.selected = Some(path.clone());
         self.preview_title = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
-        if is_markdown(&path) || view == ArtifactView::Report {
+        if is_markdown(&path) {
             self.open_report(path, lang);
             return;
         }
@@ -401,6 +403,7 @@ impl TestReportPanel {
     }
 
     pub fn open_markdown(&mut self, path: PathBuf, lang: Lang) {
+        self.return_report = None;
         self.open_report(path, lang);
     }
 
@@ -479,7 +482,7 @@ impl TestReportPanel {
                 let mut picked = self.project_id.clone();
                 let mut open_new_project = false;
                 let projects = self.projects.clone();
-                ui.scope_builder(
+                crate::theme::scope_in_allocated_rect(ui,
                     egui::UiBuilder::new()
                         .max_rect(combo_rect)
                         .layout(egui::Layout::left_to_right(egui::Align::Center)),
@@ -512,8 +515,7 @@ impl TestReportPanel {
                     egui::pos2(prow.max.x - refresh_w, prow.min.y),
                     prow.max,
                 );
-                let refresh_clicked = ui
-                    .scope_builder(
+                let refresh_clicked = crate::theme::scope_in_allocated_rect(ui,
                         egui::UiBuilder::new()
                             .max_rect(refresh_rect)
                             .layout(egui::Layout::left_to_right(egui::Align::Center)),
@@ -838,6 +840,7 @@ impl TestReportPanel {
                         }
                     }
                     if let Some((path, view, overlay)) = open_file {
+                        self.return_report = None;
                         self.apply_open(path, view, overlay, lang, &mut action);
                     }
                 }
@@ -871,7 +874,7 @@ impl TestReportPanel {
                     self.preview_title.clone()
                 };
                 let row_w = ui.available_width().max(1.0);
-                let button_w = if self.selected.is_some() { 120.0 } else { 0.0 };
+                let button_w = if self.return_report.is_some() { 224.0 } else if self.selected.is_some() { 120.0 } else { 0.0 };
                 let gap = if button_w > 0.0 { 8.0 } else { 0.0 };
                 let (row, _) = ui.allocate_exact_size(
                     egui::vec2(row_w, ui_theme::CTRL_H),
@@ -885,7 +888,7 @@ impl TestReportPanel {
                     row.min,
                     egui::pos2((button_rect.left() - gap).max(row.left()), row.bottom()),
                 );
-                ui.scope_builder(
+                crate::theme::scope_in_allocated_rect(ui,
                     egui::UiBuilder::new()
                         .max_rect(title_rect)
                         .layout(egui::Layout::left_to_right(egui::Align::Center)),
@@ -903,9 +906,10 @@ impl TestReportPanel {
                         );
                     },
                 );
+                let mut back = false;
                 if button_w > 0.0 {
                     let mut open_external = false;
-                    ui.scope_builder(
+                    crate::theme::scope_in_allocated_rect(ui,
                         egui::UiBuilder::new()
                             .max_rect(button_rect)
                             .layout(egui::Layout::right_to_left(egui::Align::Center)),
@@ -914,9 +918,14 @@ impl TestReportPanel {
                                 ui,
                                 tokens,
                                 tr(lang, "report.open_external"),
-                                button_rect.size(),
+                                egui::vec2(120.0, ui_theme::CTRL_H),
                             )
                             .clicked();
+                            if self.return_report.is_some() {
+                                back = ui_theme::secondary_btn_sized(ui, tokens,
+                                    if lang == Lang::Zh { "返回报告" } else { "Back" },
+                                    egui::vec2(96.0, ui_theme::CTRL_H)).clicked();
+                            }
                         },
                     );
                     if open_external {
@@ -959,7 +968,7 @@ impl TestReportPanel {
                     .corner_radius(CornerRadius::same(6))
                     .inner_margin(Margin::symmetric(14, 12))
                     .show(ui, |ui| {
-                        ui.set_min_height(content_h - 4.0);
+                        ui.set_min_height(ui.available_height().max(1.0));
                         ui.set_min_width(ui.available_width());
                         match &preview {
                             None => {
@@ -1039,7 +1048,12 @@ impl TestReportPanel {
                 if open_ext {
                     self.open_external(lang);
                 }
-                if let Some((path, view, overlay)) = md_open {
+                if back {
+                    if let Some(path) = self.return_report.take() { self.open_report(path, lang); }
+                } else if let Some((path, view, overlay)) = md_open {
+                    if self.selected.as_ref().is_some_and(|p| is_markdown(p)) {
+                        self.return_report = self.selected.clone();
+                    }
                     self.apply_open(path, view, overlay, lang, &mut action);
                 }
             });
@@ -1111,16 +1125,7 @@ impl TestReportPanel {
 }
 
 fn panel_in_rect(ui: &mut egui::Ui, rect: egui::Rect, add: impl FnOnce(&mut egui::Ui)) {
-    ui.scope_builder(
-        egui::UiBuilder::new()
-            .max_rect(rect)
-            .layout(egui::Layout::top_down(egui::Align::Min)),
-        |ui| {
-            ui.set_clip_rect(rect.intersect(ui.clip_rect()));
-            ui.set_min_size(rect.size());
-            add(ui);
-        },
-    );
+    crate::theme::in_allocated_rect(ui, rect, egui::Layout::top_down(egui::Align::Min), add);
 }
 
 fn is_report_group(group: &IndexedGroup) -> bool {
@@ -1133,21 +1138,13 @@ fn report_files(result: &IndexedResult) -> Vec<&IndexedFile> {
         .iter()
         .filter(|g| is_report_group(g))
         .flat_map(|g| g.files.iter())
+        .filter(|f| is_markdown(&f.path))
         .collect()
 }
 
 fn run_has_children(result: &IndexedResult) -> bool {
-    let report_n: usize = result
-        .groups
-        .iter()
-        .filter(|g| is_report_group(g))
-        .map(|g| g.files.len())
-        .sum();
-    let attachments = result
-        .groups
-        .iter()
-        .any(|g| !is_report_group(g) && !g.files.is_empty());
-    report_n > 1 || attachments
+    report_files(result).len() > 1 || result.groups.iter().any(|g|
+        g.files.iter().any(|f| !is_report_group(g) || !is_markdown(&f.path)))
 }
 
 fn group_label<'a>(lang: Lang, group: &'a IndexedGroup) -> &'a str {
@@ -1172,7 +1169,7 @@ fn paint_output_groups(
     let report_rows: Vec<(&IndexedFile, &IndexedGroup)> = groups
         .iter()
         .filter(|g| is_report_group(g))
-        .flat_map(|g| g.files.iter().map(move |f| (f, g)))
+        .flat_map(|g| g.files.iter().filter(|f| is_markdown(&f.path)).map(move |f| (f, g)))
         .collect();
     if report_rows.len() > 1 {
         let labels: Vec<String> = report_rows
@@ -1189,7 +1186,7 @@ fn paint_output_groups(
 
     let attach: Vec<&IndexedGroup> = groups
         .iter()
-        .filter(|g| !is_report_group(g) && !g.files.is_empty())
+        .filter(|g| g.files.iter().any(|f| !is_report_group(g) || !is_markdown(&f.path)))
         .collect();
     let multi_roles = attach.len() >= 2;
     for group in attach {
@@ -1197,8 +1194,8 @@ fn paint_output_groups(
         if multi_roles && group.files.len() > 1 {
             tree_caption_row(ui, tokens, depth, role);
         }
-        let parts: Vec<(String, String)> = group
-            .files
+        let files: Vec<_> = group.files.iter().filter(|f| !is_report_group(group) || !is_markdown(&f.path)).collect();
+        let parts: Vec<(String, String)> = files
             .iter()
             .map(|f| {
                 (
@@ -1208,7 +1205,7 @@ fn paint_output_groups(
             })
             .collect();
         let titles = attachment_titles(role, &parts);
-        for (file, title) in group.files.iter().zip(titles) {
+        for (file, title) in files.into_iter().zip(titles) {
             paint_file_row(
                 ui, lang, tokens, depth, &title, file, group.view, selected, open_file,
             );
@@ -1678,7 +1675,7 @@ fn is_wave_file(path: &Path) -> bool {
 }
 
 fn is_text_file(path: &Path) -> bool {
-    matches!(file_ext_path(path).as_str(), "txt" | "log")
+    matches!(file_ext_path(path).as_str(), "txt" | "log" | "json" | "jsonl")
 }
 
 fn is_image_file(path: &Path) -> bool {
@@ -1711,7 +1708,7 @@ fn open_view_for_file(file_view: ArtifactView, group_view: ArtifactView, name: &
             ArtifactView::External
         }
         "isf" | "wfm" | "csv" => ArtifactView::Wave,
-        "log" => ArtifactView::Log,
+        "log" | "json" | "jsonl" => ArtifactView::Log,
         "txt" => group_view,
         _ => file_view,
     }
@@ -1741,7 +1738,10 @@ fn reveal_in_folder(path: &Path) {
 }
 
 fn read_text_capped(path: &Path) -> Result<String, String> {
-    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    use std::io::Read;
+    let file = fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::new();
+    file.take((MAX_PREVIEW_CHARS + 1) as u64).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
     let slice = if bytes.len() > MAX_PREVIEW_CHARS {
         &bytes[..MAX_PREVIEW_CHARS]
     } else {
@@ -1965,7 +1965,7 @@ fn paint_md_doc(
 ) {
     ui.spacing_mut().item_spacing.y = 2.0;
     let mut table_id = 0u32;
-    for block in &doc.blocks {
+    for (block_id, block) in doc.blocks.iter().enumerate() {
         match block {
             MdBlock::Heading { level, text } => {
                 let size = match *level {
@@ -1975,11 +1975,7 @@ fn paint_md_doc(
                     _ => ui_theme::FONT_BODY + 1.0,
                 };
                 ui.add_space(if *level <= 2 { 10.0 } else { 6.0 });
-                ui.add(
-                    egui::Label::new(md_inline_job(text, size, true, tokens))
-                        .wrap()
-                        .selectable(false),
-                );
+                paint_md_inline(ui, text, size, true, tokens, base_dir, open, ctrl_hint);
                 if *level == 1 {
                     ui.add_space(3.0);
                     rule_line(ui, tokens, 1.2);
@@ -1990,11 +1986,7 @@ fn paint_md_doc(
             }
             MdBlock::Paragraph { text } => {
                 ui.add_space(4.0);
-                ui.add(
-                    egui::Label::new(md_inline_job(text, ui_theme::FONT_BODY, false, tokens))
-                        .wrap()
-                        .selectable(true),
-                );
+                paint_md_inline(ui, text, ui_theme::FONT_BODY, false, tokens, base_dir, open, ctrl_hint);
                 ui.add_space(2.0);
             }
             MdBlock::Bullet { depth, text } => {
@@ -2010,10 +2002,7 @@ fn paint_md_doc(
                             .size(ui_theme::FONT_BODY)
                             .color(tokens.text_muted),
                     );
-                    ui.add(
-                        egui::Label::new(md_inline_job(text, ui_theme::FONT_BODY, false, tokens))
-                            .wrap(),
-                    );
+                    paint_md_inline(ui, text, ui_theme::FONT_BODY, false, tokens, base_dir, open, ctrl_hint);
                 });
             }
             MdBlock::Ordered { depth, n, text } => {
@@ -2024,10 +2013,7 @@ fn paint_md_doc(
                             .size(ui_theme::FONT_BODY)
                             .color(tokens.text_muted),
                     );
-                    ui.add(
-                        egui::Label::new(md_inline_job(text, ui_theme::FONT_BODY, false, tokens))
-                            .wrap(),
-                    );
+                    paint_md_inline(ui, text, ui_theme::FONT_BODY, false, tokens, base_dir, open, ctrl_hint);
                 });
             }
             MdBlock::Task { depth, checked, text } => {
@@ -2043,10 +2029,7 @@ fn paint_md_doc(
                                 tokens.text_muted
                             }),
                     );
-                    ui.add(
-                        egui::Label::new(md_inline_job(text, ui_theme::FONT_BODY, false, tokens))
-                            .wrap(),
-                    );
+                    paint_md_inline(ui, text, ui_theme::FONT_BODY, false, tokens, base_dir, open, ctrl_hint);
                 });
             }
             MdBlock::Quote { text } => {
@@ -2073,15 +2056,8 @@ fn paint_md_doc(
                             CornerRadius::ZERO,
                             tokens.accent,
                         );
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(text.as_str())
-                                    .italics()
-                                    .size(ui_theme::FONT_BODY)
-                                    .color(tokens.text_muted),
-                            )
-                            .wrap(),
-                        );
+                        paint_md_inline(ui, text, ui_theme::FONT_BODY, false,
+                            tokens, base_dir, open, ctrl_hint);
                     });
                 ui.add_space(2.0);
             }
@@ -2103,7 +2079,7 @@ fn paint_md_doc(
                             ui.add_space(2.0);
                         }
                         egui::ScrollArea::horizontal()
-                            .id_salt(("md_code", body.len() as u64))
+                            .id_salt(("md_code", block_id))
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
                                 ui.label(
@@ -2226,7 +2202,20 @@ fn decode_md_src(s: &str) -> String {
     let t = s
         .trim()
         .trim_matches(|c| matches!(c, '<' | '>' | '"' | '`'));
-    let mut t = t.replace("%20", " ");
+    let mut decoded = Vec::new();
+    let bytes = t.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                decoded.push((hi * 16 + lo) as u8); i += 3; continue;
+            }
+        }
+        decoded.push(bytes[i]); i += 1;
+    }
+    let mut t = String::from_utf8(decoded).unwrap_or_else(|_| t.to_owned());
     if t.contains("\\\\") {
         t = t.replace("\\\\", "\\");
     }
@@ -2265,7 +2254,6 @@ fn looks_like_local_file(s: &str) -> bool {
         return false;
     }
     has_artifact_ext(s)
-        && (s.contains('/') || s.contains('\\') || s.starts_with('.') || Path::new(s).is_absolute())
 }
 
 fn file_ref_from_text(text: &str) -> Option<String> {
@@ -2303,10 +2291,6 @@ fn try_follow_md_ref(
     if !resp.clicked() {
         return;
     }
-    let ctrl = resp.ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
-    if !ctrl {
-        return;
-    }
     if !path.is_file() {
         return;
     }
@@ -2332,6 +2316,7 @@ fn resolve_md_asset(base_dir: Option<&Path>, src: &str) -> Option<PathBuf> {
     if stripped.starts_with("http://") || stripped.starts_with("https://") {
         return None;
     }
+    if stripped.contains('\0') || stripped.contains('\n') || stripped.contains('\r') { return None; }
     let raw = stripped
         .strip_prefix("file:///")
         .or_else(|| stripped.strip_prefix("file://"))
@@ -2351,7 +2336,13 @@ fn resolve_md_asset(base_dir: Option<&Path>, src: &str) -> Option<PathBuf> {
             return None;
         }
     }
-    Some(resolved.canonicalize().unwrap_or(resolved))
+    let canonical = resolved.canonicalize().unwrap_or(resolved);
+    if let Some(base) = base_dir {
+        let jail = md_asset_jail(base);
+        let jail = jail.canonicalize().unwrap_or_else(|_| lexical_normalize(&jail));
+        if !canonical.starts_with(jail) { return None; }
+    }
+    Some(canonical)
 }
 
 fn paint_preview_image(
@@ -2442,7 +2433,7 @@ fn paint_md_image(
     let avail_w = ui.available_width().max(40.0);
     if let Some(Some(tex)) = textures.get(&path) {
         let size = tex.size_vec2();
-        let scale = (avail_w / size.x).min(1.0);
+        let scale = ((avail_w - 8.0).max(1.0) / size.x).min(1.0);
         let show = egui::vec2(size.x * scale, size.y * scale);
         Frame::NONE
             .stroke(Stroke::new(1.0_f32, tokens.divider))
@@ -2514,96 +2505,31 @@ fn paint_md_table(
         .map(|w| ((avail - 8.0) * (*w / sum)).max(36.0))
         .collect();
 
-    Frame::NONE
-        .fill(tokens.surface_bg)
-        .stroke(Stroke::new(1.0_f32, tokens.divider))
-        .corner_radius(CornerRadius::same(5))
-        .inner_margin(Margin::symmetric(6, 4))
-        .show(ui, |ui| {
-            ui.set_min_width(avail);
+    egui::ScrollArea::horizontal().id_salt(("md_table", id))
+        .auto_shrink([false, true]).show(ui, |ui| {
+        egui::Grid::new(("md_table_grid", id)).striped(true)
+            .spacing(egui::vec2(8.0, 8.0)).show(ui, |ui| {
             for (ri, row) in rows.iter().enumerate() {
-                let row_bg = if ri == 0 {
-                    tokens.accent.gamma_multiply(0.10)
-                } else if ri % 2 == 0 {
-                    tokens.canvas_bg.gamma_multiply(0.55)
-                } else {
-                    Color32::TRANSPARENT
-                };
-                let row_h_guess = if ri == 0 { 26.0 } else { 22.0 };
-                let (row_rect, _) = ui.allocate_exact_size(
-                    egui::vec2(avail - 4.0, row_h_guess),
-                    egui::Sense::hover(),
-                );
-                if row_bg.a() > 0 {
-                    ui.painter()
-                        .rect_filled(row_rect, CornerRadius::same(3), row_bg);
-                }
-                ui.scope_builder(
-                    egui::UiBuilder::new()
-                        .max_rect(row_rect)
-                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                    |ui| {
-                        ui.set_min_height(row_h_guess);
-                        for (ci, cell) in row.iter().enumerate().take(cols) {
-                            let w = col_w.get(ci).copied().unwrap_or(48.0);
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(w, row_h_guess),
-                                egui::Layout::left_to_right(egui::Align::Center),
-                                |ui| {
-                                    if ri == 0 {
-                                        ui.label(
-                                            RichText::new(cell.as_str())
-                                                .size(ui_theme::FONT_BODY)
-                                                .strong()
-                                                .color(tokens.text_primary),
-                                        );
-                                    } else if let Some(src) = file_ref_from_text(cell) {
-                                        let shown = Path::new(&src)
-                                            .file_name()
-                                            .map(|n| n.to_string_lossy().into_owned())
-                                            .filter(|n| !n.is_empty())
-                                            .unwrap_or_else(|| src.clone());
-                                        let resp = ui.add(
-                                            egui::Label::new(
-                                                RichText::new(shown)
-                                                    .size(ui_theme::FONT_BODY)
-                                                    .color(tokens.accent)
-                                                    .underline(),
-                                            )
-                                            .sense(egui::Sense::click())
-                                            .wrap(),
-                                        );
-                                        if let Some(path) = resolve_md_asset(base_dir, &src) {
-                                            try_follow_md_ref(&resp, &path, open, ctrl_hint);
-                                        } else {
-                                            resp.on_hover_text(src);
-                                        }
-                                    } else {
-                                        ui.add(
-                                            egui::Label::new(md_inline_job(
-                                                cell,
-                                                ui_theme::FONT_BODY,
-                                                false,
-                                                tokens,
-                                            ))
-                                            .wrap(),
-                                        );
-                                    }
-                                },
-                            );
+                for ci in 0..cols {
+                    let cell = row.get(ci).map(String::as_str).unwrap_or("");
+                    ui.vertical(|ui| {
+                        ui.set_width(col_w[ci]);
+                        if let Some(src) = file_ref_from_text(cell).filter(|_| !cell.contains("](")) {
+                            let resp = ui.add(egui::Label::new(RichText::new(decode_md_src(cell))
+                                .color(tokens.accent).underline()).wrap().sense(egui::Sense::click()));
+                            if let Some(path) = resolve_md_asset(base_dir, &src) {
+                                try_follow_md_ref(&resp, &path, open, ctrl_hint);
+                            }
+                        } else {
+                            paint_md_inline(ui, cell, ui_theme::FONT_BODY, ri == 0,
+                                tokens, base_dir, open, ctrl_hint);
                         }
-                    },
-                );
-                if ri == 0 {
-                    ui.painter().hline(
-                        row_rect.x_range(),
-                        row_rect.max.y,
-                        Stroke::new(1.0_f32, tokens.divider),
-                    );
+                    });
                 }
-                let _ = id;
+                ui.end_row();
             }
         });
+    });
 }
 
 fn split_indent(line: &str) -> (usize, &str) {
@@ -2662,7 +2588,18 @@ fn split_table_row(line: &str) -> Vec<String> {
     let t = line.trim();
     let inner = t.strip_prefix('|').unwrap_or(t);
     let inner = inner.strip_suffix('|').unwrap_or(inner);
-    inner.split('|').map(|c| c.trim().to_owned()).collect()
+    let mut cells = Vec::new();
+    let mut cell = String::new();
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' && chars.peek() == Some(&'|') {
+            chars.next(); cell.push('|');
+        } else if c == '|' {
+            cells.push(cell.trim().to_owned()); cell.clear();
+        } else { cell.push(c); }
+    }
+    cells.push(cell.trim().to_owned());
+    cells
 }
 
 fn parse_markdown_table(lines: &[&str]) -> Option<(usize, Vec<Vec<String>>)> {
@@ -2717,7 +2654,33 @@ fn ordered_list_item(line: &str) -> Option<(u32, &str)> {
     Some((num, rest))
 }
 
-fn md_inline_job(text: &str, size: f32, strong_all: bool, tokens: &Tokens) -> LayoutJob {
+fn paint_md_inline(
+    ui: &mut egui::Ui, text: &str, size: f32, strong: bool, tokens: &Tokens,
+    base_dir: Option<&Path>, open: &mut Option<(PathBuf, ArtifactView, bool)>, hint: &str,
+) {
+    let (mut job, links) = md_inline_layout(text, size, strong, tokens);
+    job.wrap.max_width = ui.available_width().max(1.0);
+    let galley = ui.fonts(|f| f.layout_job(job));
+    let resp = ui.add(egui::Label::new(galley.clone()).selectable(true));
+    for (li, (section, src)) in links.iter().enumerate() {
+        for (ri, row) in galley.rows.iter().enumerate() {
+            let rect = row.glyphs.iter().filter(|g| g.section_index == *section)
+                .fold(egui::Rect::NOTHING, |r, g| r.union(g.logical_rect()));
+            if !rect.is_positive() { continue; }
+            let hit = ui.interact(rect.translate(resp.rect.min.to_vec2()),
+                resp.id.with(("md_link", li, ri)), egui::Sense::click());
+            if let Some(path) = resolve_md_asset(base_dir, src) {
+                try_follow_md_ref(&hit, &path, open, hint);
+                if !path.is_file() { hit.on_hover_text(format!("File missing: {}", path.display())); }
+            } else {
+                hit.on_hover_text(format!("Link unavailable: {src}"));
+            }
+        }
+    }
+}
+
+fn md_inline_layout(text: &str, size: f32, strong_all: bool, tokens: &Tokens) -> (LayoutJob, Vec<(u32, String)>) {
+    let mut links = Vec::new();
     let mut job = LayoutJob::default();
     let base = TextFormat {
         font_id: FontId::proportional(size),
@@ -2756,6 +2719,7 @@ fn md_inline_job(text: &str, size: f32, strong_all: bool, tokens: &Tokens) -> La
     };
     let normal = if strong_all { bold.clone() } else { base };
 
+    let text = text.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n");
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0usize;
     let mut buf = String::new();
@@ -2770,13 +2734,14 @@ fn md_inline_job(text: &str, size: f32, strong_all: bool, tokens: &Tokens) -> La
     while i < chars.len() {
         // ![alt](url) — keep as accent caption (block form preferred for display)
         if chars[i] == '!' && i + 1 < chars.len() && chars[i + 1] == '[' {
-            if let Some((alt, _src, next)) = parse_md_link(&chars, i + 1) {
+            if let Some((alt, src, next)) = parse_md_link(&chars, i + 1) {
                 flush(&mut job, &mut buf, &normal);
                 let label = if alt.is_empty() {
                     "[image]".to_owned()
                 } else {
                     format!("[{alt}]")
                 };
+                links.push((job.sections.len() as u32, src));
                 job.append(&label, 0.0, link.clone());
                 i = next;
                 continue;
@@ -2784,8 +2749,9 @@ fn md_inline_job(text: &str, size: f32, strong_all: bool, tokens: &Tokens) -> La
         }
         // [label](url)
         if chars[i] == '[' {
-            if let Some((label, _url, next)) = parse_md_link(&chars, i) {
+            if let Some((label, url, next)) = parse_md_link(&chars, i) {
                 flush(&mut job, &mut buf, &normal);
+                links.push((job.sections.len() as u32, url));
                 job.append(&label, 0.0, link.clone());
                 i = next;
                 continue;
@@ -2878,7 +2844,7 @@ fn md_inline_job(text: &str, size: f32, strong_all: bool, tokens: &Tokens) -> La
     }
     flush(&mut job, &mut buf, &normal);
     job.wrap.max_width = f32::INFINITY;
-    job
+    (job, links)
 }
 
 fn parse_md_link(chars: &[char], start: usize) -> Option<(String, String, usize)> {
@@ -2886,22 +2852,32 @@ fn parse_md_link(chars: &[char], start: usize) -> Option<(String, String, usize)
         return None;
     }
     let mut i = start + 1;
-    let label_start = i;
+    let mut label = String::new();
     while i < chars.len() && chars[i] != ']' {
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            i += 1;
+        }
+        label.push(chars[i]);
         i += 1;
     }
-    if i >= chars.len() || chars.get(i + 1) != Some(&'(') {
-        return None;
-    }
-    let label: String = chars[label_start..i].iter().collect();
+    if i >= chars.len() || chars.get(i + 1) != Some(&'(') { return None; }
     i += 2; // ](
     let url_start = i;
-    while i < chars.len() && chars[i] != ')' {
+    let angle = chars.get(i) == Some(&'<');
+    let mut depth = 0usize;
+    while i < chars.len() {
+        if angle {
+            if chars[i] == '>' && chars.get(i + 1) == Some(&')') { i += 1; break; }
+        } else {
+            if chars[i] == '(' { depth += 1; }
+            if chars[i] == ')' {
+                if depth == 0 { break; }
+                depth -= 1;
+            }
+        }
         i += 1;
     }
-    if i >= chars.len() {
-        return None;
-    }
+    if i >= chars.len() { return None; }
     let url: String = chars[url_start..i].iter().collect();
     Some((label, url, i + 1))
 }
@@ -2909,6 +2885,153 @@ fn parse_md_link(chars: &[char], start: usize) -> Option<(String, String, usize)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn data_preview_back_button_returns_to_markdown() {
+        with_tmp(|root| {
+            let md = root.join("summary.md"); let json = root.join("checks.json");
+            fs::write(&md, "# Report").unwrap(); fs::write(&json, "{}").unwrap();
+            let mut panel = TestReportPanel::new(&AppConfig::default());
+            panel.open_markdown(md.clone(), Lang::Zh);
+            panel.return_report = Some(md.clone());
+            panel.apply_open(json, ArtifactView::Report, false, Lang::Zh, &mut ReportAction::None);
+            let ctx = egui::Context::default(); crate::fonts::install_cjk_fonts(&ctx);
+            let tokens = Tokens::dark(); let mut time = 0.0;
+            let mut frame = |events| {
+                time += 0.1;
+                ctx.run(egui::RawInput {
+                    screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 400.0))),
+                    time:Some(time), events, ..Default::default()
+                }, |ctx| {egui::CentralPanel::default().show(ctx, |ui| { panel.viewer_panel(ui, Lang::Zh, &tokens, None); });})
+            };
+            let out = frame(vec![]);
+            let pos = out.shapes.iter().find_map(|shape| {
+                if let egui::Shape::Text(t) = &shape.shape {
+                    if t.galley.job.text == "返回报告" { return Some(t.pos + t.galley.size()*0.5); }
+                }
+                None
+            }).expect("back button visible");
+            frame(vec![egui::Event::PointerMoved(pos)]);
+            for pressed in [true, false] {
+                frame(vec![egui::Event::PointerButton {pos, button:egui::PointerButton::Primary, pressed, modifiers:egui::Modifiers::default()}]);
+            }
+            assert_eq!(panel.selected, Some(md));
+            assert!(matches!(panel.preview, Some(PreviewKind::Markdown(_))));
+            assert!(panel.return_report.is_none());
+        });
+    }
+
+    #[test]
+    fn generated_report_renders_across_window_sizes() {
+        with_tmp(|root| {
+            let path = if let Ok(path) = std::env::var("WIPARSE_REPORT_AUDIT_MD") {
+                PathBuf::from(path)
+            } else {
+                let path = root.join("summary.md");
+                fs::write(&path, "# 检验报告\n\n[数据](checks.json)\n\n| 用例 | 原因 | 数据 |\n|---|---|---|\n| ADP01 | Long diagnostic with enough words to wrap across several lines and remain visible in narrow panels | [检查数据](checks.json) |\n| ADP02 | Normal | [配置](checks.json) |\n").unwrap();
+                fs::write(root.join("checks.json"), "{}").unwrap();
+                path
+            };
+            for width in [640.0, 1100.0, 1920.0] {
+                let ctx = egui::Context::default();
+                crate::fonts::install_cjk_fonts(&ctx);
+                let tokens = crate::theme::apply_theme(&ctx, false);
+                let mut panel = TestReportPanel::new(&AppConfig::default());
+                panel.open_markdown(path.clone(), Lang::Zh);
+                assert!(matches!(panel.preview, Some(PreviewKind::Markdown(_))));
+                let size = egui::vec2(width, 720.0);
+                let output = ctx.run(egui::RawInput {screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)), ..Default::default()}, |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        panel.ui(ui, Lang::Zh, &tokens, root, &[], None, "default", 0, None);
+                    });
+                });
+                if let Ok(dir) = std::env::var("WIPARSE_UI_AUDIT_OUTPUT") {
+                    crate::ui_audit::export_frame(&ctx, output.clone(), &PathBuf::from(dir), &format!("report-{width:.0}"), size);
+                }
+                for primitive in ctx.tessellate(output.shapes, output.pixels_per_point) {
+                    assert!(primitive.clip_rect.is_finite());
+                    if let egui::epaint::Primitive::Mesh(mesh) = primitive.primitive { assert!(mesh.is_valid()); }
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn markdown_destinations_and_escaped_table_cells() {
+        for url in ["cap(1).isf", "<截图 (1).png>"] {
+            let chars: Vec<_> = format!("[数据]({url}) tail").chars().collect();
+            let (_, got, next) = parse_md_link(&chars, 0).unwrap();
+            assert_eq!(got, url);
+            assert_eq!(chars[next..].iter().collect::<String>(), " tail");
+        }
+        assert_eq!(file_ref_from_text("[检查](checks.json)").as_deref(), Some("checks.json"));
+        assert_eq!(decode_md_src("%E6%B3%A2%E5%BD%A2%20%281%29.isf"), "波形 (1).isf");
+        assert_eq!(split_table_row(r"| A | error\| detail | C |"), vec!["A", "error| detail", "C"]);
+    }
+
+    #[test]
+    fn report_group_json_is_displayed_as_text_and_images_as_images() {
+        with_tmp(|root| {
+            let mut panel = TestReportPanel::new(&AppConfig::default());
+            for (name, content) in [("checks.json", "{\"value\": 5}"), ("errors.jsonl", "")] {
+                let path = root.join(name); fs::write(&path, content).unwrap();
+                let mut action = ReportAction::None;
+                panel.apply_open(path, ArtifactView::Report, false, Lang::En, &mut action);
+                assert!(matches!(panel.preview, Some(PreviewKind::Text(_))));
+                assert_eq!(action, ReportAction::None);
+            }
+            let mut action = ReportAction::None;
+            panel.apply_open(root.join("shot.png"), ArtifactView::Report, false, Lang::En, &mut action);
+            assert!(matches!(panel.preview, Some(PreviewKind::Image)));
+            panel.apply_open(root.join("wave.isf"), ArtifactView::Report, false, Lang::En, &mut action);
+            assert!(matches!(action, ReportAction::Open { view: ArtifactView::Wave, .. }));
+        });
+    }
+
+    #[test]
+    fn wrapped_body_and_table_links_follow_exact_target_without_ctrl() {
+        with_tmp(|root| {
+            fs::write(root.join("first.json"), "{}").unwrap();
+            fs::write(root.join("second.json"), "{}").unwrap();
+            for table in [false, true] {
+                let ctx = egui::Context::default();
+                let tokens = Tokens::dark();
+                let mut open = None;
+                let mut time = 0.0;
+                let text = "before [FIRST](first.json) middle [SECOND LONG LINK WRAPS HERE](second.json) after";
+                let mut frame = |events| {
+                    time += 0.1;
+                    ctx.run(egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(220.0, 600.0))),
+                        time: Some(time), events, ..Default::default()
+                    }, |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            if table {
+                                paint_md_table(ui, &tokens, 1, &[vec!["Data".into()], vec![text.into()]], Some(root), &mut open, "click");
+                            } else {
+                                paint_md_inline(ui, text, 14.0, false, &tokens, Some(root), &mut open, "click");
+                            }
+                        });
+                    })
+                };
+                let out = frame(vec![]);
+                let target = out.shapes.iter().find_map(|shape| {
+                    if let egui::Shape::Text(t) = &shape.shape {
+                        if t.galley.job.text.contains("SECOND LONG") {
+                            return t.galley.rows.iter().flat_map(|r| &r.glyphs)
+                                .filter(|g| g.section_index == 3).last()
+                                .map(|g| g.logical_rect().translate(t.pos.to_vec2()).center());
+                        }
+                    }
+                    None
+                }).expect("rendered link glyph");
+                frame(vec![egui::Event::PointerMoved(target)]);
+                frame(vec![egui::Event::PointerButton {pos:target, button:egui::PointerButton::Primary, pressed:true, modifiers:egui::Modifiers::default()}]);
+                frame(vec![egui::Event::PointerButton {pos:target, button:egui::PointerButton::Primary, pressed:false, modifiers:egui::Modifiers::default()}]);
+                assert_eq!(open.as_ref().map(|o| o.0.clone()), Some(root.join("second.json").canonicalize().unwrap()), "table={table}");
+            }
+        });
+    }
 
     #[test]
     fn png_never_jumps_to_wave() {

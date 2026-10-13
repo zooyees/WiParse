@@ -1,0 +1,76 @@
+{
+  "date": "2026-10-13",
+  "timezone": "Asia/Shanghai",
+  "software_version": "1.1.30",
+  "mcp_version": "1.1.30",
+  "plugin_version": "0.1.1",
+  "industrial_approved": false,
+  "release_build": "passed",
+  "rust_tests_passed": 371,
+  "rust_tests_ignored": 1,
+  "node_tests_passed": 65,
+  "mcp_tools": 6,
+  "mcp_report_dispatch_checks": 4,
+  "service_smoke_checks": [
+    "auth",
+    "capability_gate",
+    "lease_fencing",
+    "uint64_clock_mapping",
+    "idempotency",
+    "wave_frequency",
+    "quality_gate",
+    "null_gate",
+    "path_boundary",
+    "persistent_result",
+    "protocol_700_frames",
+    "frames_hash",
+    "graceful_stop"
+  ],
+  "runner_http_fixtures": [
+    {
+      "fixture": "gold",
+      "cases": 37,
+      "checks": 37,
+      "validation_verdict": "PASS"
+    },
+    {
+      "fixture": "bad",
+      "cases": 37,
+      "checks": 37,
+      "validation_verdict": "FAIL"
+    },
+    {
+      "fixture": "missing",
+      "cases": 37,
+      "checks": 37,
+      "validation_verdict": "INCONCLUSIVE"
+    },
+    {
+      "fixture": "quality",
+      "cases": 37,
+      "checks": 37,
+      "validation_verdict": "INCONCLUSIVE"
+    }
+  ],
+  "gui_startup_and_page_switch": "passed",
+  "report_viewer": "wrapped links, data type dispatch, back button, three window sizes verified by GUI regressions",
+  "executable_sha256": {
+    "wiparse-gui.exe": "B2DCA70477BD652A0201CA1B8941A1060F45184AF2913FE70C20527AC36EDB3C",
+    "wiparse.exe": "7CEA8F50F8858BAE7090BF98AD7BF10BEE265ED734B5F0285A7192D1122B7EAF",
+    "wiparse-service.exe": "81EB4D52DD456B57A1291D93A46C8BE2CC0AA07B93837A1490FD04B656C0171C"
+  },
+  "limitations": [
+    "No physical instrument or DUT acceptance in this release run",
+    "Live stimulus remains blocked",
+    "Dongle capture firmware and G2-G4 acceptance pending"
+  ],
+  "evidence_logs": {
+    "build-release.log": "D7876FC0DFAE6C3223C528CFD278042705D829EB1C8B0DBFF727641A56E35D5F",
+    "rust-tests.log": "2504593AC5D6A7657378770EF2814C1FED78C46FF76AA0BEF4277D5B3FD346BF",
+    "node-tests.log": "394CD1A686CE179018F3C82444B2EFE5D6A465353D6C7BF901934CA58504E1DF",
+    "mcp-tests.log": "3D5FDCA1F5E76F29B9F7D583598338F2AC5E5B37E8105DC7A60BF0A0B923D2EE",
+    "wireless-service-smoke.log": "4CBF4CDDD29BD66474A0921E545B6928EBAD4B09B247392DF63593AA3879B789",
+    "automation-service-smoke.log": "04B564FD9B2F99EBB34C312F6C099EEB8981E5B53C91EAF7D2193F8AC1733055",
+    "gui-smoke.log": "43A949343D4BFEAAFE2D0CC4615C61B1598DFA5B1A286D5907E1676C7492A2B3"
+  }
+}

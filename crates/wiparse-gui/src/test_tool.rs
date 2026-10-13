@@ -318,6 +318,12 @@ impl TestToolPanel {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn prepare_layout_audit(&mut self) {
+        self.catalog_autoload = true;
+        self.serial_ports_at = Some(Instant::now());
+    }
+
     pub fn current_project_id(&self) -> String {
         self.effective_project_id()
     }
@@ -569,11 +575,9 @@ impl TestToolPanel {
             return;
         }
 
-        let side_w = SIDE_W
-            .min(full.width() * 0.30)
-            .max(200.0)
-            .min((full.width() - 280.0).max(180.0));
-        let view_w = (full.width() - side_w - PANEL_GAP).max(220.0);
+        let side_w = ui_theme::resizable_sidebar_width(ui, "test_tool", full,
+            SIDE_W, 200.0, 280.0, PANEL_GAP, tokens);
+        let view_w = (full.width() - side_w - PANEL_GAP).max(1.0);
         let side_rect = egui::Rect::from_min_size(full.min, egui::vec2(side_w, full.height()));
         let view_rect = egui::Rect::from_min_size(
             egui::pos2(full.min.x + side_w + PANEL_GAP, full.min.y),
@@ -1009,43 +1013,17 @@ impl TestToolPanel {
 
                 self.paint_runner_header(ui, lang, tokens, sel_idx);
 
-                // Left: config  |  Right: output
-                let body_h = ui.available_height().max(120.0);
-                let body_w = ui.available_width();
-                let gap = RUNNER_SPLIT_GAP * 2.0; // space around divider
-                let cfg_w = if body_w < CONFIG_MIN_W + OUTPUT_MIN_W + gap {
-                    (body_w * 0.52).max(240.0)
-                } else {
-                    (body_w * CONFIG_FRAC).clamp(CONFIG_MIN_W, body_w - OUTPUT_MIN_W - gap)
-                };
-
-                ui.horizontal(|ui| {
-                    ui.set_min_height(body_h);
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(cfg_w, body_h),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ui.set_min_height(body_h);
-                            ui.set_max_width(cfg_w);
-                            self.paint_runner_config(ui, lang, tokens, sel_idx);
-                        },
-                    );
-                    ui.add_space(RUNNER_SPLIT_GAP);
-                    let div_x = ui.cursor().left();
-                    let div_y = ui.max_rect().y_range();
-                    ui.painter()
-                        .vline(div_x, div_y, Stroke::new(1.0_f32, tokens.divider));
-                    ui.add_space(RUNNER_SPLIT_GAP + 1.0);
-                    let out_avail = ui.available_width().max(120.0);
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(out_avail, body_h),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ui.set_min_height(body_h);
-                            ui.set_min_width(out_avail);
-                            self.paint_runner_output(ui, lang, tokens);
-                        },
-                    );
+                let body_h = ui.available_height().max(1.0);
+                let body_w = ui.available_width().max(1.0);
+                let gap = RUNNER_SPLIT_GAP * 2.0 + 1.0;
+                let (body, _) =
+                    ui.allocate_exact_size(egui::vec2(body_w, body_h), egui::Sense::hover());
+                let (config, output) = runner_body_rects(body, gap);
+                panel_in_rect(ui, config, |ui| {
+                    self.paint_runner_config(ui, lang, tokens, sel_idx);
+                });
+                panel_in_rect(ui, output, |ui| {
+                    self.paint_runner_output(ui, lang, tokens);
                 });
             });
     }
@@ -1072,7 +1050,11 @@ impl TestToolPanel {
             && !running
             && !self.catalog_busy;
         let mut run_w = text_btn_w(ui, &run_lbl);
-        let mut pre_w = if running { 0.0 } else { text_btn_w(ui, &pre_lbl) };
+        let mut pre_w = if running {
+            0.0
+        } else {
+            text_btn_w(ui, &pre_lbl)
+        };
         let mut un_w = if can_uninstall {
             text_btn_w(ui, &un_lbl)
         } else {
@@ -1109,7 +1091,11 @@ impl TestToolPanel {
         let btn_rect = egui::Rect::from_min_size(
             egui::pos2(
                 row.max.x - cluster_w,
-                if compact { row.max.y - row_h } else { row.min.y },
+                if compact {
+                    row.max.y - row_h
+                } else {
+                    row.min.y
+                },
             ),
             egui::vec2(cluster_w, row_h),
         );
@@ -1137,19 +1123,17 @@ impl TestToolPanel {
         place_in_rect(
             ui,
             left_rect,
-            egui::Layout::left_to_right(egui::Align::Center),
+            egui::Layout::right_to_left(egui::Align::Center),
             |ui| {
-                ui.set_clip_rect(left_rect.intersect(ui.clip_rect()));
                 ui.spacing_mut().item_spacing.x = 6.0;
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(&title)
-                            .size(ui_theme::FONT_TITLE)
-                            .strong()
-                            .color(tokens.text_primary),
-                    )
-                    .truncate()
-                    .selectable(false),
+                let chip_w = (left_rect.width() * 0.35).clamp(1.0, 120.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(chip_w, row_h),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_max_width(chip_w);
+                        self.paint_status_chip(ui, lang, tokens);
+                    },
                 );
                 if let Some(v) = version {
                     ui.add(
@@ -1158,21 +1142,25 @@ impl TestToolPanel {
                                 .size(ui_theme::FONT_CAPTION)
                                 .color(tokens.text_muted),
                         )
+                        .truncate()
                         .selectable(false),
                     );
                 }
-                self.paint_status_chip(ui, lang, tokens);
+                let width = ui.available_width().max(1.0);
+                ui.add_sized(
+                    [width, row_h],
+                    egui::Label::new(
+                        RichText::new(&title)
+                            .size(ui_theme::FONT_TITLE)
+                            .strong()
+                            .color(tokens.text_primary),
+                    )
+                    .truncate()
+                    .selectable(false),
+                )
+                .on_hover_text(&title);
             },
         );
-        if let Some(i) = sel_idx {
-            let slug = case_slug(self, i);
-            ui.label(
-                RichText::new(format!("{}  {slug}", tr(lang, "test_tool.case")))
-                    .size(ui_theme::FONT_CAPTION)
-                    .color(tokens.text_muted),
-            );
-        }
-
         let mut run_clicked = false;
         let mut pre_clicked = false;
         let mut stop_clicked = false;
@@ -1186,13 +1174,9 @@ impl TestToolPanel {
                 ui.spacing_mut().item_spacing.x = gap;
                 let can_run = sel_idx.is_some() && !running;
                 if running {
-                    stop_clicked = ui_theme::stop_btn_sized(
-                        ui,
-                        tokens,
-                        run_lbl,
-                        egui::vec2(run_w, row_h),
-                    )
-                    .clicked();
+                    stop_clicked =
+                        ui_theme::stop_btn_sized(ui, tokens, run_lbl, egui::vec2(run_w, row_h))
+                            .clicked();
                 } else {
                     run_clicked = ui_theme::primary_btn_sized_enabled(
                         ui,
@@ -1387,14 +1371,14 @@ impl TestToolPanel {
             tokens.text_muted,
         );
 
-        let log_h = ui.available_height().max(80.0);
+        let log_h = ui.available_height().max(1.0);
         Frame::NONE
             .fill(tokens.canvas_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(6))
             .inner_margin(Margin::symmetric(8, 6))
             .show(ui, |ui| {
-                ui.set_min_height(log_h - 4.0);
+                ui.set_min_height((log_h - 14.0).max(0.0));
                 ui.set_min_width(ui.available_width());
                 egui::ScrollArea::both()
                     .id_salt("test_tool_log")
@@ -1429,12 +1413,15 @@ impl TestToolPanel {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 ui.set_min_height(ui_theme::CTRL_H);
-                ui.label(
-                    RichText::new(tr(lang, "test_tool.case"))
-                        .size(ui_theme::FONT_CAPTION)
-                        .color(tokens.text_muted),
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(tr(lang, "test_tool.case"))
+                            .size(ui_theme::FONT_CAPTION)
+                            .color(tokens.text_muted),
+                    )
+                    .truncate(),
                 );
-                let w = ui.available_width().max(80.0);
+                let w = ui.available_width().max(1.0);
                 let value = self.param_values.entry("file_prefix".into()).or_default();
                 let edit = ui.add_sized(
                     [w, ui_theme::CTRL_H],
@@ -1480,7 +1467,11 @@ impl TestToolPanel {
         label_w: f32,
         pending_param: &mut Option<String>,
     ) {
-        let Some(p) = self.plugins.get(sel_idx).and_then(|pl| pl.params.get(param_idx)) else {
+        let Some(p) = self
+            .plugins
+            .get(sel_idx)
+            .and_then(|pl| pl.params.get(param_idx))
+        else {
             return;
         };
         let name = p.name.clone();
@@ -1516,38 +1507,24 @@ impl TestToolPanel {
         // Place label / field / browse from the row rect. Never subtract
         // `available_width` inside a horizontal layout — item_spacing makes
         // that arithmetic drift and wraps a second empty control.
-        let row_w = ui.available_width().max(120.0);
-        let row_h = if multiline {
+        let row_w = ui.available_width().max(1.0);
+        let field_h = if multiline {
             JSON_PARAM_H
         } else {
             ui_theme::CTRL_H
         };
+        let stacked = row_w
+            < label_w
+                + PARAM_GAP_X
+                + 72.0
+                + if is_path {
+                    PATH_BROWSE_W + PARAM_GAP_X
+                } else {
+                    0.0
+                };
+        let row_h = field_h + if stacked { ui_theme::CTRL_H + 4.0 } else { 0.0 };
         let (row, _) = ui.allocate_exact_size(egui::vec2(row_w, row_h), egui::Sense::hover());
-        let gap = PARAM_GAP_X;
-        let browse_w = if is_path { PATH_BROWSE_W } else { 0.0 };
-        let field_min = 72.0;
-        let max_label = (row_w - browse_w - gap * 2.0 - field_min).max(LABEL_COL_MIN);
-        let label_w = label_w.min(max_label);
-        let label_rect = egui::Rect::from_min_size(row.min, egui::vec2(label_w, row_h));
-        let btn_rect = if is_path {
-            egui::Rect::from_min_size(
-                egui::pos2(row.max.x - browse_w, row.min.y),
-                egui::vec2(browse_w, row_h),
-            )
-        } else {
-            egui::Rect::NOTHING
-        };
-        let field_left = label_rect.max.x + gap;
-        let field_right = if is_path {
-            (btn_rect.min.x - gap).max(field_left + field_min)
-        } else {
-            row.max.x
-        };
-        let field_rect = egui::Rect::from_min_max(
-            egui::pos2(field_left, row.min.y),
-            egui::pos2(field_right, row.max.y),
-        );
-
+        let (label_rect, field_rect, btn_rect) = param_row_rects(row, label_w, is_path, stacked);
         let font = FontId::proportional(ui_theme::FONT_CAPTION);
         let galley_w = ui.fonts(|f| {
             f.layout_no_wrap(label.clone(), font.clone(), tokens.text_muted)
@@ -1555,12 +1532,12 @@ impl TestToolPanel {
                 .x
         });
         let painter = ui.painter_at(label_rect);
-        let label_pos = if multiline {
+        let label_pos = if multiline || stacked {
             egui::pos2(label_rect.min.x, label_rect.min.y + 6.0)
         } else {
             egui::pos2(label_rect.min.x, label_rect.center().y)
         };
-        let label_align = if multiline {
+        let label_align = if multiline || stacked {
             Align2::LEFT_TOP
         } else {
             Align2::LEFT_CENTER
@@ -1577,7 +1554,12 @@ impl TestToolPanel {
 
         let hover_resp: Option<egui::Response>;
         if is_bool {
-            let mut on = is_truthy(self.param_values.get(&name).map(|s| s.as_str()).unwrap_or(""));
+            let mut on = is_truthy(
+                self.param_values
+                    .get(&name)
+                    .map(|s| s.as_str())
+                    .unwrap_or(""),
+            );
             let resp = place_in_rect(
                 ui,
                 field_rect,
@@ -1595,11 +1577,7 @@ impl TestToolPanel {
             }
             hover_resp = Some(resp);
         } else if is_device {
-            let current = self
-                .param_values
-                .get(&name)
-                .cloned()
-                .unwrap_or_default();
+            let current = self.param_values.get(&name).cloned().unwrap_or_default();
             let filtered: Vec<LiveDevice> = self
                 .live_devices
                 .iter()
@@ -1619,42 +1597,34 @@ impl TestToolPanel {
                 });
             let mut picked = current.clone();
             let resp = hub_combo_in_rect(ui, field_rect, |ui| {
-                    egui::ComboBox::from_id_salt(("hub_device", &name))
-                        .width(field_rect.width())
-                        .selected_text(selected_label)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut picked,
-                                String::new(),
-                                tr(lang, "test_tool.device_auto"),
+                egui::ComboBox::from_id_salt(("hub_device", &name))
+                    .width(field_rect.width())
+                    .selected_text(selected_label)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut picked,
+                            String::new(),
+                            tr(lang, "test_tool.device_auto"),
+                        );
+                        if filtered.is_empty() {
+                            ui.label(
+                                RichText::new(tr(lang, "test_tool.device_none"))
+                                    .size(ui_theme::FONT_CAPTION)
+                                    .color(tokens.text_muted),
                             );
-                            if filtered.is_empty() {
-                                ui.label(
-                                    RichText::new(tr(lang, "test_tool.device_none"))
-                                        .size(ui_theme::FONT_CAPTION)
-                                        .color(tokens.text_muted),
-                                );
-                            }
-                            for d in &filtered {
-                                ui.selectable_value(
-                                    &mut picked,
-                                    d.device_id.to_string(),
-                                    d.label(),
-                                );
-                            }
-                        })
-                        .response
-                });
+                        }
+                        for d in &filtered {
+                            ui.selectable_value(&mut picked, d.device_id.to_string(), d.label());
+                        }
+                    })
+                    .response
+            });
             if picked != current {
                 self.apply_device_selection(&name, &picked);
             }
             hover_resp = Some(resp);
         } else if is_enum && !options.is_empty() {
-            let current = self
-                .param_values
-                .get(&name)
-                .cloned()
-                .unwrap_or_default();
+            let current = self.param_values.get(&name).cloned().unwrap_or_default();
             let selected_label = options
                 .iter()
                 .find(|(v, _, _)| v == &current)
@@ -1670,37 +1640,36 @@ impl TestToolPanel {
                 .unwrap_or_else(|| current.clone());
             let mut picked = current.clone();
             let resp = hub_combo_in_rect(ui, field_rect, |ui| {
-                    egui::ComboBox::from_id_salt(("hub_enum", &name))
-                        .width(field_rect.width())
-                        .selected_text(selected_label)
-                        .show_ui(ui, |ui| {
-                            for (value, en, zh) in &options {
-                                let lab = if matches!(lang, Lang::Zh) && !zh.is_empty() {
-                                    zh.as_str()
-                                } else if !en.is_empty() {
-                                    en.as_str()
-                                } else {
-                                    value.as_str()
-                                };
-                                ui.selectable_value(&mut picked, value.clone(), lab);
-                            }
-                        })
-                        .response
-                });
+                egui::ComboBox::from_id_salt(("hub_enum", &name))
+                    .width(field_rect.width())
+                    .selected_text(selected_label)
+                    .show_ui(ui, |ui| {
+                        for (value, en, zh) in &options {
+                            let lab = if matches!(lang, Lang::Zh) && !zh.is_empty() {
+                                zh.as_str()
+                            } else if !en.is_empty() {
+                                en.as_str()
+                            } else {
+                                value.as_str()
+                            };
+                            ui.selectable_value(&mut picked, value.clone(), lab);
+                        }
+                    })
+                    .response
+            });
             if picked != current {
                 self.param_values.insert(name.clone(), picked);
                 self.param_touched.insert(name.clone());
             }
             hover_resp = Some(resp);
         } else if is_serial {
-            let current = self
-                .param_values
-                .get(&name)
-                .cloned()
-                .unwrap_or_default();
+            let current = self.param_values.get(&name).cloned().unwrap_or_default();
             let mut ports = self.serial_ports.clone();
             if !current.trim().is_empty() && !ports.iter().any(|p| p.device == current) {
-                ports.insert(0, wiparse_core::serial::PortInfo::from_device(current.clone()));
+                ports.insert(
+                    0,
+                    wiparse_core::serial::PortInfo::from_device(current.clone()),
+                );
             }
             let mut picked = current.clone();
             let selected_text = if current.trim().is_empty() {
@@ -1713,24 +1682,24 @@ impl TestToolPanel {
                     .unwrap_or_else(|| current.clone())
             };
             let resp = hub_combo_in_rect(ui, field_rect, |ui| {
-                    egui::ComboBox::from_id_salt(("hub_serial", &name))
-                        .width(field_rect.width())
-                        .truncate()
-                        .selected_text(selected_text)
-                        .show_ui(ui, |ui| {
-                            if ports.is_empty() {
-                                ui.label(
-                                    RichText::new(tr(lang, "test_tool.serial_none"))
-                                        .size(ui_theme::FONT_CAPTION)
-                                        .color(tokens.text_muted),
-                                );
-                            }
-                            for p in &ports {
-                                ui.selectable_value(&mut picked, p.device.clone(), p.display_label());
-                            }
-                        })
-                        .response
-                });
+                egui::ComboBox::from_id_salt(("hub_serial", &name))
+                    .width(field_rect.width())
+                    .truncate()
+                    .selected_text(selected_text)
+                    .show_ui(ui, |ui| {
+                        if ports.is_empty() {
+                            ui.label(
+                                RichText::new(tr(lang, "test_tool.serial_none"))
+                                    .size(ui_theme::FONT_CAPTION)
+                                    .color(tokens.text_muted),
+                            );
+                        }
+                        for p in &ports {
+                            ui.selectable_value(&mut picked, p.device.clone(), p.display_label());
+                        }
+                    })
+                    .response
+            });
             if picked != current {
                 self.param_values.insert(name.clone(), picked);
                 self.param_touched.insert(name.clone());
@@ -1738,7 +1707,8 @@ impl TestToolPanel {
             hover_resp = Some(resp);
         } else if multiline {
             let entry = self.param_values.entry(name.clone()).or_default();
-            let resp = hub_text_edit_multiline(ui, tokens, field_rect, &name, entry, &hint, is_json);
+            let resp =
+                hub_text_edit_multiline(ui, tokens, field_rect, &name, entry, &hint, is_json);
             if resp.changed() {
                 self.param_touched.insert(name.clone());
             }
@@ -1918,11 +1888,10 @@ impl TestToolPanel {
                         ui.allocate_exact_size(egui::vec2(7.0, 7.0), egui::Sense::hover());
                     ui.painter()
                         .circle_filled(rect.center(), 3.5, dot);
-                    ui.label(
-                        RichText::new(label)
-                            .size(ui_theme::FONT_CAPTION)
-                            .color(tokens.text_primary),
-                    );
+                    ui.add(egui::Label::new(
+                        RichText::new(&label).size(ui_theme::FONT_CAPTION)
+                            .color(tokens.text_primary)).truncate())
+                        .on_hover_text(&label);
                 });
             });
     }
@@ -2029,7 +1998,7 @@ impl TestToolPanel {
         );
 
         let inner = rect.shrink2(egui::vec2(10.0, 0.0));
-        ui.scope_builder(
+        crate::theme::scope_in_allocated_rect(ui,
             egui::UiBuilder::new()
                 .max_rect(inner)
                 .layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(false)),
@@ -2551,10 +2520,9 @@ impl TestToolPanel {
                 )
                 .default_open(self.marketplace_base_url.trim().is_empty())
                 .show(ui, |ui| {
-                    let url_w = ui.available_width().max(80.0);
+                    let url_w = ui.available_width().max(1.0);
                     let url_edit = ui.add(
-                        egui::TextEdit::singleline(&mut self.marketplace_base_url)
-                            .desired_width(url_w)
+                        ui_theme::singleline_sized(&mut self.marketplace_base_url, url_w)
                             .clip_text(true)
                             .hint_text("http://127.0.0.1:8787")
                             .margin(egui::vec2(6.0, 4.0)),
@@ -2575,7 +2543,7 @@ impl TestToolPanel {
                             self.marketplace_channel.clone()
                         };
                         let before = ch.clone();
-                        let combo_w = ui.available_width().max(80.0);
+                        let combo_w = ui.available_width().max(1.0);
                         egui::ComboBox::from_id_salt("market_channel")
                             .width(combo_w)
                             .selected_text(ch.clone())
@@ -3458,16 +3426,7 @@ fn text_btn_w(ui: &egui::Ui, label: &str) -> f32 {
 }
 
 fn panel_in_rect(ui: &mut egui::Ui, rect: egui::Rect, add: impl FnOnce(&mut egui::Ui)) {
-    ui.scope_builder(
-        egui::UiBuilder::new()
-            .max_rect(rect)
-            .layout(egui::Layout::top_down(egui::Align::Min)),
-        |ui| {
-            ui.set_clip_rect(rect.intersect(ui.clip_rect()));
-            ui.set_min_size(rect.size());
-            add(ui);
-        },
-    );
+    crate::theme::in_allocated_rect(ui, rect, egui::Layout::top_down(egui::Align::Min), add);
 }
 
 fn place_in_rect<R>(
@@ -3476,19 +3435,10 @@ fn place_in_rect<R>(
     layout: egui::Layout,
     add: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
-    ui.scope_builder(
-        egui::UiBuilder::new()
-            .max_rect(rect)
-            .layout(layout.with_main_wrap(false)),
-        |ui| {
-            ui.set_clip_rect(rect.intersect(ui.clip_rect()));
-            ui.set_min_size(rect.size());
-            ui.set_max_size(rect.size());
-            ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
-            add(ui)
-        },
-    )
-    .inner
+    ui_theme::in_allocated_rect(ui, rect, layout.with_main_wrap(false), |ui| {
+        ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+        add(ui)
+    })
 }
 
 fn hub_combo_in_rect(
@@ -4561,3 +4511,179 @@ fn split_args(s: &str) -> Vec<String> {
     out
 }
 
+
+
+/// Narrow runners keep the full form width and scroll each section independently.
+fn runner_body_rects(body: egui::Rect, gap: f32) -> (egui::Rect, egui::Rect) {
+    if body.width() < CONFIG_MIN_W + OUTPUT_MIN_W + gap {
+        let split = body.top() + (body.height() - gap).max(0.0) * 0.6;
+        (
+            egui::Rect::from_min_max(body.min, egui::pos2(body.right(), split)),
+            egui::Rect::from_min_max(
+                egui::pos2(body.left(), (split + gap).min(body.bottom())),
+                body.max,
+            ),
+        )
+    } else {
+        let width =
+            (body.width() * CONFIG_FRAC).clamp(CONFIG_MIN_W, body.width() - OUTPUT_MIN_W - gap);
+        (
+            egui::Rect::from_min_max(body.min, egui::pos2(body.left() + width, body.bottom())),
+            egui::Rect::from_min_max(egui::pos2(body.left() + width + gap, body.top()), body.max),
+        )
+    }
+}
+
+fn param_row_rects(
+    row: egui::Rect,
+    label_w: f32,
+    path: bool,
+    stacked: bool,
+) -> (egui::Rect, egui::Rect, egui::Rect) {
+    let gap = PARAM_GAP_X.min(row.width() * 0.1);
+    let label = egui::Rect::from_min_size(
+        row.min,
+        egui::vec2(
+            if stacked {
+                row.width()
+            } else {
+                label_w.min(row.width())
+            },
+            if stacked {
+                ui_theme::CTRL_H
+            } else {
+                row.height()
+            },
+        ),
+    );
+    let top = if stacked {
+        label.bottom() + 4.0
+    } else {
+        row.top()
+    };
+    let browse_w = if path {
+        PATH_BROWSE_W.min(row.width() * 0.3)
+    } else {
+        0.0
+    };
+    let browse = if path {
+        egui::Rect::from_min_max(egui::pos2(row.right() - browse_w, top), row.max)
+    } else {
+        egui::Rect::NOTHING
+    };
+    let left = if stacked {
+        row.left()
+    } else {
+        label.right() + gap
+    };
+    let right = if path {
+        browse.left() - gap
+    } else {
+        row.right()
+    };
+    let field = egui::Rect::from_min_max(
+        egui::pos2(left, top),
+        egui::pos2(right.max(left), row.bottom()),
+    );
+    (label, field, browse)
+}
+
+#[cfg(test)]
+mod layout_regressions {
+    use super::*;
+
+    #[test]
+    fn runner_sections_and_parameter_controls_never_overlap() {
+        for width in [120.0, 180.0, 240.0, 360.0, 575.0, 800.0, 1200.0] {
+            let body = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(width, 400.0));
+            let (config, output) = runner_body_rects(body, 17.0);
+            assert!(body.contains_rect(config) && body.contains_rect(output));
+            assert!(!config.intersects(output));
+            for path in [false, true] {
+                for multiline in [false, true] {
+                    let stacked = width < 132.0 + PARAM_GAP_X + 72.0
+                        + if path { PATH_BROWSE_W + PARAM_GAP_X } else { 0.0 };
+                    let height = if multiline { JSON_PARAM_H } else { ui_theme::CTRL_H }
+                        + if stacked { ui_theme::CTRL_H + 4.0 } else { 0.0 };
+                    let row = egui::Rect::from_min_size(body.min, egui::vec2(width, height));
+                    let (label, field, browse) = param_row_rects(row, 132.0, path, stacked);
+                    assert!(row.contains_rect(label) && row.contains_rect(field));
+                    assert!(!label.intersects(field));
+                    if path {
+                        assert!(row.contains_rect(browse));
+                        assert!(!browse.intersects(field) && !browse.intersects(label));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_local_plugin_header_stays_above_case_and_parameters() {
+        let mut cfg = AppConfig::default();
+        cfg.apps.test_tool.plugins_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-tools/plugins").display().to_string();
+        cfg.apps.test_tool.data_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tmp/ui-audit-projects").display().to_string();
+        let mut panel = TestToolPanel::new(&cfg);
+        panel.serial_ports_at = Some(Instant::now());
+        assert!(panel.plugins.len() >= 5);
+        for lang in [Lang::Zh, Lang::En] {
+            for width in [180.0, 260.0, 400.0, 680.0] {
+                for selected in 0..panel.plugins.len() {
+                    let ctx = egui::Context::default();
+                    crate::fonts::install_cjk_fonts(&ctx);
+                    let tokens = ui_theme::apply_theme(&ctx, false);
+                    let _ = ctx.run(egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO,
+                            egui::vec2(width, 600.0))), ..Default::default()
+                    }, |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            let start = ui.cursor().top();
+                            panel.paint_runner_header(ui, lang, &tokens, Some(selected));
+                            let after_header = ui.cursor().top();
+                            assert!(after_header >= start + ui_theme::CTRL_H,
+                                "header collapsed: {} {width}", panel.plugins[selected].id);
+                            panel.paint_case_row(ui, lang, &tokens, selected);
+                            assert!(ui.cursor().top() >= after_header + ui_theme::CTRL_H,
+                                "case collapsed: {} {width}", panel.plugins[selected].id);
+                            let indices: Vec<usize> = (0..panel.plugins[selected].params.len()).collect();
+                            let label_w = panel.measure_param_label_col(ui, lang, selected, &indices);
+                            for param in 0..panel.plugins[selected].params.len() {
+                                let before = ui.cursor().top();
+                                panel.paint_param_field(ui, lang, &tokens, selected, param,
+                                    label_w, &mut None);
+                                assert!(ui.cursor().top() >= before + ui_theme::CTRL_H,
+                                    "parameter collapsed: {} {param} {width}", panel.plugins[selected].id);
+                            }
+                        });
+                    });
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod visual_snapshot {
+    #[test]
+    fn cmsis_dap_runner_renders_without_header_case_collision() {
+        let Ok(dir) = std::env::var("WIPARSE_UI_AUDIT_OUTPUT") else { return; };
+        let mut cfg = super::AppConfig::default();
+        cfg.apps.test_tool.plugins_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-tools/plugins").display().to_string();
+        cfg.apps.test_tool.data_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tmp/ui-audit-projects").display().to_string();
+        let mut panel = super::TestToolPanel::new(&cfg);
+        panel.select_plugin("wiparse-dap".into());
+        panel.prepare_layout_audit();
+        let ctx = egui::Context::default();
+        crate::fonts::install_cjk_fonts(&ctx);
+        let tokens = crate::theme::apply_theme(&ctx, false);
+        let size = egui::vec2(1100.0, 720.0);
+        let output = ctx.run(egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)), ..Default::default()
+        }, |ctx| { egui::CentralPanel::default().show(ctx, |ui| { panel.ui(ui, super::Lang::Zh, &tokens, &[]); }); });
+        crate::ui_audit::export_frame(&ctx, output, &std::path::PathBuf::from(dir), "cmsis-dap", size);
+    }
+}

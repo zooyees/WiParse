@@ -2,9 +2,11 @@
 
 **[中文](#中文)** · **[English](#english)**
 
-无线充电（Qi）测试与工位工具。当前版本 **1.1.27**（以工作区 `Cargo.toml` 的 `workspace.package.version` 为准）。
+无线充电（Qi）测试与工位工具。当前版本 **1.1.30**（以工作区 `Cargo.toml` 的 `workspace.package.version` 为准）。
 
-Wireless charging (Qi) lab and station utility. Current version **1.1.27**.
+Wireless charging (Qi) lab and station utility. Current version **1.1.30**.
+
+本版下载文件为 `dist/WiParse-1.1.30-dev.zip`；[版本说明](docs/releases/1.1.30.md)包含报告查看、模拟数据、MCP 部署和自动化开发范围。
 
 许可：**Proprietary**。本仓库不是通用示波器软件，也不是面向公网的服务。
 
@@ -62,7 +64,7 @@ WiParse 面向 **Qi 无线充电研发台、产线工位和闭环测试**：把�
 
 - 不是公网服务器：嵌入式 API **只绑 localhost**（默认 `127.0.0.1:7878`）。
 - 不是通用 DAQ / LabVIEW 替代品；不以任意传感器总线为中心。
-- 测试报告页 **不内嵌 HTML/PDF 引擎**，只做 Markdown 浏览与轻量预览（图片 / 表格 / 代码块）。
+- 测试报告页 **不内嵌 HTML/PDF 引擎**，支持 Markdown 浏览、JSON/JSONL 数据查看与轻量预览（图片 / 表格 / 代码块）。
 - MCP **不能单独工作**：必须先启动 GUI。不要让模型去点 UI，也不要 `Read` 原始 `serial.txt` 或订阅波形点列。
 - 插件市场对非回环的明文 HTTP 默认拒绝；只有 `127.0.0.1` / `localhost` / `::1` 可直接 HTTP，其它 HTTP 需 `WIPARSE_MARKETPLACE_ALLOW_HTTP=1`，生产环境应使用 HTTPS。
 
@@ -248,12 +250,12 @@ cargo build -p wiparse-gui
 
 | 你要做的事 | 命令 | 写到哪里 |
 |------------|------|----------|
-| **编译（调试）** | `cargo build -p wiparse-gui -p wiparse-cli` | 仅 `target\debug\`，**不写 dist** |
-| **Release 编译** | `cargo build --release -p wiparse-gui -p wiparse-cli` | 仅 `target\release\`，默认也 **不写 dist** |
+| **编译（调试）** | `cargo build -p wiparse-gui -p wiparse-cli -p wiparse-service` | 仅 `target\debug\`，**不写 dist** |
+| **Release 编译** | `cargo build --release -p wiparse-gui -p wiparse-cli -p wiparse-service` | 仅 `target\release\`，默认也 **不写 dist** |
 | **同步日常副本** | 见下方 `Copy-Item` | `dist\WiParse.exe`、`dist\WiParse-CLI.exe` |
 | **打包市场演示** | `.\scripts\package-marketplace-demo.ps1` | `dist\wiparse-win-marketplace-demo\` 与 `.zip`，并尽量覆盖上述两个 exe |
 
-Release 配置：`lto = "fat"`、`codegen-units = 1`、`strip = "symbols"`，完整编一次大约十几分钟。
+Release 配置：`lto = "fat"`、`codegen-units = 1`、`debug = "line-tables-only"`、`strip = "none"`（保留匹配 PDB），完整编一次大约十几分钟。
 
 **把日常可运行副本放到 `dist/`（发布 / 工位常用路径）：**
 
@@ -493,8 +495,8 @@ Full CLI: [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md).
 
 | Intent | Command | Output |
 |--------|---------|--------|
-| Debug compile | `cargo build -p wiparse-gui -p wiparse-cli` | `target\debug\` only |
-| Release compile | `cargo build --release -p wiparse-gui -p wiparse-cli` | `target\release\` only |
+| Debug compile | `cargo build -p wiparse-gui -p wiparse-cli -p wiparse-service` | `target\debug\` only |
+| Release compile | `cargo build --release -p wiparse-gui -p wiparse-cli -p wiparse-service` | `target\release\` only |
 | Daily runtime copy | `Copy-Item` below | `dist\WiParse.exe`, `dist\WiParse-CLI.exe` |
 | Marketplace demo | `.\scripts\package-marketplace-demo.ps1` | `dist\wiparse-win-marketplace-demo\` + zip, and a best-effort copy of the two exes |
 

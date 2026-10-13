@@ -1,0 +1,957 @@
+{
+  "schema_version": "wiparse.wireless-plugin/1",
+  "version": "0.1.0",
+  "simulation_only": true,
+  "cases": {
+    "ADP01": {
+      "ADP01.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://ADP01"
+          ]
+        }
+      }
+    },
+    "ADP02": {
+      "ADP02.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://ADP02"
+          ]
+        }
+      }
+    },
+    "ADP03": {
+      "ADP03.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://ADP03"
+          ]
+        }
+      }
+    },
+    "ADP04": {
+      "ADP04.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://ADP04"
+          ]
+        }
+      }
+    },
+    "ADP05": {
+      "ADP05.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://ADP05"
+          ]
+        }
+      }
+    },
+    "ADP06": {
+      "ADP06.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://ADP06"
+          ]
+        }
+      }
+    },
+    "ADP07": {
+      "ADP07.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://ADP07"
+          ]
+        }
+      }
+    },
+    "ADP08": {
+      "ADP08.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://ADP08"
+          ]
+        }
+      }
+    },
+    "ADP09": {
+      "ADP09.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://ADP09"
+          ]
+        }
+      }
+    },
+    "VIN01": {
+      "VIN01.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "vin_mean",
+          "channel": "VIN",
+          "value": 5.0,
+          "unit": "V",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://VIN01"
+          ]
+        }
+      }
+    },
+    "VBRG01": {
+      "VBRG01.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "vbrg_mean",
+          "channel": "VBRG",
+          "value": 10.0,
+          "unit": "V",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://VBRG01"
+          ]
+        }
+      }
+    },
+    "VIN02": {
+      "VIN02.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "vin_peak",
+          "channel": "VIN",
+          "value": 5.0,
+          "unit": "V",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://VIN02"
+          ]
+        }
+      }
+    },
+    "VIN03": {
+      "VIN03.01": {
+        "state": "SAFE_READY",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "residual_voltage",
+          "channel": "VIN",
+          "value": 0.25,
+          "unit": "V",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://VIN03"
+          ]
+        }
+      }
+    },
+    "PWM01": {
+      "PWM01.01": {
+        "state": "PING",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "frequency_median",
+          "channel": "PWM",
+          "value": 120000.0,
+          "unit": "Hz",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://PWM01"
+          ]
+        }
+      }
+    },
+    "PWM02": {
+      "PWM02.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "frequency_median",
+          "channel": "PWM",
+          "value": 120000.0,
+          "unit": "Hz",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://PWM02"
+          ]
+        }
+      }
+    },
+    "DTAHL": {
+      "DTAHL.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "deadtime_min_HL",
+          "channel": "VGS-A",
+          "value": 5.5e-07,
+          "unit": "s",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://DTAHL"
+          ]
+        }
+      }
+    },
+    "DTBHL": {
+      "DTBHL.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "deadtime_min_HL",
+          "channel": "VGS-B",
+          "value": 5.5e-07,
+          "unit": "s",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://DTBHL"
+          ]
+        }
+      }
+    },
+    "DTALH": {
+      "DTALH.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "deadtime_min_LH",
+          "channel": "VGS-A",
+          "value": 5.5e-07,
+          "unit": "s",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://DTALH"
+          ]
+        }
+      }
+    },
+    "DTBLH": {
+      "DTBLH.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "deadtime_min_LH",
+          "channel": "VGS-B",
+          "value": 5.5e-07,
+          "unit": "s",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://DTBLH"
+          ]
+        }
+      }
+    },
+    "STATE01": {
+      "STATE01.01": {
+        "events": [
+          {
+            "time_s": 0.0,
+            "tx": "IDLE",
+            "physical_power_w": 5,
+            "quality": {
+              "issues": []
+            },
+            "evidence_refs": [
+              "simulation://STATE01"
+            ]
+          },
+          {
+            "time_s": 0.01,
+            "tx": "PING",
+            "physical_power_w": 5,
+            "quality": {
+              "issues": []
+            },
+            "evidence_refs": [
+              "simulation://STATE01"
+            ]
+          },
+          {
+            "time_s": 0.02,
+            "tx": "IDENTIFY",
+            "physical_power_w": 5,
+            "quality": {
+              "issues": []
+            },
+            "evidence_refs": [
+              "simulation://STATE01"
+            ]
+          },
+          {
+            "time_s": 0.03,
+            "tx": "PT",
+            "physical_power_w": 5,
+            "quality": {
+              "issues": []
+            },
+            "evidence_refs": [
+              "simulation://STATE01"
+            ]
+          }
+        ]
+      }
+    },
+    "INPUT01": {
+      "INPUT01.01": {
+        "events": [
+          {
+            "time_s": 0.0,
+            "input": "OFF",
+            "physical_power_w": 5,
+            "quality": {
+              "issues": []
+            },
+            "evidence_refs": [
+              "simulation://INPUT01"
+            ]
+          },
+          {
+            "time_s": 0.01,
+            "input": "NEGOTIATING",
+            "physical_power_w": 5,
+            "quality": {
+              "issues": []
+            },
+            "evidence_refs": [
+              "simulation://INPUT01"
+            ]
+          },
+          {
+            "time_s": 0.02,
+            "input": "READY",
+            "physical_power_w": 5,
+            "quality": {
+              "issues": []
+            },
+            "evidence_refs": [
+              "simulation://INPUT01"
+            ]
+          }
+        ]
+      }
+    },
+    "BAT01": {
+      "BAT01.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://BAT01"
+          ]
+        }
+      }
+    },
+    "COMM-INPUT": {
+      "COMM-INPUT.01": {
+        "layer": "input",
+        "expected_count": 100,
+        "received_count": 100,
+        "error_count": 0,
+        "timeout_count": 0,
+        "complete": true,
+        "reference_verified": true,
+        "sequence_valid": true,
+        "quality": {
+          "issues": []
+        },
+        "evidence_refs": [
+          "simulation://COMM-INPUT"
+        ]
+      }
+    },
+    "COMM-QI": {
+      "COMM-QI.01": {
+        "layer": "qi",
+        "expected_count": 100,
+        "received_count": 100,
+        "error_count": 0,
+        "timeout_count": 0,
+        "complete": true,
+        "reference_verified": true,
+        "sequence_valid": true,
+        "quality": {
+          "issues": []
+        },
+        "evidence_refs": [
+          "simulation://COMM-QI"
+        ]
+      }
+    },
+    "CHG01": {
+      "CHG01.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://CHG01"
+          ]
+        }
+      }
+    },
+    "CHG02": {
+      "CHG02.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://CHG02"
+          ]
+        }
+      }
+    },
+    "CHG03": {
+      "CHG03.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://CHG03"
+          ]
+        }
+      }
+    },
+    "CHG04": {
+      "CHG04.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://CHG04"
+          ]
+        }
+      }
+    },
+    "CHG05": {
+      "CHG05.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://CHG05"
+          ]
+        }
+      }
+    },
+    "CHG06": {
+      "CHG06.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://CHG06"
+          ]
+        }
+      }
+    },
+    "CHG07": {
+      "CHG07.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://CHG07"
+          ]
+        }
+      }
+    },
+    "CHG08": {
+      "CHG08.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://CHG08"
+          ]
+        }
+      }
+    },
+    "CHG09": {
+      "CHG09.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://CHG09"
+          ]
+        }
+      }
+    },
+    "SAFE01": {
+      "SAFE01.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "event_visibility_latency",
+          "channel": "external",
+          "value": 0.125,
+          "unit": "s",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://SAFE01"
+          ]
+        }
+      }
+    },
+    "EXEC01": {
+      "EXEC01.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://EXEC01"
+          ]
+        }
+      }
+    },
+    "FAULT01": {
+      "FAULT01.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://FAULT01"
+          ]
+        }
+      }
+    },
+    "TRACE01": {
+      "TRACE01.01": {
+        "state": "PT",
+        "measurement": {
+          "schema_version": "wiparse.automation/1",
+          "metric_id": "integrity",
+          "channel": "external",
+          "value": 1.0,
+          "unit": "1",
+          "sample_count": 100,
+          "window": [
+            0,
+            0.01
+          ],
+          "uncertainty": 0,
+          "quality": {
+            "issues": []
+          },
+          "algorithm_version": "SIMULATION-reference/1",
+          "evidence_refs": [
+            "simulation://TRACE01"
+          ]
+        }
+      }
+    }
+  }
+}

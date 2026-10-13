@@ -1052,7 +1052,7 @@ impl LogTabPage {
         self.poll_filter_debounce(now);
         self.handle_view_shortcuts(ui);
 
-        const TOOLBAR_ROW_H: f32 = 28.0;
+        const TOOLBAR_ROW_H: f32 = 40.0;
         ui.allocate_ui_with_layout(
             egui::vec2(ui.available_width(), TOOLBAR_ROW_H),
             egui::Layout::left_to_right(egui::Align::Center),
@@ -1061,11 +1061,11 @@ impl LogTabPage {
                     .id_salt("log_toolbar")
                     .max_height(TOOLBAR_ROW_H)
                     .auto_shrink([false, true])
-                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.set_min_height(TOOLBAR_ROW_H);
-                            ui.set_max_height(TOOLBAR_ROW_H);
+                            ui.set_min_height(28.0);
+                            ui.set_max_height(28.0);
                             self.toolbar_row_main(ui, lang, t);
                         });
                     });
@@ -1794,7 +1794,7 @@ impl LogTabPage {
                 .corner_radius(CornerRadius::same(4))
                 .inner_margin(Margin::symmetric(8, 5))
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.label(tr(lang, "log.find"));
                         let find = ui.add(
                             egui::TextEdit::singleline(&mut self.edit_find)
@@ -1842,7 +1842,7 @@ impl LogTabPage {
         }
 
         let editor_id_salt = format!("log-document-editor-{}", self.view_id);
-        let available_height = ui.available_height().max(120.0);
+        let available_height = ui.available_height().max(1.0);
         let status_h = 22.0;
         let editor_h = (available_height - status_h).max(80.0);
         if show_virtual_line_editor(
@@ -1958,7 +1958,6 @@ impl LogTabPage {
     }
 
     fn content_body(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
-        let content_h = ui.available_height().max(120.0);
         let frame = Frame::NONE
             .fill(t.input_bg)
             .stroke(Stroke::new(1.0_f32, t.border))
@@ -1966,7 +1965,7 @@ impl LogTabPage {
             .inner_margin(egui::Margin::same(4));
 
         frame.show(ui, |ui| {
-            ui.set_min_height(content_h);
+            ui.set_min_height(ui.available_height().max(1.0));
             if self.edit_mode && !self.live {
                 self.edit_body(ui, lang, t);
                 return;

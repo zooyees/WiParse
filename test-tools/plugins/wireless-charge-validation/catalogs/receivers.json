@@ -1,0 +1,18 @@
+{
+  "schema_version": "wiparse.wireless-plugin/1",
+  "version": "0.1.0",
+  "objects": [
+    {
+      "id": "controlled-rx",
+      "type": "controlled-receiver",
+      "verified": false
+    },
+    {
+      "id": "phone",
+      "type": "real-phone",
+      "soc": null,
+      "temperature_c": null,
+      "verified": false
+    }
+  ]
+}

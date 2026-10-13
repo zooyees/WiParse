@@ -1068,7 +1068,7 @@ impl CalculatorPanel {
                 available.top() + row as f32 * (cell_height + gap),
             );
             let rect = Rect::from_min_size(min, Vec2::new(cell_width, cell_height));
-            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            crate::theme::scope_in_allocated_rect(ui,egui::UiBuilder::new().max_rect(rect), |ui| {
                 Frame::NONE
                     .fill(t.panel_bg)
                     .stroke(Stroke::new(1.0_f32, t.border))

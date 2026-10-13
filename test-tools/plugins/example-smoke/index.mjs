@@ -1,8 +1,9 @@
+import { writeReportWithEvidence } from "../../lib/plugin-session.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { createClient } from "../../lib/wiparse-sdk.mjs";
 import { normalizeResult, resolveReportName, truthy } from "../../lib/plugin-contract.mjs";
-import { attachArtifacts, writeJson, writeText } from "../../lib/plugin-session.mjs";
+import { attachArtifacts, writeJson } from "../../lib/plugin-session.mjs";
 
 async function checkCli(ctx) {
   const w = createClient({
@@ -82,7 +83,7 @@ export default async function run(ctx) {
       health,
     });
     summaryMd = path.join(reportsDir, `${prefix}_${stamp}.md`);
-    writeText(
+    writeReportWithEvidence(ctx.plugin, layout,
       summaryMd,
       [`# ${prefix} ${stamp}`, "", `- Plugin: \`${ctx.plugin.id}\``, `- API: ${wantApi ? "checked" : "skipped"}`, ""].join(
         "\n"

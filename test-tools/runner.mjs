@@ -525,6 +525,9 @@ async function main() {
       `lifecycle=${result.lifecycle || lifecycle}`,
     ];
     if (result.step) bits.push(`step=${result.step}`);
+    if (result.execution_status) bits.push(`execution=${result.execution_status}`);
+    if (result.product_verdict) bits.push(`product=${result.product_verdict}`);
+    if (result.validation_verdict) bits.push(`validation=${result.validation_verdict}`);
     if (result.error) bits.push(`error=${result.error}`);
     if (result.summary_md) bits.push(`md=${result.summary_md}`);
     if (result.run_json) bits.push(`run_json=${result.run_json}`);
@@ -548,7 +551,8 @@ async function main() {
     if (envelope.suggested_params || envelope.artifacts || envelope.session) {
       console.log(`[runner] result ${JSON.stringify(envelope)}`);
     }
-    if (result.ok === false) process.exit(1);
+    // Let pending HTTP handles and stdout drain; forced exit can abort libuv on Windows.
+    if (result.ok === false) process.exitCode = 1;
   } catch (e) {
     const result = normalizeResult(
       { ok: false, error: String(e?.message || e) },
@@ -556,7 +560,7 @@ async function main() {
     );
     console.error(`[runner] failed: ${result.error}`);
     console.log(`[runner] FAIL lifecycle=${result.lifecycle} error=${result.error}`);
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 

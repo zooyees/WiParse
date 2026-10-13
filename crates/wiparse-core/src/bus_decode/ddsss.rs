@@ -6,7 +6,7 @@
 
 use super::{
     try_push_frame, BusBitKind, BusBitMark, BusByteError, BusByteSpan, BusChipMark, BusDecodeResult,
-    BusFrame, BusFrameError, MAX_DECODE_BYTES,
+    BusFrame, BusFrameError,
 };
 use crate::instrument::WaveformTrace;
 use crate::protocol::decode::split_payload_checksum;
@@ -660,7 +660,7 @@ fn demod_phase(
         }
 
         i += nseq;
-        if used >= MAX_DECODE_BYTES {
+        if used >= super::decode_byte_limit() {
             truncated = true;
             break;
         }

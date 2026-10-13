@@ -499,11 +499,10 @@ impl DataAnalysisPanel {
             egui::Rect::from_min_size(full.min, egui::vec2(full.width(), TOOLBAR_H));
         let body_top = full.min.y + TOOLBAR_H + PANEL_GAP;
         let body_h = (full.max.y - body_top).max(1.0);
-        let side_w = SIDE_W
-            .min(full.width() * 0.36)
-            .max(240.0)
-            .min(full.width() - 140.0);
-        let plot_w = (full.width() - side_w - PANEL_GAP).max(120.0);
+        let body = egui::Rect::from_min_max(egui::pos2(full.left(), body_top), full.max);
+        let side_w = ui_theme::resizable_sidebar_width(ui, "data_analysis", body,
+            SIDE_W, 220.0, 200.0, PANEL_GAP, tokens);
+        let plot_w = (full.width() - side_w - PANEL_GAP).max(0.0);
         let side_rect =
             egui::Rect::from_min_size(egui::pos2(full.min.x, body_top), egui::vec2(side_w, body_h));
         let plot_rect = egui::Rect::from_min_size(
@@ -511,8 +510,8 @@ impl DataAnalysisPanel {
             egui::vec2(plot_w, body_h),
         );
 
-        let browser_h = (body_h * 0.42).clamp(140.0, body_h - 160.0);
-        let rules_h = (body_h - browser_h - PANEL_GAP).max(140.0);
+        let browser_h = (body_h * 0.42).clamp(1.0, (body_h - PANEL_GAP).max(1.0));
+        let rules_h = (body_h - browser_h - PANEL_GAP).max(1.0);
         let browser_rect =
             egui::Rect::from_min_size(side_rect.min, egui::vec2(side_w, browser_h));
         let rules_rect = egui::Rect::from_min_size(
@@ -2558,9 +2557,9 @@ fn paint_loading_in_rect(
     rect: egui::Rect,
     progress: u8,
 ) {
-    let bar_w = 220.0_f32;
+    let bar_w = 220.0_f32.min(rect.width().max(1.0));
     let content = egui::Rect::from_center_size(rect.center(), egui::vec2(bar_w, 96.0));
-    ui.scope_builder(
+    crate::theme::scope_in_allocated_rect(ui,
         egui::UiBuilder::new()
             .max_rect(content)
             .layout(egui::Layout::top_down(egui::Align::Center)),
@@ -3547,7 +3546,7 @@ fn panel_in_rect(ui: &mut egui::Ui, rect: egui::Rect, add: impl FnOnce(&mut egui
     if !rect.is_positive() {
         return;
     }
-    ui.scope_builder(
+    crate::theme::scope_in_allocated_rect(ui,
         egui::UiBuilder::new()
             .max_rect(rect)
             .layout(egui::Layout::top_down(egui::Align::Min)),

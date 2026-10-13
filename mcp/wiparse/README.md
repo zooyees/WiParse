@@ -1,4 +1,4 @@
-# WiParse MCP Server
+# WiParse MCP Server 1.1.30
 
 通过 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 把 WiParse 暴露给 Agent。
 
@@ -7,7 +7,7 @@
 ## 前置条件
 
 - Node.js 18+
-- 已启动的 `WiParse.exe`
+- 已启动的 `WiParse.exe`；建议与 MCP 同为 1.1.30，旧 GUI 不包含本次报告修复。
 
 对机部署（解压 zip、注册 Cursor）见 [`docs/DEPLOY_MCP.md`](../../docs/DEPLOY_MCP.md)。双击包内 `mcp/wiparse/setup-mcp.cmd` 即可。
 
@@ -17,6 +17,7 @@
 cd mcp/wiparse
 npm install
 npm run build
+npm test
 ```
 
 ## 环境变量
@@ -47,3 +48,13 @@ npm run build
 Agent 约定：不要 `Read` 日志文件；不要订阅 `/v1/events`。
 
 CLI 说明见 [`docs/CLI_REFERENCE.md`](../../docs/CLI_REFERENCE.md)。
+
+## 1.1.30 测试报告使用
+
+服务启动声明的版本直接读取 package.json，避免已编译代码和包版本不一致。六个工具名称和既有接口保持兼容。
+
+使用 `wiparse_ui` 的 `project.select` 选择 default，再通过 `report.open` 传入活动项目内的完整文件路径；省略 view 时按扩展名识别。MD 显示报告，JSON/JSONL 在报告工具内显示数据，ISF/WFM/CSV 打开波形，PNG 显示图片。报告内数据链接可普通单击，并用“返回报告”回到 MD。MCP 只返回操作状态，不传报告正文或波形点列。
+
+示例报告位于发布包 `projects/default/tests/ScopeSerialDemo/runs/20261013_231510/artifacts/reports/`。以实际解压路径替换路径前缀；跨项目路径仍被拒绝。
+
+独立 WiParse-Service 的自动化开发接口及现场刺激限制见 `docs/AUTOMATION-SERVICE.md`；本 MCP 六工具连接 GUI，不会自动代替该服务或批准实物运行。

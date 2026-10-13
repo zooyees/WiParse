@@ -1,0 +1,6 @@
+{
+  "schema_version": "wiparse.wireless-plugin/1",
+  "version": "0.1.0",
+  "simulation_only": true,
+  "cases": {}
+}

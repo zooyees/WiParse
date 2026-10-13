@@ -38,3 +38,20 @@ vendor/ftdi/*.dll
 vendor/ftdi/*.DLL
 dist/*.dll
 dist/vendor/
+
+# Local verification, backups, and expanded versioned release bundles
+/tmp/
+/evidence/
+/config.json.bak
+/dist/*.bak
+/dist/cache/
+/dist/logs/
+/dist/log/
+/dist/projects/
+/dist/wifi-uart-recent.json
+/dist/WiParse-*-dev/
+/dist/WiParse-*.zip
+/dist/WiParse-*.zip.sha256
+/dist/*.7z
+/test-tools*.7z
+/test-tools*.zip

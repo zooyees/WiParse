@@ -1,3 +1,4 @@
+import { writeReportWithEvidence } from "../../lib/plugin-session.mjs";
 /**
  * I2C master text RPC (WIPARSE-IF CH-I2C).
  */
@@ -33,7 +34,6 @@ import {
   truthy,
   writeHud,
   writeJson,
-  writeText,
 } from "../../lib/plugin-session.mjs";
 
 function mergeArgs(config, args) {
@@ -194,7 +194,7 @@ export default async function run(ctx) {
       const d = await discover(ctx, args);
       writeJson(path.join(logsDir, `i2c_discover_${stamp}.json`), d);
       const md = config.paths.summary_md;
-      writeText(
+      writeReportWithEvidence(ctx.plugin, layout,
         md,
         `# I2C discover ${stamp}\n\n${d.checks.map((c) => `- ${c.ok ? "OK" : "X"} ${c.id}: ${c.detail}`).join("\n")}\n`
       );
@@ -234,7 +234,7 @@ export default async function run(ctx) {
     stream.end();
     writeJson(path.join(logsDir, `i2c_${stamp}.json`), ran);
     const md = config.paths.summary_md;
-    writeText(md, renderReport({ stamp, args, results: ran.results, transport: ch.transport }));
+    writeReportWithEvidence(ctx.plugin, layout,md, renderReport({ stamp, args, results: ran.results, transport: ch.transport }));
     const fail = (ran.results || []).find((r) => r.parsed?.ok === false);
     return normalizeResult(
       attachArtifacts(

@@ -3,7 +3,7 @@
 use super::charging::{append, byte_error, crc8, finish};
 use super::digital::{LogicLevels, LogicWave};
 use super::{
-    BusByteError, BusByteSpan, BusDecodeResult, BusFrame, BusFrameError, MAX_DECODE_BYTES,
+    BusByteError, BusByteSpan, BusDecodeResult, BusFrame, BusFrameError,
 };
 use crate::instrument::WaveformTrace;
 
@@ -123,7 +123,7 @@ pub fn decode_scp(
             byte,
             error,
         });
-        if packet.len() >= MAX_DECODE_BYTES {
+        if packet.len() >= super::decode_byte_limit() {
             emit(&mut result, &mut used, &mut packet, false);
             result.truncated = true;
             break;

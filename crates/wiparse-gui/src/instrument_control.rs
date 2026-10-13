@@ -1675,15 +1675,20 @@ impl InstrumentControlPanel {
 
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
         // `pump` is called once from the app update loop while this tab is active.
-        ui.horizontal_top(|ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(290.0, ui.available_height()),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| self.device_rack(ui, lang, tokens),
-            );
-            ui.separator();
-            ui.vertical(|ui| self.workspace(ui, lang, tokens));
-        });
+        let (full, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
+        if !full.is_positive() { return; }
+        let gap = 8.0;
+        let width = theme::resizable_sidebar_width(ui, "instrument_control", full,
+            290.0, 240.0, 280.0, gap, tokens);
+        let side = egui::Rect::from_min_size(full.min, egui::vec2(width, full.height()));
+        let main = egui::Rect::from_min_max(
+            egui::pos2((side.right() + gap).min(full.right()), full.top()), full.max);
+        theme::scope_in_allocated_rect(ui, egui::UiBuilder::new().max_rect(side)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+            |ui| self.device_rack(ui, lang, tokens));
+        theme::scope_in_allocated_rect(ui, egui::UiBuilder::new().max_rect(main)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+            |ui| self.workspace(ui, lang, tokens));
     }
 
     fn select_kind(&mut self, kind: InstrumentKind) {
@@ -2233,7 +2238,7 @@ impl InstrumentControlPanel {
         );
         child.set_clip_rect(rect);
 
-        child.horizontal(|ui| {
+        child.horizontal_wrapped(|ui| {
             ui.label(
                 RichText::new(text(lang, "设备控制总览", "DIGITAL TWIN"))
                     .strong()
@@ -2246,7 +2251,7 @@ impl InstrumentControlPanel {
                     .monospace()
                     .color(hud.dim),
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(Local::now().format("%H:%M:%S").to_string())
                         .monospace()
@@ -2259,12 +2264,7 @@ impl InstrumentControlPanel {
                     hud.cyan,
                 );
                 if live > 0 {
-                    hud_chip(
-                        ui,
-                        &hud,
-                        format!("{live} LIVE"),
-                        hud.ok,
-                    );
+                    hud_chip(ui, &hud, format!("{live} LIVE"), hud.ok);
                 }
                 if busy {
                     hud_chip(ui, &hud, "BUSY", hud.warn);
@@ -2327,17 +2327,63 @@ impl InstrumentControlPanel {
             .collect();
 
         let remain = child.available_size();
-        let (scene, _) = child.allocate_exact_size(remain.max(egui::vec2(120.0, 180.0)), egui::Sense::hover());
-        if let Some(id) = paint_digital_twin_lab(
-            &child,
-            scene,
-            lang,
-            tokens,
-            &hud,
-            t,
-            &snaps,
-            self.scanning,
-        ) {
+        // The orbit view requires space for full-size front panels. In smaller
+        // workspaces a scrolling grid keeps every device readable and selectable.
+        if remain.x < 900.0 || remain.y < 420.0 {
+            let mut picked = None;
+            egui::ScrollArea::vertical()
+                .id_salt("compact-instrument-overview")
+                .auto_shrink([false, false])
+                .show(&mut child, |ui| {
+                    let columns = ((ui.available_width() / 300.0).floor() as usize).max(1);
+                    let gap = ui.spacing().item_spacing.x;
+                    let tile_w = ((ui.available_width() - gap * (columns - 1) as f32)
+                        / columns as f32)
+                        .max(1.0);
+                    for row in self.devices.chunks(columns) {
+                        ui.horizontal_top(|ui| {
+                            for device in row {
+                                let opened = ui
+                                    .allocate_ui_with_layout(
+                                        egui::vec2(tile_w, 230.0),
+                                        egui::Layout::top_down(egui::Align::Min),
+                                        |ui| {
+                                            ui.set_max_width(tile_w);
+                                            overview_device_tile(
+                                                ui,
+                                                lang,
+                                                tokens,
+                                                &hud,
+                                                t,
+                                                tile_w,
+                                                230.0,
+                                                device,
+                                                self.busy_device,
+                                                &self.busy_label,
+                                                &self.latest,
+                                                self.device_photos.get(&device.id),
+                                            )
+                                        },
+                                    )
+                                    .inner;
+                                if opened {
+                                    picked = Some((device.kind, device.id));
+                                }
+                            }
+                        });
+                    }
+                });
+            if let Some((kind, id)) = picked {
+                self.select_kind(kind);
+                self.selected_id = Some(id);
+            }
+            return;
+        }
+        let (scene, _) =
+            child.allocate_exact_size(remain.max(egui::vec2(120.0, 180.0)), egui::Sense::hover());
+        if let Some(id) =
+            paint_digital_twin_lab(&child, scene, lang, tokens, &hud, t, &snaps, self.scanning)
+        {
             if let Some(device) = self.devices.iter().find(|d| d.id == id) {
                 let kind = device.kind;
                 self.select_kind(kind);
@@ -2411,47 +2457,48 @@ impl InstrumentControlPanel {
             .id_salt(format!("instrument-workspace-{id}"))
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.columns(3, |columns| {
-                    card(
-                        &mut columns[0],
-                        tokens,
-                        text(lang, "参数设置", "Parameters"),
-                        |ui| {
+                responsive_three_cards(ui, |ui, column| match column {
+                    0 => {
+                        card(ui, tokens, text(lang, "参数设置", "Parameters"), |ui| {
                             self.instrument_parameters_ui(ui, lang, tokens, id, index);
                             self.settings_ui(ui, lang, tokens, id, index);
-                        },
-                    );
-                    card(
-                        &mut columns[1],
-                        tokens,
-                        text(lang, "控制", "Control"),
-                        |ui| {
+                        });
+                    }
+                    1 => {
+                        card(ui, tokens, text(lang, "控制", "Control"), |ui| {
                             let (commands, measure_once) =
                                 control_ui(ui, lang, tokens, &mut self.devices[index]);
                             for command in commands {
                                 self.log_command(id, &command);
-                                let _ = self.tx.send(Job::Command { id, command, job_id: None });
+                                let _ = self.tx.send(Job::Command {
+                                    id,
+                                    command,
+                                    job_id: None,
+                                });
                             }
                             if measure_once {
                                 self.measurement_pending.insert(id);
                                 let _ = self.tx.send(Job::Measure(id));
                             }
-                        },
-                    );
-                    card(
-                        &mut columns[2],
-                        tokens,
-                        text(lang, "数据采集", "Data Acquisition"),
-                        |ui| {
-                            ui.label(
-                                RichText::new(instrument_acquisition_hint(lang, kind))
-                                    .small()
-                                    .color(tokens.text_muted),
-                            );
-                            ui.add_space(6.0);
-                            self.acquisition_ui(ui, lang, tokens, id, index);
-                        },
-                    );
+                        });
+                    }
+                    2 => {
+                        card(
+                            ui,
+                            tokens,
+                            text(lang, "数据采集", "Data Acquisition"),
+                            |ui| {
+                                ui.label(
+                                    RichText::new(instrument_acquisition_hint(lang, kind))
+                                        .small()
+                                        .color(tokens.text_muted),
+                                );
+                                ui.add_space(6.0);
+                                self.acquisition_ui(ui, lang, tokens, id, index);
+                            },
+                        );
+                    }
+                    _ => unreachable!(),
                 });
                 card(ui, tokens, "SCPI", |ui| {
                     self.console_ui(ui, lang, tokens, id, index);
@@ -2482,7 +2529,7 @@ impl InstrumentControlPanel {
 
         instrument_grid_row(ui, avail.x, row1_h, col_l, col_r, |ui, left, right| {
             instrument_grid_cell(ui, left, tokens, text(lang, "① 示波器控制", "① Scope Control"), |ui| {
-                egui::ScrollArea::vertical()
+                egui::ScrollArea::both()
                     .id_salt(("scope-ctrl-scroll", id))
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -2609,17 +2656,7 @@ impl InstrumentControlPanel {
                     }
                 }
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    RichText::new(text(
-                        lang,
-                        "预览 · 波形源",
-                        "Preview · wave src",
-                    ))
-                    .small()
-                    .color(tokens.text_muted),
-                );
-            });
+
         });
         ui.add_space(6.0);
         let preview_h = ui.available_height().max(80.0);
@@ -2844,7 +2881,7 @@ impl InstrumentControlPanel {
         let log_w = ui.available_width().min(panel_w).max(1.0);
         let (log_rect, _) =
             ui.allocate_exact_size(egui::vec2(log_w, log_h), egui::Sense::hover());
-        ui.scope_builder(
+        crate::theme::scope_in_allocated_rect(ui,
             egui::UiBuilder::new()
                 .max_rect(log_rect)
                 .layout(egui::Layout::top_down(egui::Align::Min)),
@@ -2902,7 +2939,7 @@ impl InstrumentControlPanel {
 
         instrument_grid_row(ui, avail.x, row1_h, col_l, col_r, |ui, left, right| {
             instrument_grid_cell(ui, left, tokens, text(lang, "① 通道输出", "① Channel Outputs"), |ui| {
-                egui::ScrollArea::vertical()
+                egui::ScrollArea::both()
                     .id_salt(("source-ch-scroll", id))
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -2918,7 +2955,7 @@ impl InstrumentControlPanel {
         ui.add_space(SCOPE_ROW_GAP);
         instrument_grid_row(ui, avail.x, row2_h, col_l, col_r, |ui, left, right| {
             instrument_grid_cell(ui, left, tokens, text(lang, "③ 保护设定", "③ Protection"), |ui| {
-                egui::ScrollArea::vertical()
+                egui::ScrollArea::both()
                     .id_salt(("source-prot-scroll", id))
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -3023,26 +3060,27 @@ impl InstrumentControlPanel {
             .id_salt(format!("probe-workspace-{id}"))
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.columns(3, |columns| {
-                    card(
-                        &mut columns[0],
+                responsive_three_cards(ui, |ui, column| {
+                match column {
+                    0 => { card(
+                        ui,
                         tokens,
                         text(lang, "参数设置", "Parameters"),
                         |ui| {
-                            self.probe_parameters_ui(ui, lang, tokens, index);
+                            self.probe_parameters_ui(ui, lang, tokens, index, true);
                         },
-                    );
-                    card(
-                        &mut columns[1],
+                    ); },
+                    1 => { card(
+                        ui,
                         tokens,
                         text(lang, "控制", "Control"),
                         |ui| {
                             let commands = probe_controls(ui, lang, tokens, &mut self.devices[index]);
                             self.dispatch_scope_commands(id, commands);
                         },
-                    );
-                    card(
-                        &mut columns[2],
+                    ); },
+                    2 => { card(
+                        ui,
                         tokens,
                         text(lang, "日志 / RTT", "Log / RTT"),
                         |ui| {
@@ -3058,8 +3096,10 @@ impl InstrumentControlPanel {
                             ui.add_space(6.0);
                             self.device_io_log_ui(ui, tokens, index);
                         },
-                    );
-                });
+                    ); },
+                    _ => unreachable!(),
+                }
+            });
             });
     }
 
@@ -3075,17 +3115,18 @@ impl InstrumentControlPanel {
             .id_salt(format!("bridge-workspace-{id}"))
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.columns(3, |columns| {
-                    card(
-                        &mut columns[0],
+                responsive_three_cards(ui, |ui, column| {
+                match column {
+                    0 => { card(
+                        ui,
                         tokens,
                         text(lang, "参数设置", "Parameters"),
                         |ui| {
                             self.bridge_parameters_ui(ui, lang, tokens, index);
                         },
-                    );
-                    card(
-                        &mut columns[1],
+                    ); },
+                    1 => { card(
+                        ui,
                         tokens,
                         text(lang, "控制", "Control"),
                         |ui| {
@@ -3093,9 +3134,9 @@ impl InstrumentControlPanel {
                                 bridge_controls(ui, lang, tokens, &mut self.devices[index]);
                             self.dispatch_scope_commands(id, commands);
                         },
-                    );
-                    card(
-                        &mut columns[2],
+                    ); },
+                    2 => { card(
+                        ui,
                         tokens,
                         text(lang, "日志", "Log"),
                         |ui| {
@@ -3111,8 +3152,10 @@ impl InstrumentControlPanel {
                             ui.add_space(6.0);
                             self.device_io_log_ui(ui, tokens, index);
                         },
-                    );
-                });
+                    ); },
+                    _ => unreachable!(),
+                }
+            });
             });
     }
 
@@ -3136,17 +3179,18 @@ impl InstrumentControlPanel {
                     ui.selectable_value(tab, 2, "I2C");
                 });
                 ui.add_space(8.0);
-                ui.columns(3, |columns| {
-                    card(
-                        &mut columns[0],
+                responsive_three_cards(ui, |ui, column| {
+                match column {
+                    0 => { card(
+                        ui,
                         tokens,
                         text(lang, "参数设置", "Parameters"),
                         |ui| {
                             self.dongle_parameters_ui(ui, lang, tokens, index);
                         },
-                    );
-                    card(
-                        &mut columns[1],
+                    ); },
+                    1 => { card(
+                        ui,
                         tokens,
                         text(lang, "控制", "Control"),
                         |ui| {
@@ -3154,9 +3198,9 @@ impl InstrumentControlPanel {
                                 dongle_controls(ui, lang, tokens, &mut self.devices[index]);
                             self.dispatch_scope_commands(id, commands);
                         },
-                    );
-                    card(
-                        &mut columns[2],
+                    ); },
+                    2 => { card(
+                        ui,
                         tokens,
                         text(lang, "日志 / 捕获", "Log / Capture"),
                         |ui| {
@@ -3172,8 +3216,10 @@ impl InstrumentControlPanel {
                             ui.add_space(6.0);
                             self.device_io_log_ui(ui, tokens, index);
                         },
-                    );
-                });
+                    ); },
+                    _ => unreachable!(),
+                }
+            });
             });
     }
 
@@ -3297,7 +3343,7 @@ impl InstrumentControlPanel {
                 });
             }
             _ => {
-                self.probe_parameters_ui(ui, lang, tokens, index);
+                self.probe_parameters_ui(ui, lang, tokens, index, false);
             }
         }
     }
@@ -3308,22 +3354,25 @@ impl InstrumentControlPanel {
         lang: Lang,
         tokens: &Tokens,
         index: usize,
+        show_identity: bool,
     ) {
         let device = &mut self.devices[index];
-        egui::Grid::new(("probe-id-grid", device.id))
-            .num_columns(2)
-            .spacing([10.0, 4.0])
-            .show(ui, |ui| {
-                setting_row(ui, text(lang, "资源", "Resource"), &device.resource);
-                setting_row(
-                    ui,
-                    text(lang, "制造商", "Manufacturer"),
-                    &device.identity.manufacturer,
-                );
-                setting_row(ui, text(lang, "型号", "Model"), &device.identity.model);
-                setting_row(ui, text(lang, "序列号", "Serial"), &device.identity.serial);
-            });
-        ui.add_space(8.0);
+        if show_identity {
+            egui::Grid::new(("probe-id-grid", device.id))
+                .num_columns(2)
+                .spacing([10.0, 4.0])
+                .show(ui, |ui| {
+                    setting_row(ui, text(lang, "资源", "Resource"), &device.resource);
+                    setting_row(
+                        ui,
+                        text(lang, "制造商", "Manufacturer"),
+                        &device.identity.manufacturer,
+                    );
+                    setting_row(ui, text(lang, "型号", "Model"), &device.identity.model);
+                    setting_row(ui, text(lang, "序列号", "Serial"), &device.identity.serial);
+                });
+            ui.add_space(8.0);
+        }
         ui.label(RichText::new(text(lang, "目标芯片", "Target chip")).strong());
         ui.add(
             egui::TextEdit::singleline(&mut device.controls.probe_chip)
@@ -3582,7 +3631,7 @@ impl InstrumentControlPanel {
                             self.render_instrument_panel(ui, lang, tokens, id, index, body);
                         }
                         _ => {
-                            egui::ScrollArea::vertical()
+                            egui::ScrollArea::both()
                                 .id_salt((salt, id))
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
@@ -4969,6 +5018,11 @@ struct WaveformStats {
 }
 
 fn waveform_stats(trace: &WaveformTrace) -> WaveformStats {
+    if let Some(s) = wiparse_core::automation::analysis::trace_stats(trace) {
+        return WaveformStats { count: s.count, dt: s.dt, min: s.min, max: s.max, pp: s.max-s.min, mean: s.mean };
+    }
+    // Invalid samples are not promoted to valid automation measurements. The
+    // legacy plot remains display-only; the shared analyzer rejects them.
     let n = trace.x.len().min(trace.y.len());
     if n == 0 {
         return WaveformStats {
@@ -5142,7 +5196,7 @@ fn instrument_grid_cell(
     if !rect.is_positive() {
         return;
     }
-    ui.scope_builder(
+    crate::theme::scope_in_allocated_rect(ui,
         egui::UiBuilder::new()
             .max_rect(rect)
             .layout(egui::Layout::top_down(egui::Align::Min)),
@@ -5187,7 +5241,7 @@ fn scope_card_fill(
     if !content.is_positive() {
         return;
     }
-    ui.scope_builder(
+    crate::theme::scope_in_allocated_rect(ui,
         egui::UiBuilder::new()
             .max_rect(content)
             .layout(egui::Layout::top_down(egui::Align::Min)),
@@ -6149,13 +6203,13 @@ fn source_channel_controls(
     );
     ui.add_space(8.0);
 
-    let panel_w = ui.available_width();
-    let gap = 8.0;
-    let w_ch = 40.0;
-    let w_v = 96.0;
-    let w_i = 96.0;
+    let panel_w = ui.available_width().max(320.0);
+    let gap = 6.0;
+    let w_ch = 32.0;
     let w_apply = 72.0;
-    let w_out = (panel_w - w_ch - w_v - w_i - w_apply - gap * 4.0).max(88.0);
+    let w_out = 72.0;
+    let w_v = ((panel_w - w_ch - w_apply - w_out - gap * 4.0) * 0.5).max(1.0);
+    let w_i = w_v;
     let row_h = 34.0;
 
     ui.allocate_ui_with_layout(
@@ -6285,11 +6339,11 @@ fn source_protection_controls(
     );
     ui.add_space(8.0);
 
-    let panel_w = ui.available_width();
+    let panel_w = ui.available_width().max(320.0);
     let gap = 8.0;
     let w_ch = 40.0;
-    let w_ovp = 100.0;
-    let w_ocp = 100.0;
+    let w_ovp = 80.0;
+    let w_ocp = 80.0;
     let w_apply = (panel_w - w_ch - w_ovp - w_ocp - gap * 3.0).max(72.0);
     let row_h = 34.0;
 
@@ -6537,6 +6591,7 @@ fn card(ui: &mut egui::Ui, tokens: &Tokens, title: &str, add: impl FnOnce(&mut e
         .corner_radius(CornerRadius::same(6))
         .inner_margin(Margin::same(10))
         .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
             ui.label(RichText::new(title).strong());
             ui.add_space(5.0);
             add(ui);
@@ -6603,10 +6658,9 @@ fn instrument_type_card(
         .corner_radius(CornerRadius::same(7))
         .inner_margin(Margin::symmetric(11, 9))
         .show(ui, |ui| {
-            ui.set_min_width(CARD_PANEL_WIDTH);
-            ui.set_max_width(CARD_PANEL_WIDTH);
-            let content_width =
-                (CARD_PANEL_WIDTH - ui.spacing().indent * 2.0).max(CARD_PANEL_WIDTH - 22.0);
+            let content_width = ui.available_width().max(1.0);
+            ui.set_min_width(content_width);
+            ui.set_max_width(content_width);
 
             ui.horizontal(|ui| {
                 ui.allocate_ui_with_layout(
@@ -6617,7 +6671,7 @@ fn instrument_type_card(
                     },
                 );
                 ui.vertical(|ui| {
-                    ui.set_width(content_width - CARD_ICON_COLUMN_WIDTH);
+                    ui.set_width((content_width - CARD_ICON_COLUMN_WIDTH - ui.spacing().item_spacing.x).max(1.0));
                     if ui
                         .selectable_label(
                             selected,
@@ -8792,8 +8846,9 @@ fn overview_type_card(
         .corner_radius(CornerRadius::same(7))
         .inner_margin(Margin::symmetric(11, 9))
         .show(ui, |ui| {
-            ui.set_min_width(CARD_PANEL_WIDTH);
-            ui.set_max_width(CARD_PANEL_WIDTH);
+            let content_width = ui.available_width().max(1.0);
+            ui.set_min_width(content_width);
+            ui.set_max_width(content_width);
             ui.horizontal(|ui| {
                 ui.allocate_ui_with_layout(
                     egui::vec2(CARD_ICON_COLUMN_WIDTH, 0.0),
@@ -8877,8 +8932,8 @@ fn overview_device_tile(
         .corner_radius(CornerRadius::same(6))
         .inner_margin(Margin::same(10))
         .show(ui, |ui| {
-            ui.set_width(tile_w - 12.0);
-            ui.set_min_height(tile_h - 12.0);
+            ui.set_width((tile_w - 22.0).max(1.0));
+            ui.set_min_height((tile_h - 22.0).max(1.0));
             ui.horizontal(|ui| {
                 let glyph = ui.allocate_exact_size(egui::vec2(84.0, 72.0), egui::Sense::hover());
                 if let Some(tex) = photo {
@@ -9583,5 +9638,62 @@ fn local(zh: bool, zh_text: &'static str, en_text: &'static str) -> &'static str
         zh_text
     } else {
         en_text
+    }
+}
+
+
+#[cfg(test)]
+mod layout_audit {
+    use super::*;
+
+    #[test]
+    fn connected_demo_workspaces_and_overview_render_at_small_sizes() {
+        let cfg = AppConfig::default();
+        let mut panel = InstrumentControlPanel::new(&cfg);
+        panel.debug_mode = true;
+        let kinds = [InstrumentKind::Oscilloscope, InstrumentKind::DcSource,
+            InstrumentKind::ElectronicLoad, InstrumentKind::Multimeter,
+            InstrumentKind::DebugProbe, InstrumentKind::UsbBridge, InstrumentKind::WiparseDongle];
+        let initial_ctx = egui::Context::default();
+        for (i, kind) in kinds.iter().enumerate() {
+            let session = open_demo_session(*kind).unwrap();
+            panel.handle_event(&initial_ctx, connected_event(i as u64 + 1, &session));
+        }
+        for lang in [Lang::Zh, Lang::En] {
+            for size in [egui::vec2(640.0, 360.0), egui::vec2(1100.0, 720.0), egui::vec2(1920.0, 1080.0)] {
+                for page in 0..=kinds.len() {
+                    if page < kinds.len() { panel.select_kind(kinds[page]); }
+                    else { panel.select_overview(); }
+                    let ctx = egui::Context::default();
+                    crate::fonts::install_cjk_fonts(&ctx);
+                    let tokens = crate::theme::apply_theme(&ctx, false);
+                    let output = ctx.run(egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)), ..Default::default()
+                    }, |ctx| { egui::CentralPanel::default().show(ctx, |ui| { panel.ui(ui, lang, &tokens); }); });
+                    assert!(!output.shapes.is_empty());
+                    if matches!(lang, Lang::Zh) && size.x == 1100.0 {
+                        if let Ok(dir) = std::env::var("WIPARSE_UI_AUDIT_OUTPUT") {
+                            crate::ui_audit::export_frame(&ctx, output,
+                                &std::path::PathBuf::from(dir), &format!("instrument-{page}"), size);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+fn responsive_three_cards(ui: &mut egui::Ui, mut add: impl FnMut(&mut egui::Ui, usize)) {
+    if ui.available_width() >= 1050.0 {
+        ui.columns(3, |columns| {
+            for (index, column) in columns.iter_mut().enumerate() {
+                add(column, index);
+            }
+        });
+    } else {
+        for index in 0..3 {
+            add(ui, index);
+        }
     }
 }

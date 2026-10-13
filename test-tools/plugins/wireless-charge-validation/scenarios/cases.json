@@ -1,0 +1,2999 @@
+{
+  "schema_version": "wiparse.wireless-plugin/1",
+  "version": "0.1.0",
+  "cases": [
+    {
+      "id": "ADP01",
+      "goal": "输入协议合同/物理VI/持续充电",
+      "sys": [
+        "SYS-01"
+      ],
+      "pl": [
+        "PL-02",
+        "PL-05",
+        "PL-09"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": true,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "ADP01.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "ADP02",
+      "goal": "真实适配器互操作",
+      "sys": [
+        "SYS-01"
+      ],
+      "pl": [
+        "PL-02",
+        "PL-05",
+        "PL-09"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "ADP02.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "ADP03",
+      "goal": "线缆压降与能力",
+      "sys": [
+        "SYS-01"
+      ],
+      "pl": [
+        "PL-02",
+        "PL-05",
+        "PL-09"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "ADP03.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "ADP04",
+      "goal": "多口共享与合同变化",
+      "sys": [
+        "SYS-01"
+      ],
+      "pl": [
+        "PL-02",
+        "PL-05",
+        "PL-09"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "ADP04.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "ADP05",
+      "goal": "回退到批准输入",
+      "sys": [
+        "SYS-01"
+      ],
+      "pl": [
+        "PL-02",
+        "PL-05",
+        "PL-09"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "ADP05.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "ADP06",
+      "goal": "协商超时与恢复",
+      "sys": [
+        "SYS-01"
+      ],
+      "pl": [
+        "PL-02",
+        "PL-05",
+        "PL-09"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "ADP06.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "ADP07",
+      "goal": "冷启动/热插拔",
+      "sys": [
+        "SYS-01"
+      ],
+      "pl": [
+        "PL-02",
+        "PL-05",
+        "PL-09"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "ADP07.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "ADP08",
+      "goal": "供电掉电/恢复",
+      "sys": [
+        "SYS-01"
+      ],
+      "pl": [
+        "PL-02",
+        "PL-05",
+        "PL-09"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "ADP08.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "ADP09",
+      "goal": "历史适配器故障回归",
+      "sys": [
+        "SYS-01"
+      ],
+      "pl": [
+        "PL-02",
+        "PL-05",
+        "PL-09"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": true,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "ADP09.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "VIN01",
+      "goal": "VIN物理值与请求反馈分离",
+      "sys": [
+        "SYS-02"
+      ],
+      "pl": [
+        "PL-06"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": true,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "VIN01.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "vin_mean",
+          "limits_ref": "voltage",
+          "state": "PT",
+          "channel": "VIN",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "VBRG01",
+      "goal": "VBRG启动稳态与控制",
+      "sys": [
+        "SYS-02"
+      ],
+      "pl": [
+        "PL-06"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "VBRG01.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "vbrg_mean",
+          "limits_ref": "vbrg",
+          "state": "PT",
+          "channel": "VBRG",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "VIN02",
+      "goal": "过冲/纹波独立极值",
+      "sys": [
+        "SYS-02"
+      ],
+      "pl": [
+        "PL-06"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "VIN02.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "vin_peak",
+          "limits_ref": "voltage",
+          "state": "PT",
+          "channel": "VIN",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "VIN03",
+      "goal": "关断残压及重复启动",
+      "sys": [
+        "SYS-02",
+        "SYS-07"
+      ],
+      "pl": [
+        "PL-06",
+        "PL-04"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "VIN03.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "residual_voltage",
+          "limits_ref": "residual",
+          "state": "SAFE_READY",
+          "channel": "VIN",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "PWM01",
+      "goal": "PING burst工作频率(排除idle)",
+      "sys": [
+        "SYS-03"
+      ],
+      "pl": [
+        "PL-07"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": true,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "PWM01.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "frequency_median",
+          "limits_ref": "frequency",
+          "state": "PING",
+          "channel": "PWM",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "PWM02",
+      "goal": "PT调频轨迹与占空比",
+      "sys": [
+        "SYS-03"
+      ],
+      "pl": [
+        "PL-07"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "PWM02.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "frequency_median",
+          "limits_ref": "frequency",
+          "state": "PT",
+          "channel": "PWM",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "DTAHL",
+      "goal": "实际VGS双向最坏死区 AHL",
+      "sys": [
+        "SYS-03"
+      ],
+      "pl": [
+        "PL-07"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "DTAHL.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "deadtime_min_HL",
+          "limits_ref": "deadtime",
+          "state": "PT",
+          "channel": "VGS-A",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "DTBHL",
+      "goal": "实际VGS双向最坏死区 BHL",
+      "sys": [
+        "SYS-03"
+      ],
+      "pl": [
+        "PL-07"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "DTBHL.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "deadtime_min_HL",
+          "limits_ref": "deadtime",
+          "state": "PT",
+          "channel": "VGS-B",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "DTALH",
+      "goal": "实际VGS双向最坏死区 ALH",
+      "sys": [
+        "SYS-03"
+      ],
+      "pl": [
+        "PL-07"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "DTALH.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "deadtime_min_LH",
+          "limits_ref": "deadtime",
+          "state": "PT",
+          "channel": "VGS-A",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "DTBLH",
+      "goal": "实际VGS双向最坏死区 BLH",
+      "sys": [
+        "SYS-03"
+      ],
+      "pl": [
+        "PL-07"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "DTBLH.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "deadtime_min_LH",
+          "limits_ref": "deadtime",
+          "state": "PT",
+          "channel": "VGS-B",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "STATE01",
+      "goal": "TX日志与物理功率一致性",
+      "sys": [
+        "SYS-04"
+      ],
+      "pl": [
+        "PL-03",
+        "PL-06"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": true,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "STATE01.01",
+          "kind": "state",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ],
+          "layer": "tx",
+          "expected_final": "PT",
+          "minimum_power_w": 3,
+          "allowed_ept_reasons": [
+            "charge_complete",
+            "approved_removal"
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "INPUT01",
+      "goal": "输入层状态与供电过程",
+      "sys": [
+        "SYS-04",
+        "SYS-01"
+      ],
+      "pl": [
+        "PL-03"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "INPUT01.01",
+          "kind": "state",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ],
+          "layer": "input",
+          "expected_final": "READY",
+          "minimum_power_w": 3,
+          "allowed_ept_reasons": [
+            "charge_complete",
+            "approved_removal"
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "BAT01",
+      "goal": "RX电池CC/CV可观测性",
+      "sys": [
+        "SYS-04"
+      ],
+      "pl": [
+        "PL-03",
+        "PL-09"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "BAT01.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "COMM-INPUT",
+      "goal": "通信顺序/参考分母/超时 input",
+      "sys": [
+        "SYS-05"
+      ],
+      "pl": [
+        "PL-08",
+        "PL-09"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": true,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "COMM-INPUT.01",
+          "kind": "communication",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ],
+          "layer": "input",
+          "maximum_error_ratio": 0.01,
+          "maximum_timeouts": 0,
+          "denominator": "independent expected frames; never observed frames alone"
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "COMM-QI",
+      "goal": "通信顺序/参考分母/超时 qi",
+      "sys": [
+        "SYS-05"
+      ],
+      "pl": [
+        "PL-08",
+        "PL-09"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": true,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "COMM-QI.01",
+          "kind": "communication",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ],
+          "layer": "qi",
+          "maximum_error_ratio": 0.01,
+          "maximum_timeouts": 0,
+          "denominator": "independent expected frames; never observed frames alone"
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "CHG01",
+      "goal": "同窗校准功率/效率",
+      "sys": [
+        "SYS-04",
+        "SYS-09"
+      ],
+      "pl": [
+        "PL-09",
+        "PL-12"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "CHG01.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "CHG02",
+      "goal": "手机SOC及充电终止",
+      "sys": [
+        "SYS-04",
+        "SYS-09"
+      ],
+      "pl": [
+        "PL-09",
+        "PL-12"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "CHG02.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "CHG03",
+      "goal": "热稳态/降额",
+      "sys": [
+        "SYS-04",
+        "SYS-09"
+      ],
+      "pl": [
+        "PL-09",
+        "PL-12"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "CHG03.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "CHG04",
+      "goal": "偏位与耦合",
+      "sys": [
+        "SYS-04",
+        "SYS-09"
+      ],
+      "pl": [
+        "PL-09",
+        "PL-12"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "CHG04.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "CHG05",
+      "goal": "正式FOD夹具",
+      "sys": [
+        "SYS-04",
+        "SYS-09"
+      ],
+      "pl": [
+        "PL-09",
+        "PL-12"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "CHG05.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "CHG06",
+      "goal": "移除/重放",
+      "sys": [
+        "SYS-04",
+        "SYS-09"
+      ],
+      "pl": [
+        "PL-09",
+        "PL-12"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "CHG06.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "CHG07",
+      "goal": "保护/复位",
+      "sys": [
+        "SYS-04",
+        "SYS-09"
+      ],
+      "pl": [
+        "PL-09",
+        "PL-12"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": true,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "CHG07.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "CHG08",
+      "goal": "长稳/周期",
+      "sys": [
+        "SYS-04",
+        "SYS-09"
+      ],
+      "pl": [
+        "PL-09",
+        "PL-12"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "CHG08.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "CHG09",
+      "goal": "冻结条件A/B",
+      "sys": [
+        "SYS-04",
+        "SYS-09"
+      ],
+      "pl": [
+        "PL-09",
+        "PL-12"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": false,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "CHG09.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "SAFE01",
+      "goal": "保护先行与异常捕获时延",
+      "sys": [
+        "SYS-06"
+      ],
+      "pl": [
+        "PL-04",
+        "PL-10"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": true,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "SAFE01.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "event_visibility_latency",
+          "limits_ref": "latency",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "EXEC01",
+      "goal": "独占/unknown/取消/有限恢复",
+      "sys": [
+        "SYS-07"
+      ],
+      "pl": [
+        "PL-01",
+        "PL-04",
+        "PL-10"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": true,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "EXEC01.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "FAULT01",
+      "goal": "首个异常、证据及隔离处置",
+      "sys": [
+        "SYS-08"
+      ],
+      "pl": [
+        "PL-10",
+        "PL-11"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": true,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "FAULT01.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    },
+    {
+      "id": "TRACE01",
+      "goal": "金坏样/量测系统/版本/生产追溯",
+      "sys": [
+        "SYS-10"
+      ],
+      "pl": [
+        "PL-11",
+        "PL-12"
+      ],
+      "sw": [
+        "SW-08",
+        "SW-09"
+      ],
+      "dg": [
+        "DG-02",
+        "DG-04"
+      ],
+      "mandatory": true,
+      "initial_state": "SAFE_READY",
+      "risk": "No live action until product/station risk approval",
+      "roles": [
+        "scope",
+        "dongle",
+        "source",
+        "receiver",
+        "protection"
+      ],
+      "required_capabilities": [
+        "device.lease.acquire",
+        "capture.arm",
+        "capture.status",
+        "dongle.capture.start",
+        "station.safe_stop",
+        "stimulus.apply",
+        "check.evaluate"
+      ],
+      "deadline_ms": 5000,
+      "capture_plan": {
+        "raw": true,
+        "pretrigger_s": 0.01,
+        "posttrigger_s": 0.1,
+        "same_capture_id_required": true,
+        "timing_budget_approved": false
+      },
+      "steps": [
+        {
+          "id": "ready",
+          "condition": "Dongle ready AND scope armed AND protection healthy",
+          "deadline_ms": 5000
+        },
+        {
+          "id": "stimulus",
+          "condition": "lease/fencing/unique command; approved BBM and feedback",
+          "deadline_ms": 1000
+        },
+        {
+          "id": "observe",
+          "condition": "capture complete AND quality validated",
+          "deadline_ms": 5000
+        }
+      ],
+      "checks": [
+        {
+          "id": "TRACE01.01",
+          "kind": "scalar",
+          "required": true,
+          "metric_id": "integrity",
+          "limits_ref": "integrity",
+          "state": "PT",
+          "channel": "external",
+          "window_s": [
+            0,
+            0.01
+          ]
+        }
+      ],
+      "cleanup": "station approved topology-specific stop sequence and residual feedback",
+      "recovery": "unknown output: isolate; no retry; new attempt after preflight"
+    }
+  ]
+}

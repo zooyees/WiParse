@@ -5,7 +5,7 @@
 //! Sample SD on BCLK rising (data launched on falling, per NXP I2S spec).
 
 use super::digital::{EdgeKind, LogicWave};
-use super::{try_push_frame, BusDecodeResult, BusFrame, BusFrameError, MAX_DECODE_BYTES};
+use super::{try_push_frame, BusDecodeResult, BusFrame, BusFrameError};
 use crate::instrument::WaveformTrace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -257,7 +257,7 @@ pub fn decode_i2s(
         frames.len()
     );
     if truncated {
-        info.push_str(&format!("; truncated at {MAX_DECODE_BYTES} bytes"));
+        info.push_str(&format!("; truncated by decode budget ({} bytes)", super::decode_byte_limit()));
     }
     let empty = frames.is_empty();
     BusDecodeResult {

@@ -1,3 +1,4 @@
+import { writeReportWithEvidence } from "../../lib/plugin-session.mjs";
 /**
  * Dongle network config (WIPARSE-IF CH-NETCFG). USB MI_05 EP0 or TCP :1238.
  */
@@ -32,7 +33,6 @@ import {
   truthy,
   writeHud,
   writeJson,
-  writeText,
 } from "../../lib/plugin-session.mjs";
 
 function trimStr(v, fallback = "") {
@@ -299,7 +299,7 @@ export default async function run(ctx) {
         : null,
     });
     const md = config.paths.summary_md;
-    writeText(
+    writeReportWithEvidence(ctx.plugin, layout,
       md,
       renderReport({
         stamp,

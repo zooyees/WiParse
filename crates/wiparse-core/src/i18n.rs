@@ -54,11 +54,15 @@ pub fn tr(lang: Lang, key: &str) -> String {
         (Lang::Zh, "about.notes_section") => "本版更新",
         (Lang::En, "about.notes_section") => "What's New",
         (Lang::Zh, "about.notes") => "\
+• 全面修正插件表单、波形工具栏和卡片布局重叠\n\
+• 参数表单自动适配窄窗口，修复小高度布局异常\n\
 • 波形分析新增并修正 USB PD、SCP、UFCS 与通用总线解析\n\
 • 修复缩放崩溃、Windows 错误记录以及窄窗口控件重叠\n\
 • 协议标注缩小时自动降密度，发布包附匹配调试符号\n\
 详细记录见 docs/CHANGELOG.md",
         (Lang::En, "about.notes") => "\
+• Fixed plugin forms, waveform toolbar and card layout overlaps\n\
+• Responsive parameter forms and corrected short-window layout failures\n\
 • Added and corrected USB PD, SCP, UFCS, and common bus decoding\n\
 • Fixed zoom crashes, Windows error capture, and narrow-window overlaps\n\
 • Protocol overlays reduce detail when zoomed out; release symbols included\n\
@@ -195,8 +199,8 @@ Details: docs/CHANGELOG.md",
         (Lang::En, "report.status_open_err") => "Failed to open externally",
         (Lang::Zh, "report.status_not_md") => "仅支持 Markdown（.md）报告",
         (Lang::En, "report.status_not_md") => "Only Markdown (.md) reports are supported",
-        (Lang::Zh, "report.ctrl_open") => "Ctrl+单击打开此文件",
-        (Lang::En, "report.ctrl_open") => "Ctrl+click to open this file",
+        (Lang::Zh, "report.ctrl_open") => "单击打开此文件",
+        (Lang::En, "report.ctrl_open") => "Click to open this file",
 
         (Lang::Zh, "tool.test_tool.name") => "集成测试",
         (Lang::En, "tool.test_tool.name") => "Testing Hub",

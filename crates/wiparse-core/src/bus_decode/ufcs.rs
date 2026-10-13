@@ -1,6 +1,6 @@
 //! UFCS UART 8N1 physical layer and length-delimited messages (SOP 0xAA).
 use super::charging::{append, byte_error, crc8, finish, signal};
-use super::{BusByteSpan, BusDecodeResult, BusFrame, BusFrameError, EdgeKind, MAX_DECODE_BYTES};
+use super::{BusByteSpan, BusDecodeResult, BusFrame, BusFrameError, EdgeKind};
 use crate::instrument::WaveformTrace;
 
 #[derive(Debug, Clone)]
@@ -80,7 +80,7 @@ pub fn decode_ufcs(
                 emit(&mut result, &mut used, &mut packet, true);
             }
         }
-        if used >= MAX_DECODE_BYTES || result.truncated {
+        if used >= super::decode_byte_limit() || result.truncated {
             result.truncated = true;
             break;
         }

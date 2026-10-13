@@ -35,7 +35,9 @@ use wiparse_core::waveform_file::{
     WaveformMeasurements,
 };
 
-const TOOLBAR_H: f32 = 44.0;
+fn toolbar_height(width: f32) -> f32 {
+    if width < 1080.0 { 76.0 } else { 44.0 }
+}
 const PANEL_GAP: f32 = 8.0;
 const SIDE_W: f32 = ui_theme::SIDEBAR_W;
 /// Compact Y-axis strip width (scope-style, right of plot).
@@ -310,14 +312,13 @@ impl WaveformAnalysisPanel {
         }
 
         let toolbar_rect =
-            egui::Rect::from_min_size(full.min, egui::vec2(full.width(), TOOLBAR_H));
-        let body_top = full.min.y + TOOLBAR_H + PANEL_GAP;
+            egui::Rect::from_min_size(full.min, egui::vec2(full.width(), toolbar_height(full.width())));
+        let body_top = full.min.y + toolbar_height(full.width()) + PANEL_GAP;
         let body_h = (full.max.y - body_top).max(1.0);
-        let side_w = SIDE_W
-            .min(full.width() * 0.36)
-            .max(240.0)
-            .min(full.width() - 140.0);
-        let plot_w = (full.width() - side_w - PANEL_GAP).max(120.0);
+        let body = egui::Rect::from_min_max(egui::pos2(full.left(), body_top), full.max);
+        let side_w = ui_theme::resizable_sidebar_width(ui, "waveform_analysis", body,
+            SIDE_W, 220.0, 200.0, PANEL_GAP, tokens);
+        let plot_w = (full.width() - side_w - PANEL_GAP).max(0.0);
         let side_rect =
             egui::Rect::from_min_size(egui::pos2(full.min.x, body_top), egui::vec2(side_w, body_h));
         let plot_rect = egui::Rect::from_min_size(
@@ -330,10 +331,10 @@ impl WaveformAnalysisPanel {
         });
 
         // Browser (~45%) + bus decode (~30%) + measurements (rest).
-        let body_inner = (body_h - PANEL_GAP * 2.0).max(200.0);
-        let browser_h = (body_inner * 0.45).max(140.0);
-        let bus_h = (body_inner * 0.30).max(110.0);
-        let meas_h = (body_inner - browser_h - bus_h).max(90.0);
+        let body_inner = (body_h - PANEL_GAP * 2.0).max(1.0);
+        let browser_h = body_inner * 0.45;
+        let bus_h = body_inner * 0.30;
+        let meas_h = (body_inner - browser_h - bus_h).max(1.0);
         let browser_rect =
             egui::Rect::from_min_size(side_rect.min, egui::vec2(side_w, browser_h));
         let bus_rect = egui::Rect::from_min_size(
@@ -394,8 +395,8 @@ impl WaveformAnalysisPanel {
         }
         let meas_h = 96.0;
         let toolbar_rect =
-            egui::Rect::from_min_size(full.min, egui::vec2(full.width(), TOOLBAR_H));
-        let plot_top = full.min.y + TOOLBAR_H + PANEL_GAP;
+            egui::Rect::from_min_size(full.min, egui::vec2(full.width(), toolbar_height(full.width())));
+        let plot_top = full.min.y + toolbar_height(full.width()) + PANEL_GAP;
         let plot_h = (full.max.y - plot_top - meas_h - PANEL_GAP).max(80.0);
         let plot_rect = egui::Rect::from_min_size(
             egui::pos2(full.min.x, plot_top),
@@ -433,8 +434,8 @@ impl WaveformAnalysisPanel {
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.set_max_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(ui_theme::SPACE_SM, 4.0);
                     if ui_theme::primary_btn_sized(
                         ui,
                         tokens,
@@ -630,19 +631,11 @@ impl WaveformAnalysisPanel {
                         self.clear_active_cursors();
                     }
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(t(
-                                lang,
-                                "Ctrl+滚轮=X · Ctrl+Shift+滚轮=Y",
-                                "Ctrl+wheel=X · Ctrl+Shift+wheel=Y",
-                            ))
-                            .size(ui_theme::FONT_CAPTION)
-                            .color(tokens.text_muted),
-                        );
-                    });
+
                 });
-            });
+            }).response.on_hover_text(t(lang,
+                "Ctrl+滚轮=X · Ctrl+Shift+滚轮=Y",
+                "Ctrl+wheel=X · Ctrl+Shift+wheel=Y"));
     }
 
     fn reset_channel_display(&mut self, index: usize) {
@@ -4735,7 +4728,7 @@ fn panel_in_rect(ui: &mut egui::Ui, rect: egui::Rect, add: impl FnOnce(&mut egui
     if !rect.is_positive() {
         return;
     }
-    ui.scope_builder(
+    crate::theme::scope_in_allocated_rect(ui,
         egui::UiBuilder::new()
             .max_rect(rect)
             .layout(egui::Layout::top_down(egui::Align::Min)),

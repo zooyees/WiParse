@@ -1,0 +1,99 @@
+{
+  "schema_version": "wiparse.wireless-plugin/1",
+  "version": "0.1.0",
+  "approved": true,
+  "simulation_only": true,
+  "approval_scope": "simulator-regression-only",
+  "items": {
+    "voltage": {
+      "unit": "V",
+      "minimum": 4.5,
+      "maximum": 5.5,
+      "source": "SIMULATOR ONLY; replace with approved product clause",
+      "state_window_required": true,
+      "guard_band": "measurement uncertainty",
+      "approval_authority": "simulation database"
+    },
+    "vbrg": {
+      "unit": "V",
+      "minimum": 8,
+      "maximum": 12,
+      "source": "SIMULATOR ONLY; replace with approved product clause",
+      "state_window_required": true,
+      "guard_band": "measurement uncertainty",
+      "approval_authority": "simulation database"
+    },
+    "frequency": {
+      "unit": "Hz",
+      "minimum": 90000,
+      "maximum": 150000,
+      "source": "SIMULATOR ONLY; replace with approved product clause",
+      "state_window_required": true,
+      "guard_band": "measurement uncertainty",
+      "approval_authority": "simulation database"
+    },
+    "deadtime": {
+      "unit": "s",
+      "minimum": 1e-07,
+      "maximum": 1e-06,
+      "source": "SIMULATOR ONLY; replace with approved product clause",
+      "state_window_required": true,
+      "guard_band": "measurement uncertainty",
+      "approval_authority": "simulation database"
+    },
+    "ratio": {
+      "unit": "1",
+      "minimum": 0,
+      "maximum": 0.05,
+      "source": "SIMULATOR ONLY; replace with approved product clause",
+      "state_window_required": true,
+      "guard_band": "measurement uncertainty",
+      "approval_authority": "simulation database"
+    },
+    "power": {
+      "unit": "W",
+      "minimum": 3,
+      "maximum": 10,
+      "source": "SIMULATOR ONLY; replace with approved product clause",
+      "state_window_required": true,
+      "guard_band": "measurement uncertainty",
+      "approval_authority": "simulation database"
+    },
+    "residual": {
+      "unit": "V",
+      "minimum": 0,
+      "maximum": 0.5,
+      "source": "SIMULATOR ONLY; replace with approved product clause",
+      "state_window_required": true,
+      "guard_band": "measurement uncertainty",
+      "approval_authority": "simulation database"
+    },
+    "latency": {
+      "unit": "s",
+      "minimum": 0,
+      "maximum": 0.25,
+      "source": "SIMULATOR ONLY; replace with approved product clause",
+      "state_window_required": true,
+      "guard_band": "measurement uncertainty",
+      "approval_authority": "simulation database"
+    },
+    "integrity": {
+      "unit": "1",
+      "minimum": 1,
+      "maximum": 1,
+      "source": "SIMULATOR ONLY; replace with approved product clause",
+      "state_window_required": true,
+      "guard_band": "measurement uncertainty",
+      "approval_authority": "simulation database"
+    },
+    "temperature": {
+      "unit": "°C",
+      "minimum": 10,
+      "maximum": 45,
+      "source": "SIMULATOR ONLY; replace with approved product clause",
+      "state_window_required": true,
+      "guard_band": "measurement uncertainty",
+      "approval_authority": "simulation database"
+    }
+  }
+}

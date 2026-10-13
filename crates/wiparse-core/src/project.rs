@@ -263,6 +263,7 @@ impl IndexedResult {
             .iter()
             .filter(|g| g.view == ArtifactView::Report)
             .flat_map(|g| g.files.iter())
+            .filter(|f| f.path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown")))
             .max_by_key(|f| f.mtime)
     }
 
@@ -319,6 +320,7 @@ impl IndexedTest {
             .flat_map(|r| r.groups.iter())
             .filter(|g| g.view == ArtifactView::Report)
             .flat_map(|g| g.files.iter())
+            .filter(|f| f.path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown")))
             .max_by_key(|f| f.mtime)
     }
 
@@ -1075,13 +1077,26 @@ mod tests {
         let p = std::env::temp_dir().join(format!(
             "wiparse-proj-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+uuid::Uuid::new_v4()
         ));
         fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    #[test]
+    fn latest_report_ignores_newer_json_in_report_group() {
+        let file = |name: &str, seconds| IndexedFile {
+            name: name.into(), path: PathBuf::from(name), size: 1,
+            mtime: Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(seconds)),
+            view: ArtifactView::Report, output_id: "reports".into(),
+        };
+        let result = IndexedResult {stamp: "run".into(), ok: Some(true), groups: vec![IndexedGroup {
+            id:"reports".into(), label:"Reports".into(), label_zh:String::new(), view:ArtifactView::Report,
+            files:vec![file("summary.md",1),file("manifest.json",2)]
+        }]};
+        assert_eq!(result.latest_report().unwrap().name, "summary.md");
+        let case = IndexedTest {id:"case".into(), name:String::new(), name_zh:String::new(), plugin_id:String::new(), installed:true, results:vec![result]};
+        assert_eq!(case.latest_report().unwrap().name, "summary.md");
     }
 
     #[test]

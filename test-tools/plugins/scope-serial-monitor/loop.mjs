@@ -585,6 +585,13 @@ function mdRelPath(fromFile, target) {
   return rel.split(path.sep).join("/");
 }
 
+function mdFileLink(target) {
+  if (!target) return "无";
+  const rel = mdRelPath(summaryMd, String(target));
+  const url = rel.split("/").map(encodeURIComponent).join("/");
+  return `[${mdCell(path.basename(String(target)))}](${url})`;
+}
+
 function materializeScreenshot(src, trigger, recStamp) {
   if (!src) return null;
   fs.mkdirSync(shotDir || reportDir, { recursive: true });
@@ -602,8 +609,6 @@ function mdImageBlock(absShot) {
 function appendSummaryRecord(rec) {
   ensureSummaryHeader();
   const recId = `${prefix}_${rec.trigger}_${rec.stamp}`;
-  const shotName = rec.screenshot ? path.basename(String(rec.screenshot)) : "";
-  const pdfName = rec.pdfPath ? path.basename(String(rec.pdfPath)) : "";
   const ctx = (rec.context || []).map((l) => {
     const mark = l === rec.line ? " <<HIT>>" : "";
     return mdFence(l) + mark;
@@ -624,9 +629,9 @@ function appendSummaryRecord(rec) {
 | 命中行 | ${mdCell(rec.line)} |
 | 处理时串口 | monitoring=${mdCell(rec.serialMonitoring)} |
 | 示波器 | ${mdCell(rec.scopeModel)} id=${mdCell(rec.scopeId)} |
-| ISF | \`${mdCell(rec.isfPath)}\` |
-| 截图 | ${shotName ? `\`${mdCell(rec.screenshot)}\`` : "无"} |
-| PDF | ${pdfName ? `\`${mdCell(rec.pdfPath)}\`` : "无"} |
+| ISF | ${mdFileLink(rec.isfPath)} |
+| 截图 | ${mdFileLink(rec.screenshot)} |
+| PDF | ${mdFileLink(rec.pdfPath)} |
 
 ### 波形截图
 

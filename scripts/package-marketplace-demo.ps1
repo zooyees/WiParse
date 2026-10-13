@@ -1,4 +1,4 @@
-# Build WiParse (Windows) + marketplace demo bundle for local testing.
+﻿# Build WiParse (Windows) + marketplace demo bundle for local testing.
 #
 #   .\scripts\package-marketplace-demo.ps1
 # Output:
@@ -40,15 +40,24 @@ function Copy-Tree([string]$Src, [string]$Dst) {
 if (-not $SkipBuild) {
     Write-Host "[package] cargo release build"
     $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
-    & cargo build --release -p wiparse-gui -p wiparse-cli
+    & cargo build --release -p wiparse-gui -p wiparse-cli -p wiparse-service
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 }
 
 $GuiExe = Join-Path $Root "target\release\wiparse-gui.exe"
 $CliExe = Join-Path $Root "target\release\wiparse.exe"
+$ServiceExe = Join-Path $Root "target\release\wiparse-service.exe"
 $GuiPdb = Join-Path $Root "target\release\wiparse_gui.pdb"
 if (-not (Test-Path $GuiExe)) { throw "missing $GuiExe" }
 if (-not (Test-Path $CliExe)) { throw "missing $CliExe" }
+if (-not (Test-Path $ServiceExe)) { throw "missing $ServiceExe" }
+
+# Check resolved targets before deleting a previous package.
+$RootPrefix = [IO.Path]::GetFullPath((Join-Path $Root 'dist')).TrimEnd('\') + '\'
+$Out = [IO.Path]::GetFullPath($Out)
+$Archive = [IO.Path]::GetFullPath($Archive)
+if (-not $Out.StartsWith($RootPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Package output must be a child directory below workspace dist' }
+if (-not $Archive.StartsWith($RootPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Archive must stay within workspace' }
 
 if (Test-Path $Out) { Remove-Item $Out -Recurse -Force }
 New-Item -ItemType Directory -Force -Path (Join-Path $Out "bin") | Out-Null
@@ -57,12 +66,37 @@ New-Item -ItemType Directory -Force -Path (Join-Path $Out "marketplace") | Out-N
 
 Copy-Item -Force $GuiExe (Join-Path $Out "bin\WiParse.exe")
 Copy-Item -Force $CliExe (Join-Path $Out "bin\WiParse-CLI.exe")
+Copy-Item -Force $ServiceExe (Join-Path $Out "bin\WiParse-Service.exe")
+Copy-Tree (Join-Path $Root "docs\specs\wireless-test") (Join-Path $Out "docs\specs\wireless-test")
+Copy-Item (Join-Path $Root "docs\AUTOMATION-SERVICE.md") (Join-Path $Out "docs\AUTOMATION-SERVICE.md") -Force
+Copy-Item (Join-Path $Root "docs\CHANGELOG.md") (Join-Path $Out "docs\CHANGELOG.md") -Force
+if (Test-Path -LiteralPath (Join-Path $Root 'evidence\software-spec-2026-10-11\verification-summary.json')) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $Out 'docs\verification') | Out-Null
+    Copy-Item -LiteralPath (Join-Path $Root 'evidence\software-spec-2026-10-11\verification-summary.json') -Destination (Join-Path $Out 'docs\verification\verification-summary.json') -Force
+}
+if (Test-Path -LiteralPath (Join-Path $Root 'docs/ui-layout-audit-2026-10-11.md')) {
+    Copy-Item -LiteralPath (Join-Path $Root 'docs/ui-layout-audit-2026-10-11.md') -Destination (Join-Path $Out 'docs/ui-layout-audit-2026-10-11.md') -Force
+}
+if (Test-Path -LiteralPath (Join-Path $Root 'evidence/ui-layout-2026-10-11/verification-summary.json')) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $Out 'docs/verification') | Out-Null
+    Copy-Item -LiteralPath (Join-Path $Root 'evidence/ui-layout-2026-10-11/verification-summary.json') -Destination (Join-Path $Out 'docs/verification/ui-layout-verification.json') -Force
+}
+if (Test-Path -LiteralPath (Join-Path $Root 'evidence/wireless-plugin-2026-10-11/verification-summary.json')) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $Out 'docs/verification') | Out-Null
+    Copy-Item -LiteralPath (Join-Path $Root 'evidence/wireless-plugin-2026-10-11/verification-summary.json') -Destination (Join-Path $Out 'docs/verification/wireless-plugin-verification.json') -Force
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $Out 'symbols') | Out-Null
+foreach ($symbolName in @('wiparse_gui','wiparse_service','wiparse')) {
+    $symbolPath = Join-Path $Root "target\release\$symbolName.pdb"
+    if (Test-Path -LiteralPath $symbolPath) { Copy-Item -LiteralPath $symbolPath -Destination (Join-Path $Out "symbols\$symbolName.pdb") -Force }
+}
 
 # Also refresh the daily dist/ runtime copy (skip if the running GUI has the file mapped).
 New-Item -ItemType Directory -Force -Path (Join-Path $Root "dist") | Out-Null
 foreach ($pair in @(
     @{ Src = $GuiExe; Dst = Join-Path $Root "dist\WiParse.exe" },
-    @{ Src = $CliExe; Dst = Join-Path $Root "dist\WiParse-CLI.exe" }
+    @{ Src = $CliExe; Dst = Join-Path $Root "dist\WiParse-CLI.exe" },
+    @{ Src = $ServiceExe; Dst = Join-Path $Root "dist\WiParse-Service.exe" }
 )) {
     try {
         Copy-Item -Force $pair.Src $pair.Dst
@@ -70,7 +104,10 @@ foreach ($pair in @(
         Write-Host "[package] skip $($pair.Dst) (in use): $($_.Exception.Message)"
     }
 }
-if (Test-Path -LiteralPath $GuiPdb) {
+$DistGuiExe = Join-Path $Root "dist\WiParse.exe"
+$RuntimeGuiMatches = (Test-Path -LiteralPath $DistGuiExe) -and
+    ((Get-FileHash -LiteralPath $DistGuiExe -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $GuiExe -Algorithm SHA256).Hash)
+if ((Test-Path -LiteralPath $GuiPdb) -and $RuntimeGuiMatches) {
     $DistPdb = Join-Path $Root "dist\WiParse.pdb"
     Copy-Item -LiteralPath $GuiPdb -Destination $DistPdb -Force
     $symbolManifest = @{
@@ -84,6 +121,32 @@ if (Test-Path -LiteralPath $GuiPdb) {
 Copy-Tree (Join-Path $Root "test-tools") (Join-Path $Root "dist\test-tools")
 
 Copy-Tree (Join-Path $Root "test-tools") (Join-Path $Out "test-tools")
+if (-not (Test-Path -LiteralPath (Join-Path $Root 'mcp/wiparse/dist/index.js'))) { throw 'Build MCP before packaging: npm run build --prefix mcp/wiparse' }
+Copy-Tree (Join-Path $Root 'mcp/wiparse') (Join-Path $Out 'mcp/wiparse')
+# Generated registrations contain this workstation's paths and are not portable.
+Remove-Item -LiteralPath (Join-Path $Out 'mcp/wiparse/cursor.mcp.generated.json') -Force -ErrorAction SilentlyContinue
+& robocopy (Join-Path $Root 'mcp/wiparse/node_modules') (Join-Path $Out 'mcp/wiparse/node_modules') /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
+if ($LASTEXITCODE -ge 8) { throw 'Copy MCP offline dependencies failed' }
+foreach ($document in @('DEPLOY_MCP.md','DEPLOY_API.md','CLI_REFERENCE.md','WORKSTATION_CLOSED_LOOP.md','UPDATE.md')) {
+    Copy-Item -LiteralPath (Join-Path $Root "docs/$document") -Destination (Join-Path $Out "docs/$document") -Force
+}
+Copy-Item -LiteralPath (Join-Path $Root 'docs/DEPLOY_MCP.md') -Destination (Join-Path $Out 'DEPLOY_MCP.md') -Force
+Copy-Item -LiteralPath (Join-Path $Root 'docs/DEPLOY_API.md') -Destination (Join-Path $Out 'DEPLOY_API.md') -Force
+Copy-Tree (Join-Path $Root 'docs/releases') (Join-Path $Out 'docs/releases')
+Copy-Tree (Join-Path $Root 'docs/examples') (Join-Path $Out 'docs/examples')
+Copy-Item -LiteralPath (Join-Path $Root 'evidence/release-1.1.30-2026-10-13/verification-summary.json') -Destination (Join-Path $Out 'docs/verification/release-1.1.30.json') -Force
+Copy-Item -LiteralPath (Join-Path $Root 'evidence/release-1.1.30-2026-10-13/verification-summary.json') -Destination (Join-Path $Out 'docs/verification/wireless-plugin-verification.json') -Force
+$DemoRelative = 'projects/default/tests/ScopeSerialDemo/runs/20261013_231510'
+Copy-Tree (Join-Path $Root $DemoRelative) (Join-Path $Out $DemoRelative)
+$DemoRunFile = Join-Path $Out "$DemoRelative/run.json"
+$DemoRun = Get-Content -LiteralPath $DemoRunFile -Raw -Encoding UTF8 | ConvertFrom-Json
+foreach ($artifact in $DemoRun.artifacts.items) {
+    $artifact.path = "artifacts/$($artifact.output)/$([IO.Path]::GetFileName($artifact.path))"
+}
+$DemoRun.summary_md = 'artifacts/reports/ScopeSerialDemo_summary_20261013_231510.md'
+Write-Utf8NoBom $DemoRunFile ($DemoRun | ConvertTo-Json -Depth 20)
+$DemoProject = @{schema='wiparse.project/v1'; id='default'; name='default'; tests=@(@{id='ScopeSerialDemo';plugin_id='scope-serial-monitor';name='示波器串口监控（模拟效果检查）'})}
+Write-Utf8NoBom (Join-Path $Out 'projects/default/project.json') ($DemoProject | ConvertTo-Json -Depth 6)
 Copy-Tree (Join-Path $Root "services\testing-hub-marketplace") (Join-Path $Out "services\testing-hub-marketplace")
 Write-Host "[package] seed marketplace data into package"
 $PackageData = Join-Path $Out "services\testing-hub-marketplace\data"
@@ -189,11 +252,49 @@ Start-Process -FilePath `$exe -WorkingDirectory `$Here
 "@
 Write-Utf8NoBom (Join-Path $Out "start-wiparse.ps1") $startGui
 
+$startService = @'
+$ErrorActionPreference = 'Stop'
+Set-Location $PSScriptRoot
+$env:WIPARSE_SERVICE_ROOT = Join-Path $PSScriptRoot 'automation-data'
+& (Join-Path $PSScriptRoot 'bin\WiParse-Service.exe') --data-root $env:WIPARSE_SERVICE_ROOT --port 7879
+'@
+Write-Utf8NoBom (Join-Path $Out "start-automation-service.ps1") $startService
+
+$automationNotice = @'
+
+## Automation service (development verification)
+
+Run .\start-automation-service.ps1 before calling the new APIs.
+Read docs/AUTOMATION-SERVICE.md and docs/specs/wireless-test/04-software-implementation-review.md.
+industrial_approved=false. Complete SW-01..SW-12 and physical system acceptance are pending.
+This bundle does not install a Windows Service or provide Dongle capture firmware.
+wireless-charge-validation 0.1.1 provides offline configuration/rule replay only; live stimulus and industrial acceptance remain blocked.
+MCP 1.1.30 and its dependencies are bundled under mcp/wiparse; Node.js 18+ is still required.
+Read docs/releases/1.1.30.md. The Test Report default project includes ScopeSerialDemo (synthetic data only).
+'@
+Add-Content -LiteralPath (Join-Path $Out 'README-MARKETPLACE-DEMO.md') -Value $automationNotice -Encoding utf8
+$versionMatch = [regex]::Match([IO.File]::ReadAllText((Join-Path $Root 'Cargo.toml')), '(?m)^version\s*=\s*"([^"]+)"')
+if (-not $versionMatch.Success) { throw 'Cannot read workspace version' }
+$releaseManifest = @{
+    version = $versionMatch.Groups[1].Value
+    mcp_version = (Get-Content -LiteralPath (Join-Path $Out 'mcp/wiparse/package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
+    plugins = @(Get-ChildItem -LiteralPath (Join-Path $Out 'test-tools/plugins') -Directory | ForEach-Object { Get-Content -LiteralPath (Join-Path $_.FullName 'plugin.json') -Raw -Encoding UTF8 | ConvertFrom-Json | Select-Object id,version })
+    demo = @{run=$DemoRelative; simulation_only=$true}
+    schema_version = 'wiparse.automation/1'
+    industrial_approved = $false
+    scope = 'SW automation foundations; complete software spec and joint industrial acceptance pending'
+    built_at_utc = [DateTime]::UtcNow.ToString('o')
+    files = @(Get-ChildItem -LiteralPath (Join-Path $Out 'bin') -File | ForEach-Object { @{ path = "bin/$($_.Name)"; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash; bytes = $_.Length } })
+    symbols = @(Get-ChildItem -LiteralPath (Join-Path $Out 'symbols') -File | ForEach-Object { @{ path = "symbols/$($_.Name)"; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash } })
+}
+Write-Utf8NoBom (Join-Path $Out 'release-manifest.json') ($releaseManifest | ConvertTo-Json -Depth 8)
+
 Write-Host "[package] writing archive $Archive"
 if (Test-Path $Archive) { Remove-Item $Archive -Force }
 Push-Location (Split-Path $Out)
 try {
-    tar -a -c -f (Split-Path $Archive -Leaf) (Split-Path $Out -Leaf)
+    tar -a -c -f $Archive (Split-Path $Out -Leaf)
+    if ($LASTEXITCODE -ne 0) { throw "Archive creation failed ($LASTEXITCODE)" }
 } finally {
     Pop-Location
 }
@@ -202,5 +303,6 @@ if (-not (Test-Path $Archive)) {
 }
 
 Write-Host "[package] done -> $Out"
+Write-Utf8NoBom "$Archive.sha256" ((Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash + '  ' + (Split-Path $Archive -Leaf))
 Write-Host "[package] archive -> $Archive"
 Get-Item $Out, $Archive | Format-Table Name, Length, LastWriteTime

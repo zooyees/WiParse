@@ -1,0 +1,149 @@
+{
+  "schema_version": "wiparse.wireless-plugin/1",
+  "version": "0.1.1",
+  "id": "wireless-charge-validation",
+  "name": "Wireless Charge Validation",
+  "name_zh": "无线充电自动检验",
+  "type": "custom",
+  "entry": "index.mjs",
+  "config": "station.json",
+  "report_name": "WirelessCharge",
+  "report_name_zh": "无线充电检验",
+  "description": "Contract S1: dry-run/replay, product rules and traceable coverage. Live stimulus blocked until SW/DG safety integration is validated.",
+  "capabilities": [
+    "preflight",
+    "run",
+    "stop"
+  ],
+  "engines": {
+    "node": ">=18",
+    "wiparse": ">=1.1.29"
+  },
+  "outputs": [
+    {
+      "id": "reports",
+      "label": "Validation evidence",
+      "label_zh": "检验证据",
+      "view": "report",
+      "dir": "{artifacts_dir}/reports",
+      "include": [
+        "*.md",
+        "*.json",
+        "*.jsonl"
+      ]
+    }
+  ],
+  "params": [
+    {
+      "name": "product",
+      "type": "string",
+      "default": "reference-tx",
+      "label": "Product",
+      "label_zh": "产品配置"
+    },
+    {
+      "name": "suite",
+      "type": "enum",
+      "default": "smoke",
+      "label": "Suite",
+      "label_zh": "测试档",
+      "options": [
+        {
+          "value": "smoke",
+          "label": "smoke"
+        },
+        {
+          "value": "regression",
+          "label": "regression"
+        },
+        {
+          "value": "interop",
+          "label": "interop"
+        },
+        {
+          "value": "soak",
+          "label": "soak"
+        },
+        {
+          "value": "production",
+          "label": "production"
+        }
+      ]
+    },
+    {
+      "name": "mode",
+      "type": "enum",
+      "default": "dry-run",
+      "label": "Mode",
+      "label_zh": "运行模式",
+      "options": [
+        {
+          "value": "dry-run",
+          "label": "dry-run"
+        },
+        {
+          "value": "replay",
+          "label": "replay"
+        },
+        {
+          "value": "live",
+          "label": "live"
+        }
+      ]
+    },
+    {
+      "name": "fixture",
+      "type": "enum",
+      "default": "gold",
+      "label": "Replay database",
+      "label_zh": "回放数据库",
+      "options": [
+        {
+          "value": "gold",
+          "label": "gold"
+        },
+        {
+          "value": "bad",
+          "label": "bad"
+        },
+        {
+          "value": "missing",
+          "label": "missing"
+        },
+        {
+          "value": "quality",
+          "label": "quality"
+        }
+      ]
+    },
+    {
+      "name": "dut_serial",
+      "type": "string",
+      "default": "",
+      "label": "DUT serial",
+      "label_zh": "DUT序列号"
+    },
+    {
+      "name": "dut_firmware",
+      "type": "string",
+      "default": "",
+      "label": "DUT firmware",
+      "label_zh": "DUT固件"
+    },
+    {
+      "name": "service_root",
+      "type": "path",
+      "default": "",
+      "label": "Service data root",
+      "label_zh": "自动服务数据目录",
+      "advanced": true
+    },
+    {
+      "name": "file_prefix",
+      "type": "string",
+      "default": "WirelessCharge",
+      "label": "Report name",
+      "label_zh": "报告名称"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 //! SPI decode: 2-wire / 4-wire / Dual / Quad, modes 0–3.
 
 use super::digital::{EdgeKind, LogicWave};
-use super::{try_push_frame, BusDecodeResult, BusFrame, BusFrameError, MAX_DECODE_BYTES};
+use super::{try_push_frame, BusDecodeResult, BusFrame, BusFrameError};
 use crate::instrument::WaveformTrace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -401,7 +401,7 @@ pub fn decode_spi(
         frames.len()
     );
     if truncated {
-        info.push_str(&format!("; truncated at {MAX_DECODE_BYTES} bytes"));
+        info.push_str(&format!("; truncated by decode budget ({} bytes)", super::decode_byte_limit()));
     }
     let empty = frames.is_empty();
     BusDecodeResult {

@@ -188,17 +188,30 @@ pub const MAX_DECODE_BYTES: usize = 512;
 /// Bound payload-free markers too (noise / repeated resets / empty STARTs).
 pub const MAX_DECODE_FRAMES: usize = 2048;
 
+thread_local! { static AUTOMATION_BUDGET: std::cell::Cell<Option<(usize,usize)>> = const { std::cell::Cell::new(None) }; }
+pub(crate) fn decode_byte_limit() -> usize { AUTOMATION_BUDGET.with(|b|b.get().map_or(MAX_DECODE_BYTES,|v|v.0)) }
+fn decode_frame_limit() -> usize { AUTOMATION_BUDGET.with(|b|b.get().map_or(MAX_DECODE_FRAMES,|v|v.1)) }
+/// A separate bounded offline budget; GUI defaults stay unchanged. Truncation
+/// remains explicit, so a bounded decode cannot claim complete statistics.
+pub fn decode_bus_offline(waves:&[WaveformTrace],settings:&BusDecodeSettings,bytes:usize,frames:usize)->Result<BusDecodeResult,String>{
+    if !(512..=1_048_576).contains(&bytes)||!(2048..=262_144).contains(&frames){return Err("invalid offline decode budget".into());}
+    struct Restore(Option<(usize,usize)>);
+    impl Drop for Restore{fn drop(&mut self){AUTOMATION_BUDGET.with(|b|b.set(self.0));}}
+    let _restore=Restore(AUTOMATION_BUDGET.with(|b|b.replace(Some((bytes,frames)))));
+    Ok(decode_bus(waves,settings))
+}
+
 pub(crate) fn try_push_frame(
     frames: &mut Vec<BusFrame>,
     used: &mut usize,
     frame: BusFrame,
 ) -> bool {
     let n = frame.bytes.len();
-    if frames.len() >= MAX_DECODE_FRAMES { return false; }
-    if n > 0 && *used >= MAX_DECODE_BYTES {
+    if frames.len() >= decode_frame_limit() { return false; }
+    if n > 0 && *used >= decode_byte_limit() {
         return false;
     }
-    if n > 0 && *used + n > MAX_DECODE_BYTES {
+    if n > 0 && *used + n > decode_byte_limit() {
         return false;
     }
     *used = used.saturating_add(n);

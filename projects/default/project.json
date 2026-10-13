@@ -1,0 +1,12 @@
+{
+  "schema": "wiparse.project/v1",
+  "id": "default",
+  "name": "default",
+  "tests": [
+    {
+      "id": "ScopeSerialDemo",
+      "plugin_id": "scope-serial-monitor",
+      "name": "示波器串口监控（模拟效果检查）"
+    }
+  ]
+}

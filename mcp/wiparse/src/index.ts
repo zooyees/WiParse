@@ -2,11 +2,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { createRequire } from "node:module";
 import { apiHealth, apiInvoke, defaultApiUrl } from "./http.js";
+
+const packageVersion = createRequire(import.meta.url)("../package.json").version as string;
 
 const server = new McpServer({
   name: "wiparse",
-  version: "1.1.16",
+  version: packageVersion,
 });
 
 function compact(body: unknown) {
@@ -150,7 +153,7 @@ const UI_METHODS = {
 
 server.tool(
   "wiparse_ui",
-  "Drive WiParse.exe: tabs, panels, serial/wave/calc, instruments, Testing Hub project, and Test Report. Poll instrument.overview for digital-twin LCD. report.open jumps to existing viewers (no file body). project.* shares apps.project.active_id with Hub. instrument.command accepts Probe*/Bridge*. GUI 1.1.16+; project/report ops need this GUI build.",
+  "Drive WiParse.exe: tabs, panels, serial/wave/calc, instruments, Testing Hub project, and Test Report. Poll instrument.overview for digital-twin LCD. report.open previews Markdown, JSON/JSONL, images, or embedded waveforms (no file body). project.* shares apps.project.active_id with Hub. instrument.command accepts Probe*/Bridge*. Use GUI 1.1.30+ for the updated report viewer.",
   {
     op: z.enum([
       "state",
@@ -212,7 +215,7 @@ server.tool(
       .record(z.unknown())
       .optional()
       .describe(
-        "Op params. instrument.overview: {}. instrument.command: {device_id, command}. project.list: {}. project.select/create: {id} (+ name). project.add_test/remove_test: {id}. report.open: {path, view?, overlay?} — path must be under the active project; never dumps file bodies. test_tool.run: {id, preflight?, params?} (params overlay Hub form, e.g. {port, triggers}). test_tool.stop: {}.",
+        "Op params. instrument.overview: {}. instrument.command: {device_id, command}. project.list: {}. project.select/create: {id} (+ name). project.add_test/remove_test: {id}. report.open: {path, view?, overlay?}; omit view for automatic file type; JSON/JSONL opens in the report viewer. Path must be under the active project; never dumps file bodies. test_tool.run: {id, preflight?, params?} (params overlay Hub form, e.g. {port, triggers}). test_tool.stop: {}.",
       ),
   },
   async ({ op, tab, params }) => {

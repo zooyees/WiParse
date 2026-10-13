@@ -217,7 +217,7 @@ for (const id of ["wiparse-dap", "wiparse-uart-bridge", "wiparse-i2c-rpc", "wipa
     assert.match(station.paths.lock_file, /test_dir/);
     assert.doesNotMatch(station.paths.lock_file, /plugin_dir/);
     if (id === "wiparse-netcfg") {
-      assert.equal(plugin.version, "1.2.0");
+      assert.equal(plugin.version, "1.2.1");
       const byName = Object.fromEntries(plugin.params.map((x) => [x.name, x]));
       assert.equal(byName.ssid.default, "");
       assert.equal(byName.host.default, "");

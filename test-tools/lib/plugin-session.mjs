@@ -109,6 +109,22 @@ export function writeText(file, text) {
   return file;
 }
 
+/** Write a Markdown report with portable links to the collected evidence. */
+export function writeReportWithEvidence(plugin, layout, file, text) {
+  if (!file) return "";
+  const outputs = collectOutputFiles(plugin?.outputs, {
+    artifacts_dir: layout?.artifacts_dir || "", run_dir: layout?.run_dir || "",
+  });
+  const files = [...new Set(Object.values(outputs).flat())].filter(p=>
+    path.resolve(p)!==path.resolve(file) && !/\.(md|markdown)$/i.test(p));
+  const links = files.map(p=>{
+    const label=path.basename(p).replaceAll('|','\\|').replaceAll('[','\\[').replaceAll(']','\\]');
+    const url=path.relative(path.dirname(file),p).split(path.sep).map(encodeURIComponent).join('/');
+    return `- [${label}](${url})`;
+  });
+  return writeText(file, text + (links.length ? `\n\n## 数据与附件 / Evidence\n\n${links.join('\n')}\n` : ''));
+}
+
 export function writeJson(file, obj) {
   return writeText(file, `${JSON.stringify(obj, null, 2)}\n`);
 }

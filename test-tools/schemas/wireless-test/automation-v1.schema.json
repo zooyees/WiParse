@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:wiparse:automation:1",
+  "title": "WiParse SW automation contracts v1 (development, G0 pending)",
+  "$defs": {
+    "version": {"const": "wiparse.automation/1"},
+    "id": {"type": "string", "minLength": 1},
+    "uint64": {"type": "string", "pattern": "^(0|[1-9][0-9]{0,19})$", "description": "Runtime additionally checks <= 18446744073709551615"},
+    "quality": {"type": "object", "additionalProperties": false, "required": ["issues"], "properties": {"issues": {"type": "array", "items": {"$ref": "#/$defs/id"}, "uniqueItems": true}}},
+    "window": {"type": ["array", "null"], "items": {"type": "number"}, "minItems": 2, "maxItems": 2, "description": "Seconds in capture domain; runtime requires end > start"},
+    "measurement": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "metric_id", "channel", "value", "unit", "sample_count", "window", "uncertainty", "quality", "algorithm_version", "evidence_refs"],
+      "properties": {
+        "schema_version": {"$ref": "#/$defs/version"}, "metric_id": {"$ref": "#/$defs/id"}, "channel": {"$ref": "#/$defs/id"},
+        "value": {"type": ["number", "null"]}, "unit": {"$ref": "#/$defs/id"}, "sample_count": {"type": "integer", "minimum": 0},
+        "window": {"$ref": "#/$defs/window"}, "uncertainty": {"type": ["number", "null"], "minimum": 0}, "quality": {"$ref": "#/$defs/quality"},
+        "algorithm_version": {"$ref": "#/$defs/id"}, "evidence_refs": {"type": "array", "items": {"$ref": "#/$defs/id"}}
+      }
+    },
+    "limits": {
+      "type": "object", "additionalProperties": false,
+      "required": ["limits_ref", "limits_hash", "approved", "unit", "minimum", "maximum", "require_uncertainty"],
+      "properties": {
+        "limits_ref": {"$ref": "#/$defs/id"}, "limits_hash": {"$ref": "#/$defs/id"}, "approved": {"type": "boolean"}, "unit": {"$ref": "#/$defs/id"},
+        "minimum": {"type": ["number", "null"]}, "maximum": {"type": ["number", "null"]}, "require_uncertainty": {"type": "boolean"}
+      },
+      "description": "Approval/hash asserted by authenticated PL caller; not a signed release authority"
+    },
+    "check": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "metric_id", "limits_ref", "limits_hash", "product_verdict", "reason_code", "evidence_refs"],
+      "properties": {
+        "schema_version": {"$ref": "#/$defs/version"}, "metric_id": {"$ref": "#/$defs/id"}, "limits_ref": {"$ref": "#/$defs/id"}, "limits_hash": {"$ref": "#/$defs/id"},
+        "product_verdict": {"enum": ["PASS", "FAIL", "INCONCLUSIVE", "SKIP"]}, "reason_code": {"$ref": "#/$defs/id"}, "evidence_refs": {"type": "array", "items": {"type": "string"}}
+      }, "description": "Scalar generic check; state/duration/product check IDs supplied by PL in enclosing run records"
+    },
+    "event": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "source", "boot_id", "capture_session_id", "stream_id", "seq", "device_tick", "tick_hz", "event_type", "payload", "quality"],
+      "properties": {
+        "schema_version": {"$ref": "#/$defs/version"}, "source": {"$ref": "#/$defs/id"}, "boot_id": {"$ref": "#/$defs/id"}, "capture_session_id": {"$ref": "#/$defs/id"}, "stream_id": {"$ref": "#/$defs/id"},
+        "seq": {"$ref": "#/$defs/uint64"}, "device_tick": {"$ref": "#/$defs/uint64"}, "tick_hz": {"type": "integer", "minimum": 1},
+        "host_monotonic_ns": {"oneOf": [{"$ref": "#/$defs/uint64"}, {"type": "null"}]}, "utc": {"type": ["string", "null"]},
+        "event_type": {"$ref": "#/$defs/id"}, "payload": {}, "quality": {"$ref": "#/$defs/quality"}
+      }, "description": "Normalized event, NOT Dongle binary ICD; host/UTC may be null"
+    },
+    "job": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "command_id", "method", "params", "state", "result", "error", "cancel_requested"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "command_id": {"$ref": "#/$defs/id"}, "method": {"$ref": "#/$defs/id"}, "params": {"type": "object"},
+        "state": {"enum": ["queued", "running", "succeeded", "failed", "cancelled", "unknown"]}, "result": {}, "error": {"type": ["string", "null"]}, "cancel_requested": {"type": "boolean"}
+      }
+    },
+    "timeMapping": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "clock_id", "reference_clock_id", "boot_id", "capture_session_id", "anchor_tick", "anchor_reference_s", "seconds_per_tick", "valid_tick_end", "drift_ppm", "residual_s", "uncertainty_s", "sync_method", "quality"],
+      "properties": {
+        "schema_version": {"$ref": "#/$defs/version"}, "clock_id": {"$ref": "#/$defs/id"}, "reference_clock_id": {"$ref": "#/$defs/id"}, "boot_id": {"$ref": "#/$defs/id"}, "capture_session_id": {"$ref": "#/$defs/id"},
+        "anchor_tick": {"$ref": "#/$defs/uint64"}, "valid_tick_end": {"$ref": "#/$defs/uint64"}, "anchor_reference_s": {"type": "number"}, "seconds_per_tick": {"type": "number", "exclusiveMinimum": 0},
+        "drift_ppm": {"type": "number"}, "residual_s": {"type": "number", "minimum": 0}, "uncertainty_s": {"type": "number", "minimum": 0}, "sync_method": {"$ref": "#/$defs/id"}, "quality": {"$ref": "#/$defs/quality"}
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "schema_version": "wiparse.wireless-plugin/1",
+  "version": "0.1.0",
+  "objects": [
+    {
+      "id": "reference-cable",
+      "resistance_ohm": null,
+      "rating_a": null,
+      "verified": false
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 //! WiParse shared core (protocol, config, metrics, serial).
 
 pub mod brief;
+pub mod automation;
 pub mod bus_decode;
 pub mod bridge;
 pub mod charge_state;

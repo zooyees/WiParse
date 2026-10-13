@@ -109,7 +109,7 @@ fn decode_i2c_oriented(
     let mut truncated = false;
     let mut i = 0usize;
     while i < events.len() {
-        if used >= MAX_DECODE_BYTES {
+        if used >= super::decode_byte_limit() {
             truncated = true;
             break;
         }
@@ -145,7 +145,7 @@ fn decode_i2c_oriented(
         frames.len()
     );
     if truncated {
-        info.push_str(&format!("; truncated at {MAX_DECODE_BYTES} bytes"));
+        info.push_str(&format!("; truncated by decode budget ({} bytes)", super::decode_byte_limit()));
     }
     let empty = frames.is_empty();
     BusDecodeResult {
@@ -381,7 +381,7 @@ fn read_transaction(
                         }
                         return Some((i, truncated));
                     }
-                    if *used >= MAX_DECODE_BYTES {
+                    if *used >= super::decode_byte_limit() {
                         truncated = true;
                     }
                 }
