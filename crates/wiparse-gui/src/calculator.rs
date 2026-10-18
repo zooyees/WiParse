@@ -179,7 +179,7 @@ fn error_text(lang: Lang, error: CalcError) -> &'static str {
         (Lang::Zh, CalcError::InvalidPeaks) => "峰值必须满足有限且 (V1−Bias) > (V2−Bias) > 0。",
         (Lang::En, CalcError::InvalidPeaks) => {
             "Peaks must be finite and satisfy (V1−Bias) > (V2−Bias) > 0."
-        },
+        }
         (Lang::Zh, CalcError::InvalidInterval) => "N 必须是正整数。",
         (Lang::En, CalcError::InvalidInterval) => "N must be a positive integer.",
     }
@@ -332,7 +332,12 @@ struct QResult {
     approx_q: f64,
 }
 
-fn logarithmic_decrement_q(v1: f64, v2: f64, bias: f64, intervals: f64) -> Result<QResult, CalcError> {
+fn logarithmic_decrement_q(
+    v1: f64,
+    v2: f64,
+    bias: f64,
+    intervals: f64,
+) -> Result<QResult, CalcError> {
     if !v1.is_finite() || !v2.is_finite() || !bias.is_finite() {
         return Err(CalcError::InvalidPeaks);
     }
@@ -1050,51 +1055,70 @@ impl CalculatorPanel {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
-        let available = ui.available_rect_before_wrap();
-        let gap = 8.0;
-        let (columns, rows) = calculator_grid_shape(available.width());
-        let cell_width =
-            ((available.width() - gap * (columns.saturating_sub(1) as f32)) / columns as f32)
-                .max(1.0);
-        let cell_height =
-            ((available.height() - gap * (rows.saturating_sub(1) as f32)) / rows as f32)
-                .max(1.0);
+        let viewport_height = ui.available_height();
+        egui::ScrollArea::vertical()
+            .id_salt("calculator-dashboard")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let available = ui.available_rect_before_wrap();
+                let gap = 8.0;
+                let (columns, rows) = calculator_grid_shape(available.width());
+                let cell_width = ((available.width() - gap * (columns.saturating_sub(1) as f32))
+                    / columns as f32)
+                    .max(1.0);
+                let cell_height = ((viewport_height - gap * (rows.saturating_sub(1) as f32))
+                    / rows as f32)
+                    .max(340.0);
 
-        for index in 0..6 {
-            let row = index / columns;
-            let column = index % columns;
-            let min = Pos2::new(
-                available.left() + column as f32 * (cell_width + gap),
-                available.top() + row as f32 * (cell_height + gap),
-            );
-            let rect = Rect::from_min_size(min, Vec2::new(cell_width, cell_height));
-            crate::theme::scope_in_allocated_rect(ui,egui::UiBuilder::new().max_rect(rect), |ui| {
-                Frame::NONE
-                    .fill(t.panel_bg)
-                    .stroke(Stroke::new(1.0_f32, t.border))
-                    .corner_radius(CornerRadius::same(6))
-                    .inner_margin(Margin::same(10))
-                    .show(ui, |ui| {
-                        ui.set_min_size(Vec2::new(
-                            (cell_width - 20.0).max(1.0),
-                            (cell_height - 20.0).max(1.0),
-                        ));
-                        egui::ScrollArea::vertical()
-                            .id_salt(("calculator_tool", index))
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| match index {
-                                0 => self.lc_ui(ui, lang, t),
-                                1 => self.bandpass_ui(ui, lang, t),
-                                2 => self.q_ui(ui, lang, t),
-                                3 => self.rc_ui(ui, lang, t),
-                                4 => self.crc_ui(ui, lang, t),
-                                5 => self.converter.ui(ui, lang, t),
-                                _ => placeholder_ui(ui, lang, t, index + 1),
-                            });
-                    });
+                for index in 0..6 {
+                    let row = index / columns;
+                    let column = index % columns;
+                    let min = Pos2::new(
+                        available.left() + column as f32 * (cell_width + gap),
+                        available.top() + row as f32 * (cell_height + gap),
+                    );
+                    let rect = Rect::from_min_size(min, Vec2::new(cell_width, cell_height));
+                    crate::theme::scope_in_allocated_rect(
+                        ui,
+                        egui::UiBuilder::new().max_rect(rect),
+                        |ui| {
+                            Frame::NONE
+                                .fill(t.panel_bg)
+                                .stroke(Stroke::new(1.0_f32, t.border))
+                                .corner_radius(CornerRadius::same(6))
+                                .inner_margin(Margin::same(10))
+                                .show(ui, |ui| {
+                                    ui.set_min_size(Vec2::new(
+                                        (cell_width - 20.0).max(1.0),
+                                        (cell_height - 20.0).max(1.0),
+                                    ));
+                                    egui::ScrollArea::vertical()
+                                        .id_salt(("calculator_tool", index))
+                                        .auto_shrink([false, false])
+                                        .show(ui, |ui| match index {
+                                            0 => self.lc_ui(ui, lang, t),
+                                            1 => self.bandpass_ui(ui, lang, t),
+                                            2 => self.q_ui(ui, lang, t),
+                                            3 => self.rc_ui(ui, lang, t),
+                                            4 => self.crc_ui(ui, lang, t),
+                                            5 => self.converter.ui(ui, lang, t),
+                                            _ => placeholder_ui(ui, lang, t, index + 1),
+                                        });
+                                });
+                        },
+                    );
+                }
+                ui.allocate_rect(
+                    Rect::from_min_size(
+                        available.min,
+                        Vec2::new(
+                            available.width(),
+                            cell_height * rows as f32 + gap * (rows - 1) as f32,
+                        ),
+                    ),
+                    Sense::hover(),
+                );
             });
-        }
-        ui.allocate_rect(available, Sense::hover());
     }
 
     pub fn api_get(&self) -> serde_json::Value {
@@ -1135,7 +1159,10 @@ impl CalculatorPanel {
             .and_then(|v| v.as_str())
             .unwrap_or("lc")
             .to_ascii_lowercase();
-        let fields = params.get("fields").cloned().unwrap_or_else(|| params.clone());
+        let fields = params
+            .get("fields")
+            .cloned()
+            .unwrap_or_else(|| params.clone());
         fn s(v: &serde_json::Value, k: &str) -> Option<String> {
             v.get(k).and_then(|x| {
                 x.as_str()
@@ -1160,16 +1187,20 @@ impl CalculatorPanel {
                     self.lc.capacitor_esr = v;
                 }
                 if let Some(u) = s(&fields, "inductance_unit") {
-                    if let Some(unit) = InductanceUnit::ALL.iter().copied().find(|x| {
-                        x.label().eq_ignore_ascii_case(&u)
-                    }) {
+                    if let Some(unit) = InductanceUnit::ALL
+                        .iter()
+                        .copied()
+                        .find(|x| x.label().eq_ignore_ascii_case(&u))
+                    {
                         self.lc.inductance_unit = unit;
                     }
                 }
                 if let Some(u) = s(&fields, "capacitance_unit") {
-                    if let Some(unit) = CapacitanceUnit::FILTER_UNITS.iter().copied().find(|x| {
-                        x.label().eq_ignore_ascii_case(&u)
-                    }) {
+                    if let Some(unit) = CapacitanceUnit::FILTER_UNITS
+                        .iter()
+                        .copied()
+                        .find(|x| x.label().eq_ignore_ascii_case(&u))
+                    {
                         self.lc.capacitance_unit = unit;
                     }
                 }
@@ -2405,9 +2436,18 @@ mod tests {
 
     #[test]
     fn parse_number_accepts_hex_literals() {
-        assert_eq!(parse_number("0x10", CalcError::InvalidInductance).unwrap(), 16.0);
-        assert_eq!(parse_number("FFH", CalcError::InvalidInductance).unwrap(), 255.0);
-        assert_eq!(parse_number("10", CalcError::InvalidInductance).unwrap(), 10.0);
+        assert_eq!(
+            parse_number("0x10", CalcError::InvalidInductance).unwrap(),
+            16.0
+        );
+        assert_eq!(
+            parse_number("FFH", CalcError::InvalidInductance).unwrap(),
+            255.0
+        );
+        assert_eq!(
+            parse_number("10", CalcError::InvalidInductance).unwrap(),
+            10.0
+        );
     }
 
     #[test]

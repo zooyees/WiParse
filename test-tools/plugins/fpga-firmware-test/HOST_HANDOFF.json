@@ -1,0 +1,44 @@
+{
+  "created_at": "2026-10-18T08:38:06.481Z",
+  "host_writes_stopped": true,
+  "cargo_release_cancelled": true,
+  "final_packaging_owner": "软件工程",
+  "files": [
+    {
+      "path": "crates/wiparse-gui/src/test_tool/workspace.rs",
+      "sha256": "5f33771dcd2a84f60e19a132ca071cabd717f57a4bf4945d5bc99a1fdbfe0fc4"
+    },
+    {
+      "path": "crates/wiparse-gui/src/backend/capabilities.rs",
+      "sha256": "7fbc8f43f05eb22ff1306b74497bf0dd3b77be3a9fb2b8c9ee8d9930b66e81de"
+    },
+    {
+      "path": "crates/wiparse-gui/src/backend/stateful.rs",
+      "sha256": "3949fdedb28c25faf357e087d458f5842c1784d22337b19ec812681c2ee44972"
+    },
+    {
+      "path": "test-tools/hub-workspace.mjs",
+      "sha256": "4682b80d3d0e8e502299983e2f2ea25ce6f9fc67a508d7933837ad877c823266"
+    },
+    {
+      "path": "test-tools/lib/hub/manifest.mjs",
+      "sha256": "36e6c2927adcc54b25b368471a2764f454142082c6194cc58aa60aeaf203734e"
+    },
+    {
+      "path": "test-tools/lib/hub/run-control.mjs",
+      "sha256": "47bba848d957905cded5e88dc068d52844561c8fdb73fc1e388c709a17240b67"
+    },
+    {
+      "path": "test-tools/lib/hub/schema.mjs",
+      "sha256": "b6bff6168c31c179694b53c7e6345bf0e10f65e8a63418b40e9cf13a754311df"
+    },
+    {
+      "path": "test-tools/schemas/plugin.schema.json",
+      "sha256": "4dee2c9486c8057f35240535fd06635872c091ddf1ec3c3004a713f8b9fbd663"
+    },
+    {
+      "path": "test-tools/package.json",
+      "sha256": "0a53cf6d30bddf4777de249e16779c5ea5acd021b3bac6f77585548f004ba637"
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "date": "2026-10-18",
+  "node": "v24.15.0",
+  "plugin_version": "0.4.0",
+  "minimum_wiparse": "1.2.1",
+  "command": "node --test test-tools/plugins/fpga-firmware-test/test/*.test.mjs",
+  "passed": 142,
+  "failed": 0,
+  "fault_matrix_cases": 112,
+  "duration_ms": 29716.5072,
+  "log": "plugin-regression-2026-10-18.log",
+  "log_sha256": "7ba05b865c73edec33ef396639fa85711b46f8835a4ec0c2fb8213d2f867750f",
+  "source_sha256": {
+    "lib/io-guard.mjs": "8d880cea46b9719fade4f01cb0288f3f5d4bfea58920e149b9624be75bf8ccc3",
+    "lib/scheduler.mjs": "793adc28c6dab43e81cb601a74926e6bc9515fa835045a938bb03a12e0dfaf77",
+    "index.mjs": "9708ccfc4ec9174e15a535b35da536008cc6b1556d6f1e7869067bd5e2bbb1fd",
+    "test/fault-matrix.test.mjs": "1580db3e56db97c72378eb41115aea664a1ef809c418e0392a25b58697b4a678",
+    "test/upgrade.test.mjs": "d3a7e238483093be190bd888c89616b9f76b11b632ad56ac8cb1c6d9f2da77b1"
+  },
+  "scope": "software regression and deterministic fault injection; simulated transport only; no hardware or longest-duration aging acceptance",
+  "ui_contract_followup": {
+    "passed": 3,
+    "failed": 0,
+    "log": "ui-contract-2026-10-18.log",
+    "log_sha256": "bc4c14066dec1598f498ace8a58cb3dda3a1a73ad045cb130625d57e81578521",
+    "source_sha256": {
+      "generate-schemas.mjs": "3a2e79919d44baf4c1219fe01cb3b7e555e190765c23874c26fa7cbd71810886",
+      "schemas/fpga-test-case.schema.json": "72a28fab04d10c4d9dd288583291ab16791d1e4cb8f9194601ca2994c818308e",
+      "schemas/fpga-test-case.ui.json": "d816f9eb83e49a1712c2c0aa10806d36629df78f51b3633a376aa8cb3236046f",
+      "test/ui-contract.test.mjs": "3ad05c8622da13a3c3821933f86e292c76d63bf6b636e247f06fe033e6027d12"
+    }
+  },
+  "startup_stop_followup": {
+    "new_cases": 7,
+    "targeted_passed": 8,
+    "targeted_failed": 0,
+    "log": "startup-stop-2026-10-18.log",
+    "log_sha256": "0e0aa62aa6d77592dd630dbd554cc8012b21f85eeadf088e217095c0edf07d60",
+    "host_lock_wait_simulated": true,
+    "real_runner_acceptance": {
+      "status": "passed",
+      "log": "evidence/release-1.2.1-2026-10-18/hub-lock-retry-tests.log",
+      "path_base": "repository_root",
+      "log_sha256": "39830ae3c496e92f24e24e8da1ac3dd567446e027836ccebac692eacfe7977fa",
+      "passed": 6,
+      "failed": 0,
+      "scope": "Six total tests across repository lock retry, timeout/non-retryable boundaries, real runner lifecycle/Stop integration, and endpoint handling; not six independent Stop test cases.",
+      "source_sha256": {
+        "test-tools/runner.mjs": "fd150ec8a933c1c678f493f91687d72fee55a413e39864d3bab80ffb6fafe781",
+        "test-tools/lib/hub/retry.mjs": "69133b8769d5e7e614bf56d27fff0e6c903377ce44d206b968e767d69a2d7fd4",
+        "test-tools/lib/hub/config-store.mjs": "fcd390d53efe4c0ca9afea78f047d4756523e3fc1781b3440ae50509e8fbbb98",
+        "test-tools/test/hub-runner.test.mjs": "3faea051611a6880652d52a415e7984e4c3d9190bff010585dadb3039d484001"
+      },
+      "architecture_review": "accepted within controlled software scope"
+    }
+  }
+}

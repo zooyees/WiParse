@@ -55,3 +55,20 @@ dist/vendor/
 /dist/*.7z
 /test-tools*.7z
 /test-tools*.zip
+
+# Local version backups and expanded previews (source and release notes stay tracked)
+/backups/
+/WiParse.exe
+/WiParse-CLI.exe
+/WiParse-Service.exe
+/dist/wiparse-*-win/
+/dist/wiparse-*-preview/
+**/__pycache__/
+*.pyc
+/projects/*/.editor/
+/projects/*/tests/wiparse-dap/
+/projects/*/tests/wiparse-i2c-rpc/
+# Local protocol reference inputs and rendered extraction pages
+/docs/DDSSS_spec_input_draft5_zh.pdf
+/docs/DDSSS规范输入-草案5-中文版.pdf
+/docs/ddsss_zh_assets/

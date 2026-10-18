@@ -5,6 +5,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
+import {validateUi} from "./hub/manifest.mjs";
+import {loadSchema,loadUi} from "./hub/schema.mjs";
+import {jail} from "./hub/common.mjs";
 import {
   MarketplaceError,
   MARKETPLACE_ERROR,
@@ -257,6 +260,11 @@ export function installFromZip({
       );
     }
 
+    if(manifest.capabilities?.includes('configure')) {
+      const ui=validateUi(manifest),e=ui.config_editor;
+      loadSchema(jail(path.join(pluginRoot,e.schema),[pluginRoot]),pluginRoot);
+      if(e.ui_schema)loadUi(jail(path.join(pluginRoot,e.ui_schema),[pluginRoot]),pluginRoot);
+    }
     const dest = pluginVersionDir(marketplaceRoot, meta.id, meta.version);
     fs.rmSync(dest, { recursive: true, force: true });
     fs.mkdirSync(path.dirname(dest), { recursive: true });

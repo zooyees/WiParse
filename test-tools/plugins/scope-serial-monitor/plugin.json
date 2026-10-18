@@ -5,7 +5,7 @@
   "report_name": "ScopeSerial",
   "report_name_zh": "示波器串口",
   "type": "capture_loop",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "entry": "index.mjs",
   "config": "station.json",
   "description": "Configurable line triggers (JSON) → scope stop → instrument.capture + waveform_source → PDF. Writes under projects/{project}/tests/{test_id}/runs/{stamp}/ where test_id is the sanitized report name (file_prefix).",

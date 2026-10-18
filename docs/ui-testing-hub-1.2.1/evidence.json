@@ -1,0 +1,52 @@
+{
+  "source_freeze_sha256": "2b1306dccba7c454eb2185b40b05aa7a6a7c1241e7fe934bc266d2da86fbb3fc",
+  "frames": 112,
+  "screenshots": [
+    {
+      "path": "docs/ui-testing-hub-1.2.1/dongle-fpga-1440-0-7-dark-zh-detail.png",
+      "sha256": "6fe74cc52ded0c16ab378e90580824da77042bbd526d9884d16cb2fceff9e9d2",
+      "egui_frame_sha256": "034e09a755401f3019699989aff8b6ed0f190f863e1df751f728f3c3f9c4fac1"
+    },
+    {
+      "path": "docs/ui-testing-hub-1.2.1/dongle-fpga-1920-0-2-dark-zh-summary.png",
+      "sha256": "c011473f2de3b74ca5372cb62c9c3a488e9eca026fac58a547f2746e9ba5bb10",
+      "egui_frame_sha256": "d28c48ed56c77cba19c091a8df187fd84344c18cee1619540e80f0c24e6e979e"
+    },
+    {
+      "path": "docs/ui-testing-hub-1.2.1/dongle-fpga-640-0-7-light-zh-detail.png",
+      "sha256": "6467f7a9c383f16a03f8a5fbb4a96759d6f1138eb34d26ebd0591d5bdb947956",
+      "egui_frame_sha256": "f67f438f2c47b48a6632703690d98ba35cffb1deb6f9eae4d46dc5a11260575b"
+    },
+    {
+      "path": "docs/ui-testing-hub-1.2.1/dongle-fpga-1440-0-3-dark-zh-summary.png",
+      "sha256": "92c8fbf1df8889831fdba2d1448c8541e8119db2f402be50cef63726c7cb2167",
+      "egui_frame_sha256": "861c566133f5cd21f57cbafdc1f2b18bafc69a960f901414790358f76a91e048"
+    },
+    {
+      "path": "docs/ui-testing-hub-1.2.1/dongle-fpga-1920-0-0-dark-zh-summary.png",
+      "sha256": "0acf7867ace804ea761e7beccc864c07ac5ca2bf3536d0af546657943617a88d",
+      "egui_frame_sha256": "b7bf31e36f8795c9d4c874e37f3c13c98b6e0f1a9adbd6ab2948fc97c3bfb196"
+    },
+    {
+      "path": "docs/ui-testing-hub-1.2.1/com-fpga-1440-0-4-dark-zh-summary.png",
+      "sha256": "9fc97d3ab29d04cfd89c6b79e3fb87697abb1cffc9fe7821ac42b9f675f386e8",
+      "egui_frame_sha256": "7100880c7ddc6b8d4120a54499aa95fa7223bf93a4f23166469729aaceacccbe"
+    },
+    {
+      "path": "docs/ui-testing-hub-1.2.1/com-fpga-640-0-2-dark-zh-summary.png",
+      "sha256": "e010d244eb837e1329694a076cf419a741423c4354fcf7536468aacbed4ab2dd",
+      "egui_frame_sha256": "f5ef42a5fea22ff3bab616667b5303524e16d0d3cf0c0c229df25842bbaf3eb8"
+    },
+    {
+      "path": "docs/ui-testing-hub-1.2.1/com-fpga-1100-0-6-dark-zh-summary.png",
+      "sha256": "c1a1cb3e8d7e3786cce960583ff075aa826ca57fd736f7d881153012dc5c26c6",
+      "egui_frame_sha256": "8a735d531b961c460a598270c98e1894a57197b562438a937a74a3048c7157ef"
+    },
+    {
+      "path": "docs/ui-testing-hub-1.2.1/dongle-fpga-1440-1-0-dark-zh-summary.png",
+      "sha256": "1e4ccf9fc475b71f17715f88c914f47e7af50003006c779498ea6b4cd23d23c1",
+      "egui_frame_sha256": "df6941209d91ddaadbf3c52c7c88a1db2632ea2b474be8d109ab1fd36dbac2b1"
+    }
+  ],
+  "scope": "Actual egui output; representative configurations and states, not native manual acceptance of all twenty cases"
+}

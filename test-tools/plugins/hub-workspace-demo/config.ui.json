@@ -1,0 +1,1 @@
+{"schema_version":"wiparse.config-ui/1","groups":[{"label":"General","label_zh":"基本配置","fields":["id","name","enabled","tags","duration_s"]},{"label":"Steps","label_zh":"步骤","fields":["steps"]}],"widgets":{"tags":"tags","steps":"repeater"},"source_view":"read_only"}

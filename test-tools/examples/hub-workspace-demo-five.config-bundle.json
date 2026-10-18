@@ -1,0 +1,102 @@
+{
+  "schema_version": "wiparse.config-bundle/1",
+  "plugin_id": "hub-workspace-demo",
+  "plugin_version": "1.0.0",
+  "items": [
+    {
+      "id": "case_001",
+      "name": "Workspace simulation 1",
+      "enabled": true,
+      "tags": [
+        "simulation",
+        "smoke"
+      ],
+      "editor_revision": 0,
+      "updated_at": "2026-10-18T08:00:00Z",
+      "duration_s": 0.05,
+      "steps": [
+        {
+          "id": "step_001",
+          "name": "Inspect state",
+          "mode": "inspect"
+        }
+      ]
+    },
+    {
+      "id": "case_002",
+      "name": "Workspace simulation 2",
+      "enabled": true,
+      "tags": [
+        "simulation",
+        "smoke"
+      ],
+      "editor_revision": 0,
+      "updated_at": "2026-10-18T08:00:00Z",
+      "duration_s": 0.05,
+      "steps": [
+        {
+          "id": "step_002",
+          "name": "Inspect state",
+          "mode": "inspect"
+        }
+      ]
+    },
+    {
+      "id": "case_003",
+      "name": "Workspace simulation 3",
+      "enabled": true,
+      "tags": [
+        "simulation",
+        "smoke"
+      ],
+      "editor_revision": 0,
+      "updated_at": "2026-10-18T08:00:00Z",
+      "duration_s": 0.05,
+      "steps": [
+        {
+          "id": "step_003",
+          "name": "Inspect state",
+          "mode": "inspect"
+        }
+      ]
+    },
+    {
+      "id": "case_004",
+      "name": "Workspace simulation 4",
+      "enabled": true,
+      "tags": [
+        "simulation",
+        "smoke"
+      ],
+      "editor_revision": 0,
+      "updated_at": "2026-10-18T08:00:00Z",
+      "duration_s": 0.05,
+      "steps": [
+        {
+          "id": "step_004",
+          "name": "Inspect state",
+          "mode": "inspect"
+        }
+      ]
+    },
+    {
+      "id": "case_005",
+      "name": "Workspace simulation 5",
+      "enabled": true,
+      "tags": [
+        "simulation",
+        "smoke"
+      ],
+      "editor_revision": 0,
+      "updated_at": "2026-10-18T08:00:00Z",
+      "duration_s": 0.05,
+      "steps": [
+        {
+          "id": "step_005",
+          "name": "Inspect state",
+          "mode": "inspect"
+        }
+      ]
+    }
+  ]
+}

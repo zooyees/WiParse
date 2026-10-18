@@ -18,6 +18,8 @@ pub enum ConfigError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
+    pub ai: crate::ai::AiConfig,
+    #[serde(default)]
     pub system: SystemConfig,
     #[serde(default)]
     pub ui: UiConfig,
@@ -191,6 +193,9 @@ pub struct TestToolConfig {
     /// Data root for plugin path templates (`{data_root}`). Empty → project root.
     #[serde(default)]
     pub data_root: String,
+    /// Explicit user-approved roots for workspace configurations, imports and evidence paths.
+    #[serde(default)]
+    pub approved_config_roots: Vec<String>,
     /// Testing Hub marketplace client settings.
     #[serde(default)]
     pub marketplace: MarketplaceConfig,
@@ -203,6 +208,7 @@ impl Default for TestToolConfig {
             cli_path: String::new(),
             node_path: String::new(),
             data_root: String::new(),
+            approved_config_roots: Vec::new(),
             marketplace: MarketplaceConfig::default(),
         }
     }
@@ -580,6 +586,7 @@ impl Default for AppsConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
+            ai: crate::ai::AiConfig::default(),
             system: SystemConfig::default(),
             ui: UiConfig::default(),
             alerts: AlertsConfig::default(),

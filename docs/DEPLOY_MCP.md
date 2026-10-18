@@ -1,10 +1,10 @@
 # 在另一台电脑部署 WiParse MCP
 
-MCP **不能单独工作**：它只通过 HTTP 连本机已启动的 `WiParse.exe`（默认 `http://127.0.0.1:7878`）。对机需要 **GUI 1.1.30 + Node.js 18+ + Cursor（其他 MCP 客户端也可按其方式注册）**。闭环工位步骤见 [`WORKSTATION_CLOSED_LOOP.md`](WORKSTATION_CLOSED_LOOP.md)。
+MCP **不能单独工作**：它只通过 HTTP 连本机已启动的 `WiParse.exe`（默认 `http://127.0.0.1:7878`）。对机需要 **GUI 1.2.2 + Node.js 18+ + Cursor（其他 MCP 客户端也可按其方式注册）**。闭环工位步骤见 [`WORKSTATION_CLOSED_LOOP.md`](WORKSTATION_CLOSED_LOOP.md)。
 
 推荐安装目录（可改）：`D:\software\WiParse`
 
-当前发布包为 **WiParse / MCP 1.1.30**，包含编译后的 MCP 和 Node 依赖，无需在对机运行 tsc。使用包内 `start-wiparse.ps1` 启动，再运行 `mcp/wiparse/setup-mcp.cmd` 注册。新版测试报告要求 GUI 1.1.30。
+当前为 **WiParse / MCP 1.2.2 EXE 预览**，完整 ZIP 等用户确认后生成。预览目录包含编译后的 MCP 和 Node 依赖，无需在对机运行 tsc；直接运行 `bin/WiParse.exe`，再运行 `mcp/wiparse/setup-mcp.cmd` 注册。源码检出需先在 `mcp/wiparse` 执行 `npm ci` 和 `npm run build`；工程共享配置接口要求 GUI 1.2.2。
 
 本版本 MCP 有 **6** 个工具：`wiparse_brief`、`wiparse_select`、`wiparse_test`、`wiparse_send`、`wiparse_report_pack`、`wiparse_ui`。
 
@@ -12,7 +12,7 @@ MCP **不能单独工作**：它只通过 HTTP 连本机已启动的 `WiParse.ex
 
 ## 1. 对机要拷什么
 
-本次使用 **`dist/WiParse-1.1.30-dev.zip`**（完整开发验证包）；历史部署包 **`WiParse-Deploy.zip`**（不要只拷 `dist\index.js`，也不要拷源码仓库 / `target\`）。解压后应有：
+本次使用 **`dist/WiParse-1.2.1-dev.zip`**（完整开发验证包）；历史部署包 **`WiParse-Deploy.zip`**（不要只拷 `dist\index.js`，也不要拷源码仓库 / `target\`）。解压后应有：
 
 ```
 start-wiparse.ps1

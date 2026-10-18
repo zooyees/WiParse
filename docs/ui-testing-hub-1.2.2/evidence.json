@@ -1,0 +1,27 @@
+{
+  "source_freeze_sha256": "0e767517855bedbfd783492ebc459d76eb215f21d0a2cd3c8c27eb8dc116d6d2",
+  "actual_egui_meshes": true,
+  "frame_count": 52,
+  "screenshots": [
+    {
+      "image": "fpga-1440-1-0-dark-zh-summary.png",
+      "sha256": "f7b055bba922c2125ae17e42e36739cc8e0dcfda74d85180b07291dafe7f80fc",
+      "mesh_sha256": "63309bd64ba91a505f415fff300f5d80787bffd18a326b6f7f9bb90fabed6da3"
+    },
+    {
+      "image": "fpga-1440-4-0-dark-zh-summary.png",
+      "sha256": "081d272218f71b69efd7861d1f1a947b8cbc0d33459231033e444f91ae835a67",
+      "mesh_sha256": "819f922e927d010dacbbb58ee0d95b16075976797db5b5420ea4d4b71a0be239"
+    },
+    {
+      "image": "fpga-640-1-0-dark-zh-summary.png",
+      "sha256": "c2c169fac6a8e507c1dc21fb87f8e301b8338edbfb2df353efe7a6ea5a7fb019",
+      "mesh_sha256": "ed2d1c6fbaa694c8766f58b15e565f63d9206afb82c26246318134e4aa36a3ea"
+    },
+    {
+      "image": "fpga-1440-0-0-dark-zh-summary.png",
+      "sha256": "bdb0e602ab13cddd352e8e86d137871434dc6e45fb177f002594db4459431fde",
+      "mesh_sha256": "4e03522ecf5da0f81492e9761ea0396753ffd65a62cab2585d896179625b4973"
+    }
+  ]
+}

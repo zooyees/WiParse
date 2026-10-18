@@ -2,11 +2,13 @@
 
 **[中文](#中文)** · **[English](#english)**
 
-无线充电（Qi）测试与工位工具。当前版本 **1.1.30**（以工作区 `Cargo.toml` 的 `workspace.package.version` 为准）。
+无线充电（Qi）测试与工位工具。当前版本 **1.2.2**（以工作区 `Cargo.toml` 的 `workspace.package.version` 为准）。
 
-Wireless charging (Qi) lab and station utility. Current version **1.1.30**.
+Wireless charging (Qi) lab and station utility. Current version **1.2.2**.
 
-本版下载文件为 `dist/WiParse-1.1.30-dev.zip`；[版本说明](docs/releases/1.1.30.md)包含报告查看、模拟数据、MCP 部署和自动化开发范围。
+本轮先交付 `dist/wiparse-1.2.2-preview/bin/WiParse.exe` 效果预览，用户确认后再完整打包 ZIP；[版本说明](docs/releases/1.2.2.md)包含工程配置、矩阵、结果来源与迁移范围。
+全局 AI 接口源码已加入：支持 DeepSeek、千问及自定义兼容服务，设置与内部调用见 [AI 接口说明](docs/AI_INTERFACE.md)。已包含在当前 EXE 预览版本中。
+
 
 许可：**Proprietary**。本仓库不是通用示波器软件，也不是面向公网的服务。
 
@@ -565,3 +567,5 @@ WiParse-R/
 | [`docs/UPDATE.md`](docs/UPDATE.md) | Online update |
 | [`test-tools/PLUGIN_SPEC.md`](test-tools/PLUGIN_SPEC.md) | Plugin contract |
 | [`mcp/wiparse/README.md`](mcp/wiparse/README.md) | MCP tools |
+
+Testing Hub 配置工作区与验证说明：[TESTING_HUB_WORKSPACE.md](docs/TESTING_HUB_WORKSPACE.md)，1.2.1加入通用规则编辑器、字段分层与联合验收，详见 [版本说明](docs/releases/1.2.1.md)。

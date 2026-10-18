@@ -174,9 +174,7 @@ impl OutputSpec {
                         .and_then(|x| x.as_str())
                         .unwrap_or("")
                         .to_owned(),
-                    view: ArtifactView::parse(
-                        o.get("view").and_then(|x| x.as_str()).unwrap_or(""),
-                    ),
+                    view: ArtifactView::parse(o.get("view").and_then(|x| x.as_str()).unwrap_or("")),
                     include,
                     always: o.get("always").and_then(|x| x.as_bool()).unwrap_or(false),
                     id,
@@ -259,12 +257,28 @@ impl IndexedResult {
     }
 
     pub fn latest_report(&self) -> Option<&IndexedFile> {
-        self.groups
+        self.markdown_reports().into_iter().max_by_key(|f| f.mtime)
+    }
+
+    /// Report navigation follows the actual file type, even for legacy plugins
+    /// that put Markdown in a generic output group. Evidence stays in the index.
+    pub fn markdown_reports(&self) -> Vec<&IndexedFile> {
+        let mut reports: Vec<_> = self
+            .groups
             .iter()
-            .filter(|g| g.view == ArtifactView::Report)
             .flat_map(|g| g.files.iter())
-            .filter(|f| f.path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown")))
-            .max_by_key(|f| f.mtime)
+            .filter(|f| {
+                f.path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| {
+                        e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown")
+                    })
+            })
+            .collect();
+        reports.sort_by(|a, b| a.path.cmp(&b.path));
+        reports.dedup_by(|a, b| a.path == b.path);
+        reports
     }
 
     pub fn latest_any(&self) -> Option<&IndexedFile> {
@@ -317,10 +331,7 @@ impl IndexedTest {
     pub fn latest_report(&self) -> Option<&IndexedFile> {
         self.results
             .iter()
-            .flat_map(|r| r.groups.iter())
-            .filter(|g| g.view == ArtifactView::Report)
-            .flat_map(|g| g.files.iter())
-            .filter(|f| f.path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown")))
+            .filter_map(|r| r.latest_report())
             .max_by_key(|f| f.mtime)
     }
 
@@ -371,7 +382,8 @@ pub fn sanitize_test_id(raw: &str, fallback: &str) -> String {
     for c in raw.trim().chars() {
         if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
             s.push(c);
-        } else if c.is_whitespace() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+        } else if c.is_whitespace()
+            || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
         {
             if !s.ends_with('_') {
                 s.push('_');
@@ -645,10 +657,7 @@ pub fn list_projects(data_root: &Path) -> Vec<ProjectDoc> {
         if !path.is_dir() {
             continue;
         }
-        let id = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
+        let id = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if !is_valid_id(id) {
             continue;
         }
@@ -709,7 +718,11 @@ pub fn add_test_entry(
     Ok(doc)
 }
 
-pub fn remove_test(data_root: &Path, project_id: &str, test_id: &str) -> std::io::Result<ProjectDoc> {
+pub fn remove_test(
+    data_root: &Path,
+    project_id: &str,
+    test_id: &str,
+) -> std::io::Result<ProjectDoc> {
     let id = test_id.trim();
     let mut doc = ensure_project(data_root, project_id, None);
     let before = doc.tests.len();
@@ -727,7 +740,9 @@ fn match_simple_glob(name: &str, pattern: &str) -> bool {
     }
     if let Some(ext) = g.strip_prefix("*.") {
         if !ext.contains('*') {
-            return name.to_ascii_lowercase().ends_with(&format!(".{}", ext.to_ascii_lowercase()));
+            return name
+                .to_ascii_lowercase()
+                .ends_with(&format!(".{}", ext.to_ascii_lowercase()));
         }
     }
     name.eq_ignore_ascii_case(g)
@@ -759,14 +774,16 @@ fn push_file(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string());
-    map.entry(output_id.to_owned()).or_default().push(IndexedFile {
-        name,
-        path,
-        size,
-        mtime,
-        view,
-        output_id: output_id.to_owned(),
-    });
+    map.entry(output_id.to_owned())
+        .or_default()
+        .push(IndexedFile {
+            name,
+            path,
+            size,
+            mtime,
+            view,
+            output_id: output_id.to_owned(),
+        });
 }
 
 fn ingest_run_json(
@@ -830,10 +847,7 @@ fn glob_output_dir(
     };
     for ent in entries.flatten() {
         let path = ent.path();
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if !spec.include.iter().any(|g| match_simple_glob(name, g)) {
             continue;
         }
@@ -942,10 +956,7 @@ fn merge_testcase_refs(data_root: &Path, doc: &ProjectDoc) -> Vec<ProjectTestRef
             if !path.is_dir() {
                 continue;
             }
-            let id = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
+            let id = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !is_valid_id(id) || !seen.insert(id.to_owned()) {
                 continue;
             }
@@ -965,11 +976,7 @@ fn merge_testcase_refs(data_root: &Path, doc: &ProjectDoc) -> Vec<ProjectTestRef
     refs
 }
 
-pub fn index_project(
-    data_root: &Path,
-    doc: &ProjectDoc,
-    plugins: &[PluginMeta],
-) -> IndexedProject {
+pub fn index_project(data_root: &Path, doc: &ProjectDoc, plugins: &[PluginMeta]) -> IndexedProject {
     let mut tests = Vec::new();
     for tref in merge_testcase_refs(data_root, doc) {
         let plugin_id = tref.plugin_key().to_owned();
@@ -1077,25 +1084,85 @@ mod tests {
         let p = std::env::temp_dir().join(format!(
             "wiparse-proj-{}-{}",
             std::process::id(),
-uuid::Uuid::new_v4()
+            uuid::Uuid::new_v4()
         ));
         fs::create_dir_all(&p).unwrap();
         p
     }
 
     #[test]
+    fn markdown_navigation_accepts_legacy_groups_and_excludes_evidence() {
+        let file = |name: &str| IndexedFile {
+            name: name.into(),
+            path: PathBuf::from(name),
+            size: 1,
+            mtime: None,
+            view: ArtifactView::External,
+            output_id: "docs".into(),
+        };
+        let mut result = IndexedResult {
+            stamp: "run".into(),
+            ok: Some(true),
+            groups: vec![IndexedGroup {
+                id: "docs".into(),
+                label: "Documents".into(),
+                label_zh: String::new(),
+                view: ArtifactView::External,
+                files: vec![
+                    file("wave.isf"),
+                    file("shot.png"),
+                    file("index.jsonl"),
+                    file("summary.MD"),
+                    file("summary.MD"),
+                    file("detail.markdown"),
+                ],
+            }],
+        };
+        let reports = result.markdown_reports();
+        assert_eq!(
+            reports.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
+            vec!["detail.markdown", "summary.MD"]
+        );
+        result.groups[0]
+            .files
+            .retain(|f| !f.name.ends_with(".MD") && !f.name.ends_with(".markdown"));
+        assert!(result.latest_report().is_none());
+        assert!(
+            result.latest_any().is_some(),
+            "evidence remains available to other tools/API"
+        );
+    }
+
+    #[test]
     fn latest_report_ignores_newer_json_in_report_group() {
         let file = |name: &str, seconds| IndexedFile {
-            name: name.into(), path: PathBuf::from(name), size: 1,
+            name: name.into(),
+            path: PathBuf::from(name),
+            size: 1,
             mtime: Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(seconds)),
-            view: ArtifactView::Report, output_id: "reports".into(),
+            view: ArtifactView::Report,
+            output_id: "reports".into(),
         };
-        let result = IndexedResult {stamp: "run".into(), ok: Some(true), groups: vec![IndexedGroup {
-            id:"reports".into(), label:"Reports".into(), label_zh:String::new(), view:ArtifactView::Report,
-            files:vec![file("summary.md",1),file("manifest.json",2)]
-        }]};
+        let result = IndexedResult {
+            stamp: "run".into(),
+            ok: Some(true),
+            groups: vec![IndexedGroup {
+                id: "reports".into(),
+                label: "Reports".into(),
+                label_zh: String::new(),
+                view: ArtifactView::Report,
+                files: vec![file("summary.md", 1), file("manifest.json", 2)],
+            }],
+        };
         assert_eq!(result.latest_report().unwrap().name, "summary.md");
-        let case = IndexedTest {id:"case".into(), name:String::new(), name_zh:String::new(), plugin_id:String::new(), installed:true, results:vec![result]};
+        let case = IndexedTest {
+            id: "case".into(),
+            name: String::new(),
+            name_zh: String::new(),
+            plugin_id: String::new(),
+            installed: true,
+            results: vec![result],
+        };
         assert_eq!(case.latest_report().unwrap().name, "summary.md");
     }
 
@@ -1163,7 +1230,10 @@ uuid::Uuid::new_v4()
         assert_eq!(idx.tests[0].results[0].stamp, "20260101_000000");
         assert_eq!(idx.tests[0].results[0].groups.len(), 1);
         assert_eq!(idx.tests[0].results[0].groups[0].id, "logs");
-        assert!(idx.tests[0].results[0].groups.iter().all(|g| g.id != "waves"));
+        assert!(idx.tests[0].results[0]
+            .groups
+            .iter()
+            .all(|g| g.id != "waves"));
         fs::remove_dir_all(&root).ok();
     }
 
@@ -1182,7 +1252,10 @@ uuid::Uuid::new_v4()
     fn sanitize_test_id_from_report_name() {
         assert_eq!(sanitize_test_id("ScopeSerial", "plug"), "ScopeSerial");
         assert_eq!(sanitize_test_id("My Lot", "plug"), "My_Lot");
-        assert_eq!(sanitize_test_id("  ", "scope-serial-monitor"), "scope-serial-monitor");
+        assert_eq!(
+            sanitize_test_id("  ", "scope-serial-monitor"),
+            "scope-serial-monitor"
+        );
     }
 
     #[test]
@@ -1213,7 +1286,13 @@ uuid::Uuid::new_v4()
             report_name_zh: "DAP 通道".into(),
         };
         assert_eq!(
-            test_case_label("wiparse-dap", "wiparse-dap", "wiparse-dap", Some(&plugin), true),
+            test_case_label(
+                "wiparse-dap",
+                "wiparse-dap",
+                "wiparse-dap",
+                Some(&plugin),
+                true
+            ),
             "DAP 通道"
         );
         assert_eq!(

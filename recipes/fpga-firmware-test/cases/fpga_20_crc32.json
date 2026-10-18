@@ -1,0 +1,120 @@
+{
+  "schema_version": "wiparse.fpga-test-case/1",
+  "editor_revision": 2,
+  "updated_at": "2026-10-18T09:53:33.193Z",
+  "id": "fpga_20_crc32",
+  "name": "CRC32 数据校验计算验证",
+  "enabled": true,
+  "order": 200,
+  "tags": [
+    "demo",
+    "compute",
+    "com-uart",
+    "dongle-reset"
+  ],
+  "timeout_s": 120,
+  "dut": {
+    "model": "DEMO-FPGA-BOARD",
+    "serial_required": true,
+    "board_revision": "DEMO-REV-A",
+    "fpga_model": "DEMO-FPGA",
+    "fixture_id": "DEMO-FIXTURE-01",
+    "station_id": "DEMO-STATION-01"
+  },
+  "instruments": {
+    "programmer": {
+      "kind": "debug_probe",
+      "selector": {
+        "serial": "DEMO-DONGLE-001"
+      },
+      "required": true
+    },
+    "scope": {
+      "kind": "oscilloscope",
+      "selector": {
+        "serial": "DEMO-SCOPE-001"
+      },
+      "required": true
+    },
+    "log": {
+      "kind": "serial_port",
+      "selector": {
+        "port": "COM3",
+        "baud": 115200
+      },
+      "required": true
+    }
+  },
+  "firmware": {
+    "download": false,
+    "implementation": "reserved",
+    "path": "../firmware/demo-ip-suite.bin",
+    "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+    "target": "DEMO-FPGA",
+    "format": "bin",
+    "base_address": 0,
+    "verify": false
+  },
+  "reset": {
+    "method": "wiparse_dongle",
+    "dongle_role": "programmer",
+    "hardware": true,
+    "release_confirmation": {
+      "type": "command_complete",
+      "timeout_ms": 2000
+    }
+  },
+  "timing": {
+    "anchor": "after_reset_release"
+  },
+  "log_capture": {
+    "enabled": true,
+    "start_at_s": 0,
+    "duration_s": 15,
+    "max_lines": 20000,
+    "encoding": "utf-8"
+  },
+  "waveform_captures": [
+    {
+      "id": "ip_output",
+      "at_s": 3,
+      "kind": "screenshot",
+      "channels": [
+        "CH1",
+        "CH2"
+      ],
+      "source_waveform": {
+        "enabled": false,
+        "format": "instrument_native"
+      },
+      "timeout_s": 30
+    }
+  ],
+  "verdict": {
+    "mode": "all",
+    "rules": [
+      {
+        "id": "functional_success",
+        "type": "log_contains",
+        "text": "CRC32_TEST_OK",
+        "required": true
+      },
+      {
+        "id": "no_fatal_errors",
+        "type": "log_not_regex",
+        "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+        "required": true
+      }
+    ],
+    "ai_assist": {
+      "enabled": false,
+      "policy": "advisory_only",
+      "provider_profile": "local-default",
+      "inputs": [
+        "rule_results",
+        "waveform_metrics"
+      ],
+      "required": false
+    }
+  }
+}

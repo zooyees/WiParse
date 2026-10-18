@@ -14,6 +14,17 @@ const MAX_CAPTURE_CHARS = 512 * 1024;
 /** Default CLI process timeout (ms). */
 const DEFAULT_CLI_TIMEOUT_MS = 120_000;
 
+/** Explicit endpoints win; otherwise inherit the GUI instance's actual bind. */
+export function resolveApiUrl(explicit, env=process.env) {
+  if (explicit || env.WIPARSE_URL) return String(explicit || env.WIPARSE_URL).replace(/\/$/, '');
+  const bind=String(env.WIPARSE_API_BIND || '').trim();
+  if (/^(?:\[[0-9a-fA-F:]+\]|[\w.-]+):\d{1,5}$/.test(bind)) {
+    const endpoint=bind.replace(/^0\.0\.0\.0:/,'127.0.0.1:').replace(/^\[::\]:/,'[::1]:');
+    return 'http://'+endpoint;
+  }
+  return 'http://127.0.0.1:7878';
+}
+
 export function resolveCliPath(explicit) {
   if (explicit && String(explicit).trim()) {
     return String(explicit).trim();
@@ -101,10 +112,7 @@ function runProcess(cliPath, args, { cwd, env, log, timeoutMs = DEFAULT_CLI_TIME
  * @param {{ url?: string, log?: Function }} [opts]
  */
 export function createHttpClient(opts = {}) {
-  const base = String(opts.url || process.env.WIPARSE_URL || "http://127.0.0.1:7878").replace(
-    /\/$/,
-    ""
-  );
+  const base = resolveApiUrl(opts.url);
   const log = opts.log;
 
   async function health(ms = 15_000) {
@@ -158,7 +166,7 @@ export function createHttpClient(opts = {}) {
  */
 export function createClient(opts = {}) {
   const cliPath = resolveCliPath(opts.cliPath);
-  const url = opts.url || process.env.WIPARSE_URL || "http://127.0.0.1:7878";
+  const url = resolveApiUrl(opts.url);
   const log = opts.log;
   const cwd = opts.cwd;
   const http = createHttpClient({ url, log });

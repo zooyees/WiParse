@@ -1,0 +1,2137 @@
+{
+  "schema_version": "wiparse.config-ui/1",
+  "source_view": "read_only",
+  "layout": "three_pane",
+  "list": {
+    "virtualized": true,
+    "key": "id",
+    "search": [
+      "name",
+      "id",
+      "tags"
+    ],
+    "actions": [
+      "create",
+      "duplicate",
+      "rename",
+      "enable",
+      "disable",
+      "tag",
+      "reorder",
+      "archive",
+      "restore",
+      "import",
+      "export"
+    ]
+  },
+  "groups": [
+    {
+      "label": "Firmware",
+      "fields": [
+        "firmware"
+      ],
+      "label_zh": "固件"
+    },
+    {
+      "label": "Reset and timing",
+      "fields": [
+        "reset",
+        "timing"
+      ],
+      "label_zh": "复位与计时"
+    },
+    {
+      "label": "Serial capture",
+      "fields": [
+        "log_capture"
+      ],
+      "label_zh": "日志采集"
+    },
+    {
+      "label": "Waveform tasks",
+      "fields": [
+        "waveform_captures"
+      ],
+      "label_zh": "波形任务"
+    },
+    {
+      "label": "Rules and limits",
+      "fields": [
+        "verdict.rules"
+      ],
+      "label_zh": "判定规则与限值"
+    },
+    {
+      "label": "AI advisory",
+      "fields": [
+        "verdict.ai_assist"
+      ],
+      "label_zh": "AI 辅助"
+    }
+  ],
+  "widgets": {
+    "firmware.path": {
+      "type": "file",
+      "hash_field": "firmware.sha256"
+    },
+    "tags": "tags",
+    "reset": "discriminated_union",
+    "waveform_captures": {
+      "type": "timeline",
+      "time_field": "at_s",
+      "label_field": "id",
+      "unit": "s",
+      "summary_fields": [
+        "id",
+        "at_s",
+        "channels"
+      ]
+    },
+    "verdict.rules": {
+      "type": "rule_builder",
+      "summary_fields": [
+        "metric",
+        "minimum",
+        "maximum",
+        "unit"
+      ]
+    },
+    "reset.power_role": {
+      "type": "reference_selector",
+      "source_path": "instruments",
+      "value_field": "id",
+      "label_field": "name",
+      "source_scope": "project_config"
+    },
+    "reset.dongle_role": {
+      "type": "reference_selector",
+      "source_path": "instruments",
+      "value_field": "id",
+      "label_field": "name",
+      "source_scope": "project_config"
+    },
+    "verdict.rules.*.capture": {
+      "type": "reference_selector",
+      "source_path": "waveform_captures",
+      "value_field": "id",
+      "label_field": "name"
+    },
+    "verdict.rules.*.resource_role": {
+      "type": "reference_selector",
+      "source_path": "instruments",
+      "value_field": "id",
+      "label_field": "name",
+      "source_scope": "project_config"
+    },
+    "verdict.rules.*.rules.*.capture": {
+      "type": "reference_selector",
+      "source_path": "waveform_captures",
+      "value_field": "id",
+      "label_field": "name"
+    },
+    "verdict.rules.*.rules.*.resource_role": {
+      "type": "reference_selector",
+      "source_path": "instruments",
+      "value_field": "id",
+      "label_field": "name",
+      "source_scope": "project_config"
+    },
+    "verdict.rules.*.rules.*.rules.*.capture": {
+      "type": "reference_selector",
+      "source_path": "waveform_captures",
+      "value_field": "id",
+      "label_field": "name"
+    },
+    "verdict.rules.*.rules.*.rules.*.resource_role": {
+      "type": "reference_selector",
+      "source_path": "instruments",
+      "value_field": "id",
+      "label_field": "name",
+      "source_scope": "project_config"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.capture": {
+      "type": "reference_selector",
+      "source_path": "waveform_captures",
+      "value_field": "id",
+      "label_field": "name"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "type": "reference_selector",
+      "source_path": "instruments",
+      "value_field": "id",
+      "label_field": "name",
+      "source_scope": "project_config"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "type": "reference_selector",
+      "source_path": "waveform_captures",
+      "value_field": "id",
+      "label_field": "name"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "type": "reference_selector",
+      "source_path": "instruments",
+      "value_field": "id",
+      "label_field": "name",
+      "source_scope": "project_config"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "type": "reference_selector",
+      "source_path": "waveform_captures",
+      "value_field": "id",
+      "label_field": "name"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "type": "reference_selector",
+      "source_path": "instruments",
+      "value_field": "id",
+      "label_field": "name",
+      "source_scope": "project_config"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "type": "reference_selector",
+      "source_path": "waveform_captures",
+      "value_field": "id",
+      "label_field": "name"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "type": "reference_selector",
+      "source_path": "instruments",
+      "value_field": "id",
+      "label_field": "name",
+      "source_scope": "project_config"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "type": "reference_selector",
+      "source_path": "waveform_captures",
+      "value_field": "id",
+      "label_field": "name"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "type": "reference_selector",
+      "source_path": "instruments",
+      "value_field": "id",
+      "label_field": "name",
+      "source_scope": "project_config"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "type": "reference_selector",
+      "source_path": "waveform_captures",
+      "value_field": "id",
+      "label_field": "name"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "type": "reference_selector",
+      "source_path": "instruments",
+      "value_field": "id",
+      "label_field": "name",
+      "source_scope": "project_config"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "type": "reference_selector",
+      "source_path": "waveform_captures",
+      "value_field": "id",
+      "label_field": "name"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "type": "reference_selector",
+      "source_path": "instruments",
+      "value_field": "id",
+      "label_field": "name",
+      "source_scope": "project_config"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "type": "reference_selector",
+      "source_path": "waveform_captures",
+      "value_field": "id",
+      "label_field": "name"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "type": "reference_selector",
+      "source_path": "instruments",
+      "value_field": "id",
+      "label_field": "name",
+      "source_scope": "project_config"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "type": "reference_selector",
+      "source_path": "waveform_captures",
+      "value_field": "id",
+      "label_field": "name"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "type": "reference_selector",
+      "source_path": "instruments",
+      "value_field": "id",
+      "label_field": "name",
+      "source_scope": "project_config"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "type": "reference_selector",
+      "source_path": "waveform_captures",
+      "value_field": "id",
+      "label_field": "name"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "type": "reference_selector",
+      "source_path": "instruments",
+      "value_field": "id",
+      "label_field": "name",
+      "source_scope": "project_config"
+    },
+    "log_capture.resource_role": {
+      "type": "reference_selector",
+      "source_scope": "project_config",
+      "source_path": "instruments",
+      "value_field": "id",
+      "label_field": "name"
+    }
+  },
+  "conditional_fields": [
+    {
+      "path": "reset.method",
+      "value": "dc_power",
+      "show": [
+        "reset.power_role",
+        "reset.channel",
+        "reset.off_time_ms"
+      ]
+    },
+    {
+      "path": "reset.method",
+      "value": "wiparse_dongle",
+      "show": [
+        "reset.dongle_role",
+        "reset.hardware"
+      ]
+    }
+  ],
+  "validation": {
+    "adapter": "fpga-firmware-test",
+    "method": "validateCase",
+    "cross_fields": [
+      "reset",
+      "waveform_captures",
+      "verdict.rules",
+      "timeout_s"
+    ]
+  },
+  "preview": [
+    "errors",
+    "resources",
+    "timeline",
+    "estimated_duration",
+    "read_only_source"
+  ],
+  "required_widgets": [
+    "rule_builder",
+    "timeline",
+    "reference_selector"
+  ],
+  "global_actions": [
+    "ai_settings"
+  ],
+  "fields": {
+    "schema_version": {
+      "label": "schema version",
+      "label_zh": "配置格式版本",
+      "width": "normal",
+      "hidden": true,
+      "advanced": true
+    },
+    "editor_revision": {
+      "label": "editor revision",
+      "label_zh": "编辑版本",
+      "width": "normal",
+      "hidden": true,
+      "advanced": true
+    },
+    "updated_at": {
+      "label": "updated at",
+      "label_zh": "更新时间",
+      "width": "normal",
+      "hidden": true,
+      "advanced": true
+    },
+    "id": {
+      "label": "id",
+      "label_zh": "标识",
+      "width": "normal",
+      "order": 90,
+      "advanced": true
+    },
+    "name": {
+      "label": "name",
+      "label_zh": "名称",
+      "width": "long",
+      "order": 0
+    },
+    "enabled": {
+      "label": "enabled",
+      "label_zh": "启用",
+      "width": "short",
+      "order": 20
+    },
+    "order": {
+      "label": "order",
+      "label_zh": "排序",
+      "width": "short",
+      "advanced": true,
+      "order": 50
+    },
+    "tags": {
+      "label": "tags",
+      "label_zh": "标签",
+      "width": "normal",
+      "order": 30
+    },
+    "timeout_s": {
+      "label": "timeout s",
+      "label_zh": "超时",
+      "width": "short",
+      "advanced": true,
+      "order": 40
+    },
+    "firmware": {
+      "label": "firmware",
+      "label_zh": "固件",
+      "width": "normal"
+    },
+    "firmware.download": {
+      "label": "download",
+      "label_zh": "下载（接口预留）",
+      "width": "normal",
+      "description_zh": "当前仅预留下载接口；启用下载会阻断预检。"
+    },
+    "firmware.implementation": {
+      "label": "implementation",
+      "label_zh": "实现状态",
+      "width": "normal",
+      "hidden": true,
+      "advanced": true
+    },
+    "firmware.path": {
+      "label": "path",
+      "label_zh": "文件",
+      "width": "long"
+    },
+    "firmware.sha256": {
+      "label": "sha256",
+      "label_zh": "SHA-256",
+      "width": "long"
+    },
+    "firmware.target": {
+      "label": "target",
+      "label_zh": "目标芯片",
+      "width": "normal"
+    },
+    "firmware.format": {
+      "label": "format",
+      "label_zh": "格式",
+      "width": "normal",
+      "enum_labels_zh": {
+        "hex": "HEX",
+        "bin": "BIN"
+      }
+    },
+    "firmware.base_address": {
+      "label": "base address",
+      "label_zh": "基地址",
+      "width": "normal",
+      "advanced": true
+    },
+    "firmware.verify": {
+      "label": "verify",
+      "label_zh": "写入校验",
+      "width": "normal",
+      "advanced": true
+    },
+    "reset": {
+      "label": "reset",
+      "label_zh": "复位",
+      "width": "normal",
+      "description_zh": "计时起点 T0 固定为复位释放确认时刻。"
+    },
+    "reset.method": {
+      "label": "method",
+      "label_zh": "方式",
+      "width": "normal",
+      "hidden": true,
+      "enum_labels_zh": {
+        "wiparse_dongle": "WiParse Dongle"
+      }
+    },
+    "reset.power_role": {
+      "label": "power role",
+      "label_zh": "电源角色",
+      "width": "normal"
+    },
+    "reset.channel": {
+      "label": "channel",
+      "label_zh": "通道",
+      "width": "short"
+    },
+    "reset.off_time_ms": {
+      "label": "off time ms",
+      "label_zh": "断电时长",
+      "width": "short"
+    },
+    "reset.release_confirmation": {
+      "label": "release confirmation",
+      "label_zh": "复位释放确认",
+      "width": "normal"
+    },
+    "reset.release_confirmation.type": {
+      "label": "type",
+      "label_zh": "类型",
+      "width": "normal",
+      "hidden": true,
+      "enum_labels_zh": {
+        "voltage_threshold": "电压阈值确认",
+        "command_ack": "指令应答确认",
+        "command_complete": "指令完成确认"
+      }
+    },
+    "reset.release_confirmation.minimum_v": {
+      "label": "minimum v",
+      "label_zh": "最低电压",
+      "width": "normal"
+    },
+    "reset.release_confirmation.stable_ms": {
+      "label": "stable ms",
+      "label_zh": "稳定时长",
+      "width": "normal"
+    },
+    "reset.release_confirmation.timeout_ms": {
+      "label": "Confirmation timeout",
+      "label_zh": "确认超时",
+      "width": "short"
+    },
+    "reset.dongle_role": {
+      "label": "dongle role",
+      "label_zh": "Dongle 角色",
+      "width": "normal"
+    },
+    "reset.hardware": {
+      "label": "hardware",
+      "label_zh": "硬件复位",
+      "width": "normal",
+      "hidden": true
+    },
+    "timing": {
+      "label": "timing",
+      "label_zh": "计时",
+      "width": "normal",
+      "hidden": true,
+      "description_zh": "计时起点固定为复位释放确认时刻 T0；已有值仍参与校验。"
+    },
+    "timing.anchor": {
+      "label": "anchor",
+      "label_zh": "计时起点",
+      "width": "normal",
+      "hidden": true
+    },
+    "log_capture": {
+      "label": "log capture",
+      "label_zh": "日志采集",
+      "width": "normal"
+    },
+    "log_capture.enabled": {
+      "label": "enabled",
+      "label_zh": "启用",
+      "width": "normal"
+    },
+    "log_capture.start_at_s": {
+      "label": "start at s",
+      "label_zh": "开始时间（相对 T0）",
+      "width": "short",
+      "order": 10,
+      "description_zh": "T0 为复位释放确认时刻，单位为秒。"
+    },
+    "log_capture.duration_s": {
+      "label": "duration s",
+      "label_zh": "采集时长",
+      "width": "short",
+      "order": 20,
+      "description_zh": "从相对 T0 的开始时间起持续采集，单位为秒。"
+    },
+    "log_capture.max_lines": {
+      "label": "max lines",
+      "label_zh": "最大行数",
+      "width": "normal",
+      "advanced": true
+    },
+    "log_capture.encoding": {
+      "label": "encoding",
+      "label_zh": "编码",
+      "width": "normal",
+      "hidden": true
+    },
+    "waveform_captures": {
+      "label": "waveform captures",
+      "label_zh": "波形任务",
+      "width": "normal"
+    },
+    "waveform_captures.*.id": {
+      "label": "id",
+      "label_zh": "标识",
+      "width": "normal"
+    },
+    "waveform_captures.*.at_s": {
+      "label": "at s",
+      "label_zh": "采集时点",
+      "width": "normal"
+    },
+    "waveform_captures.*.kind": {
+      "label": "kind",
+      "label_zh": "设备类型",
+      "width": "normal",
+      "hidden": true
+    },
+    "waveform_captures.*.channels": {
+      "label": "channels",
+      "label_zh": "通道列表",
+      "width": "normal"
+    },
+    "waveform_captures.*.source_waveform": {
+      "label": "source waveform",
+      "label_zh": "源波形",
+      "width": "normal"
+    },
+    "waveform_captures.*.source_waveform.enabled": {
+      "label": "enabled",
+      "label_zh": "启用",
+      "width": "normal"
+    },
+    "waveform_captures.*.source_waveform.format": {
+      "label": "format",
+      "label_zh": "格式",
+      "width": "normal",
+      "enum_labels_zh": {
+        "instrument_native": "仪器原生格式",
+        "csv": "CSV 数据"
+      }
+    },
+    "waveform_captures.*.timeout_s": {
+      "label": "timeout s",
+      "label_zh": "超时",
+      "width": "normal"
+    },
+    "verdict": {
+      "label": "verdict",
+      "label_zh": "判定",
+      "width": "normal"
+    },
+    "verdict.mode": {
+      "label": "mode",
+      "label_zh": "模式",
+      "width": "normal",
+      "hidden": true
+    },
+    "verdict.rules": {
+      "label": "rules",
+      "label_zh": "规则",
+      "width": "normal"
+    },
+    "verdict.ai_assist": {
+      "label": "ai assist",
+      "label_zh": "AI 辅助",
+      "width": "normal",
+      "description_zh": "仅提供建议，不替代规则结论；服务与脱敏策略由工位统一配置。"
+    },
+    "verdict.ai_assist.enabled": {
+      "label": "enabled",
+      "label_zh": "启用",
+      "width": "normal"
+    },
+    "verdict.ai_assist.policy": {
+      "label": "policy",
+      "label_zh": "策略",
+      "width": "normal",
+      "hidden": true
+    },
+    "verdict.ai_assist.provider_profile": {
+      "label": "provider profile",
+      "label_zh": "服务配置",
+      "width": "normal",
+      "advanced": true
+    },
+    "verdict.ai_assist.inputs": {
+      "label": "inputs",
+      "label_zh": "允许输入",
+      "width": "normal",
+      "advanced": true
+    },
+    "verdict.ai_assist.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "verdict.ai_assist.timeout_s": {
+      "label": "timeout s",
+      "label_zh": "超时",
+      "width": "normal"
+    },
+    "verdict.ai_assist.redaction_profile": {
+      "label": "redaction profile",
+      "label_zh": "脱敏配置",
+      "width": "normal",
+      "advanced": true
+    },
+    "verdict.ai_assist.prompt_template_id": {
+      "label": "prompt template id",
+      "label_zh": "提示模板",
+      "width": "normal",
+      "advanced": true
+    },
+    "verdict.rules.*.id": {
+      "label": "id",
+      "label_zh": "标识",
+      "width": "normal",
+      "advanced": true,
+      "order": 90
+    },
+    "verdict.rules.*.type": {
+      "label": "type",
+      "label_zh": "类型",
+      "width": "normal",
+      "hidden": true
+    },
+    "verdict.rules.*.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "verdict.rules.*.evidence_refs": {
+      "label": "evidence refs",
+      "label_zh": "证据引用列表",
+      "width": "normal"
+    },
+    "verdict.rules.*.text": {
+      "label": "text",
+      "label_zh": "匹配内容",
+      "width": "long"
+    },
+    "verdict.rules.*.minimum_matches": {
+      "label": "minimum matches",
+      "label_zh": "最少匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.maximum_matches": {
+      "label": "maximum matches",
+      "label_zh": "最多匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.pattern": {
+      "label": "pattern",
+      "label_zh": "正则",
+      "width": "long"
+    },
+    "verdict.rules.*.capture": {
+      "label": "capture",
+      "label_zh": "波形任务引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.channel": {
+      "label": "channel",
+      "label_zh": "通道",
+      "width": "normal"
+    },
+    "verdict.rules.*.metric": {
+      "label": "metric",
+      "label_zh": "指标",
+      "width": "normal",
+      "enum_labels_zh": {
+        "frequency_hz": "频率",
+        "period_s": "周期",
+        "duty_cycle": "占空比",
+        "peak_to_peak_v": "峰峰值",
+        "minimum_v": "最小电压",
+        "maximum_v": "最大电压",
+        "mean_v": "平均电压",
+        "rise_time_s": "上升时间",
+        "fall_time_s": "下降时间"
+      }
+    },
+    "verdict.rules.*.unit": {
+      "label": "unit",
+      "label_zh": "单位",
+      "width": "normal"
+    },
+    "verdict.rules.*.minimum": {
+      "label": "minimum",
+      "label_zh": "下限",
+      "width": "normal"
+    },
+    "verdict.rules.*.maximum": {
+      "label": "maximum",
+      "label_zh": "上限",
+      "width": "normal"
+    },
+    "verdict.rules.*.limit_ref": {
+      "label": "limit ref",
+      "label_zh": "限值引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.resource_role": {
+      "label": "resource role",
+      "label_zh": "仪器角色",
+      "width": "normal"
+    },
+    "verdict.rules.*.evidence_ref": {
+      "label": "evidence ref",
+      "label_zh": "证据文件引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.sha256": {
+      "label": "sha256",
+      "label_zh": "SHA-256",
+      "width": "long"
+    },
+    "verdict.rules.*.rules": {
+      "label": "rules",
+      "label_zh": "规则",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.id": {
+      "label": "id",
+      "label_zh": "标识",
+      "width": "normal",
+      "advanced": true,
+      "order": 90
+    },
+    "verdict.rules.*.rules.*.type": {
+      "label": "type",
+      "label_zh": "类型",
+      "width": "normal",
+      "hidden": true
+    },
+    "verdict.rules.*.rules.*.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.evidence_refs": {
+      "label": "evidence refs",
+      "label_zh": "证据引用列表",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.text": {
+      "label": "text",
+      "label_zh": "匹配内容",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.minimum_matches": {
+      "label": "minimum matches",
+      "label_zh": "最少匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.maximum_matches": {
+      "label": "maximum matches",
+      "label_zh": "最多匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.pattern": {
+      "label": "pattern",
+      "label_zh": "正则",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.capture": {
+      "label": "capture",
+      "label_zh": "波形任务引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.channel": {
+      "label": "channel",
+      "label_zh": "通道",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.metric": {
+      "label": "metric",
+      "label_zh": "指标",
+      "width": "normal",
+      "enum_labels_zh": {
+        "frequency_hz": "频率",
+        "period_s": "周期",
+        "duty_cycle": "占空比",
+        "peak_to_peak_v": "峰峰值",
+        "minimum_v": "最小电压",
+        "maximum_v": "最大电压",
+        "mean_v": "平均电压",
+        "rise_time_s": "上升时间",
+        "fall_time_s": "下降时间"
+      }
+    },
+    "verdict.rules.*.rules.*.unit": {
+      "label": "unit",
+      "label_zh": "单位",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.minimum": {
+      "label": "minimum",
+      "label_zh": "下限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.maximum": {
+      "label": "maximum",
+      "label_zh": "上限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.limit_ref": {
+      "label": "limit ref",
+      "label_zh": "限值引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.resource_role": {
+      "label": "resource role",
+      "label_zh": "仪器角色",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.evidence_ref": {
+      "label": "evidence ref",
+      "label_zh": "证据文件引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.sha256": {
+      "label": "sha256",
+      "label_zh": "SHA-256",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules": {
+      "label": "rules",
+      "label_zh": "规则",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.id": {
+      "label": "id",
+      "label_zh": "标识",
+      "width": "normal",
+      "advanced": true,
+      "order": 90
+    },
+    "verdict.rules.*.rules.*.rules.*.type": {
+      "label": "type",
+      "label_zh": "类型",
+      "width": "normal",
+      "hidden": true
+    },
+    "verdict.rules.*.rules.*.rules.*.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.evidence_refs": {
+      "label": "evidence refs",
+      "label_zh": "证据引用列表",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.text": {
+      "label": "text",
+      "label_zh": "匹配内容",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.minimum_matches": {
+      "label": "minimum matches",
+      "label_zh": "最少匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.maximum_matches": {
+      "label": "maximum matches",
+      "label_zh": "最多匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.pattern": {
+      "label": "pattern",
+      "label_zh": "正则",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.capture": {
+      "label": "capture",
+      "label_zh": "波形任务引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.channel": {
+      "label": "channel",
+      "label_zh": "通道",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.metric": {
+      "label": "metric",
+      "label_zh": "指标",
+      "width": "normal",
+      "enum_labels_zh": {
+        "frequency_hz": "频率",
+        "period_s": "周期",
+        "duty_cycle": "占空比",
+        "peak_to_peak_v": "峰峰值",
+        "minimum_v": "最小电压",
+        "maximum_v": "最大电压",
+        "mean_v": "平均电压",
+        "rise_time_s": "上升时间",
+        "fall_time_s": "下降时间"
+      }
+    },
+    "verdict.rules.*.rules.*.rules.*.unit": {
+      "label": "unit",
+      "label_zh": "单位",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.minimum": {
+      "label": "minimum",
+      "label_zh": "下限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.maximum": {
+      "label": "maximum",
+      "label_zh": "上限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.limit_ref": {
+      "label": "limit ref",
+      "label_zh": "限值引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.resource_role": {
+      "label": "resource role",
+      "label_zh": "仪器角色",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.evidence_ref": {
+      "label": "evidence ref",
+      "label_zh": "证据文件引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.sha256": {
+      "label": "sha256",
+      "label_zh": "SHA-256",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules": {
+      "label": "rules",
+      "label_zh": "规则",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.id": {
+      "label": "id",
+      "label_zh": "标识",
+      "width": "normal",
+      "advanced": true,
+      "order": 90
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.type": {
+      "label": "type",
+      "label_zh": "类型",
+      "width": "normal",
+      "hidden": true
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.evidence_refs": {
+      "label": "evidence refs",
+      "label_zh": "证据引用列表",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.text": {
+      "label": "text",
+      "label_zh": "匹配内容",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.minimum_matches": {
+      "label": "minimum matches",
+      "label_zh": "最少匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.maximum_matches": {
+      "label": "maximum matches",
+      "label_zh": "最多匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.pattern": {
+      "label": "pattern",
+      "label_zh": "正则",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.capture": {
+      "label": "capture",
+      "label_zh": "波形任务引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.channel": {
+      "label": "channel",
+      "label_zh": "通道",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.metric": {
+      "label": "metric",
+      "label_zh": "指标",
+      "width": "normal",
+      "enum_labels_zh": {
+        "frequency_hz": "频率",
+        "period_s": "周期",
+        "duty_cycle": "占空比",
+        "peak_to_peak_v": "峰峰值",
+        "minimum_v": "最小电压",
+        "maximum_v": "最大电压",
+        "mean_v": "平均电压",
+        "rise_time_s": "上升时间",
+        "fall_time_s": "下降时间"
+      }
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.unit": {
+      "label": "unit",
+      "label_zh": "单位",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.minimum": {
+      "label": "minimum",
+      "label_zh": "下限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.maximum": {
+      "label": "maximum",
+      "label_zh": "上限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.limit_ref": {
+      "label": "limit ref",
+      "label_zh": "限值引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "label": "resource role",
+      "label_zh": "仪器角色",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.evidence_ref": {
+      "label": "evidence ref",
+      "label_zh": "证据文件引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.sha256": {
+      "label": "sha256",
+      "label_zh": "SHA-256",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules": {
+      "label": "rules",
+      "label_zh": "规则",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.id": {
+      "label": "id",
+      "label_zh": "标识",
+      "width": "normal",
+      "advanced": true,
+      "order": 90
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.type": {
+      "label": "type",
+      "label_zh": "类型",
+      "width": "normal",
+      "hidden": true
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_refs": {
+      "label": "evidence refs",
+      "label_zh": "证据引用列表",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.text": {
+      "label": "text",
+      "label_zh": "匹配内容",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.minimum_matches": {
+      "label": "minimum matches",
+      "label_zh": "最少匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.maximum_matches": {
+      "label": "maximum matches",
+      "label_zh": "最多匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.pattern": {
+      "label": "pattern",
+      "label_zh": "正则",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "label": "capture",
+      "label_zh": "波形任务引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.channel": {
+      "label": "channel",
+      "label_zh": "通道",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.metric": {
+      "label": "metric",
+      "label_zh": "指标",
+      "width": "normal",
+      "enum_labels_zh": {
+        "frequency_hz": "频率",
+        "period_s": "周期",
+        "duty_cycle": "占空比",
+        "peak_to_peak_v": "峰峰值",
+        "minimum_v": "最小电压",
+        "maximum_v": "最大电压",
+        "mean_v": "平均电压",
+        "rise_time_s": "上升时间",
+        "fall_time_s": "下降时间"
+      }
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.unit": {
+      "label": "unit",
+      "label_zh": "单位",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.minimum": {
+      "label": "minimum",
+      "label_zh": "下限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.maximum": {
+      "label": "maximum",
+      "label_zh": "上限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.limit_ref": {
+      "label": "limit ref",
+      "label_zh": "限值引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "label": "resource role",
+      "label_zh": "仪器角色",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_ref": {
+      "label": "evidence ref",
+      "label_zh": "证据文件引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.sha256": {
+      "label": "sha256",
+      "label_zh": "SHA-256",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules": {
+      "label": "rules",
+      "label_zh": "规则",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.id": {
+      "label": "id",
+      "label_zh": "标识",
+      "width": "normal",
+      "advanced": true,
+      "order": 90
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.type": {
+      "label": "type",
+      "label_zh": "类型",
+      "width": "normal",
+      "hidden": true
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_refs": {
+      "label": "evidence refs",
+      "label_zh": "证据引用列表",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.text": {
+      "label": "text",
+      "label_zh": "匹配内容",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.minimum_matches": {
+      "label": "minimum matches",
+      "label_zh": "最少匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.maximum_matches": {
+      "label": "maximum matches",
+      "label_zh": "最多匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.pattern": {
+      "label": "pattern",
+      "label_zh": "正则",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "label": "capture",
+      "label_zh": "波形任务引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.channel": {
+      "label": "channel",
+      "label_zh": "通道",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.metric": {
+      "label": "metric",
+      "label_zh": "指标",
+      "width": "normal",
+      "enum_labels_zh": {
+        "frequency_hz": "频率",
+        "period_s": "周期",
+        "duty_cycle": "占空比",
+        "peak_to_peak_v": "峰峰值",
+        "minimum_v": "最小电压",
+        "maximum_v": "最大电压",
+        "mean_v": "平均电压",
+        "rise_time_s": "上升时间",
+        "fall_time_s": "下降时间"
+      }
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.unit": {
+      "label": "unit",
+      "label_zh": "单位",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.minimum": {
+      "label": "minimum",
+      "label_zh": "下限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.maximum": {
+      "label": "maximum",
+      "label_zh": "上限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.limit_ref": {
+      "label": "limit ref",
+      "label_zh": "限值引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "label": "resource role",
+      "label_zh": "仪器角色",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_ref": {
+      "label": "evidence ref",
+      "label_zh": "证据文件引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.sha256": {
+      "label": "sha256",
+      "label_zh": "SHA-256",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules": {
+      "label": "rules",
+      "label_zh": "规则",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.id": {
+      "label": "id",
+      "label_zh": "标识",
+      "width": "normal",
+      "advanced": true,
+      "order": 90
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.type": {
+      "label": "type",
+      "label_zh": "类型",
+      "width": "normal",
+      "hidden": true
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_refs": {
+      "label": "evidence refs",
+      "label_zh": "证据引用列表",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.text": {
+      "label": "text",
+      "label_zh": "匹配内容",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.minimum_matches": {
+      "label": "minimum matches",
+      "label_zh": "最少匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.maximum_matches": {
+      "label": "maximum matches",
+      "label_zh": "最多匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.pattern": {
+      "label": "pattern",
+      "label_zh": "正则",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "label": "capture",
+      "label_zh": "波形任务引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.channel": {
+      "label": "channel",
+      "label_zh": "通道",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.metric": {
+      "label": "metric",
+      "label_zh": "指标",
+      "width": "normal",
+      "enum_labels_zh": {
+        "frequency_hz": "频率",
+        "period_s": "周期",
+        "duty_cycle": "占空比",
+        "peak_to_peak_v": "峰峰值",
+        "minimum_v": "最小电压",
+        "maximum_v": "最大电压",
+        "mean_v": "平均电压",
+        "rise_time_s": "上升时间",
+        "fall_time_s": "下降时间"
+      }
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.unit": {
+      "label": "unit",
+      "label_zh": "单位",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.minimum": {
+      "label": "minimum",
+      "label_zh": "下限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.maximum": {
+      "label": "maximum",
+      "label_zh": "上限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.limit_ref": {
+      "label": "limit ref",
+      "label_zh": "限值引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "label": "resource role",
+      "label_zh": "仪器角色",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_ref": {
+      "label": "evidence ref",
+      "label_zh": "证据文件引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.sha256": {
+      "label": "sha256",
+      "label_zh": "SHA-256",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules": {
+      "label": "rules",
+      "label_zh": "规则",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.id": {
+      "label": "id",
+      "label_zh": "标识",
+      "width": "normal",
+      "advanced": true,
+      "order": 90
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.type": {
+      "label": "type",
+      "label_zh": "类型",
+      "width": "normal",
+      "hidden": true
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_refs": {
+      "label": "evidence refs",
+      "label_zh": "证据引用列表",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.text": {
+      "label": "text",
+      "label_zh": "匹配内容",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.minimum_matches": {
+      "label": "minimum matches",
+      "label_zh": "最少匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.maximum_matches": {
+      "label": "maximum matches",
+      "label_zh": "最多匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.pattern": {
+      "label": "pattern",
+      "label_zh": "正则",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "label": "capture",
+      "label_zh": "波形任务引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.channel": {
+      "label": "channel",
+      "label_zh": "通道",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.metric": {
+      "label": "metric",
+      "label_zh": "指标",
+      "width": "normal",
+      "enum_labels_zh": {
+        "frequency_hz": "频率",
+        "period_s": "周期",
+        "duty_cycle": "占空比",
+        "peak_to_peak_v": "峰峰值",
+        "minimum_v": "最小电压",
+        "maximum_v": "最大电压",
+        "mean_v": "平均电压",
+        "rise_time_s": "上升时间",
+        "fall_time_s": "下降时间"
+      }
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.unit": {
+      "label": "unit",
+      "label_zh": "单位",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.minimum": {
+      "label": "minimum",
+      "label_zh": "下限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.maximum": {
+      "label": "maximum",
+      "label_zh": "上限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.limit_ref": {
+      "label": "limit ref",
+      "label_zh": "限值引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "label": "resource role",
+      "label_zh": "仪器角色",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_ref": {
+      "label": "evidence ref",
+      "label_zh": "证据文件引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.sha256": {
+      "label": "sha256",
+      "label_zh": "SHA-256",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules": {
+      "label": "rules",
+      "label_zh": "规则",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.id": {
+      "label": "id",
+      "label_zh": "标识",
+      "width": "normal",
+      "advanced": true,
+      "order": 90
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.type": {
+      "label": "type",
+      "label_zh": "类型",
+      "width": "normal",
+      "hidden": true
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_refs": {
+      "label": "evidence refs",
+      "label_zh": "证据引用列表",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.text": {
+      "label": "text",
+      "label_zh": "匹配内容",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.minimum_matches": {
+      "label": "minimum matches",
+      "label_zh": "最少匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.maximum_matches": {
+      "label": "maximum matches",
+      "label_zh": "最多匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.pattern": {
+      "label": "pattern",
+      "label_zh": "正则",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "label": "capture",
+      "label_zh": "波形任务引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.channel": {
+      "label": "channel",
+      "label_zh": "通道",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.metric": {
+      "label": "metric",
+      "label_zh": "指标",
+      "width": "normal",
+      "enum_labels_zh": {
+        "frequency_hz": "频率",
+        "period_s": "周期",
+        "duty_cycle": "占空比",
+        "peak_to_peak_v": "峰峰值",
+        "minimum_v": "最小电压",
+        "maximum_v": "最大电压",
+        "mean_v": "平均电压",
+        "rise_time_s": "上升时间",
+        "fall_time_s": "下降时间"
+      }
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.unit": {
+      "label": "unit",
+      "label_zh": "单位",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.minimum": {
+      "label": "minimum",
+      "label_zh": "下限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.maximum": {
+      "label": "maximum",
+      "label_zh": "上限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.limit_ref": {
+      "label": "limit ref",
+      "label_zh": "限值引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "label": "resource role",
+      "label_zh": "仪器角色",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_ref": {
+      "label": "evidence ref",
+      "label_zh": "证据文件引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.sha256": {
+      "label": "sha256",
+      "label_zh": "SHA-256",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules": {
+      "label": "rules",
+      "label_zh": "规则",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.id": {
+      "label": "id",
+      "label_zh": "标识",
+      "width": "normal",
+      "advanced": true,
+      "order": 90
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.type": {
+      "label": "type",
+      "label_zh": "类型",
+      "width": "normal",
+      "hidden": true
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_refs": {
+      "label": "evidence refs",
+      "label_zh": "证据引用列表",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.text": {
+      "label": "text",
+      "label_zh": "匹配内容",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.minimum_matches": {
+      "label": "minimum matches",
+      "label_zh": "最少匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.maximum_matches": {
+      "label": "maximum matches",
+      "label_zh": "最多匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.pattern": {
+      "label": "pattern",
+      "label_zh": "正则",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "label": "capture",
+      "label_zh": "波形任务引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.channel": {
+      "label": "channel",
+      "label_zh": "通道",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.metric": {
+      "label": "metric",
+      "label_zh": "指标",
+      "width": "normal",
+      "enum_labels_zh": {
+        "frequency_hz": "频率",
+        "period_s": "周期",
+        "duty_cycle": "占空比",
+        "peak_to_peak_v": "峰峰值",
+        "minimum_v": "最小电压",
+        "maximum_v": "最大电压",
+        "mean_v": "平均电压",
+        "rise_time_s": "上升时间",
+        "fall_time_s": "下降时间"
+      }
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.unit": {
+      "label": "unit",
+      "label_zh": "单位",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.minimum": {
+      "label": "minimum",
+      "label_zh": "下限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.maximum": {
+      "label": "maximum",
+      "label_zh": "上限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.limit_ref": {
+      "label": "limit ref",
+      "label_zh": "限值引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "label": "resource role",
+      "label_zh": "仪器角色",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_ref": {
+      "label": "evidence ref",
+      "label_zh": "证据文件引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.sha256": {
+      "label": "sha256",
+      "label_zh": "SHA-256",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules": {
+      "label": "rules",
+      "label_zh": "规则",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.id": {
+      "label": "id",
+      "label_zh": "标识",
+      "width": "normal",
+      "advanced": true,
+      "order": 90
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.type": {
+      "label": "type",
+      "label_zh": "类型",
+      "width": "normal",
+      "hidden": true
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_refs": {
+      "label": "evidence refs",
+      "label_zh": "证据引用列表",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.text": {
+      "label": "text",
+      "label_zh": "匹配内容",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.minimum_matches": {
+      "label": "minimum matches",
+      "label_zh": "最少匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.maximum_matches": {
+      "label": "maximum matches",
+      "label_zh": "最多匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.pattern": {
+      "label": "pattern",
+      "label_zh": "正则",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "label": "capture",
+      "label_zh": "波形任务引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.channel": {
+      "label": "channel",
+      "label_zh": "通道",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.metric": {
+      "label": "metric",
+      "label_zh": "指标",
+      "width": "normal",
+      "enum_labels_zh": {
+        "frequency_hz": "频率",
+        "period_s": "周期",
+        "duty_cycle": "占空比",
+        "peak_to_peak_v": "峰峰值",
+        "minimum_v": "最小电压",
+        "maximum_v": "最大电压",
+        "mean_v": "平均电压",
+        "rise_time_s": "上升时间",
+        "fall_time_s": "下降时间"
+      }
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.unit": {
+      "label": "unit",
+      "label_zh": "单位",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.minimum": {
+      "label": "minimum",
+      "label_zh": "下限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.maximum": {
+      "label": "maximum",
+      "label_zh": "上限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.limit_ref": {
+      "label": "limit ref",
+      "label_zh": "限值引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "label": "resource role",
+      "label_zh": "仪器角色",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_ref": {
+      "label": "evidence ref",
+      "label_zh": "证据文件引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.sha256": {
+      "label": "sha256",
+      "label_zh": "SHA-256",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules": {
+      "label": "rules",
+      "label_zh": "规则",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.id": {
+      "label": "id",
+      "label_zh": "标识",
+      "width": "normal",
+      "advanced": true,
+      "order": 90
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.type": {
+      "label": "type",
+      "label_zh": "类型",
+      "width": "normal",
+      "hidden": true
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_refs": {
+      "label": "evidence refs",
+      "label_zh": "证据引用列表",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.text": {
+      "label": "text",
+      "label_zh": "匹配内容",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.minimum_matches": {
+      "label": "minimum matches",
+      "label_zh": "最少匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.maximum_matches": {
+      "label": "maximum matches",
+      "label_zh": "最多匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.pattern": {
+      "label": "pattern",
+      "label_zh": "正则",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "label": "capture",
+      "label_zh": "波形任务引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.channel": {
+      "label": "channel",
+      "label_zh": "通道",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.metric": {
+      "label": "metric",
+      "label_zh": "指标",
+      "width": "normal",
+      "enum_labels_zh": {
+        "frequency_hz": "频率",
+        "period_s": "周期",
+        "duty_cycle": "占空比",
+        "peak_to_peak_v": "峰峰值",
+        "minimum_v": "最小电压",
+        "maximum_v": "最大电压",
+        "mean_v": "平均电压",
+        "rise_time_s": "上升时间",
+        "fall_time_s": "下降时间"
+      }
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.unit": {
+      "label": "unit",
+      "label_zh": "单位",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.minimum": {
+      "label": "minimum",
+      "label_zh": "下限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.maximum": {
+      "label": "maximum",
+      "label_zh": "上限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.limit_ref": {
+      "label": "limit ref",
+      "label_zh": "限值引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "label": "resource role",
+      "label_zh": "仪器角色",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_ref": {
+      "label": "evidence ref",
+      "label_zh": "证据文件引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.sha256": {
+      "label": "sha256",
+      "label_zh": "SHA-256",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules": {
+      "label": "rules",
+      "label_zh": "规则",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.id": {
+      "label": "id",
+      "label_zh": "标识",
+      "width": "normal",
+      "advanced": true,
+      "order": 90
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.type": {
+      "label": "type",
+      "label_zh": "类型",
+      "width": "normal",
+      "hidden": true
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_refs": {
+      "label": "evidence refs",
+      "label_zh": "证据引用列表",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.text": {
+      "label": "text",
+      "label_zh": "匹配内容",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.minimum_matches": {
+      "label": "minimum matches",
+      "label_zh": "最少匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.maximum_matches": {
+      "label": "maximum matches",
+      "label_zh": "最多匹配次数",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.pattern": {
+      "label": "pattern",
+      "label_zh": "正则",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.capture": {
+      "label": "capture",
+      "label_zh": "波形任务引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.channel": {
+      "label": "channel",
+      "label_zh": "通道",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.metric": {
+      "label": "metric",
+      "label_zh": "指标",
+      "width": "normal",
+      "enum_labels_zh": {
+        "frequency_hz": "频率",
+        "period_s": "周期",
+        "duty_cycle": "占空比",
+        "peak_to_peak_v": "峰峰值",
+        "minimum_v": "最小电压",
+        "maximum_v": "最大电压",
+        "mean_v": "平均电压",
+        "rise_time_s": "上升时间",
+        "fall_time_s": "下降时间"
+      }
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.unit": {
+      "label": "unit",
+      "label_zh": "单位",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.minimum": {
+      "label": "minimum",
+      "label_zh": "下限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.maximum": {
+      "label": "maximum",
+      "label_zh": "上限",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.limit_ref": {
+      "label": "limit ref",
+      "label_zh": "限值引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.resource_role": {
+      "label": "resource role",
+      "label_zh": "仪器角色",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.evidence_ref": {
+      "label": "evidence ref",
+      "label_zh": "证据文件引用",
+      "width": "normal"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.sha256": {
+      "label": "sha256",
+      "label_zh": "SHA-256",
+      "width": "long"
+    },
+    "verdict.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules.*.rules": {
+      "label": "rules",
+      "label_zh": "规则",
+      "width": "normal"
+    },
+    "log_capture.resource_role": {
+      "label": "Log role",
+      "label_zh": "日志角色",
+      "order": 0,
+      "description_zh": "引用工程中已保存的COM或Dongle UART角色；绑定只在工程设置中修改。"
+    }
+  },
+  "execution_badge": {
+    "parameter": "execution_mode",
+    "default": "hardware",
+    "values": {
+      "simulation": {
+        "label": "Simulation · not hardware validation",
+        "label_zh": "模拟演示 · 不代表硬件通过",
+        "tone": "warning"
+      },
+      "hardware": {
+        "label": "Hardware mode",
+        "label_zh": "真实硬件模式",
+        "tone": "normal"
+      }
+    }
+  },
+  "help": "Edit by section, save, select cases, then preflight. Simulation uses labelled fixtures; hardware requires an adapter.",
+  "help_zh": "工程名称、DUT约束及仪器绑定在工程设置中统一维护。测试名称等由项属性编辑；日志、复位和规则仅引用共享角色。",
+  "item_properties": [
+    "name",
+    "id",
+    "enabled",
+    "order",
+    "tags",
+    "timeout_s"
+  ]
+}

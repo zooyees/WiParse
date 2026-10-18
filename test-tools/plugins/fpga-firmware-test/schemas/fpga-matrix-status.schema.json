@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "wiparse.test-matrix/1"
+    },
+    "plugin_id": {
+      "const": "fpga-firmware-test"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "preflight_revision": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "active_item_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "summary": {
+      "type": "object"
+    },
+    "items": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "order": {
+            "type": "integer"
+          },
+          "tags": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "selected": {
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "running",
+              "pass",
+              "fail",
+              "error",
+              "skipped",
+              "aborted",
+              "inconclusive"
+            ]
+          },
+          "phase": {
+            "type": "string"
+          },
+          "progress": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "loop_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "elapsed_s": {
+            "type": "number",
+            "minimum": 0
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "config_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "result_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attempt_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "tags",
+          "selected",
+          "status",
+          "phase",
+          "progress",
+          "attempt",
+          "elapsed_s",
+          "message",
+          "result_ref"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "project_config": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "schema_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "revision",
+        "sha256",
+        "schema_hash"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "plugin_id",
+    "revision",
+    "run_id",
+    "preflight_revision",
+    "updated_at",
+    "active_item_id",
+    "summary",
+    "items"
+  ],
+  "additionalProperties": false
+}

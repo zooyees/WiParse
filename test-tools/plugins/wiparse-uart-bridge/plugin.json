@@ -5,7 +5,7 @@
   "report_name": "WiparseUart",
   "report_name_zh": "UART 透传",
   "type": "serial",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "entry": "index.mjs",
   "config": "station.json",
   "description": "Generic UART byte bridge (WIPARSE-IF CH-UART). TCP :1234 first-packet baud, WinUSB CDC SET_LINE_CODING+DTR, or GUI COM. Capture, send hex/text, expect, recipe. Test case dir is report_name (override with file_prefix).",

@@ -5496,7 +5496,7 @@ dependencies = [
 
 [[package]]
 name = "wiparse-cli"
-version = "1.1.30"
+version = "1.2.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5510,7 +5510,7 @@ dependencies = [
 
 [[package]]
 name = "wiparse-core"
-version = "1.1.30"
+version = "1.2.2"
 dependencies = [
  "chrono",
  "crossbeam-channel",
@@ -5530,6 +5530,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "ureq",
+ "url",
  "uuid",
  "windows-sys 0.48.0",
  "winreg",
@@ -5537,7 +5538,7 @@ dependencies = [
 
 [[package]]
 name = "wiparse-gui"
-version = "1.1.30"
+version = "1.2.2"
 dependencies = [
  "chrono",
  "crossbeam-channel",
@@ -5547,6 +5548,7 @@ dependencies = [
  "egui_plot",
  "image",
  "rayon",
+ "regex",
  "rfd",
  "rusqlite",
  "serde",
@@ -5561,7 +5563,7 @@ dependencies = [
 
 [[package]]
 name = "wiparse-service"
-version = "1.1.30"
+version = "1.2.2"
 dependencies = [
  "chrono",
  "serde",

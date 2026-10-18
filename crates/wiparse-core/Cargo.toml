@@ -24,6 +24,7 @@ nusb = "0.1.12"
 probe-rs = { version = "0.27", default-features = false, features = ["builtin-targets"] }
 sha2 = "0.10"
 ureq = { version = "2", default-features = false, features = ["json", "tls"] }
+url = "2"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [target.'cfg(windows)'.dependencies]
@@ -34,6 +35,8 @@ windows-sys = { version = "0.48", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
     "Win32_Security",
+    "Win32_Security_Cryptography",
+    "Win32_System_Memory",
     "Win32_System_IO",
     "Win32_System_Threading",
     "Win32_NetworkManagement_IpHelper",

@@ -1,4 +1,4 @@
-# WiParse MCP Server 1.1.30
+# WiParse MCP Server 1.2.2
 
 通过 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 把 WiParse 暴露给 Agent。
 
@@ -7,7 +7,7 @@
 ## 前置条件
 
 - Node.js 18+
-- 已启动的 `WiParse.exe`；建议与 MCP 同为 1.1.30，旧 GUI 不包含本次报告修复。
+- 已启动的 `WiParse.exe`；建议与 MCP 同为 1.2.2；工程共享配置、迁移与结果详情接口需要 GUI 1.2.2。
 
 对机部署（解压 zip、注册 Cursor）见 [`docs/DEPLOY_MCP.md`](../../docs/DEPLOY_MCP.md)。双击包内 `mcp/wiparse/setup-mcp.cmd` 即可。
 
@@ -49,7 +49,7 @@ Agent 约定：不要 `Read` 日志文件；不要订阅 `/v1/events`。
 
 CLI 说明见 [`docs/CLI_REFERENCE.md`](../../docs/CLI_REFERENCE.md)。
 
-## 1.1.30 测试报告使用
+## 1.1.36 测试报告使用
 
 服务启动声明的版本直接读取 package.json，避免已编译代码和包版本不一致。六个工具名称和既有接口保持兼容。
 
@@ -58,3 +58,12 @@ CLI 说明见 [`docs/CLI_REFERENCE.md`](../../docs/CLI_REFERENCE.md)。
 示例报告位于发布包 `projects/default/tests/ScopeSerialDemo/runs/20261013_231510/artifacts/reports/`。以实际解压路径替换路径前缀；跨项目路径仍被拒绝。
 
 独立 WiParse-Service 的自动化开发接口及现场刺激限制见 `docs/AUTOMATION-SERVICE.md`；本 MCP 六工具连接 GUI，不会自动代替该服务或批准实物运行。
+
+
+### Testing Hub 配置工作区
+
+`wiparse_ui` 新增 `test_tool.config.list/get/create/save/duplicate/archive/restore/import/export/batch/archives/validate`、`test_tool.matrix.get`、`test_tool.preflight.state`。
+
+参数使用 `plugin` 或 `plugin_id`；单项使用 `config_id`。保存需要 `value`、`expected_revision` 和 `expected_sha256`。分页默认 100，硬上限 500；实际只有 5 项就返回 5 项。导入/导出传受控 `file`，不通过 MCP 传整个 bundle。返回值屏蔽本地绝对路径、敏感键和 schema.writeOnly 字段。
+
+预检成功后读取 `test_tool.preflight.state`，运行时在 `test_matrix` 中传 `config_manifest_sha256`、`preflight_revision`、`selected_item_ids`。修改配置或选择集后应重新预检。

@@ -26,6 +26,33 @@ use crate::log_view::{
 use crate::theme::Tokens;
 
 pub(crate) const LOG_FONT_DEFAULT: f32 = 13.0;
+
+pub(crate) struct HistoryStore {
+    lines: Vec<Arc<str>>,
+    max_chars: usize,
+}
+
+impl HistoryStore {
+    pub(crate) fn capture(store: &dyn LogStore) -> Self {
+        Self {
+            lines: (0..store.line_count())
+                .filter_map(|i| store.line_at(i))
+                .collect(),
+            max_chars: store.max_line_chars(),
+        }
+    }
+}
+impl LogStore for HistoryStore {
+    fn line_count(&self) -> usize {
+        self.lines.len()
+    }
+    fn line_at(&self, index: usize) -> Option<Arc<str>> {
+        self.lines.get(index).cloned()
+    }
+    fn max_line_chars(&self) -> usize {
+        self.max_chars
+    }
+}
 pub(crate) const LOG_FONT_MIN: f32 = 8.0;
 pub(crate) const LOG_FONT_MAX: f32 = 24.0;
 pub(crate) const LOG_FONT_STEP: f32 = 0.25;
@@ -97,8 +124,10 @@ pub(crate) struct PaneState {
     pub(crate) highlight_master: Option<usize>,
     pub(crate) last_selected_text: String,
     pub(crate) focus_filter_requested: bool,
-    /// When false, live tail follow (`stick_to_bottom`) is paused until user scrolls to end.
+    /// Live tail following resumes only through an explicit follow command.
     pub(crate) scroll_pinned: bool,
+    pub(crate) history: Option<Arc<HistoryStore>>,
+    pub(crate) resume_tail: bool,
     pub(crate) reset_horizontal_scroll: bool,
     pub(crate) cached_row_height: Option<(f32, f32)>, // font_size, height
     /// Last first-visible master row — used to prefetch on tab activate.
@@ -143,6 +172,8 @@ impl Default for PaneState {
             last_selected_text: String::new(),
             focus_filter_requested: false,
             scroll_pinned: true,
+            history: None,
+            resume_tail: false,
             reset_horizontal_scroll: true,
             cached_row_height: None,
             last_view_row: None,
@@ -205,6 +236,10 @@ impl PaneState {
     }
 
     fn reset_navigation(&mut self) {
+        self.history = None;
+        self.resume_tail = false;
+        self.scroll_pinned = true;
+        self.scroll_hold_frames = 0;
         self.clear_sel();
         self.clear_search_sel();
         self.parse_tip = None;
@@ -263,7 +298,7 @@ impl PaneState {
     }
 
     fn shift_after_front_eviction(&mut self, evicted: usize) {
-        if evicted == 0 {
+        if evicted == 0 || self.history.is_some() {
             return;
         }
         let shift_caret = |caret: TextCaret| {
@@ -307,10 +342,9 @@ impl PaneState {
                 .filter(|next| *next < self.find_hits.len())
         });
         if let Some(FindJump::FirstAt { row, start }) = self.find_jump {
-            self.find_jump = row.checked_sub(evicted).map(|row| FindJump::FirstAt {
-                row,
-                start,
-            });
+            self.find_jump = row
+                .checked_sub(evicted)
+                .map(|row| FindJump::FirstAt { row, start });
         }
         self.search_map = self
             .search_map
@@ -708,6 +742,9 @@ impl LogTabPage {
             .iter()
             .enumerate()
             .map(|(i, pane)| {
+                if pane.history.is_some() {
+                    return None;
+                }
                 let filter = if !split && i > 0 {
                     ""
                 } else {
@@ -751,6 +788,9 @@ impl LogTabPage {
             .collect();
 
         for (pane, update) in self.panes.iter_mut().zip(pane_updates) {
+            if pane.history.is_some() {
+                continue;
+            }
             match update {
                 None => {
                     pane.search_map.clear();
@@ -864,9 +904,11 @@ impl LogTabPage {
         }
     }
 
-    fn caret_byte(&self, caret: TextCaret) -> usize {
-        self.backend
-            .line_at(caret.row)
+    fn caret_byte(&self, pane_idx: usize, caret: TextCaret) -> usize {
+        self.panes
+            .get(pane_idx)
+            .and_then(|p| p.history.as_ref())
+            .map_or_else(|| self.backend.line_at(caret.row), |s| s.line_at(caret.row))
             .map(|line| line.chars().take(caret.col).map(|ch| ch.len_utf8()).sum())
             .unwrap_or(0)
     }
@@ -897,10 +939,7 @@ impl LogTabPage {
                         pane.show_search = was_visible
                             && (!pane.search_map.is_empty() || !pane.filter_applied.is_empty());
                         pane.filter_busy = false;
-                        if pane
-                            .find_current
-                            .is_some_and(|i| i >= pane.find_hits.len())
-                        {
+                        if pane.find_current.is_some_and(|i| i >= pane.find_hits.len()) {
                             pane.find_current = None;
                         }
                         pane.consume_find_jump();
@@ -996,15 +1035,17 @@ impl LogTabPage {
 
         match &self.backend {
             TabBackend::Live(live) => {
-                let (hits, truncated) = collect_match_hits(live, &needles, case_sensitive);
+                let view: &dyn LogStore = self.panes[pane_idx]
+                    .history
+                    .as_deref()
+                    .map(|s| s as &dyn LogStore)
+                    .unwrap_or(live);
+                let (hits, truncated) = collect_match_hits(view, &needles, case_sensitive);
                 if let Some(pane) = self.panes.get_mut(pane_idx) {
                     pane.find_hits = hits;
                     pane.find_truncated = truncated;
                     pane.search_map = unique_match_rows(&pane.find_hits);
-                    if pane
-                        .find_current
-                        .is_some_and(|i| i >= pane.find_hits.len())
-                    {
+                    if pane.find_current.is_some_and(|i| i >= pane.find_hits.len()) {
                         pane.find_current = None;
                     }
                     pane.consume_find_jump();
@@ -1052,25 +1093,21 @@ impl LogTabPage {
         self.poll_filter_debounce(now);
         self.handle_view_shortcuts(ui);
 
-        const TOOLBAR_ROW_H: f32 = 40.0;
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), TOOLBAR_ROW_H),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                egui::ScrollArea::horizontal()
-                    .id_salt("log_toolbar")
-                    .max_height(TOOLBAR_ROW_H)
-                    .auto_shrink([false, true])
-                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.set_min_height(28.0);
-                            ui.set_max_height(28.0);
-                            self.toolbar_row_main(ui, lang, t);
-                        });
+        if !self.edit_mode {
+            egui::ScrollArea::horizontal()
+                .id_salt("log_toolbar")
+                .max_height(36.0)
+                .auto_shrink([false, true])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.set_min_height(28.0);
+                        ui.set_max_height(28.0);
+                        self.toolbar_row_find(ui, lang, t);
                     });
-            },
-        );
+                });
+        }
+        ui.horizontal_wrapped(|ui| self.toolbar_row_main(ui, lang, t));
 
         ui.add_space(2.0);
         Frame::NONE
@@ -1080,10 +1117,7 @@ impl LogTabPage {
                 self.content_body(ui, lang, t);
             });
         if self.has_background_filter()
-            || self
-                .panes
-                .iter()
-                .any(|pane| pane.filter_apply_at.is_some())
+            || self.panes.iter().any(|pane| pane.filter_apply_at.is_some())
         {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(33));
@@ -1098,9 +1132,7 @@ impl LogTabPage {
             .panes
             .iter()
             .enumerate()
-            .filter_map(|(idx, pane)| {
-                pane.filter_apply_at.filter(|at| now >= *at).map(|_| idx)
-            })
+            .filter_map(|(idx, pane)| pane.filter_apply_at.filter(|at| now >= *at).map(|_| idx))
             .collect();
         for idx in due {
             self.apply_filter(idx);
@@ -1136,10 +1168,9 @@ impl LogTabPage {
             return;
         }
         if ctrl && key_f {
-            let has_selection = self
-                .panes
-                .get(pane_idx)
-                .is_some_and(|pane| pane.has_text_selection() && !pane.last_selected_text.is_empty());
+            let has_selection = self.panes.get(pane_idx).is_some_and(|pane| {
+                pane.has_text_selection() && !pane.last_selected_text.is_empty()
+            });
             self.focus_find(pane_idx, has_selection);
             return;
         }
@@ -1191,14 +1222,17 @@ impl LogTabPage {
     }
 
     fn focus_find(&mut self, pane_idx: usize, jump: bool) {
-        let (selected_text, caret) = self.panes.get(pane_idx).map_or((String::new(), None), |pane| {
-            let text = if pane.has_text_selection() {
-                pane.last_selected_text.clone()
-            } else {
-                String::new()
-            };
-            (text, pane.sel_anchor)
-        });
+        let (selected_text, caret) =
+            self.panes
+                .get(pane_idx)
+                .map_or((String::new(), None), |pane| {
+                    let text = if pane.has_text_selection() {
+                        pane.last_selected_text.clone()
+                    } else {
+                        String::new()
+                    };
+                    (text, pane.sel_anchor)
+                });
         if let Some(pane) = self.panes.get_mut(pane_idx) {
             pane.focus_filter_requested = true;
             if !selected_text.is_empty() {
@@ -1207,7 +1241,7 @@ impl LogTabPage {
         }
         if jump {
             let start = caret
-                .map(|c| (c.row, self.caret_byte(c)))
+                .map(|c| (c.row, self.caret_byte(pane_idx, c)))
                 .unwrap_or((0, 0));
             if let Some(pane) = self.panes.get_mut(pane_idx) {
                 pane.find_jump = Some(FindJump::FirstAt {
@@ -1239,7 +1273,7 @@ impl LogTabPage {
             pane.filter_draft = selected;
         }
         let start = caret
-            .map(|c| (c.row, self.caret_byte(c)))
+            .map(|c| (c.row, self.caret_byte(pane_idx, c)))
             .unwrap_or((0, 0));
         if let Some(pane) = self.panes.get_mut(pane_idx) {
             pane.find_jump = Some(FindJump::FirstAt {
@@ -1316,8 +1350,7 @@ impl LogTabPage {
                 let enter = ui.input(|input| input.key_pressed(egui::Key::Enter));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button(tr(lang, "log.goto")).clicked() || (edit.has_focus() && enter)
-                    {
+                    if ui.button(tr(lang, "log.goto")).clicked() || (edit.has_focus() && enter) {
                         go = true;
                     }
                     if ui.button(tr(lang, "log.cancel")).clicked() {
@@ -1342,11 +1375,6 @@ impl LogTabPage {
     fn toolbar_row_main(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
         if !self.live && !self.loading {
             self.toolbar_edit_controls(ui, lang, t);
-            ui.separator();
-        }
-
-        if !self.edit_mode {
-            self.toolbar_row_find(ui, lang, t);
             ui.separator();
         }
 
@@ -1394,15 +1422,15 @@ impl LogTabPage {
             && self.auto_scroll
         {
             for pane in &mut self.panes {
+                pane.reset_navigation();
                 pane.scroll_pinned = true;
+                pane.resume_tail = true;
             }
+            self.refresh_all_views();
         }
 
         if ui
-            .add_sized(
-                [56.0, 24.0],
-                egui::Button::new(tr(lang, "log.goto")),
-            )
+            .add_sized([56.0, 24.0], egui::Button::new(tr(lang, "log.goto")))
             .clicked()
         {
             self.open_goto_dialog();
@@ -1540,28 +1568,19 @@ impl LogTabPage {
         let selected = self.selected_pane.min(n_filters.saturating_sub(1));
 
         if ui
-            .add_sized(
-                [56.0, 24.0],
-                egui::Button::new(tr(lang, "log.find_prev")),
-            )
+            .add_sized([56.0, 24.0], egui::Button::new(tr(lang, "log.find_prev")))
             .clicked()
         {
             prev_idx = Some(selected);
         }
         if ui
-            .add_sized(
-                [56.0, 24.0],
-                egui::Button::new(tr(lang, "log.find_next")),
-            )
+            .add_sized([56.0, 24.0], egui::Button::new(tr(lang, "log.find_next")))
             .clicked()
         {
             next_idx = Some(selected);
         }
         if ui
-            .add_sized(
-                [72.0, 24.0],
-                egui::Button::new(tr(lang, "log.list_all")),
-            )
+            .add_sized([72.0, 24.0], egui::Button::new(tr(lang, "log.list_all")))
             .clicked()
         {
             list_idx = Some(selected);
@@ -1584,11 +1603,7 @@ impl LogTabPage {
             text
         };
         if !count_text.is_empty() {
-            ui.label(
-                RichText::new(count_text)
-                    .size(12.0)
-                    .color(t.text_muted),
-            );
+            ui.label(RichText::new(count_text).size(12.0).color(t.text_muted));
         }
         ui.label(
             RichText::new(tr(lang, "log.find_hint"))
@@ -1845,14 +1860,7 @@ impl LogTabPage {
         let available_height = ui.available_height().max(1.0);
         let status_h = 22.0;
         let editor_h = (available_height - status_h).max(80.0);
-        if show_virtual_line_editor(
-            ui,
-            &mut self.edit,
-            font_size,
-            &editor_id_salt,
-            editor_h,
-            t,
-        ) {
+        if show_virtual_line_editor(ui, &mut self.edit, font_size, &editor_id_salt, editor_h, t) {
             self.edit_dirty = true;
         }
 
@@ -1897,20 +1905,13 @@ impl LogTabPage {
                         col,
                         self.case_sensitive,
                     ) {
-                        replace_char_range(
-                            &mut self.edit.lines[row],
-                            s,
-                            e,
-                            &self.edit_replace,
-                        );
+                        replace_char_range(&mut self.edit.lines[row], s, e, &self.edit_replace);
                         self.edit_dirty = true;
                         self.edit.rescan_max_chars();
                         let new_col = s + self.edit_replace.chars().count();
                         self.edit.col = new_col;
-                        self.edit.pending_cursor = Some(CCursorRange::two(
-                            CCursor::new(s),
-                            CCursor::new(new_col),
-                        ));
+                        self.edit.pending_cursor =
+                            Some(CCursorRange::two(CCursor::new(s), CCursor::new(new_col)));
                         self.edit.want_focus = true;
                     } else {
                         self.edit_match_status = tr(lang, "log.select_match");
@@ -2008,6 +2009,10 @@ impl LogTabPage {
         if self.panes.get(idx).is_none() {
             return;
         }
+        let was_reviewing = self.panes[idx].history.is_some();
+        if self.panes[idx].resume_tail {
+            self.auto_scroll = true;
+        }
         if ui.ui_contains_pointer() {
             self.selected_pane = idx;
         }
@@ -2085,6 +2090,7 @@ impl LogTabPage {
                                 s,
                                 &mut self.panes[idx],
                                 self.auto_scroll && scroll_to.is_none(),
+                                true,
                                 &pane_salt,
                                 top_h,
                                 scroll_to,
@@ -2099,6 +2105,7 @@ impl LogTabPage {
                                 ui,
                                 s.as_ref(),
                                 &mut self.panes[idx],
+                                false,
                                 false,
                                 &pane_salt,
                                 top_h,
@@ -2180,7 +2187,10 @@ impl LogTabPage {
                         let jump = match &self.backend {
                             TabBackend::Live(s) => show_virtual_search_pane(
                                 ui,
-                                s,
+                                pane.history
+                                    .as_deref()
+                                    .map(|h| h as &dyn LogStore)
+                                    .unwrap_or(s),
                                 &pane.search_map,
                                 &search_salt,
                                 bottom_h,
@@ -2261,6 +2271,7 @@ impl LogTabPage {
                                 s,
                                 &mut self.panes[idx],
                                 self.auto_scroll && !pin,
+                                true,
                                 &pane_salt,
                                 avail,
                                 scroll_to,
@@ -2275,6 +2286,7 @@ impl LogTabPage {
                                 ui,
                                 s.as_ref(),
                                 &mut self.panes[idx],
+                                false,
                                 false,
                                 &pane_salt,
                                 avail,
@@ -2303,6 +2315,9 @@ impl LogTabPage {
                 },
             );
         });
+        if was_reviewing && self.panes[idx].history.is_none() {
+            self.rebuild_pane_matches(idx);
+        }
     }
 }
 
@@ -2648,8 +2663,7 @@ fn write_log_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 fn is_file_lock_error(e: &io::Error) -> bool {
-    matches!(e.raw_os_error(), Some(5) | Some(32))
-        || e.kind() == io::ErrorKind::PermissionDenied
+    matches!(e.raw_os_error(), Some(5) | Some(32)) || e.kind() == io::ErrorKind::PermissionDenied
 }
 
 fn line_column_at(text: &str, char_index: usize) -> (usize, usize) {
@@ -2665,6 +2679,31 @@ fn line_column_at(text: &str, char_index: usize) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paused_pane_keeps_filter_and_caret_context_while_live_api_advances() {
+        let mut tab = LogTabPage::live_tab(Lang::En);
+        tab.append_lines((0..5000).map(|i| format!("ASK old {i}")), true);
+        tab.set_pane_filter(0, "ASK").unwrap();
+        let snapshot = match &tab.backend {
+            TabBackend::Live(s) => HistoryStore::capture(s),
+            _ => unreachable!(),
+        };
+        tab.panes[0].history = Some(Arc::new(snapshot));
+        tab.panes[0].sel_anchor = Some(TextCaret { row: 4, col: 2 });
+        tab.panes[0].sel_focus = Some(TextCaret { row: 4, col: 4 });
+        tab.append_lines((0..10000).map(|i| format!("new {i}")), true);
+        assert_eq!(tab.line_count(), MAX_LIVE_LINES);
+        assert_eq!(tab.dropped(), 10000);
+        assert_eq!(tab.panes[0].sel_anchor.unwrap().row, 4);
+        assert_eq!(tab.panes[0].search_map.len(), 5000);
+        tab.set_pane_filter(0, "old 42").unwrap();
+        assert_eq!(tab.panes[0].search_map[0], 42);
+        assert_eq!(tab.caret_byte(0, TextCaret { row: 42, col: 4 }), 4);
+        tab.clear_display();
+        assert!(tab.panes[0].history.is_none());
+        assert_eq!(tab.line_count(), 0);
+    }
 
     #[test]
     fn split_heights_never_exceed_available_space() {

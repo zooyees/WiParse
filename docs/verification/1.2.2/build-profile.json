@@ -1,0 +1,15 @@
+{
+  "software_version": "1.2.2",
+  "plugin_version": "0.5.0",
+  "release_profile": {
+    "lto": false,
+    "codegen_units": 16,
+    "jobs": 4,
+    "offline": true,
+    "debug": "line-tables-only",
+    "strip": "none"
+  },
+  "source_freeze_sha256": "0e767517855bedbfd783492ebc459d76eb215f21d0a2cd3c8c27eb8dc116d6d2",
+  "industrial_approved": false,
+  "delivery": "exe_preview_then_user_confirmation_before_full_zip"
+}

@@ -142,3 +142,46 @@ pub(crate) fn export_frame(
     )
     .unwrap();
 }
+
+#[test]
+fn serial_and_wave_workbench_previews() {
+    let cfg = AppConfig::default();
+    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tmp/serial-wave-fixture");
+    std::fs::create_dir_all(&fixture_dir).unwrap();
+    let wave_path = fixture_dir.join("PWM-demo.csv");
+    let mut csv = String::from("Time(s),CH1(V)\n");
+    for i in 0..2000 { csv.push_str(&format!("{},{}\n", i as f64 * 1e-7, if i % 100 < 45 { 5.0 } else { 0.0 })); }
+    std::fs::write(&wave_path, csv).unwrap();
+    for light in [false, true] {
+        for (width, height) in [(1100.0, 720.0), (1600.0, 1000.0)] {
+            for page in ["serial", "wave"] {
+                let ctx = egui::Context::default();
+                crate::fonts::install_cjk_fonts(&ctx);
+                let tokens = crate::theme::apply_theme(&ctx, light);
+                let mut serial = crate::serial_tool::SerialToolPanel::new(&cfg, Lang::Zh);
+                let mut wave = crate::waveform_analysis::WaveformAnalysisPanel::new(&cfg);
+                if page == "wave" { wave.open_path(&wave_path, Lang::Zh).unwrap(); }
+                let size = Vec2::new(width, height);
+                let mut output = egui::FullOutput::default();
+                for _ in 0..3 {
+                    let next = ctx.run(RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)), ..Default::default() }, |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            if page == "serial" { serial.ui(ui, Lang::Zh, &tokens); } else { wave.ui(ui, Lang::Zh, &tokens); }
+                        });
+                    });
+                    output.textures_delta.append(next.textures_delta);
+                    output.shapes = next.shapes;
+                    output.pixels_per_point = next.pixels_per_point;
+                }
+                let title = if page == "serial" { "串口工具" } else { "波形分析" };
+                assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(t) if t.galley.job.text == title)), "redundant page title");
+                if let Ok(dir) = std::env::var("WIPARSE_UI_AUDIT_OUTPUT") {
+                    output.textures_delta.set.retain(|(id, _)| *id != egui::TextureId::Managed(0));
+                    output.textures_delta.set.push((egui::TextureId::Managed(0), egui::epaint::ImageDelta::full(ctx.fonts(|f| f.image()), egui::TextureOptions::LINEAR)));
+                    export_frame(&ctx, output, &std::path::PathBuf::from(dir), &format!("{page}-workbench-{}-{}", width as u32, if light { "light" } else { "dark" }), size);
+                }
+                serial.on_exit();
+            }
+        }
+    }
+}

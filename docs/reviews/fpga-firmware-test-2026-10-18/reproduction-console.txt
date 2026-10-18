@@ -1,0 +1,84 @@
+[
+  {
+    "scenario": "empty",
+    "schema_errors": [],
+    "cross_field_errors": [],
+    "result": {
+      "results": [
+        {
+          "id": "empty",
+          "type": "all",
+          "required": true,
+          "verdict": "PASS",
+          "measured": null,
+          "evidence_refs": [
+            "logs/serial.jsonl"
+          ],
+          "reason": "satisfied",
+          "children": []
+        }
+      ],
+      "product_verdict": "PASS",
+      "limits_sha256": "4d1f38ec726645ad1e87162d90a3ab52b5a372ca61ae764c0700b3132a17809f"
+    }
+  },
+  {
+    "scenario": "missing_pattern",
+    "schema_errors": [],
+    "cross_field_errors": [],
+    "result": {
+      "results": [
+        {
+          "id": "missing_pattern",
+          "type": "log_regex",
+          "required": true,
+          "verdict": "PASS",
+          "measured": 14,
+          "evidence_refs": [
+            "logs/serial.jsonl"
+          ],
+          "reason": "satisfied"
+        }
+      ],
+      "product_verdict": "PASS",
+      "limits_sha256": "f68b38aeb9163e2be9462c73cf8684b166148375d777aecff63f1b63caf9214a"
+    }
+  },
+  {
+    "scenario": "wrong_uart_channel",
+    "selected": {
+      "kind": "wiparse_dongle_uart",
+      "dongle_serial": "D1",
+      "uart_channel": 0,
+      "device_id": "channel-zero"
+    }
+  },
+  {
+    "scenario": "stop_after_screenshot",
+    "source_calls_after_stop": 1
+  },
+  {
+    "scenario": "capture_timeout_not_enforced",
+    "configured_timeout_ms": 1,
+    "observation": "still_pending_after_40ms"
+  },
+  {
+    "scenario": "resume_original_manifest",
+    "error": "RUN.PREFLIGHT_STALE"
+  },
+  {
+    "scenario": "resume_new_preflight",
+    "error": "RUN.RESUME_MANIFEST_REQUIRED"
+  },
+  {
+    "scenario": "matrix_parse_after_lease",
+    "acquired": 1,
+    "released": 0,
+    "error": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+  },
+  {
+    "scenario": "demo_filename_contract",
+    "total": 20,
+    "mismatches": 20
+  }
+]

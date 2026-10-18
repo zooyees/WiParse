@@ -41,7 +41,15 @@ pub fn resizable_sidebar_width(
 ) -> f32 {
     let id = ui.make_persistent_id(("tool_sidebar_width", key));
     let preferred = ui.ctx().data(|data| data.get_temp::<f32>(id)).unwrap_or(default);
-    let (min, max) = sidebar_width_bounds(body.width(), gap, min_side, min_main);
+    let (min, max) = if matches!(key, "serial_tool" | "waveform_analysis") {
+        // These data viewers may be narrowed further without changing other tools.
+        let budget = (body.width() - gap).max(0.0);
+        let main = min_main.max(budget * 0.20).min(budget * 0.55);
+        let max = (budget - main).max(0.0);
+        (min_side.min(max).max(0.0), max)
+    } else {
+        sidebar_width_bounds(body.width(), gap, min_side, min_main)
+    };
     let mut width = preferred.clamp(min, max);
     let gutter = Rect::from_min_max(
         egui::pos2(body.left() + width, body.top()),
@@ -835,3 +843,4 @@ mod tests {
         }
     }
 }
+

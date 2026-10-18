@@ -1,5 +1,6 @@
 {
-    "note":  "Keep this PDB with the EXE build identified by exe_sha256. It cannot symbolize a different build.",
-    "exe_sha256":  "B2DCA70477BD652A0201CA1B8941A1060F45184AF2913FE70C20527AC36EDB3C",
-    "pdb_sha256":  "777302F1030A461375E51D7CFBFAC15A50CCF0E9CC16AC1E8E3C5237AEAC1625"
+  "software_version": "1.2.2",
+  "exe_sha256": "42481492ad67338298a54e89d000952b5dcee0a42559ba445076539db209244d",
+  "pdb_sha256": "0ef67a6d705deebad8477e7a3fb838cd3c633067e9b12e52f067bd14be380a5c",
+  "note": "Matching PDB retained locally and in version backup. Never symbolize a different EXE with this PDB."
 }

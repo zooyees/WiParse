@@ -1,0 +1,1058 @@
+{
+  "schema_version": "wiparse.config-ui/1",
+  "source_view": "read_only",
+  "groups": [
+    {
+      "label": "Project",
+      "label_zh": "工程基本信息",
+      "fields": [
+        "name",
+        "description"
+      ]
+    },
+    {
+      "label": "DUT requirements",
+      "label_zh": "DUT 身份约束",
+      "fields": [
+        "dut"
+      ]
+    },
+    {
+      "label": "Resource bindings",
+      "label_zh": "仪器绑定",
+      "fields": [
+        "instruments"
+      ]
+    }
+  ],
+  "fields": {
+    "dut": {
+      "label": "DUT requirements",
+      "label_zh": "DUT 身份约束",
+      "width": "normal",
+      "description": "Expected identity constraints; actual identity is supplied in run parameters.",
+      "description_zh": "此处配置期望身份约束；本轮实际身份在运行参数中填写，预检时核对。"
+    },
+    "dut.model": {
+      "label": "model",
+      "label_zh": "型号",
+      "width": "normal"
+    },
+    "dut.serial_required": {
+      "label": "serial required",
+      "label_zh": "要求产品序列号",
+      "width": "normal"
+    },
+    "dut.board_revision": {
+      "label": "board revision",
+      "label_zh": "板卡版本",
+      "width": "normal"
+    },
+    "dut.fpga_model": {
+      "label": "fpga model",
+      "label_zh": "FPGA 型号",
+      "width": "normal"
+    },
+    "dut.fixture_id": {
+      "label": "fixture id",
+      "label_zh": "治具编号",
+      "width": "normal"
+    },
+    "dut.station_id": {
+      "label": "station id",
+      "label_zh": "工位编号",
+      "width": "normal"
+    },
+    "instruments": {
+      "label": "instruments",
+      "label_zh": "仪器绑定",
+      "width": "normal"
+    },
+    "instruments.programmer": {
+      "label": "programmer",
+      "label_zh": "调试探针",
+      "width": "normal"
+    },
+    "instruments.programmer.kind": {
+      "label": "kind",
+      "label_zh": "设备类型",
+      "width": "normal",
+      "enum_labels_zh": {
+        "debug_probe": "调试探针",
+        "oscilloscope": "示波器",
+        "dc_source": "直流电源",
+        "serial_port": "COM 串口",
+        "wiparse_dongle_uart": "Dongle UART",
+        "wiparse_dongle": "WiParse Dongle",
+        "dmm": "万用表",
+        "load": "电子负载",
+        "bridge": "桥接器"
+      }
+    },
+    "instruments.programmer.selector": {
+      "label": "selector",
+      "label_zh": "选择条件",
+      "width": "normal"
+    },
+    "instruments.programmer.selector.serial": {
+      "label": "serial",
+      "label_zh": "序列号",
+      "width": "normal",
+      "advanced": false
+    },
+    "instruments.programmer.selector.resource": {
+      "label": "resource",
+      "label_zh": "资源地址",
+      "width": "normal",
+      "advanced": false
+    },
+    "instruments.programmer.selector.manufacturer": {
+      "label": "manufacturer",
+      "label_zh": "制造商",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.programmer.selector.model": {
+      "label": "model",
+      "label_zh": "型号",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.programmer.selector.dongle_serial": {
+      "label": "dongle serial",
+      "label_zh": "Dongle 序列号",
+      "width": "normal"
+    },
+    "instruments.programmer.selector.uart_channel": {
+      "label": "uart channel",
+      "label_zh": "UART 通道",
+      "width": "normal"
+    },
+    "instruments.programmer.selector.port": {
+      "label": "port",
+      "label_zh": "串口",
+      "width": "normal"
+    },
+    "instruments.programmer.selector.baud": {
+      "label": "baud",
+      "label_zh": "波特率",
+      "width": "normal"
+    },
+    "instruments.programmer.selector.data_bits": {
+      "label": "data bits",
+      "label_zh": "数据位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.programmer.selector.stop_bits": {
+      "label": "stop bits",
+      "label_zh": "停止位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.programmer.selector.parity": {
+      "label": "parity",
+      "label_zh": "校验位",
+      "width": "normal",
+      "enum_labels_zh": {
+        "none": "无",
+        "even": "偶校验",
+        "odd": "奇校验"
+      },
+      "advanced": true
+    },
+    "instruments.programmer.selector.flow_control": {
+      "label": "flow control",
+      "label_zh": "流控",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.programmer.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "instruments.scope": {
+      "label": "scope",
+      "label_zh": "示波器",
+      "width": "normal"
+    },
+    "instruments.scope.kind": {
+      "label": "kind",
+      "label_zh": "设备类型",
+      "width": "normal",
+      "enum_labels_zh": {
+        "debug_probe": "调试探针",
+        "oscilloscope": "示波器",
+        "dc_source": "直流电源",
+        "serial_port": "COM 串口",
+        "wiparse_dongle_uart": "Dongle UART",
+        "wiparse_dongle": "WiParse Dongle",
+        "dmm": "万用表",
+        "load": "电子负载",
+        "bridge": "桥接器"
+      }
+    },
+    "instruments.scope.selector": {
+      "label": "selector",
+      "label_zh": "选择条件",
+      "width": "normal"
+    },
+    "instruments.scope.selector.serial": {
+      "label": "serial",
+      "label_zh": "序列号",
+      "width": "normal",
+      "advanced": false
+    },
+    "instruments.scope.selector.resource": {
+      "label": "resource",
+      "label_zh": "资源地址",
+      "width": "normal",
+      "advanced": false
+    },
+    "instruments.scope.selector.manufacturer": {
+      "label": "manufacturer",
+      "label_zh": "制造商",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.scope.selector.model": {
+      "label": "model",
+      "label_zh": "型号",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.scope.selector.dongle_serial": {
+      "label": "dongle serial",
+      "label_zh": "Dongle 序列号",
+      "width": "normal"
+    },
+    "instruments.scope.selector.uart_channel": {
+      "label": "uart channel",
+      "label_zh": "UART 通道",
+      "width": "normal"
+    },
+    "instruments.scope.selector.port": {
+      "label": "port",
+      "label_zh": "串口",
+      "width": "normal"
+    },
+    "instruments.scope.selector.baud": {
+      "label": "baud",
+      "label_zh": "波特率",
+      "width": "normal"
+    },
+    "instruments.scope.selector.data_bits": {
+      "label": "data bits",
+      "label_zh": "数据位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.scope.selector.stop_bits": {
+      "label": "stop bits",
+      "label_zh": "停止位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.scope.selector.parity": {
+      "label": "parity",
+      "label_zh": "校验位",
+      "width": "normal",
+      "enum_labels_zh": {
+        "none": "无",
+        "even": "偶校验",
+        "odd": "奇校验"
+      },
+      "advanced": true
+    },
+    "instruments.scope.selector.flow_control": {
+      "label": "flow control",
+      "label_zh": "流控",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.scope.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "instruments.power": {
+      "label": "power",
+      "label_zh": "电源",
+      "width": "normal"
+    },
+    "instruments.power.kind": {
+      "label": "kind",
+      "label_zh": "设备类型",
+      "width": "normal",
+      "enum_labels_zh": {
+        "debug_probe": "调试探针",
+        "oscilloscope": "示波器",
+        "dc_source": "直流电源",
+        "serial_port": "COM 串口",
+        "wiparse_dongle_uart": "Dongle UART",
+        "wiparse_dongle": "WiParse Dongle",
+        "dmm": "万用表",
+        "load": "电子负载",
+        "bridge": "桥接器"
+      }
+    },
+    "instruments.power.selector": {
+      "label": "selector",
+      "label_zh": "选择条件",
+      "width": "normal"
+    },
+    "instruments.power.selector.serial": {
+      "label": "serial",
+      "label_zh": "序列号",
+      "width": "normal",
+      "advanced": false
+    },
+    "instruments.power.selector.resource": {
+      "label": "resource",
+      "label_zh": "资源地址",
+      "width": "normal",
+      "advanced": false
+    },
+    "instruments.power.selector.manufacturer": {
+      "label": "manufacturer",
+      "label_zh": "制造商",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.power.selector.model": {
+      "label": "model",
+      "label_zh": "型号",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.power.selector.dongle_serial": {
+      "label": "dongle serial",
+      "label_zh": "Dongle 序列号",
+      "width": "normal"
+    },
+    "instruments.power.selector.uart_channel": {
+      "label": "uart channel",
+      "label_zh": "UART 通道",
+      "width": "normal"
+    },
+    "instruments.power.selector.port": {
+      "label": "port",
+      "label_zh": "串口",
+      "width": "normal"
+    },
+    "instruments.power.selector.baud": {
+      "label": "baud",
+      "label_zh": "波特率",
+      "width": "normal"
+    },
+    "instruments.power.selector.data_bits": {
+      "label": "data bits",
+      "label_zh": "数据位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.power.selector.stop_bits": {
+      "label": "stop bits",
+      "label_zh": "停止位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.power.selector.parity": {
+      "label": "parity",
+      "label_zh": "校验位",
+      "width": "normal",
+      "enum_labels_zh": {
+        "none": "无",
+        "even": "偶校验",
+        "odd": "奇校验"
+      },
+      "advanced": true
+    },
+    "instruments.power.selector.flow_control": {
+      "label": "flow control",
+      "label_zh": "流控",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.power.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "instruments.log": {
+      "label": "log",
+      "label_zh": "串口日志",
+      "width": "normal"
+    },
+    "instruments.log.kind": {
+      "label": "kind",
+      "label_zh": "设备类型",
+      "width": "normal",
+      "hidden": true,
+      "enum_labels_zh": {
+        "serial_port": "COM 串口",
+        "wiparse_dongle_uart": "Dongle UART"
+      }
+    },
+    "instruments.log.selector": {
+      "label": "selector",
+      "label_zh": "选择条件",
+      "width": "normal"
+    },
+    "instruments.log.selector.serial": {
+      "label": "serial",
+      "label_zh": "序列号",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log.selector.resource": {
+      "label": "resource",
+      "label_zh": "资源地址",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log.selector.manufacturer": {
+      "label": "manufacturer",
+      "label_zh": "制造商",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log.selector.model": {
+      "label": "model",
+      "label_zh": "型号",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log.selector.dongle_serial": {
+      "label": "dongle serial",
+      "label_zh": "Dongle 序列号",
+      "width": "normal"
+    },
+    "instruments.log.selector.uart_channel": {
+      "label": "uart channel",
+      "label_zh": "UART 通道",
+      "width": "normal"
+    },
+    "instruments.log.selector.port": {
+      "label": "port",
+      "label_zh": "串口",
+      "width": "normal"
+    },
+    "instruments.log.selector.baud": {
+      "label": "baud",
+      "label_zh": "波特率",
+      "width": "normal"
+    },
+    "instruments.log.selector.data_bits": {
+      "label": "data bits",
+      "label_zh": "数据位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log.selector.stop_bits": {
+      "label": "stop bits",
+      "label_zh": "停止位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log.selector.parity": {
+      "label": "parity",
+      "label_zh": "校验位",
+      "width": "normal",
+      "enum_labels_zh": {
+        "none": "无",
+        "even": "偶校验",
+        "odd": "奇校验"
+      },
+      "advanced": true
+    },
+    "instruments.log.selector.flow_control": {
+      "label": "flow control",
+      "label_zh": "流控",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "instruments.dmm": {
+      "label": "dmm",
+      "label_zh": "万用表",
+      "width": "normal"
+    },
+    "instruments.dmm.kind": {
+      "label": "kind",
+      "label_zh": "设备类型",
+      "width": "normal",
+      "enum_labels_zh": {
+        "debug_probe": "调试探针",
+        "oscilloscope": "示波器",
+        "dc_source": "直流电源",
+        "serial_port": "COM 串口",
+        "wiparse_dongle_uart": "Dongle UART",
+        "wiparse_dongle": "WiParse Dongle",
+        "dmm": "万用表",
+        "load": "电子负载",
+        "bridge": "桥接器"
+      }
+    },
+    "instruments.dmm.selector": {
+      "label": "selector",
+      "label_zh": "选择条件",
+      "width": "normal"
+    },
+    "instruments.dmm.selector.serial": {
+      "label": "serial",
+      "label_zh": "序列号",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.dmm.selector.resource": {
+      "label": "resource",
+      "label_zh": "资源地址",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.dmm.selector.manufacturer": {
+      "label": "manufacturer",
+      "label_zh": "制造商",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.dmm.selector.model": {
+      "label": "model",
+      "label_zh": "型号",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.dmm.selector.dongle_serial": {
+      "label": "dongle serial",
+      "label_zh": "Dongle 序列号",
+      "width": "normal"
+    },
+    "instruments.dmm.selector.uart_channel": {
+      "label": "uart channel",
+      "label_zh": "UART 通道",
+      "width": "normal"
+    },
+    "instruments.dmm.selector.port": {
+      "label": "port",
+      "label_zh": "串口",
+      "width": "normal"
+    },
+    "instruments.dmm.selector.baud": {
+      "label": "baud",
+      "label_zh": "波特率",
+      "width": "normal"
+    },
+    "instruments.dmm.selector.data_bits": {
+      "label": "data bits",
+      "label_zh": "数据位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.dmm.selector.stop_bits": {
+      "label": "stop bits",
+      "label_zh": "停止位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.dmm.selector.parity": {
+      "label": "parity",
+      "label_zh": "校验位",
+      "width": "normal",
+      "enum_labels_zh": {
+        "none": "无",
+        "even": "偶校验",
+        "odd": "奇校验"
+      },
+      "advanced": true
+    },
+    "instruments.dmm.selector.flow_control": {
+      "label": "flow control",
+      "label_zh": "流控",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.dmm.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "instruments.load": {
+      "label": "load",
+      "label_zh": "电子负载",
+      "width": "normal"
+    },
+    "instruments.load.kind": {
+      "label": "kind",
+      "label_zh": "设备类型",
+      "width": "normal",
+      "enum_labels_zh": {
+        "debug_probe": "调试探针",
+        "oscilloscope": "示波器",
+        "dc_source": "直流电源",
+        "serial_port": "COM 串口",
+        "wiparse_dongle_uart": "Dongle UART",
+        "wiparse_dongle": "WiParse Dongle",
+        "dmm": "万用表",
+        "load": "电子负载",
+        "bridge": "桥接器"
+      }
+    },
+    "instruments.load.selector": {
+      "label": "selector",
+      "label_zh": "选择条件",
+      "width": "normal"
+    },
+    "instruments.load.selector.serial": {
+      "label": "serial",
+      "label_zh": "序列号",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.load.selector.resource": {
+      "label": "resource",
+      "label_zh": "资源地址",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.load.selector.manufacturer": {
+      "label": "manufacturer",
+      "label_zh": "制造商",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.load.selector.model": {
+      "label": "model",
+      "label_zh": "型号",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.load.selector.dongle_serial": {
+      "label": "dongle serial",
+      "label_zh": "Dongle 序列号",
+      "width": "normal"
+    },
+    "instruments.load.selector.uart_channel": {
+      "label": "uart channel",
+      "label_zh": "UART 通道",
+      "width": "normal"
+    },
+    "instruments.load.selector.port": {
+      "label": "port",
+      "label_zh": "串口",
+      "width": "normal"
+    },
+    "instruments.load.selector.baud": {
+      "label": "baud",
+      "label_zh": "波特率",
+      "width": "normal"
+    },
+    "instruments.load.selector.data_bits": {
+      "label": "data bits",
+      "label_zh": "数据位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.load.selector.stop_bits": {
+      "label": "stop bits",
+      "label_zh": "停止位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.load.selector.parity": {
+      "label": "parity",
+      "label_zh": "校验位",
+      "width": "normal",
+      "enum_labels_zh": {
+        "none": "无",
+        "even": "偶校验",
+        "odd": "奇校验"
+      },
+      "advanced": true
+    },
+    "instruments.load.selector.flow_control": {
+      "label": "flow control",
+      "label_zh": "流控",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.load.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "instruments.bridge": {
+      "label": "bridge",
+      "label_zh": "桥接器",
+      "width": "normal"
+    },
+    "instruments.bridge.kind": {
+      "label": "kind",
+      "label_zh": "设备类型",
+      "width": "normal",
+      "enum_labels_zh": {
+        "debug_probe": "调试探针",
+        "oscilloscope": "示波器",
+        "dc_source": "直流电源",
+        "serial_port": "COM 串口",
+        "wiparse_dongle_uart": "Dongle UART",
+        "wiparse_dongle": "WiParse Dongle",
+        "dmm": "万用表",
+        "load": "电子负载",
+        "bridge": "桥接器"
+      }
+    },
+    "instruments.bridge.selector": {
+      "label": "selector",
+      "label_zh": "选择条件",
+      "width": "normal"
+    },
+    "instruments.bridge.selector.serial": {
+      "label": "serial",
+      "label_zh": "序列号",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.bridge.selector.resource": {
+      "label": "resource",
+      "label_zh": "资源地址",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.bridge.selector.manufacturer": {
+      "label": "manufacturer",
+      "label_zh": "制造商",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.bridge.selector.model": {
+      "label": "model",
+      "label_zh": "型号",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.bridge.selector.dongle_serial": {
+      "label": "dongle serial",
+      "label_zh": "Dongle 序列号",
+      "width": "normal"
+    },
+    "instruments.bridge.selector.uart_channel": {
+      "label": "uart channel",
+      "label_zh": "UART 通道",
+      "width": "normal"
+    },
+    "instruments.bridge.selector.port": {
+      "label": "port",
+      "label_zh": "串口",
+      "width": "normal"
+    },
+    "instruments.bridge.selector.baud": {
+      "label": "baud",
+      "label_zh": "波特率",
+      "width": "normal"
+    },
+    "instruments.bridge.selector.data_bits": {
+      "label": "data bits",
+      "label_zh": "数据位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.bridge.selector.stop_bits": {
+      "label": "stop bits",
+      "label_zh": "停止位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.bridge.selector.parity": {
+      "label": "parity",
+      "label_zh": "校验位",
+      "width": "normal",
+      "enum_labels_zh": {
+        "none": "无",
+        "even": "偶校验",
+        "odd": "奇校验"
+      },
+      "advanced": true
+    },
+    "instruments.bridge.selector.flow_control": {
+      "label": "flow control",
+      "label_zh": "流控",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.bridge.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "schema_version": {
+      "hidden": true
+    },
+    "name": {
+      "label": "Project name",
+      "label_zh": "工程名称",
+      "width": "long",
+      "order": 0
+    },
+    "description": {
+      "label": "Description",
+      "label_zh": "工程说明",
+      "width": "long",
+      "order": 10
+    },
+    "instruments.log_com.kind": {
+      "label": "kind",
+      "label_zh": "设备类型",
+      "width": "normal",
+      "hidden": true,
+      "enum_labels_zh": {
+        "serial_port": "COM 串口",
+        "wiparse_dongle_uart": "Dongle UART"
+      }
+    },
+    "instruments.log_com.selector": {
+      "label": "selector",
+      "label_zh": "选择条件",
+      "width": "normal"
+    },
+    "instruments.log_com.selector.serial": {
+      "label": "serial",
+      "label_zh": "序列号",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log_com.selector.resource": {
+      "label": "resource",
+      "label_zh": "资源地址",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log_com.selector.manufacturer": {
+      "label": "manufacturer",
+      "label_zh": "制造商",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log_com.selector.model": {
+      "label": "model",
+      "label_zh": "型号",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log_com.selector.dongle_serial": {
+      "hidden": true
+    },
+    "instruments.log_com.selector.uart_channel": {
+      "hidden": true
+    },
+    "instruments.log_com.selector.port": {
+      "label": "port",
+      "label_zh": "串口",
+      "width": "normal"
+    },
+    "instruments.log_com.selector.baud": {
+      "label": "baud",
+      "label_zh": "波特率",
+      "width": "normal"
+    },
+    "instruments.log_com.selector.data_bits": {
+      "label": "data bits",
+      "label_zh": "数据位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log_com.selector.stop_bits": {
+      "label": "stop bits",
+      "label_zh": "停止位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log_com.selector.parity": {
+      "label": "parity",
+      "label_zh": "校验位",
+      "width": "normal",
+      "enum_labels_zh": {
+        "none": "无",
+        "even": "偶校验",
+        "odd": "奇校验"
+      },
+      "advanced": true
+    },
+    "instruments.log_com.selector.flow_control": {
+      "label": "flow control",
+      "label_zh": "流控",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log_com.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "instruments.log_dongle.kind": {
+      "label": "kind",
+      "label_zh": "设备类型",
+      "width": "normal",
+      "hidden": true,
+      "enum_labels_zh": {
+        "serial_port": "COM 串口",
+        "wiparse_dongle_uart": "Dongle UART"
+      }
+    },
+    "instruments.log_dongle.selector": {
+      "label": "selector",
+      "label_zh": "选择条件",
+      "width": "normal"
+    },
+    "instruments.log_dongle.selector.serial": {
+      "label": "serial",
+      "label_zh": "序列号",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log_dongle.selector.resource": {
+      "label": "resource",
+      "label_zh": "资源地址",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log_dongle.selector.manufacturer": {
+      "label": "manufacturer",
+      "label_zh": "制造商",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log_dongle.selector.model": {
+      "label": "model",
+      "label_zh": "型号",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log_dongle.selector.dongle_serial": {
+      "label": "dongle serial",
+      "label_zh": "Dongle 序列号",
+      "width": "normal"
+    },
+    "instruments.log_dongle.selector.uart_channel": {
+      "label": "uart channel",
+      "label_zh": "UART 通道",
+      "width": "normal"
+    },
+    "instruments.log_dongle.selector.port": {
+      "hidden": true
+    },
+    "instruments.log_dongle.selector.baud": {
+      "label": "baud",
+      "label_zh": "波特率",
+      "width": "normal"
+    },
+    "instruments.log_dongle.selector.data_bits": {
+      "label": "data bits",
+      "label_zh": "数据位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log_dongle.selector.stop_bits": {
+      "label": "stop bits",
+      "label_zh": "停止位",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log_dongle.selector.parity": {
+      "label": "parity",
+      "label_zh": "校验位",
+      "width": "normal",
+      "enum_labels_zh": {
+        "none": "无",
+        "even": "偶校验",
+        "odd": "奇校验"
+      },
+      "advanced": true
+    },
+    "instruments.log_dongle.selector.flow_control": {
+      "label": "flow control",
+      "label_zh": "流控",
+      "width": "normal",
+      "advanced": true
+    },
+    "instruments.log_dongle.required": {
+      "label": "required",
+      "label_zh": "必需",
+      "width": "normal"
+    },
+    "instruments.log_com": {
+      "label": "COM log role",
+      "label_zh": "COM 日志角色"
+    },
+    "instruments.log_dongle": {
+      "label": "Dongle UART log role",
+      "label_zh": "Dongle UART 日志角色"
+    }
+  },
+  "widgets": {
+    "instruments.log.selector.port": {
+      "type": "serial_port_selector"
+    },
+    "instruments.programmer.selector.serial": {
+      "type": "instrument_selector",
+      "kind": "debug_probe",
+      "value_field": "serial"
+    },
+    "instruments.scope.selector.serial": {
+      "type": "instrument_selector",
+      "kind": "oscilloscope",
+      "value_field": "serial"
+    },
+    "instruments.power.selector.serial": {
+      "type": "instrument_selector",
+      "kind": "dc_source",
+      "value_field": "serial"
+    },
+    "instruments.log_com.selector.port": {
+      "type": "serial_port_selector"
+    },
+    "instruments.log_dongle.selector.dongle_serial": {
+      "type": "instrument_selector",
+      "kind": "wiparse_dongle_uart",
+      "value_field": "dongle_serial"
+    }
+  },
+  "conditional_fields": [
+    {
+      "path": "instruments.log.kind",
+      "value": "serial_port",
+      "show": [
+        "instruments.log.selector.port"
+      ]
+    },
+    {
+      "path": "instruments.log.kind",
+      "value": "wiparse_dongle_uart",
+      "show": [
+        "instruments.log.selector.dongle_serial",
+        "instruments.log.selector.uart_channel"
+      ]
+    },
+    {
+      "path": "instruments.log.kind",
+      "value": "serial_port",
+      "hide": [
+        "instruments.log.selector.dongle_serial",
+        "instruments.log.selector.uart_channel"
+      ]
+    },
+    {
+      "path": "instruments.log.kind",
+      "value": "wiparse_dongle_uart",
+      "hide": [
+        "instruments.log.selector.port"
+      ]
+    }
+  ],
+  "help_zh": "当前测试工程的共享设置，按project/test/plugin隔离；保存后才可预检。实际DUT身份在本轮参数填写，不由共享默认值覆盖。"
+}

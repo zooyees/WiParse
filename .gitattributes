@@ -1,0 +1,12 @@
+# Preserve bytes of verified build inputs and protocol fixtures. These sources
+# have SHA-256 provenance; checkout must not silently change their line endings.
+# Unsetting text disables EOL conversion, not textual diff/review.
+Cargo.toml -text whitespace=cr-at-eol
+Cargo.lock -text whitespace=cr-at-eol
+crates/** -text whitespace=cr-at-eol
+test-tools/** -text whitespace=cr-at-eol
+recipes/** -text whitespace=cr-at-eol
+mcp/wiparse/package.json -text whitespace=cr-at-eol
+mcp/wiparse/package-lock.json -text whitespace=cr-at-eol
+mcp/wiparse/dist/** -text whitespace=cr-at-eol
+docs/verification/** -text whitespace=cr-at-eol

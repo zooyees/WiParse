@@ -1,5 +1,7 @@
 //! Unified VISA instrument workbench.
 
+mod workbench;
+
 use crate::plot::paint_envelope_columns;
 use crate::test_tool::LiveDevice;
 use crate::theme::{self, Tokens};
@@ -12,14 +14,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use wiparse_core::config::AppConfig;
-use wiparse_core::i18n::Lang;
 use wiparse_core::bridge::Ft4222Session;
+use wiparse_core::config::AppConfig;
 use wiparse_core::dongle::{self, DongleSession};
+use wiparse_core::i18n::Lang;
 use wiparse_core::instrument::{
-    discover_resources_with_library, export_csv, humanize_scope_reading_text, parse_control_command,
-    AcquisitionBuffer, Capabilities, ControlCommand, Identity, InstrumentDevice, InstrumentKind,
-    MeasureFunction, Reading, ResourceInfo, Sample, ScopeMeasType, WaveformTrace,
+    discover_resources_with_library, export_csv, humanize_scope_reading_text,
+    parse_control_command, AcquisitionBuffer, Capabilities, ControlCommand, Identity,
+    InstrumentDevice, InstrumentKind, MeasureFunction, Reading, ResourceInfo, Sample,
+    ScopeMeasType, WaveformTrace,
 };
 use wiparse_core::probe::ProbeSession;
 use wiparse_core::usb::{is_usb_session_address, parse_usb_resource, UsbIface};
@@ -181,35 +184,18 @@ struct CachedWavePlot {
 /// Longest edge for on-screen screenshot preview (full PNG kept for Save As).
 const SCOPE_PREVIEW_MAX_EDGE: u32 = 1600;
 /// Gap between the two scope rows (keep small so cards fill the screen).
-const SCOPE_ROW_GAP: f32 = 8.0;
 /// Gap between columns inside a row.
-const SCOPE_COL_GAP: f32 = 8.0;
 /// Uniform action-button size for scope toolbar / channel actions.
 const SCOPE_BTN: egui::Vec2 = egui::vec2(72.0, 28.0);
 const SCOPE_BTN_WIDE: egui::Vec2 = egui::vec2(88.0, 28.0);
-const SCOPE_STEP_BTN: egui::Vec2 = egui::vec2(24.0, 24.0);
 const SCOPE_POS_STEP: f64 = 0.25;
-/// Tektronix-style vertical scale ladder (V/div).
-const SCOPE_SCALE_STEPS: &[f64] = &[
-    1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0,
-];
 /// Max independent DC source channels in the UI (DP832=3, modular up to 4).
 const MAX_SOURCE_CHANNELS: usize = 4;
-
-#[derive(Clone, Copy)]
-enum InstrumentPanelBody {
-    LoadControl,
-    LoadReadings,
-    LoadInfo,
-    DmmSetup,
-    DmmReading,
-    DmmInfo,
-    Scpi,
-}
 
 #[derive(Debug)]
 struct ControlState {
     scope_channel: u8,
+    scope_setup_page: u8,
     /// CH1..=CH4 display enable (Tektronix SELect:CHx).
     scope_channel_on: [bool; 4],
     /// Per-channel vertical scale (V/div).
@@ -225,6 +211,7 @@ struct ControlState {
     trigger_level: f64,
     trigger_slope: String,
     /// Per-channel voltage / current setpoints and output state.
+    source_focus: u8,
     source_voltages: [f64; MAX_SOURCE_CHANNELS],
     source_currents: [f64; MAX_SOURCE_CHANNELS],
     source_ovps: [f64; MAX_SOURCE_CHANNELS],
@@ -238,6 +225,7 @@ struct ControlState {
     dmm_range: f64,
     dmm_nplc: f64,
     console: String,
+    probe_page: u8,
     probe_chip: String,
     probe_flash_path: String,
     probe_flash_verify: bool,
@@ -279,6 +267,7 @@ impl Default for ControlState {
     fn default() -> Self {
         Self {
             scope_channel: 1,
+            scope_setup_page: 0,
             scope_channel_on: [true, false, false, false],
             scope_scales: [1.0, 1.0, 1.0, 1.0],
             scope_positions: [0.0, 0.0, 0.0, 0.0],
@@ -288,6 +277,7 @@ impl Default for ControlState {
             trigger_source: "CH1".into(),
             trigger_level: 0.0,
             trigger_slope: "RISE".into(),
+            source_focus: 1,
             source_voltages: [5.0; MAX_SOURCE_CHANNELS],
             source_currents: [1.0; MAX_SOURCE_CHANNELS],
             source_ovps: [6.0; MAX_SOURCE_CHANNELS],
@@ -301,6 +291,7 @@ impl Default for ControlState {
             dmm_range: 10.0,
             dmm_nplc: 1.0,
             console: "*IDN?".into(),
+            probe_page: 0,
             probe_chip: String::new(),
             probe_flash_path: String::new(),
             probe_flash_verify: true,
@@ -351,6 +342,7 @@ struct DeviceUi {
     acquiring: bool,
     paused: bool,
     last_activity: String,
+    last_error: Option<String>,
 }
 
 pub struct InstrumentControlPanel {
@@ -496,7 +488,7 @@ impl InstrumentControlPanel {
     }
 
     fn show_overview(&self) -> bool {
-        self.debug_mode && self.overview_open
+        self.overview_open
     }
 
     fn close_overview(&mut self) {
@@ -684,7 +676,7 @@ impl InstrumentControlPanel {
                 .as_ref(),
             &pending.effective_ext,
         );
-                if let Some(path) = dialog.save_file() {
+        if let Some(path) = dialog.save_file() {
             match save_pending_waveform_source(&path, &pending) {
                 Ok(saved) => {
                     self.status = if saved.len() == 1 {
@@ -894,14 +886,10 @@ impl InstrumentControlPanel {
             || params
                 .get("kind")
                 .and_then(|v| v.as_str())
-                .is_some_and(|k| k.eq_ignore_ascii_case("overview") || k.eq_ignore_ascii_case("mesh"));
+                .is_some_and(|k| {
+                    k.eq_ignore_ascii_case("overview") || k.eq_ignore_ascii_case("mesh")
+                });
         if overview {
-            if !self.debug_mode {
-                return err(
-                    "ui.instrument.select",
-                    "overview is debug-mode only",
-                );
-            }
             self.select_overview();
             return ok(
                 "ui.instrument.select",
@@ -915,10 +903,7 @@ impl InstrumentControlPanel {
             if let Ok(kind) = serde_json::from_value::<InstrumentKind>(kind_val.clone()) {
                 self.select_kind(kind);
             } else if let Some(s) = kind_val.as_str() {
-                return err(
-                    "ui.instrument.select",
-                    &format!("unknown kind '{s}'"),
-                );
+                return err("ui.instrument.select", &format!("unknown kind '{s}'"));
             }
         }
         let id = params
@@ -1105,10 +1090,7 @@ impl InstrumentControlPanel {
         }
     }
 
-    pub fn api_connect_all(
-        &mut self,
-        lang: Lang,
-    ) -> crate::backend::InvokeReply {
+    pub fn api_connect_all(&mut self, lang: Lang) -> crate::backend::InvokeReply {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let queued = self.queue_connect_all(lang);
         if queued.is_empty() {
@@ -1203,7 +1185,11 @@ impl InstrumentControlPanel {
                 .get("wait")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-        let job_id = if wait { Some(self.alloc_job_id()) } else { None };
+        let job_id = if wait {
+            Some(self.alloc_job_id())
+        } else {
+            None
+        };
         self.begin_busy(id, "Capturing screen");
         match self.tx.send(Job::Capture {
             id,
@@ -1336,6 +1322,7 @@ impl InstrumentControlPanel {
                     acquiring: false,
                     paused: false,
                     last_activity: "LINK UP".into(),
+                    last_error: None,
                 });
                 if self.overview_open {
                     self.selected_id = Some(id);
@@ -1357,19 +1344,23 @@ impl InstrumentControlPanel {
                 self.screenshots.remove(&id);
                 self.screenshot_png.remove(&id);
                 self.rtt_pending.remove(&id);
-                self.selected_id = self
-                    .selected_id
-                    .filter(|selected| *selected != id)
-                    .or_else(|| {
-                        self.devices
-                            .iter()
-                            .find(|device| device.kind == self.selected_kind)
-                            .map(|device| device.id)
-                    });
+                self.selected_id =
+                    self.selected_id
+                        .filter(|selected| *selected != id)
+                        .or_else(|| {
+                            self.devices
+                                .iter()
+                                .find(|device| device.kind == self.selected_kind)
+                                .map(|device| device.id)
+                        });
                 self.status = "Disconnected".into();
                 self.log(format!("DISCONNECT #{id}"));
             }
-            Event::CommandDone { id, job_id, response } => {
+            Event::CommandDone {
+                id,
+                job_id,
+                response,
+            } => {
                 self.rtt_pending.remove(&id);
                 if let Some(response) = response.clone() {
                     if let Some(device) = self.devices.iter_mut().find(|device| device.id == id) {
@@ -1441,28 +1432,21 @@ impl InstrumentControlPanel {
                 ctx.copy_image(color.clone());
                 self.screenshots.insert(
                     id,
-                    ctx.load_texture(
-                        format!("instrument-shot-{id}"),
-                        color,
-                        Default::default(),
-                    ),
+                    ctx.load_texture(format!("instrument-shot-{id}"), color, Default::default()),
                 );
                 self.screenshot_png.insert(id, png.clone());
                 if let Some(device) = self.devices.iter_mut().find(|device| device.id == id) {
                     note_activity(&mut device.last_activity, "SCREEN CAPTURE");
                 }
-                self.status =
-                    "截图已显示并复制到剪贴板 / Screenshot copied to clipboard".into();
+                self.status = "截图已显示并复制到剪贴板 / Screenshot copied to clipboard".into();
                 if let Some(path) = save_path {
                     if let Some(parent) = path.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
                     match std::fs::write(&path, &png) {
                         Ok(()) => {
-                            self.status = format!(
-                                "截图已保存 / Screenshot saved: {}",
-                                path.display()
-                            );
+                            self.status =
+                                format!("截图已保存 / Screenshot saved: {}", path.display());
                             self.complete_job(
                                 job_id,
                                 true,
@@ -1504,8 +1488,7 @@ impl InstrumentControlPanel {
             Event::Waveform { id, trace } => {
                 self.clear_busy();
                 self.status = format!("{}: {} points", trace.channel, trace.x.len());
-                self.wave_plots
-                    .insert(id, build_cached_wave_plot(&trace));
+                self.wave_plots.insert(id, build_cached_wave_plot(&trace));
                 self.waveforms.insert(id, trace);
             }
             Event::WaveformSource {
@@ -1565,10 +1548,7 @@ impl InstrumentControlPanel {
                     );
                     // Preview trace moves into waveforms; pending keeps rest for multi-ch Save As.
                     let preview = traces.remove(0);
-                    self.wave_plots.insert(
-                        id,
-                        build_cached_wave_plot(&preview),
-                    );
+                    self.wave_plots.insert(id, build_cached_wave_plot(&preview));
                     self.waveforms.insert(id, preview);
                     self.log(format!(
                         "WaveformSource OK: {ch_summary}, {} points, {} bytes → {}",
@@ -1628,12 +1608,19 @@ impl InstrumentControlPanel {
                     self.busy_started = Some(Instant::now());
                 }
             }
-            Event::Error { id, job_id, message } => {
+            Event::Error {
+                id,
+                job_id,
+                message,
+            } => {
                 self.clear_busy();
                 if id.is_none() {
                     self.scanning = false;
                 }
                 if let Some(id) = id {
+                    if let Some(device) = self.devices.iter_mut().find(|device| device.id == id) {
+                        device.last_error = Some(message.clone());
+                    }
                     self.measurement_pending.remove(&id);
                     self.rtt_pending.remove(&id);
                     if self
@@ -1658,7 +1645,11 @@ impl InstrumentControlPanel {
                     serde_json::json!({ "error": message }),
                 );
                 self.status = message.clone();
-                self.log(format!("ERROR {message}"));
+                self.log(if let Some(id) = id {
+                    format!("#{id} ERROR {message}")
+                } else {
+                    format!("ERROR {message}")
+                });
             }
         }
     }
@@ -1676,19 +1667,39 @@ impl InstrumentControlPanel {
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
         // `pump` is called once from the app update loop while this tab is active.
         let (full, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
-        if !full.is_positive() { return; }
+        if !full.is_positive() {
+            return;
+        }
         let gap = 8.0;
-        let width = theme::resizable_sidebar_width(ui, "instrument_control", full,
-            290.0, 240.0, 280.0, gap, tokens);
+        let width = theme::resizable_sidebar_width(
+            ui,
+            "instrument_control",
+            full,
+            236.0,
+            200.0,
+            320.0,
+            gap,
+            tokens,
+        );
         let side = egui::Rect::from_min_size(full.min, egui::vec2(width, full.height()));
         let main = egui::Rect::from_min_max(
-            egui::pos2((side.right() + gap).min(full.right()), full.top()), full.max);
-        theme::scope_in_allocated_rect(ui, egui::UiBuilder::new().max_rect(side)
-            .layout(egui::Layout::top_down(egui::Align::Min)),
-            |ui| self.device_rack(ui, lang, tokens));
-        theme::scope_in_allocated_rect(ui, egui::UiBuilder::new().max_rect(main)
-            .layout(egui::Layout::top_down(egui::Align::Min)),
-            |ui| self.workspace(ui, lang, tokens));
+            egui::pos2((side.right() + gap).min(full.right()), full.top()),
+            full.max,
+        );
+        theme::scope_in_allocated_rect(
+            ui,
+            egui::UiBuilder::new()
+                .max_rect(side)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+            |ui| self.device_rack(ui, lang, tokens),
+        );
+        theme::scope_in_allocated_rect(
+            ui,
+            egui::UiBuilder::new()
+                .max_rect(main)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+            |ui| self.workspace(ui, lang, tokens),
+        );
     }
 
     fn select_kind(&mut self, kind: InstrumentKind) {
@@ -1719,9 +1730,6 @@ impl InstrumentControlPanel {
     }
 
     fn select_overview(&mut self) {
-        if !self.debug_mode {
-            return;
-        }
         self.overview_open = true;
         self.selected_id = None;
     }
@@ -1769,7 +1777,11 @@ impl InstrumentControlPanel {
             }
         }
 
-        let identified = self.resources.iter().filter(|item| item.kind.is_some()).count();
+        let identified = self
+            .resources
+            .iter()
+            .filter(|item| item.kind.is_some())
+            .count();
         let failed = self
             .resources
             .iter()
@@ -1869,12 +1881,7 @@ impl InstrumentControlPanel {
                 !r.address.trim().is_empty()
                     && !self.devices.iter().any(|d| d.resource == r.address)
             })
-            .map(|r| {
-                (
-                    r.kind.unwrap_or(InstrumentKind::Generic),
-                    r.address.clone(),
-                )
-            })
+            .map(|r| (r.kind.unwrap_or(InstrumentKind::Generic), r.address.clone()))
             .collect();
         let mut queued = Vec::new();
         for (kind, address) in pending {
@@ -1998,9 +2005,7 @@ impl InstrumentControlPanel {
                                     .monospace(),
                             );
                             if !model.is_empty() {
-                                ui.label(
-                                    RichText::new(model).small().color(tokens.text_muted),
-                                );
+                                ui.label(RichText::new(model).small().color(tokens.text_muted));
                             }
                             if let Some(error) = &resource.probe_error {
                                 ui.label(
@@ -2045,175 +2050,24 @@ impl InstrumentControlPanel {
     }
 
     fn device_rack(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
-        ui.set_min_height(ui.available_height());
-        Frame::NONE
-            .fill(tokens.panel_bg)
-            .stroke(Stroke::new(1.0_f32, tokens.divider))
-            .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
-            .inner_margin(Margin::same(10))
-            .show(ui, |ui| {
-                ui.set_min_height(ui.available_height());
-                ui.heading(text(lang, "仪器设备", "Instruments"));
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(
-                            !self.scanning,
-                            egui::Button::new(text(lang, "扫描 USB/LAN", "Scan USB/LAN")),
-                        )
-                        .clicked()
-                    {
-                        self.scanning = true;
-                        self.status = text(
-                            lang,
-                            "正在扫描并识别设备…",
-                            "Scanning and identifying…",
-                        )
-                        .into();
-                        let _ = self.tx.send(Job::Scan {
-                            library: self.visa_library.clone(),
-                            timeout_ms: self.timeout_ms,
-                        });
-                    }
-                    if self.scanning {
-                        ui.spinner().on_hover_text(text(
-                            lang,
-                            "扫描后通过 *IDN? / USB VID-PID 识别并分发到对应卡片",
-                            "After scan, *IDN? / USB VID-PID classifies devices onto matching cards",
-                        ));
-                    }
-                });
-                ui.label(
-                    RichText::new(text(
-                        lang,
-                        "扫描后自动识别 VISA 与 USB 探针/桥并填入对应卡片；也可手动选择地址后连接",
-                        "Scan auto-classifies VISA and USB probes/bridges onto cards; or pick an address manually",
-                    ))
-                    .small()
-                    .color(tokens.text_muted),
-                );
-                if !self.resources.is_empty() {
-                    ui.add_space(4.0);
-                    self.discovered_resources_panel(ui, lang, tokens);
-                }
-                let cards_height = ui.available_height().max(160.0);
-                egui::ScrollArea::vertical()
-                    .id_salt("instrument-type-cards")
-                    .max_height(cards_height)
-                    .auto_shrink([false; 2])
-                    .show(ui, |ui| {
-                        if self.debug_mode {
-                            let overview_action = overview_type_card(
-                                ui,
-                                lang,
-                                tokens,
-                                self.show_overview(),
-                                self.devices.len(),
-                            );
-                            if overview_action {
-                                self.select_overview();
-                            }
-                            ui.add_space(7.0);
-                        }
-                        for kind in self.visible_instrument_kinds() {
-                            let matching_count = self
-                                .devices
-                                .iter()
-                                .filter(|device| device.kind == kind)
-                                .count();
-                            let matching_device = self
-                                .devices
-                                .iter()
-                                .find(|device| device.kind == kind)
-                                .map(|device| (device.id, device.identity.model.clone()));
-                            let input_slot = instrument_kind_slot(kind);
-                            let action = instrument_type_card(
-                                ui,
-                                lang,
-                                tokens,
-                                kind,
-                                !self.show_overview() && self.selected_kind == kind,
-                                matching_device.as_ref().map(|(_, model)| model.as_str()),
-                                matching_count,
-                                matching_device.as_ref().map(|(id, _)| *id),
-                                &mut self.resource_inputs[input_slot],
-                                &self.resources,
-                            );
-                            if action.selected {
-                                self.select_kind(kind);
-                            }
-                            if action.connect {
-                                self.begin_connect(kind, lang);
-                            }
-                            if let Some(id) = action.disconnect {
-                                let _ = self.tx.send(Job::Disconnect(id));
-                            }
-                            ui.add_space(7.0);
-                        }
-                    });
-                ui.separator();
-                ui.label(RichText::new(&self.status).small().color(tokens.text_muted));
-            });
+        self.apple_sidebar(ui, lang, tokens);
     }
 
     fn workspace(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
         if self.show_overview() {
-            self.overview_workspace(ui, lang, tokens);
+            self.fleet_overview(ui, lang, tokens);
             return;
         }
         let Some(index) = self.active_device_index() else {
-            self.empty_instrument_workspace(ui, lang, tokens);
+            self.connection_page(ui, lang, tokens);
             return;
         };
-        let id = self.devices[index].id;
-        self.selected_id = Some(id);
-        let same_kind_count = self
-            .devices
-            .iter()
-            .filter(|device| device.kind == self.selected_kind)
-            .count();
-        ui.horizontal(|ui| {
-            let device = &self.devices[index];
-            ui.heading(format!(
-                "{} — {}",
-                device.kind.label(),
-                device.identity.model
-            ));
-            ui.label(RichText::new(&device.identity.manufacturer).color(tokens.text_muted));
-            if same_kind_count > 1 {
-                let models: Vec<(u64, String)> = self
-                    .devices
-                    .iter()
-                    .filter(|device| device.kind == self.selected_kind)
-                    .map(|device| (device.id, device.identity.model.clone()))
-                    .collect();
-                let selected_model = self.devices[index].identity.model.clone();
-                egui::ComboBox::from_id_salt("same-kind-device")
-                    .selected_text(selected_model)
-                    .show_ui(ui, |ui| {
-                        for (device_id, model) in models {
-                            ui.selectable_value(&mut self.selected_id, Some(device_id), model);
-                        }
-                    });
-            }
-        });
-        ui.separator();
-
-        let kind = self.devices[index].kind;
-        match kind {
-            InstrumentKind::Oscilloscope => self.scope_workspace(ui, lang, tokens, id, index),
-            InstrumentKind::DcSource => self.source_workspace(ui, lang, tokens, id, index),
-            InstrumentKind::ElectronicLoad => self.load_workspace(ui, lang, tokens, id, index),
-            InstrumentKind::Multimeter => self.dmm_workspace(ui, lang, tokens, id, index),
-            InstrumentKind::DebugProbe => self.probe_workspace(ui, lang, tokens, id, index),
-            InstrumentKind::UsbBridge => self.bridge_workspace(ui, lang, tokens, id, index),
-            InstrumentKind::WiparseDongle => self.dongle_workspace(ui, lang, tokens, id, index),
-            InstrumentKind::Generic => {
-                self.generic_workspace(ui, lang, tokens, id, index, kind);
-            }
-        }
+        self.selected_id = Some(self.devices[index].id);
+        self.detail_header(ui, lang, tokens, index);
+        self.industrial_workspace(ui, lang, tokens, index);
     }
 
+    #[allow(dead_code)] // Keep the former front-panel renderer available for older audit integrations.
     fn overview_workspace(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
         ui.ctx().request_repaint_after(Duration::from_millis(80));
         let t = ui.input(|i| i.time) as f32;
@@ -2440,117 +2294,12 @@ impl InstrumentControlPanel {
     fn dispatch_scope_commands(&mut self, id: u64, commands: Vec<ControlCommand>) {
         for command in commands {
             self.log_command(id, &command);
-            let _ = self.tx.send(Job::Command { id, command, job_id: None });
+            let _ = self.tx.send(Job::Command {
+                id,
+                command,
+                job_id: None,
+            });
         }
-    }
-
-    fn generic_workspace(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-        kind: InstrumentKind,
-    ) {
-        egui::ScrollArea::vertical()
-            .id_salt(format!("instrument-workspace-{id}"))
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                responsive_three_cards(ui, |ui, column| match column {
-                    0 => {
-                        card(ui, tokens, text(lang, "参数设置", "Parameters"), |ui| {
-                            self.instrument_parameters_ui(ui, lang, tokens, id, index);
-                            self.settings_ui(ui, lang, tokens, id, index);
-                        });
-                    }
-                    1 => {
-                        card(ui, tokens, text(lang, "控制", "Control"), |ui| {
-                            let (commands, measure_once) =
-                                control_ui(ui, lang, tokens, &mut self.devices[index]);
-                            for command in commands {
-                                self.log_command(id, &command);
-                                let _ = self.tx.send(Job::Command {
-                                    id,
-                                    command,
-                                    job_id: None,
-                                });
-                            }
-                            if measure_once {
-                                self.measurement_pending.insert(id);
-                                let _ = self.tx.send(Job::Measure(id));
-                            }
-                        });
-                    }
-                    2 => {
-                        card(
-                            ui,
-                            tokens,
-                            text(lang, "数据采集", "Data Acquisition"),
-                            |ui| {
-                                ui.label(
-                                    RichText::new(instrument_acquisition_hint(lang, kind))
-                                        .small()
-                                        .color(tokens.text_muted),
-                                );
-                                ui.add_space(6.0);
-                                self.acquisition_ui(ui, lang, tokens, id, index);
-                            },
-                        );
-                    }
-                    _ => unreachable!(),
-                });
-                card(ui, tokens, "SCPI", |ui| {
-                    self.console_ui(ui, lang, tokens, id, index);
-                });
-            });
-    }
-
-    fn scope_workspace(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-    ) {
-        let defer_heavy = self.scope_heavy_defer_frames > 0;
-        if defer_heavy {
-            self.scope_heavy_defer_frames = self.scope_heavy_defer_frames.saturating_sub(1);
-            ui.ctx().request_repaint();
-        }
-
-        // Fill the visible workspace exactly: 2×2 grid, no outer scroll overflow.
-        // Fixed column widths (shared by both rows) — avoid egui::columns content sizing drift.
-        let avail = ui.available_size();
-        let row1_h = ((avail.y - SCOPE_ROW_GAP) * 0.5).floor().max(1.0);
-        let row2_h = (avail.y - SCOPE_ROW_GAP - row1_h).max(1.0);
-        let (col_l, col_r) = instrument_row_column_widths(avail.x);
-
-        instrument_grid_row(ui, avail.x, row1_h, col_l, col_r, |ui, left, right| {
-            instrument_grid_cell(ui, left, tokens, text(lang, "① 示波器控制", "① Scope Control"), |ui| {
-                egui::ScrollArea::both()
-                    .id_salt(("scope-ctrl-scroll", id))
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        let commands =
-                            scope_unified_controls(ui, lang, tokens, &mut self.devices[index]);
-                        self.dispatch_scope_commands(id, commands);
-                    });
-            });
-            instrument_grid_cell(ui, right, tokens, text(lang, "② 屏幕截图", "② Screen Capture"), |ui| {
-                self.scope_screenshot_ui(ui, lang, tokens, id, index, defer_heavy);
-            });
-        });
-        ui.add_space(SCOPE_ROW_GAP);
-        instrument_grid_row(ui, avail.x, row2_h, col_l, col_r, |ui, left, right| {
-            instrument_grid_cell(ui, left, tokens, text(lang, "③ 波形数据", "③ Waveform Samples"), |ui| {
-                self.scope_waveform_data_ui(ui, lang, tokens, id, index, defer_heavy);
-            });
-            instrument_grid_cell(ui, right, tokens, text(lang, "④ SCPI 控制台", "④ SCPI Console"), |ui| {
-                self.console_ui_compact(ui, lang, tokens, id, index);
-            });
-        });
     }
 
     fn scope_screenshot_ui(
@@ -2562,7 +2311,7 @@ impl InstrumentControlPanel {
         index: usize,
         defer_heavy: bool,
     ) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             let can_shot = self.devices[index].capabilities.screenshot;
             let has_png = self.screenshot_png.contains_key(&id);
@@ -2570,7 +2319,7 @@ impl InstrumentControlPanel {
             if ui
                 .add_enabled(
                     can_shot && !busy,
-                    egui::Button::new(text(lang, "屏幕截图", "Screenshot"))
+                    egui::Button::new(RichText::new(text(lang, "屏幕截图", "Screenshot")).color(tokens.accent_text))
                         .fill(tokens.accent)
                         .min_size(SCOPE_BTN_WIDE),
                 )
@@ -2688,7 +2437,7 @@ impl InstrumentControlPanel {
         index: usize,
         defer_heavy: bool,
     ) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.label(RichText::new(text(lang, "通道", "CH")).strong());
             let max_ch = self.devices[index].capabilities.channels.max(1);
@@ -2748,7 +2497,11 @@ impl InstrumentControlPanel {
                     let dialog = scope_waveform_save_dialog(
                         vendor,
                         &self.save_dir,
-                        default.file_name().unwrap_or_default().to_string_lossy().as_ref(),
+                        default
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .as_ref(),
                         default_ext,
                     );
                     if let Some(path) = dialog.save_file() {
@@ -2817,7 +2570,14 @@ impl InstrumentControlPanel {
         if defer_heavy {
             media_slot_empty(ui, preview_h, tokens);
         } else if let Some(cached) = self.wave_plots.get(&id) {
-            paint_waveform(ui, &cached.columns, cached.bounds, preview_h, tokens.accent, tokens);
+            paint_waveform(
+                ui,
+                &cached.columns,
+                cached.bounds,
+                preview_h,
+                tokens.accent,
+                tokens,
+            );
         } else {
             placeholder_panel(
                 ui,
@@ -2849,16 +2609,16 @@ impl InstrumentControlPanel {
         ui.horizontal(|ui| {
             ui.set_max_width(panel_w);
             ui.spacing_mut().item_spacing.x = 8.0;
-            let send_w = SCOPE_BTN.x;
+            let send_w = 96.0;
             let gap = ui.spacing().item_spacing.x;
             let edit_w = (ui.available_width() - send_w - gap).max(40.0);
-            let response = ui.add(
+            let response = ui.add_sized([edit_w, 32.0],
                 egui::TextEdit::singleline(command)
-                    .desired_width(edit_w)
+                    .desired_width(edit_w).min_size(egui::vec2(0.0, 32.0))
                     .hint_text("*IDN?"),
             );
             let send = ui
-                .add_sized(SCOPE_BTN, egui::Button::new(text(lang, "发送", "Send")))
+                .add_sized([send_w, 32.0], egui::Button::new(text(lang, "发送", "Send")))
                 .clicked()
                 || (response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)));
             if send && !command.trim().is_empty() {
@@ -2872,16 +2632,20 @@ impl InstrumentControlPanel {
         });
         if let Some(scpi) = to_send {
             self.log_command(id, &scpi);
-            let _ = self.tx.send(Job::Command { id, command: scpi, job_id: None });
+            let _ = self.tx.send(Job::Command {
+                id,
+                command: scpi,
+                job_id: None,
+            });
         }
         ui.add_space(6.0);
 
         // Exact leftover viewport so ScrollArea cannot grow the card past its cell.
         let log_h = ui.available_height().max(1.0);
         let log_w = ui.available_width().min(panel_w).max(1.0);
-        let (log_rect, _) =
-            ui.allocate_exact_size(egui::vec2(log_w, log_h), egui::Sense::hover());
-        crate::theme::scope_in_allocated_rect(ui,
+        let (log_rect, _) = ui.allocate_exact_size(egui::vec2(log_w, log_h), egui::Sense::hover());
+        crate::theme::scope_in_allocated_rect(
+            ui,
             egui::UiBuilder::new()
                 .max_rect(log_rect)
                 .layout(egui::Layout::top_down(egui::Align::Min)),
@@ -2896,7 +2660,15 @@ impl InstrumentControlPanel {
                     .stick_to_bottom(true)
                     .show(ui, |ui| {
                         ui.set_max_width(log_rect.width());
-                        if self.logs.is_empty() {
+                        let marker = format!(" #{id} ");
+                        let lines: Vec<_> = self
+                            .logs
+                            .iter()
+                            .rev()
+                            .filter(|line| line.contains(&marker))
+                            .take(80)
+                            .collect();
+                        if lines.is_empty() {
                             ui.label(
                                 RichText::new(text(
                                     lang,
@@ -2907,7 +2679,7 @@ impl InstrumentControlPanel {
                                 .color(tokens.text_muted),
                             );
                         } else {
-                            for line in self.logs.iter().rev().take(80).rev() {
+                            for line in lines.into_iter().rev() {
                                 ui.add(
                                     egui::Label::new(
                                         RichText::new(line)
@@ -2924,654 +2696,10 @@ impl InstrumentControlPanel {
         );
     }
 
-    fn source_workspace(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-    ) {
-        let avail = ui.available_size();
-        let row1_h = ((avail.y - SCOPE_ROW_GAP) * 0.5).floor().max(1.0);
-        let row2_h = (avail.y - SCOPE_ROW_GAP - row1_h).max(1.0);
-        let (col_l, col_r) = instrument_row_column_widths(avail.x);
-
-        instrument_grid_row(ui, avail.x, row1_h, col_l, col_r, |ui, left, right| {
-            instrument_grid_cell(ui, left, tokens, text(lang, "① 通道输出", "① Channel Outputs"), |ui| {
-                egui::ScrollArea::both()
-                    .id_salt(("source-ch-scroll", id))
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        let commands =
-                            source_channel_controls(ui, lang, tokens, &mut self.devices[index]);
-                        self.dispatch_scope_commands(id, commands);
-                    });
-            });
-            instrument_grid_cell(ui, right, tokens, text(lang, "② 实测读数", "② Measurements"), |ui| {
-                self.source_readings_ui(ui, lang, tokens, id, index);
-            });
-        });
-        ui.add_space(SCOPE_ROW_GAP);
-        instrument_grid_row(ui, avail.x, row2_h, col_l, col_r, |ui, left, right| {
-            instrument_grid_cell(ui, left, tokens, text(lang, "③ 保护设定", "③ Protection"), |ui| {
-                egui::ScrollArea::both()
-                    .id_salt(("source-prot-scroll", id))
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        let commands =
-                            source_protection_controls(ui, lang, tokens, &mut self.devices[index]);
-                        self.dispatch_scope_commands(id, commands);
-                    });
-            });
-            instrument_grid_cell(ui, right, tokens, text(lang, "④ SCPI 控制台", "④ SCPI Console"), |ui| {
-                self.console_ui_compact(ui, lang, tokens, id, index);
-            });
-        });
-    }
-
-    fn load_workspace(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-    ) {
-        self.instrument_two_by_two(
-            ui,
-            [
-                (
-                    text(lang, "① 负载控制", "① Load Control"),
-                    "load-ctrl-scroll",
-                    InstrumentPanelBody::LoadControl,
-                ),
-                (
-                    text(lang, "② 实测读数", "② Measurements"),
-                    "load-meas",
-                    InstrumentPanelBody::LoadReadings,
-                ),
-                (
-                    text(lang, "③ 设备信息", "③ Device Info"),
-                    "load-info-scroll",
-                    InstrumentPanelBody::LoadInfo,
-                ),
-                (
-                    text(lang, "④ SCPI 控制台", "④ SCPI Console"),
-                    "load-scpi",
-                    InstrumentPanelBody::Scpi,
-                ),
-            ],
-            lang,
-            tokens,
-            id,
-            index,
-        );
-    }
-
-    fn dmm_workspace(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-    ) {
-        self.instrument_two_by_two(
-            ui,
-            [
-                (
-                    text(lang, "① 测量配置", "① Measure Setup"),
-                    "dmm-setup-scroll",
-                    InstrumentPanelBody::DmmSetup,
-                ),
-                (
-                    text(lang, "② 读数", "② Reading"),
-                    "dmm-reading",
-                    InstrumentPanelBody::DmmReading,
-                ),
-                (
-                    text(lang, "③ 设备信息", "③ Device Info"),
-                    "dmm-info-scroll",
-                    InstrumentPanelBody::DmmInfo,
-                ),
-                (
-                    text(lang, "④ SCPI 控制台", "④ SCPI Console"),
-                    "dmm-scpi",
-                    InstrumentPanelBody::Scpi,
-                ),
-            ],
-            lang,
-            tokens,
-            id,
-            index,
-        );
-    }
-
-    fn probe_workspace(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-    ) {
-        egui::ScrollArea::vertical()
-            .id_salt(format!("probe-workspace-{id}"))
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                responsive_three_cards(ui, |ui, column| {
-                match column {
-                    0 => { card(
-                        ui,
-                        tokens,
-                        text(lang, "参数设置", "Parameters"),
-                        |ui| {
-                            self.probe_parameters_ui(ui, lang, tokens, index, true);
-                        },
-                    ); },
-                    1 => { card(
-                        ui,
-                        tokens,
-                        text(lang, "控制", "Control"),
-                        |ui| {
-                            let commands = probe_controls(ui, lang, tokens, &mut self.devices[index]);
-                            self.dispatch_scope_commands(id, commands);
-                        },
-                    ); },
-                    2 => { card(
-                        ui,
-                        tokens,
-                        text(lang, "日志 / RTT", "Log / RTT"),
-                        |ui| {
-                            ui.label(
-                                RichText::new(text(
-                                    lang,
-                                    "烧录与 RTT 会占用探针。ST-Link 若被 STM32Cube 独占，请关闭 Cube 或改用 WinUSB (Zadig)。SWO/ITM 未接上时会在此标明。",
-                                    "Flash and RTT occupy the probe. If ST-Link is held by STM32Cube, close Cube or switch to WinUSB (Zadig). SWO/ITM is secondary and marked when unavailable.",
-                                ))
-                                .small()
-                                .color(tokens.text_muted),
-                            );
-                            ui.add_space(6.0);
-                            self.device_io_log_ui(ui, tokens, index);
-                        },
-                    ); },
-                    _ => unreachable!(),
-                }
-            });
-            });
-    }
-
-    fn bridge_workspace(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-    ) {
-        egui::ScrollArea::vertical()
-            .id_salt(format!("bridge-workspace-{id}"))
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                responsive_three_cards(ui, |ui, column| {
-                match column {
-                    0 => { card(
-                        ui,
-                        tokens,
-                        text(lang, "参数设置", "Parameters"),
-                        |ui| {
-                            self.bridge_parameters_ui(ui, lang, tokens, index);
-                        },
-                    ); },
-                    1 => { card(
-                        ui,
-                        tokens,
-                        text(lang, "控制", "Control"),
-                        |ui| {
-                            let commands =
-                                bridge_controls(ui, lang, tokens, &mut self.devices[index]);
-                            self.dispatch_scope_commands(id, commands);
-                        },
-                    ); },
-                    2 => { card(
-                        ui,
-                        tokens,
-                        text(lang, "日志", "Log"),
-                        |ui| {
-                            ui.label(
-                                RichText::new(text(
-                                    lang,
-                                    "识别不需要 DLL。SPI/I2C/GPIO 会从 WiParse 目录、vendor/ftdi 或 FTDI 安装路径加载 LibFT4222.dll。J-Link/ST-Link/DAP 无需厂商 DLL。",
-                                    "Scan needs no DLL. SPI/I2C/GPIO load LibFT4222 from the WiParse folder, vendor/ftdi, or an FTDI install. J-Link/ST-Link/DAP need no vendor DLL.",
-                                ))
-                                .small()
-                                .color(tokens.text_muted),
-                            );
-                            ui.add_space(6.0);
-                            self.device_io_log_ui(ui, tokens, index);
-                        },
-                    ); },
-                    _ => unreachable!(),
-                }
-            });
-            });
-    }
-
-    fn dongle_workspace(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-    ) {
-        egui::ScrollArea::vertical()
-            .id_salt(format!("dongle-workspace-{id}"))
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(text(lang, "通道", "Channel")).strong());
-                    let tab = &mut self.devices[index].controls.dongle_tab;
-                    ui.selectable_value(tab, 0, "DAP");
-                    ui.selectable_value(tab, 1, "UART");
-                    ui.selectable_value(tab, 2, "I2C");
-                });
-                ui.add_space(8.0);
-                responsive_three_cards(ui, |ui, column| {
-                match column {
-                    0 => { card(
-                        ui,
-                        tokens,
-                        text(lang, "参数设置", "Parameters"),
-                        |ui| {
-                            self.dongle_parameters_ui(ui, lang, tokens, index);
-                        },
-                    ); },
-                    1 => { card(
-                        ui,
-                        tokens,
-                        text(lang, "控制", "Control"),
-                        |ui| {
-                            let commands =
-                                dongle_controls(ui, lang, tokens, &mut self.devices[index]);
-                            self.dispatch_scope_commands(id, commands);
-                        },
-                    ); },
-                    2 => { card(
-                        ui,
-                        tokens,
-                        text(lang, "日志 / 捕获", "Log / Capture"),
-                        |ui| {
-                            ui.label(
-                                RichText::new(text(
-                                    lang,
-                                    "DAP 走 USB CMSIS-DAP（probe-rs，先占用探针；填芯片名再 Attach）。UART / I2C 优先 WinUSB（MI_01 / MI_03），失败再走 TCP :1234 / :1236。",
-                                    "DAP uses USB CMSIS-DAP (probe-rs claims the probe; enter a chip name then Attach). UART / I2C prefer WinUSB (MI_01 / MI_03), then TCP :1234 / :1236.",
-                                ))
-                                .small()
-                                .color(tokens.text_muted),
-                            );
-                            ui.add_space(6.0);
-                            self.device_io_log_ui(ui, tokens, index);
-                        },
-                    ); },
-                    _ => unreachable!(),
-                }
-            });
-            });
-    }
-
-    fn dongle_parameters_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        index: usize,
-    ) {
-        let device = &self.devices[index];
-        egui::Grid::new(("dongle-id-grid", device.id))
-            .num_columns(2)
-            .spacing([10.0, 4.0])
-            .show(ui, |ui| {
-                setting_row(ui, text(lang, "资源", "Resource"), &device.resource);
-                setting_row(ui, text(lang, "型号", "Model"), &device.identity.model);
-                setting_row(ui, text(lang, "序列号", "Serial"), &device.identity.serial);
-            });
-        ui.add_space(8.0);
-        ui.label(RichText::new(text(lang, "TCP 主机", "TCP host")).strong());
-        ui.add(
-            egui::TextEdit::singleline(&mut self.devices[index].controls.dongle_host)
-                .hint_text("192.168.137.123 / dap.local")
-                .desired_width(ui.available_width()),
-        );
-        ui.horizontal(|ui| {
-            ui.label("UART");
-            ui.add(
-                egui::DragValue::new(&mut self.devices[index].controls.dongle_uart_port)
-                    .range(1..=65535),
-            );
-            ui.label("I2C");
-            ui.add(
-                egui::DragValue::new(&mut self.devices[index].controls.dongle_i2c_port)
-                    .range(1..=65535),
-            );
-        });
-        ui.add_space(8.0);
-        match self.devices[index].controls.dongle_tab {
-            1 => {
-                ui.label(RichText::new(text(lang, "UART", "UART")).strong());
-                ui.horizontal(|ui| {
-                    ui.label(text(lang, "波特率", "Baud"));
-                    ui.add(
-                        egui::DragValue::new(&mut self.devices[index].controls.dongle_uart_baud)
-                            .range(dongle::UART_BAUD_MIN..=dongle::UART_BAUD_MAX)
-                            .speed(100.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label(text(lang, "COM（可选）", "COM (optional)"));
-                    ui.add(
-                        egui::TextEdit::singleline(
-                            &mut self.devices[index].controls.dongle_uart_com,
-                        )
-                        .hint_text("COM5")
-                        .desired_width(80.0),
-                    );
-                });
-                ui.checkbox(
-                    &mut self.devices[index].controls.dongle_uart_hex,
-                    text(lang, "十六进制发送", "Send hex"),
-                );
-                let uart_hex = self.devices[index].controls.dongle_uart_hex;
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.devices[index].controls.dongle_uart_tx)
-                        .hint_text(if uart_hex { "AA 55 …" } else { "text" })
-                        .desired_width(ui.available_width()),
-                );
-                ui.checkbox(
-                    &mut self.devices[index].controls.dongle_uart_listen,
-                    text(lang, "持续接收", "Listen"),
-                );
-            }
-            2 => {
-                ui.label(RichText::new(text(lang, "I2C RPC", "I2C RPC")).strong());
-                ui.horizontal(|ui| {
-                    ui.label(text(lang, "7-bit 地址", "7-bit addr"));
-                    ui.add(
-                        egui::TextEdit::singleline(
-                            &mut self.devices[index].controls.dongle_i2c_addr,
-                        )
-                        .desired_width(60.0)
-                        .hint_text("50"),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label(text(lang, "速率", "Speed"));
-                    ui.add(
-                        egui::DragValue::new(&mut self.devices[index].controls.dongle_i2c_hz)
-                            .range(10_000..=1_000_000)
-                            .suffix(" Hz")
-                            .speed(1000.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label(text(lang, "超时", "Timeout"));
-                    ui.add(
-                        egui::DragValue::new(
-                            &mut self.devices[index].controls.dongle_i2c_timeout_ms,
-                        )
-                        .range(1..=1000)
-                        .suffix(" ms"),
-                    );
-                });
-                ui.label(text(lang, "写 hex", "Write hex"));
-                ui.add(
-                    egui::TextEdit::singleline(
-                        &mut self.devices[index].controls.dongle_i2c_write_hex,
-                    )
-                    .desired_width(ui.available_width()),
-                );
-                ui.horizontal(|ui| {
-                    ui.label(text(lang, "读字节", "Read len"));
-                    ui.add(
-                        egui::DragValue::new(&mut self.devices[index].controls.dongle_i2c_read_len)
-                            .range(1..=256)
-                            .suffix(" B"),
-                    );
-                });
-            }
-            _ => {
-                self.probe_parameters_ui(ui, lang, tokens, index, false);
-            }
+    fn device_io_log_ui(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens, index: usize) {
+        if ui.button(text(lang, "清空记录", "Clear log")).clicked() {
+            self.devices[index].controls.io_log.clear();
         }
-    }
-
-    fn probe_parameters_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        index: usize,
-        show_identity: bool,
-    ) {
-        let device = &mut self.devices[index];
-        if show_identity {
-            egui::Grid::new(("probe-id-grid", device.id))
-                .num_columns(2)
-                .spacing([10.0, 4.0])
-                .show(ui, |ui| {
-                    setting_row(ui, text(lang, "资源", "Resource"), &device.resource);
-                    setting_row(
-                        ui,
-                        text(lang, "制造商", "Manufacturer"),
-                        &device.identity.manufacturer,
-                    );
-                    setting_row(ui, text(lang, "型号", "Model"), &device.identity.model);
-                    setting_row(ui, text(lang, "序列号", "Serial"), &device.identity.serial);
-                });
-            ui.add_space(8.0);
-        }
-        ui.label(RichText::new(text(lang, "目标芯片", "Target chip")).strong());
-        ui.add(
-            egui::TextEdit::singleline(&mut device.controls.probe_chip)
-                .hint_text("STM32F103C8 / empty = DP only")
-                .desired_width(ui.available_width()),
-        );
-        ui.label(
-            RichText::new(text(
-                lang,
-                "留空则只连接 DP，不能烧录。",
-                "Leave empty to attach DP only (no flash).",
-            ))
-            .small()
-            .color(tokens.text_muted),
-        );
-        ui.add_space(8.0);
-        ui.label(RichText::new(text(lang, "烧录文件", "Flash file")).strong());
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut device.controls.probe_flash_path)
-                    .desired_width(160.0)
-                    .hint_text("HEX / BIN / ELF"),
-            );
-            if ui.button(text(lang, "浏览", "Browse")).clicked() {
-                if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("Firmware", &["hex", "ihex", "bin", "elf"])
-                    .pick_file()
-                {
-                    device.controls.probe_flash_path = path.display().to_string();
-                }
-            }
-        });
-        ui.checkbox(
-            &mut device.controls.probe_flash_verify,
-            text(lang, "校验", "Verify"),
-        );
-        ui.add_space(8.0);
-        ui.label(RichText::new(text(lang, "内存", "Memory")).strong());
-        ui.horizontal(|ui| {
-            ui.label(text(lang, "地址", "Address"));
-            ui.add(
-                egui::TextEdit::singleline(&mut device.controls.probe_mem_addr)
-                    .desired_width(100.0)
-                    .hint_text("08000000"),
-            );
-            ui.label(text(lang, "长度", "Len"));
-            ui.add(
-                egui::DragValue::new(&mut device.controls.probe_mem_len)
-                    .range(1..=4096)
-                    .suffix(" B"),
-            );
-        });
-        ui.add(
-            egui::TextEdit::singleline(&mut device.controls.probe_mem_write_hex)
-                .hint_text("write hex, e.g. DE AD BE EF")
-                .desired_width(ui.available_width()),
-        );
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.label(text(lang, "RTT 通道", "RTT channel"));
-            ui.add(egui::DragValue::new(&mut device.controls.probe_rtt_channel).range(0..=15));
-        });
-        ui.horizontal(|ui| {
-            ui.label(text(lang, "SWD 速率", "SWD kHz"));
-            ui.add(
-                egui::DragValue::new(&mut device.controls.probe_speed_khz)
-                    .range(10..=50_000)
-                    .suffix(" kHz")
-                    .speed(100.0),
-            );
-        });
-    }
-
-    fn bridge_parameters_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        index: usize,
-    ) {
-        let device = &self.devices[index];
-        egui::Grid::new(("bridge-id-grid", device.id))
-            .num_columns(2)
-            .spacing([10.0, 4.0])
-            .show(ui, |ui| {
-                setting_row(ui, text(lang, "资源", "Resource"), &device.resource);
-                setting_row(ui, text(lang, "型号", "Model"), &device.identity.model);
-                setting_row(ui, text(lang, "序列号", "Serial"), &device.identity.serial);
-            });
-        ui.add_space(8.0);
-        let tab = &mut self.devices[index].controls.bridge_tab;
-        ui.horizontal(|ui| {
-            ui.selectable_value(tab, 0, "SPI");
-            ui.selectable_value(tab, 1, "I2C");
-            ui.selectable_value(tab, 2, "GPIO");
-        });
-        ui.add_space(6.0);
-        match self.devices[index].controls.bridge_tab {
-            1 => {
-                ui.horizontal(|ui| {
-                    ui.label(text(lang, "7-bit 地址", "7-bit addr"));
-                    ui.add(
-                        egui::TextEdit::singleline(
-                            &mut self.devices[index].controls.bridge_i2c_addr,
-                        )
-                        .desired_width(60.0)
-                        .hint_text("50"),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label(text(lang, "I2C 时钟", "I2C clock"));
-                    ui.add(
-                        egui::DragValue::new(&mut self.devices[index].controls.bridge_i2c_hz)
-                            .range(60_000..=3_400_000)
-                            .suffix(" Hz")
-                            .speed(1000.0),
-                    );
-                });
-                ui.label(text(lang, "写 hex", "Write hex"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.devices[index].controls.bridge_write_hex)
-                        .desired_width(ui.available_width()),
-                );
-                ui.horizontal(|ui| {
-                    ui.label(text(lang, "读字节", "Read len"));
-                    ui.add(
-                        egui::DragValue::new(&mut self.devices[index].controls.bridge_read_len)
-                            .range(0..=256),
-                    );
-                });
-            }
-            2 => {
-                ui.horizontal(|ui| {
-                    ui.label(text(lang, "引脚", "Pin"));
-                    ui.add(
-                        egui::DragValue::new(&mut self.devices[index].controls.bridge_gpio_pin)
-                            .range(0..=3),
-                    );
-                });
-                ui.checkbox(
-                    &mut self.devices[index].controls.bridge_gpio_out,
-                    text(lang, "输出", "Output"),
-                );
-                ui.checkbox(
-                    &mut self.devices[index].controls.bridge_gpio_value,
-                    text(lang, "高电平", "High"),
-                );
-            }
-            _ => {
-                ui.horizontal(|ui| {
-                    ui.label("SPI mode");
-                    ui.add(
-                        egui::DragValue::new(&mut self.devices[index].controls.bridge_spi_mode)
-                            .range(0..=3),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label(text(lang, "时钟", "Clock"));
-                    ui.add(
-                        egui::DragValue::new(&mut self.devices[index].controls.bridge_spi_hz)
-                            .range(1_000..=40_000_000)
-                            .suffix(" Hz")
-                            .speed(10_000.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("CS");
-                    ui.add(
-                        egui::DragValue::new(&mut self.devices[index].controls.bridge_spi_cs)
-                            .range(0..=3),
-                    );
-                });
-                ui.label(text(lang, "写 hex", "Write hex"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.devices[index].controls.bridge_write_hex)
-                        .desired_width(ui.available_width()),
-                );
-                ui.horizontal(|ui| {
-                    ui.label(text(lang, "读字节", "Read len"));
-                    ui.add(
-                        egui::DragValue::new(&mut self.devices[index].controls.bridge_read_len)
-                            .range(0..=256),
-                    );
-                });
-            }
-        }
-        ui.add_space(8.0);
-        ui.label(
-            RichText::new(text(
-                lang,
-                "无 DLL 时仍可识别；把 LibFT4222.dll 与 ftd2xx.dll 放到 WiParse.exe 旁或 vendor/ftdi。",
-                "Identify works without DLLs; drop LibFT4222.dll and ftd2xx.dll next to WiParse.exe or in vendor/ftdi.",
-            ))
-            .small()
-            .color(tokens.text_muted),
-        );
-    }
-
-    fn device_io_log_ui(&mut self, ui: &mut egui::Ui, tokens: &Tokens, index: usize) {
         let log = self.devices[index].controls.io_log.clone();
         egui::ScrollArea::vertical()
             .id_salt(("device-io-log", self.devices[index].id))
@@ -3595,546 +2723,6 @@ impl InstrumentControlPanel {
                     );
                 }
             });
-        if ui.button("Clear").clicked() {
-            self.devices[index].controls.io_log.clear();
-        }
-    }
-
-    fn instrument_two_by_two(
-        &mut self,
-        ui: &mut egui::Ui,
-        panels: [(&str, &str, InstrumentPanelBody); 4],
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-    ) {
-        let avail = ui.available_size();
-        let row1_h = ((avail.y - SCOPE_ROW_GAP) * 0.5).floor().max(1.0);
-        let row2_h = (avail.y - SCOPE_ROW_GAP - row1_h).max(1.0);
-        let (col_l, col_r) = instrument_row_column_widths(avail.x);
-
-        for (row_idx, (row_h, pair)) in [
-            (row1_h, [panels[0], panels[1]]),
-            (row2_h, [panels[2], panels[3]]),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            instrument_grid_row(ui, avail.x, row_h, col_l, col_r, |ui, left, right| {
-                for (cell, (title, salt, body)) in [(left, pair[0]), (right, pair[1])] {
-                    instrument_grid_cell(ui, cell, tokens, title, |ui| match body {
-                        InstrumentPanelBody::Scpi => {
-                            self.console_ui_compact(ui, lang, tokens, id, index);
-                        }
-                        InstrumentPanelBody::LoadReadings | InstrumentPanelBody::DmmReading => {
-                            self.render_instrument_panel(ui, lang, tokens, id, index, body);
-                        }
-                        _ => {
-                            egui::ScrollArea::both()
-                                .id_salt((salt, id))
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    self.render_instrument_panel(
-                                        ui, lang, tokens, id, index, body,
-                                    );
-                                });
-                        }
-                    });
-                }
-            });
-            if row_idx == 0 {
-                ui.add_space(SCOPE_ROW_GAP);
-            }
-        }
-    }
-
-    fn render_instrument_panel(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-        body: InstrumentPanelBody,
-    ) {
-        match body {
-            InstrumentPanelBody::LoadControl => {
-                let commands = load_channel_controls(ui, lang, tokens, &mut self.devices[index]);
-                self.dispatch_scope_commands(id, commands);
-            }
-            InstrumentPanelBody::LoadReadings => {
-                self.load_readings_ui(ui, lang, tokens, id, index);
-            }
-            InstrumentPanelBody::LoadInfo => {
-                self.load_info_ui(ui, lang, tokens, id, index);
-            }
-            InstrumentPanelBody::DmmSetup => {
-                let commands = dmm_setup_controls(ui, lang, tokens, &mut self.devices[index]);
-                self.dispatch_scope_commands(id, commands);
-            }
-            InstrumentPanelBody::DmmReading => {
-                self.dmm_reading_ui(ui, lang, tokens, id, index);
-            }
-            InstrumentPanelBody::DmmInfo => {
-                self.dmm_info_ui(ui, lang, tokens, id, index);
-            }
-            InstrumentPanelBody::Scpi => {
-                self.console_ui_compact(ui, lang, tokens, id, index);
-            }
-        }
-    }
-
-    fn load_readings_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-    ) {
-        self.measure_toolbar(ui, lang, tokens, id, index);
-        ui.add_space(8.0);
-        ui.separator();
-        ui.add_space(6.0);
-        egui::Grid::new(("load-readings-grid", id))
-            .num_columns(2)
-            .spacing([16.0, 10.0])
-            .striped(true)
-            .show(ui, |ui| {
-                for key in ["Voltage", "Current", "Power"] {
-                    let label = match key {
-                        "Voltage" => text(lang, "电压", "Voltage"),
-                        "Current" => text(lang, "电流", "Current"),
-                        _ => text(lang, "功率", "Power"),
-                    };
-                    let value = self
-                        .latest
-                        .get(&(id, key.to_owned()))
-                        .map(|r| format!("{:.6} {}", r.value, r.unit))
-                        .unwrap_or_else(|| "—".into());
-                    ui.label(RichText::new(label).strong());
-                    ui.label(RichText::new(value).monospace().size(16.0));
-                    ui.end_row();
-                }
-            });
-    }
-
-    fn load_info_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-    ) {
-        let device = &self.devices[index];
-        egui::Grid::new(("load-info-grid", id))
-            .num_columns(2)
-            .spacing([14.0, 8.0])
-            .show(ui, |ui| {
-                setting_row(
-                    ui,
-                    text(lang, "制造商", "Manufacturer"),
-                    &device.identity.manufacturer,
-                );
-                setting_row(ui, text(lang, "型号", "Model"), &device.identity.model);
-                setting_row(ui, "VISA", &device.resource);
-                setting_row(ui, text(lang, "驱动档案", "Profile"), &device.profile);
-            });
-        ui.add_space(10.0);
-        ui.label(RichText::new(text(lang, "支持模式", "Supported modes")).strong());
-        ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
-            for mode in &device.capabilities.load_modes {
-                capability_badge(ui, tokens, mode);
-            }
-        });
-        ui.add_space(10.0);
-        ui.label(
-            RichText::new(text(
-                lang,
-                "提示：先设定模式与电平，再开启负载输入。",
-                "Tip: set mode and level before enabling load input.",
-            ))
-            .small()
-            .color(tokens.text_muted),
-        );
-    }
-
-    fn dmm_reading_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-    ) {
-        self.measure_toolbar(ui, lang, tokens, id, index);
-        ui.add_space(10.0);
-        ui.separator();
-        ui.add_space(10.0);
-
-        let function = self.devices[index].controls.dmm_function;
-        let channel = function.scpi().to_owned();
-        // Worker stores channel as scpi string via read_measurements.
-        let reading = self
-            .latest
-            .get(&(id, channel))
-            .or_else(|| {
-                // Fallback: any reading for this device.
-                self.latest
-                    .iter()
-                    .find(|((dev, _), _)| *dev == id)
-                    .map(|(_, r)| r)
-            });
-
-        ui.label(
-            RichText::new(function.label())
-                .strong()
-                .size(14.0)
-                .color(tokens.text_muted),
-        );
-        ui.add_space(8.0);
-        if let Some(r) = reading {
-            ui.label(
-                RichText::new(format!("{:.6}", r.value))
-                    .monospace()
-                    .size(28.0)
-                    .strong(),
-            );
-            ui.label(RichText::new(&r.unit).size(16.0).color(tokens.text_muted));
-        } else {
-            placeholder_panel(
-                ui,
-                ui.available_height().max(80.0),
-                text(lang, "点击「单次测量」或开始连续采样", "Measure once or start sampling"),
-                tokens.plot_fg,
-                tokens,
-            );
-        }
-    }
-
-    fn dmm_info_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-    ) {
-        let device = &self.devices[index];
-        egui::Grid::new(("dmm-info-grid", id))
-            .num_columns(2)
-            .spacing([14.0, 8.0])
-            .show(ui, |ui| {
-                setting_row(
-                    ui,
-                    text(lang, "制造商", "Manufacturer"),
-                    &device.identity.manufacturer,
-                );
-                setting_row(ui, text(lang, "型号", "Model"), &device.identity.model);
-                setting_row(ui, "VISA", &device.resource);
-                setting_row(ui, text(lang, "驱动档案", "Profile"), &device.profile);
-            });
-        ui.add_space(10.0);
-        ui.label(RichText::new(text(lang, "测量功能", "Functions")).strong());
-        ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
-            for function in &device.capabilities.measure_functions {
-                capability_badge(ui, tokens, function);
-            }
-        });
-        ui.add_space(8.0);
-        ui.horizontal_wrapped(|ui| {
-            if device.capabilities.range_control {
-                capability_badge(ui, tokens, text(lang, "量程", "Range"));
-            }
-            if device.capabilities.nplc_control {
-                capability_badge(ui, tokens, "NPLC");
-            }
-        });
-    }
-
-    fn measure_toolbar(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-    ) {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            if ui
-                .add_sized(
-                    SCOPE_BTN_WIDE,
-                    egui::Button::new(text(lang, "单次测量", "Measure")).fill(tokens.accent),
-                )
-                .clicked()
-            {
-                self.measurement_pending.insert(id);
-                let _ = self.tx.send(Job::Measure(id));
-            }
-            ui.label(text(lang, "周期", "Interval"));
-            ui.add(
-                egui::DragValue::new(&mut self.sample_interval_ms)
-                    .range(100..=60_000)
-                    .suffix(" ms"),
-            );
-            let acquiring = self.devices[index].acquiring;
-            if !acquiring {
-                if ui
-                    .add_sized(
-                        SCOPE_BTN_WIDE,
-                        egui::Button::new(text(lang, "连续采样", "Continuous")),
-                    )
-                    .clicked()
-                {
-                    self.devices[index].acquiring = true;
-                    self.devices[index].paused = false;
-                    self.last_sample =
-                        Instant::now() - Duration::from_millis(self.sample_interval_ms);
-                }
-            } else {
-                let pause_label = if self.devices[index].paused {
-                    text(lang, "继续", "Resume")
-                } else {
-                    text(lang, "暂停", "Pause")
-                };
-                if ui
-                    .add_sized(SCOPE_BTN, egui::Button::new(pause_label))
-                    .clicked()
-                {
-                    self.devices[index].paused = !self.devices[index].paused;
-                    if !self.devices[index].paused {
-                        self.last_sample =
-                            Instant::now() - Duration::from_millis(self.sample_interval_ms);
-                    }
-                }
-                if ui
-                    .add_sized(
-                        SCOPE_BTN,
-                        egui::Button::new(
-                            RichText::new(text(lang, "停止", "Stop"))
-                                .color(tokens.accent_text)
-                                .strong(),
-                        )
-                        .fill(tokens.stop_bg),
-                    )
-                    .clicked()
-                {
-                    self.devices[index].acquiring = false;
-                    self.devices[index].paused = false;
-                }
-            }
-        });
-    }
-
-    fn source_readings_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-    ) {
-        let channels = self.devices[index].capabilities.channels.max(1).min(4) as usize;
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            if ui
-                .add_sized(
-                    SCOPE_BTN_WIDE,
-                    egui::Button::new(text(lang, "读取实测", "Read Actual")).fill(tokens.accent),
-                )
-                .clicked()
-            {
-                self.measurement_pending.insert(id);
-                let _ = self.tx.send(Job::Measure(id));
-            }
-            let acquiring = self.devices[index].acquiring;
-            let label = if acquiring {
-                text(lang, "停止采样", "Stop Sample")
-            } else {
-                text(lang, "连续采样", "Continuous")
-            };
-            if ui.add_sized(SCOPE_BTN_WIDE, egui::Button::new(label)).clicked() {
-                self.devices[index].acquiring = !acquiring;
-                if self.devices[index].acquiring {
-                    self.devices[index].paused = false;
-                    self.measurement_pending.insert(id);
-                    let _ = self.tx.send(Job::Measure(id));
-                }
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    RichText::new(format!(
-                        "{}: {channels}",
-                        text(lang, "通道数", "Channels")
-                    ))
-                    .small()
-                    .color(tokens.text_muted),
-                );
-            });
-        });
-        ui.add_space(8.0);
-        ui.separator();
-        ui.add_space(6.0);
-
-        egui::ScrollArea::vertical()
-            .id_salt(("source-readings", id))
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                egui::Grid::new(("source-readings-grid", id))
-                    .num_columns(4)
-                    .spacing([12.0, 8.0])
-                    .striped(true)
-                    .show(ui, |ui| {
-                        ui.label(RichText::new("CH").strong().small());
-                        ui.label(RichText::new("V").strong().small());
-                        ui.label(RichText::new("A").strong().small());
-                        ui.label(RichText::new("W").strong().small());
-                        ui.end_row();
-                        for ch in 1..=channels {
-                            let v = self
-                                .latest
-                                .get(&(id, format!("CH{ch} Voltage")))
-                                .map(|r| format!("{:.4} {}", r.value, r.unit))
-                                .unwrap_or_else(|| "—".into());
-                            let a = self
-                                .latest
-                                .get(&(id, format!("CH{ch} Current")))
-                                .map(|r| format!("{:.4} {}", r.value, r.unit))
-                                .unwrap_or_else(|| "—".into());
-                            let p = self
-                                .latest
-                                .get(&(id, format!("CH{ch} Power")))
-                                .map(|r| format!("{:.4} {}", r.value, r.unit))
-                                .unwrap_or_else(|| "—".into());
-                            ui.label(RichText::new(format!("CH{ch}")).strong().monospace());
-                            ui.label(RichText::new(v).monospace().small());
-                            ui.label(RichText::new(a).monospace().small());
-                            ui.label(RichText::new(p).monospace().small());
-                            ui.end_row();
-                        }
-                    });
-            });
-    }
-
-    fn empty_instrument_workspace(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
-        ui.heading(instrument_name(lang, self.selected_kind));
-        ui.label(
-            RichText::new(text(
-                lang,
-                "当前类型尚未连接。左侧扫描或输入地址后即可启用全部功能。",
-                "No instrument of this type is connected. Scan or enter a resource on the left to enable all functions.",
-            ))
-            .color(tokens.text_muted),
-        );
-        ui.add_space(12.0);
-        let features = instrument_features(lang, self.selected_kind);
-        ui.columns(3, |columns| {
-            for (column, (title, body)) in columns.iter_mut().zip(features) {
-                card(column, tokens, title, |ui| {
-                    ui.label(RichText::new(body).color(tokens.text_muted));
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new(text(lang, "连接后启用", "Available after connection"))
-                            .small()
-                            .color(tokens.accent),
-                    );
-                });
-            }
-        });
-    }
-
-    fn instrument_parameters_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-    ) {
-        let kind = self.devices[index].kind;
-        let capabilities = self.devices[index].capabilities.clone();
-        match kind {
-            InstrumentKind::Oscilloscope => {
-                ui.horizontal(|ui| {
-                    ui.label(text(lang, "默认波形通道", "Default waveform channel"));
-                    ui.add(
-                        egui::DragValue::new(&mut self.devices[index].controls.scope_channel)
-                            .range(1..=capabilities.channels.max(1)),
-                    );
-                    ui.label(text(lang, "测量历史点数", "Measurement history points"));
-                    ui.label(format!("{}", self.max_points.min(20_000)));
-                });
-            }
-            InstrumentKind::DcSource => {
-                ui.label(
-                    RichText::new(format!(
-                        "{}: {}  |  {}  |  {}",
-                        text(lang, "识别通道数", "Detected channels"),
-                        capabilities.channels.max(1),
-                        text(lang, "电压上限 0–60 V", "Voltage limit 0–60 V"),
-                        if capabilities.source_protection {
-                            text(lang, "支持 OVP/OCP", "OVP/OCP supported")
-                        } else {
-                            text(lang, "保护未报告", "Protection not reported")
-                        }
-                    ))
-                    .small()
-                    .color(tokens.text_muted),
-                );
-                let _ = id;
-            }
-            InstrumentKind::ElectronicLoad => {
-                card(
-                    ui,
-                    tokens,
-                    text(lang, "负载参数", "Load Parameters"),
-                    |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(text(lang, "支持模式", "Supported modes"));
-                            for mode in &capabilities.load_modes {
-                                capability_badge(ui, tokens, mode);
-                            }
-                        });
-                    },
-                );
-            }
-            InstrumentKind::Multimeter => {
-                card(
-                    ui,
-                    tokens,
-                    text(lang, "万用表参数", "DMM Parameters"),
-                    |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(text(lang, "测量功能", "Functions"));
-                            for function in &capabilities.measure_functions {
-                                capability_badge(ui, tokens, function);
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label(text(lang, "量程控制", "Range control"));
-                            ui.label(if capabilities.range_control {
-                                text(lang, "支持", "Supported")
-                            } else {
-                                text(lang, "未报告", "Not reported")
-                            });
-                            ui.label(text(lang, "NPLC 控制", "NPLC control"));
-                            ui.label(if capabilities.nplc_control {
-                                text(lang, "支持", "Supported")
-                            } else {
-                                text(lang, "未报告", "Not reported")
-                            });
-                        });
-                    },
-                );
-            }
-            InstrumentKind::Generic => {}
-            InstrumentKind::DebugProbe | InstrumentKind::UsbBridge | InstrumentKind::WiparseDongle => {}
-        }
     }
 
     fn acquisition_ui(
@@ -4145,63 +2733,63 @@ impl InstrumentControlPanel {
         id: u64,
         index: usize,
     ) {
+        self.acquisition_ui_with_readings(ui, lang, _tokens, id, index, true);
+    }
+
+    fn acquisition_ui_with_readings(
+        &mut self, ui: &mut egui::Ui, lang: Lang, _tokens: &Tokens,
+        id: u64, index: usize, show_readings: bool,
+    ) {
+        self.acquisition_ui_sized(ui, lang, _tokens, id, index, show_readings, false);
+    }
+
+    fn acquisition_ui_sized(
+        &mut self, ui: &mut egui::Ui, lang: Lang, _tokens: &Tokens,
+        id: u64, index: usize, show_readings: bool, fill_height: bool,
+    ) {
+        let resource = self.devices[index].resource.clone();
+        fn command_button(ui: &mut egui::Ui, t: &Tokens, label: &str, primary: bool, enabled: bool) -> egui::Response {
+            let button = egui::Button::new(RichText::new(label).color(if primary { t.accent_text } else { t.text_primary }))
+                .fill(if primary { t.accent } else { t.button_bg }).stroke(Stroke::NONE)
+                .corner_radius(CornerRadius::same(theme::RADIUS_CTRL)).wrap();
+            ui.add_enabled(enabled, |ui: &mut egui::Ui| ui.add_sized([104.0, 32.0], button))
+        }
         ui.horizontal(|ui| {
             ui.label(text(lang, "采样周期", "Sample interval"));
-            ui.add(
-                egui::DragValue::new(&mut self.sample_interval_ms)
-                    .range(100..=60_000)
-                    .suffix(" ms"),
-            );
+            ui.add_sized([112.0, 28.0], egui::DragValue::new(&mut self.sample_interval_ms).range(100..=60_000).suffix(" ms"));
+        });
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
             let acquiring = self.devices[index].acquiring;
             if !acquiring {
-                if theme::accent_button(ui, _tokens, text(lang, "开始", "Start")).clicked() {
+                if command_button(ui, _tokens, text(lang, "开始", "Start"), true, true).clicked() {
                     self.devices[index].acquiring = true;
                     self.devices[index].paused = false;
-                    self.last_sample =
-                        Instant::now() - Duration::from_millis(self.sample_interval_ms);
+                    self.last_sample = Instant::now() - Duration::from_millis(self.sample_interval_ms);
                 }
             } else {
-                let pause_label = if self.devices[index].paused {
-                    text(lang, "继续", "Resume")
-                } else {
-                    text(lang, "暂停", "Pause")
-                };
-                if ui.button(pause_label).clicked() {
+                let pause_label = if self.devices[index].paused { text(lang, "继续", "Resume") } else { text(lang, "暂停", "Pause") };
+                if command_button(ui, _tokens, pause_label, false, true).clicked() {
                     self.devices[index].paused = !self.devices[index].paused;
-                    if !self.devices[index].paused {
-                        self.last_sample =
-                            Instant::now() - Duration::from_millis(self.sample_interval_ms);
-                    }
+                    if !self.devices[index].paused { self.last_sample = Instant::now() - Duration::from_millis(self.sample_interval_ms); }
                 }
-                if theme::stop_button(ui, _tokens, text(lang, "停止", "Stop")).clicked() {
+                if command_button(ui, _tokens, text(lang, "停止", "Stop"), false, true).clicked() {
                     self.devices[index].acquiring = false;
                     self.devices[index].paused = false;
                 }
             }
-            if ui.button(text(lang, "单次读取", "Read Once")).clicked() {
+            if command_button(ui, _tokens, text(lang, "单次读取", "Read once"), false, true).clicked() {
                 self.measurement_pending.insert(id);
                 let _ = self.tx.send(Job::Measure(id));
             }
-            if ui.button(text(lang, "清空", "Clear")).clicked() {
-                self.samples.clear();
-                self.latest.retain(|(device_id, _), _| *device_id != id);
+            if command_button(ui, _tokens, text(lang, "清空", "Clear"), false, true).clicked() {
+                self.clear_device_samples(id, &resource);
             }
-            if ui
-                .add_enabled(
-                    !self.samples.is_empty(),
-                    egui::Button::new(text(lang, "导出 CSV", "Export CSV")),
-                )
-                .clicked()
-            {
-                let default_name =
-                    format!("instrument_{}.csv", Local::now().format("%Y%m%d_%H%M%S"));
-                if let Some(path) = rfd::FileDialog::new()
-                    .set_directory(&self.save_dir)
-                    .set_file_name(&default_name)
-                    .add_filter("CSV", &["csv"])
-                    .save_file()
-                {
-                    let rows: Vec<_> = self.samples.iter().cloned().collect();
+            let has_samples = self.samples.iter().any(|s| s.resource == resource);
+            if command_button(ui, _tokens, text(lang, "导出 CSV", "Export CSV"), false, has_samples).clicked() {
+                let default_name = format!("instrument_{}.csv", Local::now().format("%Y%m%d_%H%M%S"));
+                if let Some(path) = rfd::FileDialog::new().set_directory(&self.save_dir).set_file_name(&default_name).add_filter("CSV", &["csv"]).save_file() {
+                    let rows: Vec<_> = self.samples.iter().filter(|s| s.resource == resource).cloned().collect();
                     match export_csv(path, rows) {
                         Ok(()) => self.status = text(lang, "CSV 已导出", "CSV exported").into(),
                         Err(error) => self.status = error.to_string(),
@@ -4209,29 +2797,29 @@ impl InstrumentControlPanel {
                 }
             }
         });
-
-        ui.horizontal_wrapped(|ui| {
-            for ((device_id, channel), reading) in &self.latest {
-                if *device_id == id {
-                    Frame::NONE
-                        .stroke(Stroke::new(
-                            1.0_f32,
-                            ui.visuals().widgets.noninteractive.bg_stroke.color,
-                        ))
-                        .corner_radius(CornerRadius::same(5))
-                        .inner_margin(Margin::symmetric(10, 6))
-                        .show(ui, |ui| {
-                            ui.label(RichText::new(channel).small());
-                            ui.label(
-                                RichText::new(format!("{:.6} {}", reading.value, reading.unit))
-                                    .strong(),
-                            );
-                        });
-                }
-            }
+        ui.add_space(12.0);
+        if show_readings {
+        let mut readings: Vec<_> = self.latest.iter().filter(|((device_id,_),_)| *device_id == id).collect();
+        readings.sort_by_key(|((_, channel),_)| {
+            let order = if channel.ends_with("Voltage") { 0 } else if channel.ends_with("Current") { 1 } else if channel.ends_with("Power") { 2 } else { 3 };
+            (channel.split_whitespace().next().unwrap_or(""), order, channel.as_str())
         });
-
-        let resource = self.devices[index].resource.clone();
+        let columns = (((ui.available_width() + 8.0) / 188.0).floor() as usize).clamp(1, 3);
+        let tile_width = (ui.available_width() - 8.0 * (columns - 1) as f32) / columns as f32;
+        for row in readings.chunks(columns) {
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                for ((_, channel), reading) in row {
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(tile_width, 76.0), egui::Sense::hover());
+                    instrument_grid_cell(ui, rect, _tokens, channel, |ui| {
+                        let value = if reading.value.is_finite() { format!("{:.4} {}", reading.value, reading.unit) } else { "—".into() };
+                        ui.add(egui::Label::new(RichText::new(&value).monospace().size(20.0)).truncate()).on_hover_text(value);
+                    });
+                }
+            });
+        }
+        }
+        ui.add_space(12.0);
         let mut series: HashMap<String, Vec<[f64; 2]>> = HashMap::new();
         let first = self
             .samples
@@ -4253,7 +2841,7 @@ impl InstrumentControlPanel {
             }
         }
         Plot::new(format!("acquisition-{id}"))
-            .height(260.0)
+            .height(if fill_height { ui.available_height().max(80.0) } else { 260.0 })
             .legend(Legend::default())
             .show(ui, |plot_ui| {
                 for (name, points) in series {
@@ -4266,181 +2854,11 @@ impl InstrumentControlPanel {
             });
     }
 
-    fn settings_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-    ) {
-        let device = &self.devices[index];
-        let identity = device.identity.clone();
-        let resource = device.resource.clone();
-        let profile = device.profile.clone();
-        let capabilities = device.capabilities.clone();
-        let mut command = None;
-        let mut disconnect = false;
-
-        card(
-            ui,
-            tokens,
-            text(lang, "设备信息", "Device Information"),
-            |ui| {
-                egui::Grid::new(format!("device-info-{id}"))
-                    .num_columns(2)
-                    .spacing([18.0, 6.0])
-                    .show(ui, |ui| {
-                        setting_row(
-                            ui,
-                            text(lang, "制造商", "Manufacturer"),
-                            &identity.manufacturer,
-                        );
-                        setting_row(ui, text(lang, "型号", "Model"), &identity.model);
-                        setting_row(ui, text(lang, "序列号", "Serial"), &identity.serial);
-                        setting_row(ui, text(lang, "固件", "Firmware"), &identity.firmware);
-                        setting_row(ui, "VISA", &resource);
-                        setting_row(ui, text(lang, "驱动档案", "Driver Profile"), &profile);
-                    });
-            },
-        );
-        card(
-            ui,
-            tokens,
-            text(lang, "通信与采集参数", "Communication & Acquisition"),
-            |ui| {
-                egui::Grid::new(format!("instrument-parameters-{id}"))
-                    .num_columns(2)
-                    .spacing([18.0, 8.0])
-                    .show(ui, |ui| {
-                        ui.label(text(lang, "VISA 超时", "VISA timeout"));
-                        ui.add(
-                            egui::DragValue::new(&mut self.timeout_ms)
-                                .range(100..=120_000)
-                                .suffix(" ms"),
-                        );
-                        ui.end_row();
-                        ui.label(text(lang, "采样周期", "Sample interval"));
-                        ui.add(
-                            egui::DragValue::new(&mut self.sample_interval_ms)
-                                .range(100..=60_000)
-                                .suffix(" ms"),
-                        );
-                        ui.end_row();
-                        ui.label(text(lang, "最大采样点", "Maximum samples"));
-                        ui.label(self.max_points.to_string());
-                        ui.end_row();
-                        ui.label(text(lang, "数据目录", "Data directory"));
-                        ui.label(self.save_dir.display().to_string());
-                        ui.end_row();
-                    });
-            },
-        );
-        card(
-            ui,
-            tokens,
-            text(lang, "设备能力", "Device Capabilities"),
-            |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    capability_badge(ui, tokens, format!("CH {}", capabilities.channels));
-                    if capabilities.waveform {
-                        capability_badge(ui, tokens, text(lang, "波形", "Waveform"));
-                    }
-                    if capabilities.screenshot {
-                        capability_badge(ui, tokens, text(lang, "截图", "Screenshot"));
-                    }
-                    if capabilities.source_output {
-                        capability_badge(ui, tokens, text(lang, "输出控制", "Output"));
-                    }
-                    for mode in &capabilities.load_modes {
-                        capability_badge(ui, tokens, mode);
-                    }
-                    for function in &capabilities.measure_functions {
-                        capability_badge(ui, tokens, function);
-                    }
-                });
-            },
-        );
-        ui.horizontal(|ui| {
-            if ui
-                .button("*CLS")
-                .on_hover_text(text(lang, "清除设备状态", "Clear device status"))
-                .clicked()
-            {
-                command = Some(ControlCommand::Clear);
-            }
-            if ui
-                .button("SYST:ERR?")
-                .on_hover_text(text(lang, "读取错误队列", "Read error queue"))
-                .clicked()
-            {
-                command = Some(ControlCommand::RawQuery("SYST:ERR?".into()));
-            }
-            if ui
-                .button("*RST")
-                .on_hover_text(text(lang, "恢复设备默认设置", "Reset instrument"))
-                .clicked()
-            {
-                command = Some(ControlCommand::Reset);
-            }
-            if theme::stop_button(ui, tokens, text(lang, "断开设备", "Disconnect")).clicked() {
-                disconnect = true;
-            }
-        });
-        if let Some(command) = command {
-            self.log_command(id, &command);
-            let _ = self.tx.send(Job::Command { id, command, job_id: None });
-        }
-        if disconnect {
-            let _ = self.tx.send(Job::Disconnect(id));
-        }
-    }
-
-    fn console_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        id: u64,
-        index: usize,
-    ) {
-        ui.label(text(
-            lang,
-            "仅在确认仪表命令集后使用原始 SCPI。查询命令应以 ? 结尾。",
-            "Use raw SCPI only after confirming the instrument command set. Queries should end in ?.",
-        ));
-        let command = &mut self.devices[index].controls.console;
-        let mut to_send = None;
-        ui.horizontal(|ui| {
-            let response = ui.add(egui::TextEdit::singleline(command).desired_width(420.0));
-            let send = ui.button(text(lang, "发送", "Send")).clicked()
-                || (response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)));
-            if send && !command.trim().is_empty() {
-                let value = command.trim().to_owned();
-                to_send = Some(if value.ends_with('?') {
-                    ControlCommand::RawQuery(value)
-                } else {
-                    ControlCommand::RawWrite(value)
-                });
-            }
-        });
-        if let Some(scpi) = to_send {
-            self.log_command(id, &scpi);
-            let _ = self.tx.send(Job::Command { id, command: scpi, job_id: None });
-        }
-        ui.separator();
-        egui::ScrollArea::vertical()
-            .stick_to_bottom(true)
-            .show(ui, |ui| {
-                for line in &self.logs {
-                    ui.label(
-                        RichText::new(line)
-                            .monospace()
-                            .small()
-                            .color(tokens.text_muted),
-                    );
-                }
-            });
+    fn clear_device_samples(&mut self, id: u64, resource: &str) {
+        let keep: Vec<_> = self.samples.iter().filter(|sample| sample.resource != resource).cloned().collect();
+        self.samples.clear();
+        for sample in keep { self.samples.push(sample); }
+        self.latest.retain(|(device_id, _), _| *device_id != id);
     }
 
     fn log_command(&mut self, id: u64, command: &ControlCommand) {
@@ -4516,7 +2934,11 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                 devices.remove(&id);
                 let _ = events.send(Event::Disconnected(id));
             }
-            Job::Command { id, command, job_id } => {
+            Job::Command {
+                id,
+                command,
+                job_id,
+            } => {
                 if let Some(device) = devices.get_mut(&id) {
                     match device.execute(command) {
                         Ok(response) => {
@@ -4533,13 +2955,14 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                 }
             }
             Job::PollRtt(id) => match devices.get_mut(&id) {
-                Some(LiveSession::Probe(probe)) => match probe.execute(ControlCommand::ProbeRttRead)
-                {
-                    Ok(text) => {
-                        let _ = events.send(Event::SessionOutput { id, text });
+                Some(LiveSession::Probe(probe)) => {
+                    match probe.execute(ControlCommand::ProbeRttRead) {
+                        Ok(text) => {
+                            let _ = events.send(Event::SessionOutput { id, text });
+                        }
+                        Err(error) => send_error(&events, Some(id), error),
                     }
-                    Err(error) => send_error(&events, Some(id), error),
-                },
+                }
                 Some(LiveSession::Dongle(dongle)) => {
                     let mut chunks = Vec::new();
                     match dongle.execute(ControlCommand::ProbeRttRead) {
@@ -4563,28 +2986,26 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                     let _ = events.send(Event::SessionOutput { id, text: None });
                 }
             },
-            Job::Measure(id) => {
-                match devices.get_mut(&id) {
-                    Some(LiveSession::Scpi(device)) => match device.read_measurements() {
-                        Ok(readings) => {
-                            let _ = events.send(Event::Measurements {
-                                id,
-                                resource: device.resource.clone(),
-                                readings,
-                            });
-                        }
-                        Err(error) => send_error(&events, Some(id), error),
-                    },
-                    Some(_) => {
+            Job::Measure(id) => match devices.get_mut(&id) {
+                Some(LiveSession::Scpi(device)) => match device.read_measurements() {
+                    Ok(readings) => {
                         let _ = events.send(Event::Measurements {
                             id,
-                            resource: String::new(),
-                            readings: Vec::new(),
+                            resource: device.resource.clone(),
+                            readings,
                         });
                     }
-                    None => send_error(&events, Some(id), "device not connected"),
+                    Err(error) => send_error(&events, Some(id), error),
+                },
+                Some(_) => {
+                    let _ = events.send(Event::Measurements {
+                        id,
+                        resource: String::new(),
+                        readings: Vec::new(),
+                    });
                 }
-            }
+                None => send_error(&events, Some(id), "device not connected"),
+            },
             Job::Capture {
                 id,
                 job_id,
@@ -4727,8 +3148,8 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                                 } else {
                                     let mut t = Vec::new();
                                     for (ch, b, e) in &channel_files {
-                                        match load_waveform_bytes(b, e, &format!("CH{ch}"))
-                                            .or_else(|first| match sniff_waveform_ext(b) {
+                                        match load_waveform_bytes(b, e, &format!("CH{ch}")).or_else(
+                                            |first| match sniff_waveform_ext(b) {
                                                 Some(sniffed) if sniffed != *e => {
                                                     load_waveform_bytes(
                                                         b,
@@ -4737,7 +3158,8 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                                                     )
                                                 }
                                                 _ => Err(first),
-                                            }) {
+                                            },
+                                        ) {
                                             Ok(tr) => t.push(tr),
                                             Err(e) => errors.push(format!("CH{ch}: {e}")),
                                         }
@@ -4833,7 +3255,9 @@ impl LiveSession {
     }
 }
 
-fn open_demo_session(kind: InstrumentKind) -> Result<LiveSession, wiparse_core::instrument::InstrumentError> {
+fn open_demo_session(
+    kind: InstrumentKind,
+) -> Result<LiveSession, wiparse_core::instrument::InstrumentError> {
     match kind {
         InstrumentKind::DebugProbe => Ok(LiveSession::Probe(ProbeSession::demo(
             "probe://jlink/serial=DEMO",
@@ -4868,12 +3292,14 @@ fn open_live_session(
         Some(InstrumentKind::DebugProbe) => {
             ProbeSession::open(&resource, None).map(LiveSession::Probe)
         }
-        Some(InstrumentKind::UsbBridge) => {
-            Ft4222Session::open(&resource).map(LiveSession::Bridge)
+        Some(InstrumentKind::UsbBridge) => Ft4222Session::open(&resource).map(LiveSession::Bridge),
+        Some(InstrumentKind::WiparseDongle) => {
+            DongleSession::open(&resource).map(LiveSession::Dongle)
         }
-        Some(InstrumentKind::WiparseDongle) => DongleSession::open(&resource).map(LiveSession::Dongle),
-        requested => InstrumentDevice::connect_with_library(resource, timeout_ms, requested, library)
-            .map(LiveSession::Scpi),
+        requested => {
+            InstrumentDevice::connect_with_library(resource, timeout_ms, requested, library)
+                .map(LiveSession::Scpi)
+        }
     }
 }
 
@@ -4972,11 +3398,8 @@ fn save_pending_waveform_source(
     }
 
     // Multi-channel: prefer already-joined `bytes` (ISF/CSV built on the worker).
-    let all_isf = pending.effective_ext == "isf"
-        || pending
-            .channel_files
-            .iter()
-            .all(|(_, _, e)| e == "isf");
+    let all_isf =
+        pending.effective_ext == "isf" || pending.channel_files.iter().all(|(_, _, e)| e == "isf");
     if all_isf && (ext == "isf" || ext == "wfm") {
         let out = if ext == "isf" {
             path.to_path_buf()
@@ -5019,7 +3442,14 @@ struct WaveformStats {
 
 fn waveform_stats(trace: &WaveformTrace) -> WaveformStats {
     if let Some(s) = wiparse_core::automation::analysis::trace_stats(trace) {
-        return WaveformStats { count: s.count, dt: s.dt, min: s.min, max: s.max, pp: s.max-s.min, mean: s.mean };
+        return WaveformStats {
+            count: s.count,
+            dt: s.dt,
+            min: s.min,
+            max: s.max,
+            pp: s.max - s.min,
+            mean: s.mean,
+        };
     }
     // Invalid samples are not promoted to valid automation measurements. The
     // legacy plot remains display-only; the shared analyzer rejects them.
@@ -5136,12 +3566,7 @@ fn build_cached_wave_plot(trace: &WaveformTrace) -> CachedWavePlot {
     }
 }
 
-fn scope_panel(
-    ui: &mut egui::Ui,
-    tokens: &Tokens,
-    title: &str,
-    add: impl FnOnce(&mut egui::Ui),
-) {
+fn scope_panel(ui: &mut egui::Ui, tokens: &Tokens, title: &str, add: impl FnOnce(&mut egui::Ui)) {
     let width = ui.available_width();
     Frame::NONE
         .fill(tokens.surface_bg)
@@ -5158,34 +3583,6 @@ fn scope_panel(
 }
 
 /// Card that fills the allocated cell exactly (no overflow); body uses leftover height.
-/// Equal split for a 2×2 instrument grid — same left/right widths on every row.
-fn instrument_row_column_widths(total_w: f32) -> (f32, f32) {
-    let left = ((total_w - SCOPE_COL_GAP) * 0.5).floor().max(1.0);
-    let right = (total_w - SCOPE_COL_GAP - left).max(1.0);
-    (left, right)
-}
-
-/// Allocate one row and return absolute left/right cell rects (content cannot shift columns).
-fn instrument_grid_row(
-    ui: &mut egui::Ui,
-    total_w: f32,
-    row_h: f32,
-    left_w: f32,
-    right_w: f32,
-    add: impl FnOnce(&mut egui::Ui, egui::Rect, egui::Rect),
-) {
-    let total_w = total_w.max(1.0);
-    let row_h = row_h.max(1.0);
-    let (row_rect, _) =
-        ui.allocate_exact_size(egui::vec2(total_w, row_h), egui::Sense::hover());
-    let left_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(left_w, row_h));
-    let right_rect = egui::Rect::from_min_size(
-        egui::pos2(row_rect.min.x + left_w + SCOPE_COL_GAP, row_rect.min.y),
-        egui::vec2(right_w, row_h),
-    );
-    add(ui, left_rect, right_rect);
-}
-
 fn instrument_grid_cell(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -5196,7 +3593,8 @@ fn instrument_grid_cell(
     if !rect.is_positive() {
         return;
     }
-    crate::theme::scope_in_allocated_rect(ui,
+    crate::theme::scope_in_allocated_rect(
+        ui,
         egui::UiBuilder::new()
             .max_rect(rect)
             .layout(egui::Layout::top_down(egui::Align::Min)),
@@ -5241,7 +3639,8 @@ fn scope_card_fill(
     if !content.is_positive() {
         return;
     }
-    crate::theme::scope_in_allocated_rect(ui,
+    crate::theme::scope_in_allocated_rect(
+        ui,
         egui::UiBuilder::new()
             .max_rect(content)
             .layout(egui::Layout::top_down(egui::Align::Min)),
@@ -5252,23 +3651,21 @@ fn scope_card_fill(
             ui.label(RichText::new(title).strong().size(13.0));
             ui.add_space(4.0);
             let body = ui.available_size();
-            ui.allocate_ui_with_layout(
-                body,
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    ui.set_min_size(body);
-                    ui.set_max_size(body);
-                    ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
-                    add(ui);
-                },
-            );
+            ui.allocate_ui_with_layout(body, egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.set_min_size(body);
+                ui.set_max_size(body);
+                ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
+                add(ui);
+            });
         },
     );
 }
 
 fn media_slot_empty(ui: &mut egui::Ui, height: f32, tokens: &Tokens) {
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::hover(),
+    );
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_CTRL), tokens.plot_bg);
     painter.rect_stroke(
@@ -5278,7 +3675,6 @@ fn media_slot_empty(ui: &mut egui::Ui, height: f32, tokens: &Tokens) {
         egui::StrokeKind::Inside,
     );
 }
-
 
 fn paint_waveform(
     ui: &mut egui::Ui,
@@ -5315,7 +3711,12 @@ fn paint_waveform(
     paint_envelope_columns(&painter, columns, map, inner, stroke);
 }
 
-fn paint_screenshot(ui: &mut egui::Ui, texture: &egui::TextureHandle, height: f32, tokens: &Tokens) {
+fn paint_screenshot(
+    ui: &mut egui::Ui,
+    texture: &egui::TextureHandle,
+    height: f32,
+    tokens: &Tokens,
+) {
     let width = ui.available_width().max(1.0);
     let height = height.max(1.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
@@ -5344,9 +3745,17 @@ fn paint_screenshot(ui: &mut egui::Ui, texture: &egui::TextureHandle, height: f3
         .paint_at(ui, image_rect);
 }
 
-fn placeholder_panel(ui: &mut egui::Ui, height: f32, message: &str, color: Color32, tokens: &Tokens) {
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::hover());
+fn placeholder_panel(
+    ui: &mut egui::Ui,
+    height: f32,
+    message: &str,
+    color: Color32,
+    tokens: &Tokens,
+) {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::hover(),
+    );
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_CTRL), tokens.plot_bg);
     painter.rect_stroke(
@@ -5428,745 +3837,17 @@ fn prepare_screenshot_preview(
     Ok((width as usize, height as usize, image.into_raw()))
 }
 
-fn control_ui(
-    ui: &mut egui::Ui,
-    lang: Lang,
-    tokens: &Tokens,
-    device: &mut DeviceUi,
-) -> (Vec<ControlCommand>, bool) {
-    let mut commands = Vec::new();
-    let mut measure_once = false;
-    match device.kind {
-        InstrumentKind::Oscilloscope => {
-            commands.extend(scope_unified_controls(ui, lang, tokens, device));
-        }
-        InstrumentKind::DcSource => {
-            // Dedicated source_workspace handles DC source controls.
-            commands.extend(source_channel_controls(ui, lang, tokens, device));
-            if ui.button(text(lang, "读取实测", "Read Actual")).clicked() {
-                measure_once = true;
-            }
-        }
-        InstrumentKind::ElectronicLoad => {
-            commands.extend(load_channel_controls(ui, lang, tokens, device));
-            if ui.button(text(lang, "单次测量", "Measure")).clicked() {
-                measure_once = true;
-            }
-        }
-        InstrumentKind::Multimeter => {
-            commands.extend(dmm_setup_controls(ui, lang, tokens, device));
-            if ui.button(text(lang, "单次测量", "Measure")).clicked() {
-                measure_once = true;
-            }
-        }
-        InstrumentKind::Generic => {
-            ui.label(text(
-                lang,
-                "未识别设备仅开放 SCPI 控制台，避免发送不兼容命令。",
-                "Unknown instruments are limited to the SCPI console to avoid incompatible commands.",
-            ));
-        }
-        InstrumentKind::DebugProbe => {
-            commands.extend(probe_controls(ui, lang, tokens, device));
-        }
-        InstrumentKind::UsbBridge => {
-            commands.extend(bridge_controls(ui, lang, tokens, device));
-        }
-        InstrumentKind::WiparseDongle => {
-            commands.extend(dongle_controls(ui, lang, tokens, device));
-        }
-    }
-    (commands, measure_once)
-}
 
-fn probe_controls(
-    ui: &mut egui::Ui,
-    lang: Lang,
-    tokens: &Tokens,
-    device: &mut DeviceUi,
-) -> Vec<ControlCommand> {
-    let mut out = Vec::new();
-    ui.horizontal_wrapped(|ui| {
-        if theme::accent_button(ui, tokens, text(lang, "连接目标", "Attach")).clicked() {
-            out.push(ControlCommand::ProbeAttach {
-                target: device.controls.probe_chip.clone(),
-            });
-        }
-        if ui.button(text(lang, "Halt", "Halt")).clicked() {
-            out.push(ControlCommand::ProbeHalt);
-        }
-        if ui.button(text(lang, "Run", "Run")).clicked() {
-            out.push(ControlCommand::ProbeRun);
-        }
-        if ui.button(text(lang, "复位", "Reset")).clicked() {
-            out.push(ControlCommand::ProbeReset { hardware: false });
-        }
-        if ui.button(text(lang, "硬件复位", "HW Reset")).clicked() {
-            out.push(ControlCommand::ProbeReset { hardware: true });
-        }
-        if ui.button(text(lang, "状态", "Status")).clicked() {
-            out.push(ControlCommand::ProbeStatus);
-        }
-        if ui.button(text(lang, "寄存器", "Regs")).clicked() {
-            out.push(ControlCommand::ProbeRegs);
-        }
-        if ui.button(text(lang, "擦除", "Erase")).clicked() {
-            out.push(ControlCommand::ProbeErase);
-        }
-        if ui.button(text(lang, "速率", "Speed")).clicked() {
-            out.push(ControlCommand::ProbeSpeed {
-                khz: device.controls.probe_speed_khz,
-            });
-        }
-    });
-    ui.add_space(8.0);
-    ui.horizontal_wrapped(|ui| {
-        if ui.button(text(lang, "烧录", "Flash")).clicked() {
-            out.push(ControlCommand::ProbeFlash {
-                path: device.controls.probe_flash_path.clone(),
-                verify: device.controls.probe_flash_verify,
-                base_address: None,
-            });
-        }
-        if ui.button(text(lang, "读内存", "Read mem")).clicked() {
-            out.push(ControlCommand::ProbeMemRead {
-                address: device.controls.probe_mem_addr.clone(),
-                len: device.controls.probe_mem_len,
-            });
-        }
-        if ui.button(text(lang, "写内存", "Write mem")).clicked() {
-            out.push(ControlCommand::ProbeMemWrite {
-                address: device.controls.probe_mem_addr.clone(),
-                data_hex: device.controls.probe_mem_write_hex.clone(),
-            });
-        }
-    });
-    ui.add_space(8.0);
-    let mut rtt_on = device.controls.probe_rtt_on;
-    if ui
-        .checkbox(&mut rtt_on, text(lang, "RTT 输出", "RTT output"))
-        .changed()
-    {
-        device.controls.probe_rtt_on = rtt_on;
-        if rtt_on {
-            out.push(ControlCommand::ProbeRttStart {
-                up_channel: device.controls.probe_rtt_channel,
-            });
-        } else {
-            out.push(ControlCommand::ProbeRttStop);
-        }
-    }
-    ui.label(
-        RichText::new(text(
-            lang,
-            "SWO/ITM 为次优先；当前构建以 RTT 为主。",
-            "SWO/ITM is secondary; this build uses RTT first.",
-        ))
-        .small()
-        .color(tokens.text_muted),
-    );
-    out
-}
-
-fn bridge_controls(
-    ui: &mut egui::Ui,
-    lang: Lang,
-    _tokens: &Tokens,
-    device: &mut DeviceUi,
-) -> Vec<ControlCommand> {
-    let mut out = Vec::new();
-    match device.controls.bridge_tab {
-        1 => {
-            if ui.button(text(lang, "I2C 事务", "I2C xfer")).clicked() {
-                out.push(ControlCommand::BridgeI2c {
-                    addr: device.controls.bridge_i2c_addr.clone(),
-                    write_hex: device.controls.bridge_write_hex.clone(),
-                    read_len: device.controls.bridge_read_len,
-                    clock_hz: device.controls.bridge_i2c_hz,
-                });
-            }
-            if ui.button(text(lang, "芯片信息", "Chip info")).clicked() {
-                out.push(ControlCommand::BridgeInfo);
-            }
-        }
-        2 => {
-            if ui.button(text(lang, "应用 GPIO", "Apply GPIO")).clicked() {
-                out.push(ControlCommand::BridgeGpio {
-                    pin: device.controls.bridge_gpio_pin,
-                    dir: Some(device.controls.bridge_gpio_out),
-                    value: Some(device.controls.bridge_gpio_value),
-                });
-            }
-            if ui.button(text(lang, "读全部", "Read all")).clicked() {
-                out.push(ControlCommand::BridgeGpio {
-                    pin: 255,
-                    dir: None,
-                    value: None,
-                });
-            }
-        }
-        _ => {
-            if ui.button(text(lang, "SPI 事务", "SPI xfer")).clicked() {
-                out.push(ControlCommand::BridgeSpi {
-                    mode: device.controls.bridge_spi_mode,
-                    clock_hz: device.controls.bridge_spi_hz,
-                    cs: device.controls.bridge_spi_cs,
-                    write_hex: device.controls.bridge_write_hex.clone(),
-                    read_len: device.controls.bridge_read_len,
-                });
-            }
-            if ui.button(text(lang, "芯片信息", "Chip info")).clicked() {
-                out.push(ControlCommand::BridgeInfo);
-            }
-        }
-    }
-    out
-}
-
-fn dongle_controls(
-    ui: &mut egui::Ui,
-    lang: Lang,
-    tokens: &Tokens,
-    device: &mut DeviceUi,
-) -> Vec<ControlCommand> {
-    let mut out = Vec::new();
-    ui.horizontal_wrapped(|ui| {
-        if ui.button(text(lang, "链路信息", "Link info")).clicked() {
-            out.push(ControlCommand::DongleSetLink {
-                host: device.controls.dongle_host.clone(),
-                uart_port: device.controls.dongle_uart_port,
-                i2c_port: device.controls.dongle_i2c_port,
-            });
-            out.push(ControlCommand::DongleInfo);
-        }
-    });
-    ui.add_space(6.0);
-    match device.controls.dongle_tab {
-        1 => {
-            if theme::accent_button(ui, tokens, text(lang, "打开 UART", "Open UART")).clicked() {
-                out.push(ControlCommand::DongleSetLink {
-                    host: device.controls.dongle_host.clone(),
-                    uart_port: device.controls.dongle_uart_port,
-                    i2c_port: device.controls.dongle_i2c_port,
-                });
-                out.push(ControlCommand::DongleUartOpen {
-                    host: device.controls.dongle_host.clone(),
-                    port: device.controls.dongle_uart_port,
-                    baud: device.controls.dongle_uart_baud,
-                    com: device.controls.dongle_uart_com.clone(),
-                    send_baud_cmd: true,
-                });
-            }
-            ui.horizontal_wrapped(|ui| {
-                if ui.button(text(lang, "发送", "Send")).clicked() {
-                    out.push(ControlCommand::DongleUartWrite {
-                        data: device.controls.dongle_uart_tx.clone(),
-                        hex: device.controls.dongle_uart_hex,
-                    });
-                }
-                if ui.button(text(lang, "读一次", "Read")).clicked() {
-                    out.push(ControlCommand::DongleUartRead);
-                }
-                if ui.button(text(lang, "关闭", "Close")).clicked() {
-                    device.controls.dongle_uart_listen = false;
-                    out.push(ControlCommand::DongleUartClose);
-                }
-            });
-        }
-        2 => {
-            ui.horizontal_wrapped(|ui| {
-                if theme::accent_button(ui, tokens, text(lang, "扫描", "Scan")).clicked() {
-                    out.push(ControlCommand::DongleSetLink {
-                        host: device.controls.dongle_host.clone(),
-                        uart_port: device.controls.dongle_uart_port,
-                        i2c_port: device.controls.dongle_i2c_port,
-                    });
-                    out.push(ControlCommand::DongleI2cScan);
-                }
-                if ui.button(text(lang, "Ping", "Ping")).clicked() {
-                    out.push(ControlCommand::DongleI2cPing {
-                        addr: device.controls.dongle_i2c_addr.clone(),
-                    });
-                }
-                if ui.button(text(lang, "恢复总线", "Recover")).clicked() {
-                    out.push(ControlCommand::DongleI2cRecover);
-                }
-            });
-            ui.horizontal_wrapped(|ui| {
-                if ui.button(text(lang, "速率", "Speed")).clicked() {
-                    out.push(ControlCommand::DongleI2cSpeed {
-                        hz: Some(device.controls.dongle_i2c_hz),
-                    });
-                }
-                if ui.button(text(lang, "超时", "Timeout")).clicked() {
-                    out.push(ControlCommand::DongleI2cTimeout {
-                        ms: Some(device.controls.dongle_i2c_timeout_ms),
-                    });
-                }
-                if ui.button("HELP").clicked() {
-                    out.push(ControlCommand::DongleI2cLine {
-                        line: "HELP".into(),
-                    });
-                }
-            });
-            ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                if ui.button(text(lang, "写", "Write")).clicked() {
-                    out.push(ControlCommand::DongleI2cWrite {
-                        addr: device.controls.dongle_i2c_addr.clone(),
-                        data_hex: device.controls.dongle_i2c_write_hex.clone(),
-                    });
-                }
-                if ui.button(text(lang, "读", "Read")).clicked() {
-                    out.push(ControlCommand::DongleI2cRead {
-                        addr: device.controls.dongle_i2c_addr.clone(),
-                        len: device.controls.dongle_i2c_read_len,
-                    });
-                }
-                if ui.button(text(lang, "写后读", "WriteRead")).clicked() {
-                    out.push(ControlCommand::DongleI2cWriteRead {
-                        addr: device.controls.dongle_i2c_addr.clone(),
-                        data_hex: device.controls.dongle_i2c_write_hex.clone(),
-                        len: device.controls.dongle_i2c_read_len,
-                    });
-                }
-            });
-        }
-        _ => {
-            out.extend(probe_controls(ui, lang, tokens, device));
-        }
-    }
-    out
-}
-
-fn scope_unified_controls(
-    ui: &mut egui::Ui,
-    lang: Lang,
-    tokens: &Tokens,
-    device: &mut DeviceUi,
-) -> Vec<ControlCommand> {
-    let mut out = Vec::new();
-    let max_ch = device.capabilities.channels.max(1).min(4) as usize;
-    let trigger_source = device.controls.trigger_source.clone();
-    let trigger_slope = device.controls.trigger_slope.clone();
-    let panel_w = ui.available_width();
-
-    // Row A — acquisition: four equal buttons span the full card width.
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        let gap = ui.spacing().item_spacing.x;
-        let btn_w = ((panel_w - gap * 3.0) / 4.0).max(56.0);
-        let btn = egui::vec2(btn_w, SCOPE_BTN.y);
-        if ui
-            .add_sized(
-                btn,
-                egui::Button::new(
-                    RichText::new(text(lang, "运行", "Run"))
-                        .color(tokens.accent_text)
-                        .strong(),
-                )
-                .fill(tokens.accent),
-            )
-            .clicked()
-        {
-            out.push(ControlCommand::ScopeRun);
-        }
-        if ui
-            .add_sized(
-                btn,
-                egui::Button::new(
-                    RichText::new(text(lang, "停止", "Stop"))
-                        .color(tokens.accent_text)
-                        .strong(),
-                )
-                .fill(tokens.stop_bg),
-            )
-            .clicked()
-        {
-            out.push(ControlCommand::ScopeStop);
-        }
-        if ui
-            .add_sized(btn, egui::Button::new(text(lang, "单次", "Single")))
-            .clicked()
-        {
-            out.push(ControlCommand::ScopeSingle);
-        }
-        if ui
-            .add_sized(btn, egui::Button::new(text(lang, "自动设置", "Autoset")))
-            .clicked()
-        {
-            out.push(ControlCommand::ScopeAutoset);
-        }
-    });
-    ui.add_space(10.0);
-
-    // Row B — timebase / trigger as a full-width toolbar (no floating gap).
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 10.0;
-        ui.label(RichText::new("s/div").strong().small());
-        ui.allocate_ui_with_layout(
-            egui::vec2(80.0, SCOPE_BTN.y),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                ui.add(
-                    egui::DragValue::new(&mut device.controls.scope_timebase)
-                        .speed(0.000_01)
-                        .range(1e-9..=10.0)
-                        .min_decimals(0)
-                        .max_decimals(9),
-                );
-            },
-        );
-        ui.separator();
-        ui.label(RichText::new(text(lang, "触发", "Trig")).strong().small());
-        egui::ComboBox::from_id_salt("scope-trigger-source")
-            .selected_text(trigger_source)
-            .width(68.0)
-            .show_ui(ui, |ui| {
-                for n in 1..=max_ch as u8 {
-                    let name = format!("CH{n}");
-                    ui.selectable_value(&mut device.controls.trigger_source, name.clone(), name);
-                }
-            });
-        ui.allocate_ui_with_layout(
-            egui::vec2(72.0, SCOPE_BTN.y),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                ui.add(
-                    egui::DragValue::new(&mut device.controls.trigger_level)
-                        .suffix(" V")
-                        .speed(0.01),
-                );
-            },
-        );
-        egui::ComboBox::from_id_salt("scope-slope")
-            .selected_text(trigger_slope)
-            .width(68.0)
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut device.controls.trigger_slope, "RISE".into(), "RISE");
-                ui.selectable_value(&mut device.controls.trigger_slope, "FALL".into(), "FALL");
-            });
-        if ui
-            .add_sized(SCOPE_BTN, egui::Button::new(text(lang, "应用", "Apply")))
-            .clicked()
-        {
-            out.push(ControlCommand::ScopeTimebase(
-                device.controls.scope_timebase,
-            ));
-            out.push(ControlCommand::ScopeTrigger {
-                source: device.controls.trigger_source.clone(),
-                level: device.controls.trigger_level,
-                slope: device.controls.trigger_slope.clone(),
-            });
-        }
-    });
-    ui.add_space(10.0);
-    ui.separator();
-    ui.add_space(8.0);
-
-    // Channel table — proportional columns fill the panel; result column is widest.
-    let gap = 8.0;
-    let w_ch = 40.0;
-    let w_on = 28.0;
-    let w_scale = 96.0;
-    let w_pos = 96.0;
-    let w_meas = 168.0;
-    let fixed = w_ch + w_on + w_scale + w_pos + w_meas + gap * 5.0;
-    let w_result = (panel_w - fixed).max(160.0);
-    let header_h = 20.0;
-    let rows_h = (ui.available_height() - header_h - 4.0).max(0.0);
-    let row_h = (rows_h / max_ch.max(1) as f32).clamp(30.0, 44.0);
-
-    scope_channel_col_header(
-        ui,
-        lang,
-        tokens,
-        &[
-            (w_ch, "CH"),
-            (w_on, text(lang, "开", "On")),
-            (w_scale, "Scale"),
-            (w_pos, "Pos"),
-            (w_meas, text(lang, "测量", "Meas")),
-            (w_result, text(lang, "读数", "Result")),
-        ],
-        gap,
-        header_h,
-    );
-    ui.add_space(4.0);
-
-    for i in 0..max_ch {
-        let ch = (i as u8) + 1;
-        ui.allocate_ui_with_layout(
-            egui::vec2(panel_w, row_h),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                ui.spacing_mut().item_spacing.x = gap;
-
-                scope_col(ui, w_ch, row_h, |ui| {
-                    ui.label(
-                        RichText::new(format!("CH{ch}"))
-                            .strong()
-                            .monospace()
-                            .size(12.0),
-                    );
-                });
-                scope_col(ui, w_on, row_h, |ui| {
-                    if ui
-                        .checkbox(&mut device.controls.scope_channel_on[i], "")
-                        .changed()
-                    {
-                        out.push(ControlCommand::ScopeChannel {
-                            channel: ch,
-                            enabled: device.controls.scope_channel_on[i],
-                        });
-                    }
-                });
-                scope_col(ui, w_scale, row_h, |ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    if ui
-                        .add_sized(SCOPE_STEP_BTN, egui::Button::new("−"))
-                        .clicked()
-                    {
-                        device.controls.scope_scales[i] =
-                            nearest_scale_step(device.controls.scope_scales[i], -1);
-                        out.push(ControlCommand::ScopeScale {
-                            channel: ch,
-                            volts_per_div: device.controls.scope_scales[i],
-                        });
-                        device.controls.scope_channel = ch;
-                    }
-                    ui.add_sized(
-                        egui::vec2(36.0, SCOPE_STEP_BTN.y),
-                        egui::Label::new(
-                            RichText::new(format_scope_scale(device.controls.scope_scales[i]))
-                                .small()
-                                .monospace(),
-                        )
-                        .selectable(false),
-                    );
-                    if ui
-                        .add_sized(SCOPE_STEP_BTN, egui::Button::new("+"))
-                        .clicked()
-                    {
-                        device.controls.scope_scales[i] =
-                            nearest_scale_step(device.controls.scope_scales[i], 1);
-                        out.push(ControlCommand::ScopeScale {
-                            channel: ch,
-                            volts_per_div: device.controls.scope_scales[i],
-                        });
-                        device.controls.scope_channel = ch;
-                    }
-                });
-                scope_col(ui, w_pos, row_h, |ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    if ui
-                        .add_sized(SCOPE_STEP_BTN, egui::Button::new("−"))
-                        .clicked()
-                    {
-                        device.controls.scope_positions[i] =
-                            (device.controls.scope_positions[i] - SCOPE_POS_STEP).clamp(-8.0, 8.0);
-                        out.push(ControlCommand::ScopePosition {
-                            channel: ch,
-                            divisions: device.controls.scope_positions[i],
-                        });
-                        device.controls.scope_channel = ch;
-                    }
-                    ui.add_sized(
-                        egui::vec2(36.0, SCOPE_STEP_BTN.y),
-                        egui::Label::new(
-                            RichText::new(format!("{:.2}", device.controls.scope_positions[i]))
-                                .small()
-                                .monospace(),
-                        )
-                        .selectable(false),
-                    );
-                    if ui
-                        .add_sized(SCOPE_STEP_BTN, egui::Button::new("+"))
-                        .clicked()
-                    {
-                        device.controls.scope_positions[i] =
-                            (device.controls.scope_positions[i] + SCOPE_POS_STEP).clamp(-8.0, 8.0);
-                        out.push(ControlCommand::ScopePosition {
-                            channel: ch,
-                            divisions: device.controls.scope_positions[i],
-                        });
-                        device.controls.scope_channel = ch;
-                    }
-                });
-                scope_col(ui, w_meas, row_h, |ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    let meas_label = device.controls.scope_meas_types[i].label();
-                    egui::ComboBox::from_id_salt(("scope-meas-type", ch))
-                        .selected_text(meas_label)
-                        .width(88.0)
-                        .show_ui(ui, |ui| {
-                            for option in ScopeMeasType::all() {
-                                ui.selectable_value(
-                                    &mut device.controls.scope_meas_types[i],
-                                    *option,
-                                    option.label(),
-                                );
-                            }
-                        });
-                    if ui
-                        .add_sized(
-                            egui::vec2(60.0, SCOPE_BTN.y),
-                            egui::Button::new(text(lang, "测量", "Meas")),
-                        )
-                        .clicked()
-                    {
-                        out.push(ControlCommand::ScopeMeasure {
-                            channel: ch,
-                            meas_type: device.controls.scope_meas_types[i],
-                        });
-                        device.controls.scope_channel = ch;
-                    }
-                });
-                scope_col(ui, w_result, row_h, |ui| {
-                    let full = device.controls.scope_meas_results[i]
-                        .as_deref()
-                        .unwrap_or("—");
-                    // Row already shows CH + meas type; show human units (MHz/µs…).
-                    let display = format_scope_meas_display(
-                        full,
-                        device.controls.scope_meas_types[i],
-                    );
-                    let clipped = ellipsize_to_width(ui, &display, w_result - 4.0);
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(clipped)
-                                .small()
-                                .monospace()
-                                .color(tokens.text_muted),
-                        )
-                        .truncate()
-                        .selectable(false),
-                    )
-                    .on_hover_text(full);
-                });
-            },
-        );
-    }
-    out
-}
-
-fn scope_channel_col_header(
-    ui: &mut egui::Ui,
-    _lang: Lang,
-    tokens: &Tokens,
-    cols: &[(f32, &str)],
-    gap: f32,
-    height: f32,
-) {
-    let width: f32 =
-        cols.iter().map(|(w, _)| *w).sum::<f32>() + gap * (cols.len().saturating_sub(1) as f32);
-    ui.allocate_ui_with_layout(
-        egui::vec2(width.max(ui.available_width()), height),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.spacing_mut().item_spacing.x = gap;
-            for (w, label) in cols {
-                scope_col(ui, *w, height, |ui| {
-                    ui.label(
-                        RichText::new(*label)
-                            .strong()
-                            .small()
-                            .color(tokens.text_muted),
-                    );
-                });
-            }
-        },
-    );
-}
-
-fn scope_col(ui: &mut egui::Ui, width: f32, height: f32, add: impl FnOnce(&mut egui::Ui)) {
-    ui.allocate_ui_with_layout(
-        egui::vec2(width, height),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.set_min_width(width);
-            ui.set_max_width(width);
-            add(ui);
-        },
-    );
-}
-
-/// Prefer human-readable "value unit" from "CHx Type: …" for the readout column.
 fn format_scope_meas_display(full: &str, meas_type: ScopeMeasType) -> String {
-    let payload = if let Some((_, rest)) = full.split_once(": ") {
-        rest.trim()
-    } else {
-        full.trim()
-    };
+    let payload = full
+        .split_once(": ")
+        .map(|(_, rest)| rest)
+        .unwrap_or(full)
+        .trim();
     if payload.is_empty() || payload == "—" {
         return "—".into();
     }
     humanize_scope_reading_text(payload, meas_type)
-}
-
-fn ellipsize_to_width(ui: &egui::Ui, text: &str, max_width: f32) -> String {
-    if max_width <= 8.0 || text.is_empty() {
-        return text.to_owned();
-    }
-    let font = egui::TextStyle::Small.resolve(ui.style());
-    let galley = ui.fonts(|f| f.layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE));
-    if galley.size().x <= max_width {
-        return text.to_owned();
-    }
-    let ellipsis = "…";
-    let mut lo = 0usize;
-    let mut hi = text.chars().count();
-    while lo < hi {
-        let mid = (lo + hi + 1) / 2;
-        let candidate: String = text.chars().take(mid).collect::<String>() + ellipsis;
-        let g = ui.fonts(|f| f.layout_no_wrap(candidate, font.clone(), Color32::WHITE));
-        if g.size().x <= max_width {
-            lo = mid;
-        } else {
-            hi = mid - 1;
-        }
-    }
-    if lo == 0 {
-        ellipsis.to_owned()
-    } else {
-        text.chars().take(lo).collect::<String>() + ellipsis
-    }
-}
-
-fn nearest_scale_step(value: f64, direction: i32) -> f64 {
-    let steps = SCOPE_SCALE_STEPS;
-    if value <= 0.0 || steps.is_empty() {
-        return steps.first().copied().unwrap_or(1e-3);
-    }
-    let mut best_i = 0usize;
-    let mut best_d = f64::MAX;
-    for (i, step) in steps.iter().enumerate() {
-        let d = (*step - value).abs();
-        if d < best_d {
-            best_d = d;
-            best_i = i;
-        }
-    }
-    if direction > 0 {
-        steps[(best_i + 1).min(steps.len() - 1)]
-    } else if direction < 0 {
-        steps[best_i.saturating_sub(1)]
-    } else {
-        steps[best_i]
-    }
-}
-
-fn format_scope_scale(volts_per_div: f64) -> String {
-    if volts_per_div >= 1.0 {
-        format!("{volts_per_div:.3}")
-            .trim_end_matches('0')
-            .trim_end_matches('.')
-            .to_owned()
-    } else if volts_per_div >= 1e-3 {
-        format!("{:.0}m", volts_per_div * 1e3)
-    } else {
-        format!("{:.0}u", volts_per_div * 1e6)
-    }
 }
 
 fn store_scope_measure_result(controls: &mut ControlState, response: &str) {
@@ -6183,417 +3864,26 @@ fn store_scope_measure_result(controls: &mut ControlState, response: &str) {
     }
 }
 
+#[cfg(test)]
 fn source_channel_controls(
     ui: &mut egui::Ui,
     lang: Lang,
     tokens: &Tokens,
     device: &mut DeviceUi,
 ) -> Vec<ControlCommand> {
-    let mut out = Vec::new();
-    let channels = device.capabilities.channels.max(1).min(4) as usize;
-    ui.label(
-        RichText::new(format!(
-            "{} — {} {}",
-            text(lang, "按通道设置电压/限流并开关输出", "Set V/I and output per channel"),
-            channels,
-            text(lang, "个通道", "channels"),
-        ))
-        .small()
-        .color(tokens.text_muted),
-    );
-    ui.add_space(8.0);
-
-    let panel_w = ui.available_width().max(320.0);
-    let gap = 6.0;
-    let w_ch = 32.0;
-    let w_apply = 72.0;
-    let w_out = 72.0;
-    let w_v = ((panel_w - w_ch - w_apply - w_out - gap * 4.0) * 0.5).max(1.0);
-    let w_i = w_v;
-    let row_h = 34.0;
-
-    ui.allocate_ui_with_layout(
-        egui::vec2(panel_w, 20.0),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.spacing_mut().item_spacing.x = gap;
-            for (w, label) in [
-                (w_ch, "CH"),
-                (w_v, "V"),
-                (w_i, text(lang, "限流 A", "Limit A")),
-                (w_apply, text(lang, "设定", "Apply")),
-                (w_out, text(lang, "输出", "Output")),
-            ] {
-                scope_col(ui, w, 20.0, |ui| {
-                    ui.label(
-                        RichText::new(label)
-                            .strong()
-                            .small()
-                            .color(tokens.text_muted),
-                    );
-                });
-            }
-        },
-    );
-    ui.add_space(4.0);
-
-    for i in 0..channels {
-        let ch = (i as u8) + 1;
-        ui.allocate_ui_with_layout(
-            egui::vec2(panel_w, row_h),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                ui.spacing_mut().item_spacing.x = gap;
-                scope_col(ui, w_ch, row_h, |ui| {
-                    ui.label(
-                        RichText::new(format!("CH{ch}"))
-                            .strong()
-                            .monospace()
-                            .size(12.0),
-                    );
-                });
-                scope_col(ui, w_v, row_h, |ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut device.controls.source_voltages[i])
-                            .range(0.0..=60.0)
-                            .speed(0.01)
-                            .suffix(" V"),
-                    );
-                });
-                scope_col(ui, w_i, row_h, |ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut device.controls.source_currents[i])
-                            .range(0.0..=20.0)
-                            .speed(0.01)
-                            .suffix(" A"),
-                    );
-                });
-                scope_col(ui, w_apply, row_h, |ui| {
-                    if ui
-                        .add_sized(SCOPE_BTN, egui::Button::new(text(lang, "应用", "Apply")))
-                        .clicked()
-                    {
-                        out.push(ControlCommand::SourceVoltage {
-                            channel: ch,
-                            value: device.controls.source_voltages[i],
-                        });
-                        out.push(ControlCommand::SourceCurrent {
-                            channel: ch,
-                            value: device.controls.source_currents[i],
-                        });
-                    }
-                });
-                scope_col(ui, w_out, row_h, |ui| {
-                    let on = device.controls.source_outputs[i];
-                    let label = if on {
-                        text(lang, "关闭", "OFF")
-                    } else {
-                        text(lang, "开启", "ON")
-                    };
-                    let btn = if on {
-                        egui::Button::new(
-                            RichText::new(label)
-                                .color(tokens.accent_text)
-                                .strong(),
-                        )
-                        .fill(tokens.stop_bg)
-                    } else {
-                        egui::Button::new(
-                            RichText::new(label)
-                                .color(tokens.accent_text)
-                                .strong(),
-                        )
-                        .fill(tokens.accent)
-                    };
-                    if ui.add_sized(egui::vec2(w_out.min(100.0), SCOPE_BTN.y), btn).clicked()
-                    {
-                        device.controls.source_outputs[i] = !on;
-                        out.push(ControlCommand::SourceOutput {
-                            channel: ch,
-                            enabled: device.controls.source_outputs[i],
-                        });
-                    }
-                });
-            },
-        );
-    }
-    out
-}
-
-fn source_protection_controls(
-    ui: &mut egui::Ui,
-    lang: Lang,
-    tokens: &Tokens,
-    device: &mut DeviceUi,
-) -> Vec<ControlCommand> {
-    let mut out = Vec::new();
-    let channels = device.capabilities.channels.max(1).min(4) as usize;
-    ui.label(
-        RichText::new(text(
-            lang,
-            "每通道 OVP / OCP（过压 / 过流保护）",
-            "Per-channel OVP / OCP protection",
-        ))
-        .small()
-        .color(tokens.text_muted),
-    );
-    ui.add_space(8.0);
-
-    let panel_w = ui.available_width().max(320.0);
-    let gap = 8.0;
-    let w_ch = 40.0;
-    let w_ovp = 80.0;
-    let w_ocp = 80.0;
-    let w_apply = (panel_w - w_ch - w_ovp - w_ocp - gap * 3.0).max(72.0);
-    let row_h = 34.0;
-
-    ui.allocate_ui_with_layout(
-        egui::vec2(panel_w, 20.0),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.spacing_mut().item_spacing.x = gap;
-            for (w, label) in [
-                (w_ch, "CH"),
-                (w_ovp, "OVP"),
-                (w_ocp, "OCP"),
-                (w_apply, text(lang, "设定", "Apply")),
-            ] {
-                scope_col(ui, w, 20.0, |ui| {
-                    ui.label(
-                        RichText::new(label)
-                            .strong()
-                            .small()
-                            .color(tokens.text_muted),
-                    );
-                });
-            }
-        },
-    );
-    ui.add_space(4.0);
-
-    for i in 0..channels {
-        let ch = (i as u8) + 1;
-        ui.allocate_ui_with_layout(
-            egui::vec2(panel_w, row_h),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                ui.spacing_mut().item_spacing.x = gap;
-                scope_col(ui, w_ch, row_h, |ui| {
-                    ui.label(
-                        RichText::new(format!("CH{ch}"))
-                            .strong()
-                            .monospace()
-                            .size(12.0),
-                    );
-                });
-                scope_col(ui, w_ovp, row_h, |ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut device.controls.source_ovps[i])
-                            .range(0.0..=60.0)
-                            .speed(0.01)
-                            .suffix(" V"),
-                    );
-                });
-                scope_col(ui, w_ocp, row_h, |ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut device.controls.source_ocps[i])
-                            .range(0.0..=20.0)
-                            .speed(0.01)
-                            .suffix(" A"),
-                    );
-                });
-                scope_col(ui, w_apply, row_h, |ui| {
-                    if ui
-                        .add_sized(SCOPE_BTN, egui::Button::new(text(lang, "应用", "Apply")))
-                        .clicked()
-                    {
-                        out.push(ControlCommand::SourceOvp {
-                            channel: ch,
-                            value: device.controls.source_ovps[i],
-                        });
-                        out.push(ControlCommand::SourceOcp {
-                            channel: ch,
-                            value: device.controls.source_ocps[i],
-                        });
-                    }
-                });
-            },
-        );
-    }
-    out
-}
-
-fn load_channel_controls(
-    ui: &mut egui::Ui,
-    lang: Lang,
-    tokens: &Tokens,
-    device: &mut DeviceUi,
-) -> Vec<ControlCommand> {
-    let mut out = Vec::new();
-    ui.label(
-        RichText::new(text(
-            lang,
-            "设定工作模式与电平，再控制负载输入开关。",
-            "Set mode and level, then toggle load input.",
-        ))
-        .small()
-        .color(tokens.text_muted),
-    );
-    ui.add_space(10.0);
-
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 10.0;
-        ui.label(RichText::new(text(lang, "模式", "Mode")).strong());
-        let selected = device.controls.load_mode.clone();
-        egui::ComboBox::from_id_salt("load-mode")
-            .selected_text(selected)
-            .width(88.0)
-            .show_ui(ui, |ui| {
-                for mode in device.capabilities.load_modes.clone() {
-                    ui.selectable_value(&mut device.controls.load_mode, mode.clone(), mode);
-                }
-            });
-        let unit = match device.controls.load_mode.as_str() {
-            "CV" => " V",
-            "CR" => " Ω",
-            "CP" => " W",
-            _ => " A",
-        };
-        ui.label(RichText::new(text(lang, "电平", "Level")).strong());
-        ui.add(
-            egui::DragValue::new(&mut device.controls.load_level)
-                .speed(0.01)
-                .suffix(unit),
-        );
-        if ui
-            .add_sized(SCOPE_BTN, egui::Button::new(text(lang, "应用", "Apply")))
-            .clicked()
-        {
-            out.push(ControlCommand::LoadMode(device.controls.load_mode.clone()));
-            out.push(ControlCommand::LoadLevel {
-                mode: device.controls.load_mode.clone(),
-                value: device.controls.load_level,
-            });
-        }
-    });
-    ui.add_space(14.0);
-    ui.separator();
-    ui.add_space(10.0);
-
-    let on = device.controls.load_input;
-    let label = if on {
-        text(lang, "关闭负载输入", "Input OFF")
-    } else {
-        text(lang, "开启负载输入", "Input ON")
-    };
-    let btn = if on {
-        egui::Button::new(RichText::new(label).color(tokens.accent_text).strong())
-            .fill(tokens.stop_bg)
-    } else {
-        egui::Button::new(RichText::new(label).color(tokens.accent_text).strong())
-            .fill(tokens.accent)
-    };
-    if ui
-        .add_sized(egui::vec2(ui.available_width().min(220.0), 32.0), btn)
-        .clicked()
-    {
-        device.controls.load_input = !on;
-        out.push(ControlCommand::LoadInput(device.controls.load_input));
-    }
-    out
-}
-
-fn dmm_setup_controls(
-    ui: &mut egui::Ui,
-    lang: Lang,
-    tokens: &Tokens,
-    device: &mut DeviceUi,
-) -> Vec<ControlCommand> {
-    let mut out = Vec::new();
-    ui.label(
-        RichText::new(text(
-            lang,
-            "配置测量功能、量程与 NPLC，然后应用到仪表。",
-            "Configure function, range and NPLC, then apply.",
-        ))
-        .small()
-        .color(tokens.text_muted),
-    );
-    ui.add_space(10.0);
-
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 10.0;
-        ui.label(RichText::new(text(lang, "功能", "Function")).strong());
-        egui::ComboBox::from_id_salt("dmm-function")
-            .selected_text(device.controls.dmm_function.label())
-            .width(88.0)
-            .show_ui(ui, |ui| {
-                for function in MeasureFunction::all() {
-                    ui.selectable_value(
-                        &mut device.controls.dmm_function,
-                        *function,
-                        function.label(),
-                    );
-                }
-            });
-        ui.checkbox(
-            &mut device.controls.dmm_autorange,
-            text(lang, "自动量程", "Auto range"),
-        );
-    });
-    ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 10.0;
-        ui.label(RichText::new(text(lang, "量程", "Range")).strong());
-        ui.add_enabled(
-            !device.controls.dmm_autorange,
-            egui::DragValue::new(&mut device.controls.dmm_range)
-                .speed(0.1)
-                .suffix(format!(" {}", device.controls.dmm_function.unit())),
-        );
-        ui.label(RichText::new("NPLC").strong());
-        ui.add(
-            egui::DragValue::new(&mut device.controls.dmm_nplc)
-                .range(0.001..=100.0)
-                .speed(0.01),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .add_sized(SCOPE_BTN, egui::Button::new(text(lang, "应用", "Apply")))
-                .clicked()
-            {
-                out.push(ControlCommand::DmmFunction(device.controls.dmm_function));
-                out.push(ControlCommand::DmmAutoRange {
-                    function: device.controls.dmm_function,
-                    enabled: device.controls.dmm_autorange,
-                });
-                if !device.controls.dmm_autorange {
-                    out.push(ControlCommand::DmmRange {
-                        function: device.controls.dmm_function,
-                        value: device.controls.dmm_range,
-                    });
-                }
-                out.push(ControlCommand::DmmNplc {
-                    function: device.controls.dmm_function,
-                    value: device.controls.dmm_nplc,
-                });
-            }
-        });
-    });
-    let _ = tokens;
-    out
+    workbench::controls::source(ui, lang, tokens, device)
 }
 
 fn card(ui: &mut egui::Ui, tokens: &Tokens, title: &str, add: impl FnOnce(&mut egui::Ui)) {
     Frame::NONE
         .fill(tokens.surface_bg)
-        .stroke(Stroke::new(1.0_f32, tokens.border))
-        .corner_radius(CornerRadius::same(6))
-        .inner_margin(Margin::same(10))
+        .stroke(Stroke::new(1.0_f32, tokens.divider))
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(Margin::same(12))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.label(RichText::new(title).strong());
-            ui.add_space(5.0);
+            ui.add_space(10.0);
             add(ui);
         });
     ui.add_space(7.0);
@@ -6671,7 +3961,10 @@ fn instrument_type_card(
                     },
                 );
                 ui.vertical(|ui| {
-                    ui.set_width((content_width - CARD_ICON_COLUMN_WIDTH - ui.spacing().item_spacing.x).max(1.0));
+                    ui.set_width(
+                        (content_width - CARD_ICON_COLUMN_WIDTH - ui.spacing().item_spacing.x)
+                            .max(1.0),
+                    );
                     if ui
                         .selectable_label(
                             selected,
@@ -7120,11 +4413,9 @@ fn instrument_features(lang: Lang, kind: InstrumentKind) -> [(&'static str, &'st
             "Halt/Run/复位、烧录、内存与 RTT",
             "Halt/run/reset, flash, memory and RTT",
         ),
-        InstrumentKind::UsbBridge => text(
-            lang,
-            "SPI / I2C / GPIO 收发",
-            "SPI / I2C / GPIO transfers",
-        ),
+        InstrumentKind::UsbBridge => {
+            text(lang, "SPI / I2C / GPIO 收发", "SPI / I2C / GPIO transfers")
+        }
         InstrumentKind::WiparseDongle => text(
             lang,
             "DAP Halt/烧录、UART 透传、I2C SCAN/读写",
@@ -7164,7 +4455,7 @@ fn instrument_features(lang: Lang, kind: InstrumentKind) -> [(&'static str, &'st
 
 fn setting_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.label(RichText::new(label).strong());
-    ui.label(value);
+    ui.add(egui::Label::new(value).wrap());
     ui.end_row();
 }
 
@@ -7203,8 +4494,12 @@ fn resource_address_hint(kind: InstrumentKind) -> &'static str {
 
 fn resource_empty_prompt(lang: Lang, kind: InstrumentKind) -> &'static str {
     match kind {
-        InstrumentKind::DebugProbe => text(lang, "选择或输入探针地址", "Select or enter probe address"),
-        InstrumentKind::UsbBridge => text(lang, "选择或输入桥地址", "Select or enter bridge address"),
+        InstrumentKind::DebugProbe => {
+            text(lang, "选择或输入探针地址", "Select or enter probe address")
+        }
+        InstrumentKind::UsbBridge => {
+            text(lang, "选择或输入桥地址", "Select or enter bridge address")
+        }
         InstrumentKind::WiparseDongle => text(
             lang,
             "选择或输入 dongle 地址",
@@ -7263,17 +4558,17 @@ fn hud_tokens(tokens: &Tokens) -> HudTokens {
 
 fn hud_chip(ui: &mut egui::Ui, hud: &HudTokens, label: impl Into<String>, color: Color32) {
     Frame::NONE
-        .fill(Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 28))
+        .fill(Color32::from_rgba_unmultiplied(
+            color.r(),
+            color.g(),
+            color.b(),
+            28,
+        ))
         .stroke(Stroke::new(1.0_f32, color))
         .corner_radius(CornerRadius::same(3))
         .inner_margin(Margin::symmetric(8, 3))
         .show(ui, |ui| {
-            ui.label(
-                RichText::new(label.into())
-                    .small()
-                    .monospace()
-                    .color(color),
-            );
+            ui.label(RichText::new(label.into()).small().monospace().color(color));
         });
 }
 
@@ -7304,7 +4599,10 @@ fn paint_hud_backdrop(painter: &egui::Painter, rect: Rect, hud: &HudTokens, t: f
     }
     let scan = rect.top() + (t * 48.0).rem_euclid(rect.height().max(1.0));
     painter.line_segment(
-        [egui::pos2(rect.left(), scan), egui::pos2(rect.right(), scan)],
+        [
+            egui::pos2(rect.left(), scan),
+            egui::pos2(rect.right(), scan),
+        ],
         Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 40)),
     );
 }
@@ -7324,11 +4622,7 @@ fn paint_control_pipeline(
             if scanning { hud.warn } else { hud.cyan },
             scanning,
         ),
-        (
-            text(lang, "识别", "IDENT"),
-            hud.cyan,
-            sessions > 0,
-        ),
+        (text(lang, "识别", "IDENT"), hud.cyan, sessions > 0),
         (
             text(lang, "会话", "LINK"),
             if sessions > 0 { hud.ok } else { hud.dim },
@@ -7349,7 +4643,10 @@ fn paint_control_pipeline(
                 let (r, _) = ui.allocate_exact_size(egui::vec2(w, 28.0), egui::Sense::hover());
                 let y = r.center().y;
                 ui.painter().line_segment(
-                    [egui::pos2(r.left() + 2.0, y), egui::pos2(r.right() - 2.0, y)],
+                    [
+                        egui::pos2(r.left() + 2.0, y),
+                        egui::pos2(r.right() - 2.0, y),
+                    ],
                     Stroke::new(1.2_f32, hud.line),
                 );
                 let dash = r.left() + (t * 40.0).rem_euclid(w);
@@ -7360,7 +4657,12 @@ fn paint_control_pipeline(
                 );
             }
             let fill = if *on {
-                Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), (40.0 + 50.0 * pulse) as u8)
+                Color32::from_rgba_unmultiplied(
+                    color.r(),
+                    color.g(),
+                    color.b(),
+                    (40.0 + 50.0 * pulse) as u8,
+                )
             } else {
                 Color32::from_rgba_unmultiplied(74, 227, 255, 16)
             };
@@ -7466,7 +4768,9 @@ fn latest_pair(
     id: u64,
     key: &str,
 ) -> Option<(f64, String)> {
-    latest.get(&(id, key.to_string())).map(|r| (r.value, r.unit.clone()))
+    latest
+        .get(&(id, key.to_string()))
+        .map(|r| (r.value, r.unit.clone()))
 }
 
 fn twin_face_of(
@@ -7507,10 +4811,7 @@ fn twin_face_of(
                     meas_w: latest_pair(latest, id, &format!("CH{ch} Power")),
                 });
             }
-            TwinFace::DcSource {
-                channels: n,
-                rows,
-            }
+            TwinFace::DcSource { channels: n, rows }
         }
         InstrumentKind::ElectronicLoad => TwinFace::Load {
             mode: device.controls.load_mode.clone(),
@@ -7766,18 +5067,17 @@ fn paint_digital_twin_lab(
     let hub_top = egui::pos2(hub.center().x, hub.top());
     let mut clicked = None;
     for (i, snap) in snaps.iter().enumerate() {
-        let ang = -std::f32::consts::FRAC_PI_2
-            + (i as f32 + 0.5) * (std::f32::consts::TAU / n.max(1.0));
+        let ang =
+            -std::f32::consts::FRAC_PI_2 + (i as f32 + 0.5) * (std::f32::consts::TAU / n.max(1.0));
         let size = twin_unit_size(&snap.face) * scale;
         let mut center = egui::pos2(origin.x + rx * ang.cos(), origin.y + ry * ang.sin() * 0.72);
         center.x = center.x.clamp(
             rect.left() + size.x * 0.5 + 10.0,
             rect.right() - size.x * 0.5 - 10.0,
         );
-        center.y = center.y.clamp(
-            rect.top() + size.y * 0.5 + 8.0,
-            hub.top() - size.y * 0.45,
-        );
+        center.y = center
+            .y
+            .clamp(rect.top() + size.y * 0.5 + 8.0, hub.top() - size.y * 0.45);
         let card = Rect::from_center_size(center, size);
         let card_bottom = egui::pos2(card.center().x, card.bottom());
         paint_twin_link(&painter, hub_top, card_bottom, hud, t, i, snap.live);
@@ -7835,7 +5135,10 @@ fn paint_twin_floor(painter: &egui::Painter, rect: Rect, t: f32) {
     }
     let scan = floor.top() + (t * 36.0).rem_euclid(floor.height().max(1.0));
     painter.line_segment(
-        [egui::pos2(floor.left(), scan), egui::pos2(floor.right(), scan)],
+        [
+            egui::pos2(floor.left(), scan),
+            egui::pos2(floor.right(), scan),
+        ],
         Stroke::new(1.1_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 28)),
     );
 }
@@ -7983,7 +5286,11 @@ fn paint_iso_twin_unit(
     painter.text(
         egui::pos2(header.left() + 8.0, header.center().y),
         egui::Align2::LEFT_CENTER,
-        format!("{}  {}", kind_icon(snap.kind), truncate_chars(&snap.name, 16)),
+        format!(
+            "{}  {}",
+            kind_icon(snap.kind),
+            truncate_chars(&snap.name, 16)
+        ),
         egui::FontId::monospace(10.0),
         tokens.text_primary,
     );
@@ -8014,7 +5321,13 @@ fn paint_iso_twin_unit(
             ),
         );
     }
-    let _ = (&snap.manufacturer, &snap.activity, &snap.params, &snap.serial, &snap.resource);
+    let _ = (
+        &snap.manufacturer,
+        &snap.activity,
+        &snap.params,
+        &snap.serial,
+        &snap.resource,
+    );
 }
 
 fn twin_chassis_colors(kind: InstrumentKind) -> (Color32, Color32, Color32) {
@@ -8062,13 +5375,7 @@ fn twin_chassis_colors(kind: InstrumentKind) -> (Color32, Color32, Color32) {
     }
 }
 
-fn paint_twin_face(
-    painter: &egui::Painter,
-    rect: Rect,
-    snap: &TwinSnap,
-    hud: &HudTokens,
-    t: f32,
-) {
+fn paint_twin_face(painter: &egui::Painter, rect: Rect, snap: &TwinSnap, hud: &HudTokens, t: f32) {
     match &snap.face {
         TwinFace::DcSource { channels, rows } => {
             paint_face_dc_source(painter, rect, *channels, rows, hud, snap.live, t);
@@ -8255,10 +5562,7 @@ fn paint_face_dc_source(
     t: f32,
 ) {
     let jack_h = 22.0;
-    let lcd = Rect::from_min_max(
-        rect.min,
-        egui::pos2(rect.right(), rect.bottom() - jack_h),
-    );
+    let lcd = Rect::from_min_max(rect.min, egui::pos2(rect.right(), rect.bottom() - jack_h));
     paint_lcd_panel(painter, lcd, LcdTint::Amber);
     let n = channels.max(1) as usize;
     let row_h = ((lcd.height() - 4.0) / n as f32).clamp(16.0, 24.0);
@@ -8306,26 +5610,34 @@ fn paint_face_dc_source(
                 format!("OFF")
             },
             egui::FontId::monospace(10.0),
-            if row.on { hud.ok } else { lcd_dim(LcdTint::Amber) },
+            if row.on {
+                hud.ok
+            } else {
+                lcd_dim(LcdTint::Amber)
+            },
         );
     }
     if live {
         let scan = lcd.top() + (t * 22.0).rem_euclid(lcd.height().max(1.0));
         painter.line_segment(
-            [egui::pos2(lcd.left() + 2.0, scan), egui::pos2(lcd.right() - 2.0, scan)],
+            [
+                egui::pos2(lcd.left() + 2.0, scan),
+                egui::pos2(lcd.right() - 2.0, scan),
+            ],
             Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 194, 74, 28)),
         );
     }
-    let jack_area = Rect::from_min_max(
-        egui::pos2(rect.left(), lcd.bottom() + 2.0),
-        rect.max,
-    );
+    let jack_area = Rect::from_min_max(egui::pos2(rect.left(), lcd.bottom() + 2.0), rect.max);
     let slot_w = jack_area.width() / n as f32;
     for i in 0..n {
         let cx = jack_area.left() + slot_w * (i as f32 + 0.5);
         let cy = jack_area.center().y;
         let on = rows.get(i).map(|r| r.on).unwrap_or(false);
-        painter.circle_filled(egui::pos2(cx - 7.0, cy), 4.2, Color32::from_rgb(176, 42, 42));
+        painter.circle_filled(
+            egui::pos2(cx - 7.0, cy),
+            4.2,
+            Color32::from_rgb(176, 42, 42),
+        );
         painter.circle_filled(egui::pos2(cx + 7.0, cy), 4.2, Color32::from_rgb(28, 28, 30));
         painter.circle_stroke(
             egui::pos2(cx - 7.0, cy),
@@ -8337,7 +5649,11 @@ fn paint_face_dc_source(
             4.2,
             Stroke::new(1.0_f32, Color32::from_rgb(60, 60, 64)),
         );
-        let led = if on { hud.ok } else { Color32::from_rgb(32, 40, 32) };
+        let led = if on {
+            hud.ok
+        } else {
+            Color32::from_rgb(32, 40, 32)
+        };
         painter.circle_filled(egui::pos2(cx, cy - 8.0), 2.2, led);
         painter.text(
             egui::pos2(cx, jack_area.bottom() - 1.0),
@@ -8371,27 +5687,31 @@ fn paint_face_scope(
 ) {
     let n = channels.max(1).min(4) as usize;
     let knobs_w = 28.0;
-    let screen = Rect::from_min_max(
-        rect.min,
-        egui::pos2(rect.right() - knobs_w, rect.bottom()),
-    );
+    let screen = Rect::from_min_max(rect.min, egui::pos2(rect.right() - knobs_w, rect.bottom()));
     paint_lcd_panel(painter, screen, LcdTint::Scope);
     for g in 1..4 {
         let x = screen.left() + screen.width() * (g as f32 / 4.0);
         painter.line_segment(
-            [egui::pos2(x, screen.top() + 2.0), egui::pos2(x, screen.bottom() - 2.0)],
+            [
+                egui::pos2(x, screen.top() + 2.0),
+                egui::pos2(x, screen.bottom() - 2.0),
+            ],
             Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 28)),
         );
         let y = screen.top() + screen.height() * (g as f32 / 4.0);
         painter.line_segment(
-            [egui::pos2(screen.left() + 2.0, y), egui::pos2(screen.right() - 2.0, y)],
+            [
+                egui::pos2(screen.left() + 2.0, y),
+                egui::pos2(screen.right() - 2.0, y),
+            ],
             Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 28)),
         );
     }
     let mut pts = Vec::new();
     if wave.len() >= 2 {
         for (i, y01) in wave.iter().enumerate() {
-            let x = screen.left() + 3.0 + (screen.width() - 6.0) * (i as f32 / (wave.len() - 1) as f32);
+            let x =
+                screen.left() + 3.0 + (screen.width() - 6.0) * (i as f32 / (wave.len() - 1) as f32);
             let y = screen.bottom() - 4.0 - (screen.height() - 8.0) * y01;
             pts.push(egui::pos2(x, y));
         }
@@ -8400,8 +5720,7 @@ fn paint_face_scope(
         for i in 0..36 {
             let k = i as f32 / 35.0;
             let x = screen.left() + 3.0 + (screen.width() - 6.0) * k;
-            let y = screen.center().y
-                + (t * 3.2 + k * 8.0).sin() * screen.height() * amp;
+            let y = screen.center().y + (t * 3.2 + k * 8.0).sin() * screen.height() * amp;
             pts.push(egui::pos2(x, y));
         }
     }
@@ -8439,7 +5758,11 @@ fn paint_face_scope(
     for i in 0..n {
         let y = knob_col.top() + 10.0 + i as f32 * 18.0;
         let on = channel_on.get(i).copied().unwrap_or(false);
-        let color = if on { SCOPE_CH_COLORS[i] } else { Color32::from_rgb(40, 48, 52) };
+        let color = if on {
+            SCOPE_CH_COLORS[i]
+        } else {
+            Color32::from_rgb(40, 48, 52)
+        };
         painter.circle_filled(egui::pos2(knob_col.center().x, y), 5.4, color);
         painter.circle_stroke(
             egui::pos2(knob_col.center().x, y),
@@ -8479,7 +5802,12 @@ fn paint_face_load(
     painter.text(
         egui::pos2(lcd.left() + 8.0, lcd.top() + 6.0),
         egui::Align2::LEFT_TOP,
-        format!("{}  LVL {:.4}  {}", mode, level, if input { "SINK" } else { "OPEN" }),
+        format!(
+            "{}  LVL {:.4}  {}",
+            mode,
+            level,
+            if input { "SINK" } else { "OPEN" }
+        ),
         egui::FontId::monospace(10.0),
         color,
     );
@@ -8509,13 +5837,19 @@ fn paint_face_load(
     if live {
         let scan = lcd.top() + (t * 18.0).rem_euclid(lcd.height().max(1.0));
         painter.line_segment(
-            [egui::pos2(lcd.left() + 2.0, scan), egui::pos2(lcd.right() - 2.0, scan)],
+            [
+                egui::pos2(lcd.left() + 2.0, scan),
+                egui::pos2(lcd.right() - 2.0, scan),
+            ],
             Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 194, 74, 24)),
         );
     }
     let sink = Rect::from_min_max(egui::pos2(lcd.right() + 4.0, rect.top() + 8.0), rect.max);
     painter.line_segment(
-        [egui::pos2(sink.center().x, sink.top()), egui::pos2(sink.center().x, sink.bottom() - 10.0)],
+        [
+            egui::pos2(sink.center().x, sink.top()),
+            egui::pos2(sink.center().x, sink.bottom() - 10.0),
+        ],
         Stroke::new(1.4_f32, hud.cyan),
     );
     painter.line_segment(
@@ -8528,7 +5862,11 @@ fn paint_face_load(
     painter.circle_filled(
         egui::pos2(sink.center().x, sink.bottom() - 6.0),
         4.0,
-        if input { hud.ok } else { Color32::from_rgb(40, 40, 40) },
+        if input {
+            hud.ok
+        } else {
+            Color32::from_rgb(40, 40, 40)
+        },
     );
 }
 
@@ -8649,17 +5987,21 @@ fn paint_face_probe(
             0.25
         };
         painter.line_segment(
-            [egui::pos2(header.left(), y), egui::pos2(header.right() - 4.0, y)],
+            [
+                egui::pos2(header.left(), y),
+                egui::pos2(header.right() - 4.0, y),
+            ],
             Stroke::new(
                 1.2_f32,
-                Color32::from_rgba_unmultiplied(hud.cyan.r(), hud.cyan.g(), hud.cyan.b(), (80.0 + 140.0 * pulse) as u8),
+                Color32::from_rgba_unmultiplied(
+                    hud.cyan.r(),
+                    hud.cyan.g(),
+                    hud.cyan.b(),
+                    (80.0 + 140.0 * pulse) as u8,
+                ),
             ),
         );
-        painter.circle_filled(
-            egui::pos2(header.right() - 4.0, y),
-            2.4,
-            hud.cyan,
-        );
+        painter.circle_filled(egui::pos2(header.right() - 4.0, y), 2.4, hud.cyan);
         painter.text(
             egui::pos2(header.left(), y - 7.0),
             egui::Align2::LEFT_BOTTOM,
@@ -8710,7 +6052,11 @@ fn paint_face_dongle(
         egui::Align2::LEFT_BOTTOM,
         if live { "LIVE" } else { "IDLE" },
         egui::FontId::monospace(10.0),
-        if live { hud.ok } else { lcd_dim(LcdTint::Scope) },
+        if live {
+            hud.ok
+        } else {
+            lcd_dim(LcdTint::Scope)
+        },
     );
 }
 
@@ -8766,7 +6112,11 @@ fn paint_face_bridge(
         painter.circle_filled(
             egui::pos2(cx - 14.0, y),
             3.2,
-            if on { hud.ok } else { Color32::from_rgb(40, 48, 40) },
+            if on {
+                hud.ok
+            } else {
+                Color32::from_rgb(40, 48, 40)
+            },
         );
         painter.text(
             egui::pos2(cx - 8.0, y),
@@ -8817,7 +6167,10 @@ fn truncate_chars(s: &str, max: usize) -> String {
     if count <= max {
         s.to_owned()
     } else {
-        format!("{}…", s.chars().take(max.saturating_sub(1)).collect::<String>())
+        format!(
+            "{}…",
+            s.chars().take(max.saturating_sub(1)).collect::<String>()
+        )
     }
 }
 
@@ -8922,8 +6275,7 @@ fn overview_device_tile(
     latest: &HashMap<(u64, String), Reading>,
     photo: Option<&egui::TextureHandle>,
 ) -> bool {
-    let (status, status_color) =
-        overview_runtime_status(lang, device, busy_device, busy_label);
+    let (status, status_color) = overview_runtime_status(lang, device, busy_device, busy_label);
     let params = overview_param_lines(lang, device, latest);
     let mut opened = false;
     let frame = Frame::NONE
@@ -8959,7 +6311,12 @@ fn overview_device_tile(
                     } else {
                         device.identity.model.clone()
                     };
-                    ui.label(RichText::new(name).strong().color(tokens.text_primary).size(14.0));
+                    ui.label(
+                        RichText::new(name)
+                            .strong()
+                            .color(tokens.text_primary)
+                            .size(14.0),
+                    );
                     ui.label(
                         RichText::new(&device.identity.manufacturer)
                             .small()
@@ -8973,12 +6330,7 @@ fn overview_device_tile(
             } else {
                 format!("SN {}", device.identity.serial)
             };
-            ui.label(
-                RichText::new(serial)
-                    .small()
-                    .monospace()
-                    .color(hud.dim),
-            );
+            ui.label(RichText::new(serial).small().monospace().color(hud.dim));
             ui.label(
                 RichText::new(short_resource(&device.resource))
                     .small()
@@ -8988,18 +6340,8 @@ fn overview_device_tile(
             ui.add_space(6.0);
             for (k, v) in params.iter().take(4) {
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(k)
-                            .small()
-                            .monospace()
-                            .color(hud.dim),
-                    );
-                    ui.label(
-                        RichText::new(v)
-                            .small()
-                            .monospace()
-                            .color(hud.cyan),
-                    );
+                    ui.label(RichText::new(k).small().monospace().color(hud.dim));
+                    ui.label(RichText::new(v).small().monospace().color(hud.cyan));
                 });
             }
             if !device.last_activity.is_empty() {
@@ -9064,21 +6406,36 @@ fn overview_runtime_status(
         return (label, Color32::from_rgb(0xFF, 0xD6, 0x0A));
     }
     if device.acquiring && device.paused {
-        return (text(lang, "保持", "HOLD").into(), Color32::from_rgb(0xFF, 0x9F, 0x0A));
+        return (
+            text(lang, "保持", "HOLD").into(),
+            Color32::from_rgb(0xFF, 0x9F, 0x0A),
+        );
     }
     if device.acquiring {
-        return (text(lang, "采集", "LIVE").into(), Color32::from_rgb(0x30, 0xD1, 0x58));
+        return (
+            text(lang, "采集", "LIVE").into(),
+            Color32::from_rgb(0x30, 0xD1, 0x58),
+        );
     }
     if device.controls.probe_rtt_on {
         return ("RTT".into(), Color32::from_rgb(0x4A, 0xE3, 0xFF));
     }
     if device.controls.source_outputs.iter().any(|on| *on) {
-        return (text(lang, "输出开", "OUTPUT").into(), Color32::from_rgb(0x30, 0xD1, 0x58));
+        return (
+            text(lang, "输出开", "OUTPUT").into(),
+            Color32::from_rgb(0x30, 0xD1, 0x58),
+        );
     }
     if device.controls.load_input {
-        return (text(lang, "带载", "SINK").into(), Color32::from_rgb(0x30, 0xD1, 0x58));
+        return (
+            text(lang, "带载", "SINK").into(),
+            Color32::from_rgb(0x30, 0xD1, 0x58),
+        );
     }
-    (text(lang, "待机", "STANDBY").into(), Color32::from_rgb(0x7A, 0xC8, 0xE0))
+    (
+        text(lang, "待机", "STANDBY").into(),
+        Color32::from_rgb(0x7A, 0xC8, 0xE0),
+    )
 }
 
 fn overview_status_key(device: &DeviceUi, busy_device: Option<u64>) -> &'static str {
@@ -9316,12 +6673,17 @@ fn paint_device_glyph(
                 egui::pos2(r.right() - 22.0, r.bottom() - 10.0),
             );
             painter.rect_filled(screen, CornerRadius::same(2), Color32::from_rgb(4, 18, 28));
-            painter.rect_stroke(screen, CornerRadius::same(2), stroke, egui::StrokeKind::Inside);
+            painter.rect_stroke(
+                screen,
+                CornerRadius::same(2),
+                stroke,
+                egui::StrokeKind::Inside,
+            );
             let mut pts = Vec::new();
             for i in 0..24 {
                 let x = screen.left() + screen.width() * (i as f32 / 23.0);
-                let y = screen.center().y
-                    + (t * 4.0 + i as f32 * 0.45).sin() * screen.height() * 0.28;
+                let y =
+                    screen.center().y + (t * 4.0 + i as f32 * 0.45).sin() * screen.height() * 0.28;
                 pts.push(egui::pos2(x, y));
             }
             painter.add(egui::Shape::line(pts, Stroke::new(1.2_f32, accent)));
@@ -9336,7 +6698,10 @@ fn paint_device_glyph(
         InstrumentKind::DcSource => {
             for i in 0..3 {
                 let y = r.top() + 14.0 + i as f32 * 16.0;
-                let bar = Rect::from_min_size(egui::pos2(r.left() + 10.0, y), egui::vec2(r.width() * 0.62, 9.0));
+                let bar = Rect::from_min_size(
+                    egui::pos2(r.left() + 10.0, y),
+                    egui::vec2(r.width() * 0.62, 9.0),
+                );
                 painter.rect_filled(bar, CornerRadius::same(1), Color32::from_rgb(8, 32, 44));
                 painter.rect_filled(
                     Rect::from_min_size(
@@ -9370,7 +6735,12 @@ fn paint_device_glyph(
         InstrumentKind::Multimeter => {
             let face = Rect::from_center_size(c, egui::vec2(r.width() - 18.0, 28.0));
             painter.rect_filled(face, CornerRadius::same(2), Color32::from_rgb(4, 20, 16));
-            painter.rect_stroke(face, CornerRadius::same(2), stroke, egui::StrokeKind::Inside);
+            painter.rect_stroke(
+                face,
+                CornerRadius::same(2),
+                stroke,
+                egui::StrokeKind::Inside,
+            );
             painter.text(
                 face.center(),
                 egui::Align2::CENTER_CENTER,
@@ -9380,12 +6750,14 @@ fn paint_device_glyph(
             );
         }
         InstrumentKind::DebugProbe => {
-            let body = Rect::from_center_size(
-                egui::pos2(c.x - 6.0, c.y),
-                egui::vec2(40.0, 22.0),
-            );
+            let body = Rect::from_center_size(egui::pos2(c.x - 6.0, c.y), egui::vec2(40.0, 22.0));
             painter.rect_filled(body, CornerRadius::same(3), Color32::from_rgb(12, 36, 52));
-            painter.rect_stroke(body, CornerRadius::same(3), stroke, egui::StrokeKind::Inside);
+            painter.rect_stroke(
+                body,
+                CornerRadius::same(3),
+                stroke,
+                egui::StrokeKind::Inside,
+            );
             for i in 0..4 {
                 let y = body.top() + 5.0 + i as f32 * 4.0;
                 painter.line_segment(
@@ -9394,7 +6766,10 @@ fn paint_device_glyph(
                 );
             }
             painter.rect_filled(
-                Rect::from_min_size(egui::pos2(body.left() - 10.0, body.top() + 4.0), egui::vec2(10.0, 14.0)),
+                Rect::from_min_size(
+                    egui::pos2(body.left() - 10.0, body.top() + 4.0),
+                    egui::vec2(10.0, 14.0),
+                ),
                 CornerRadius::same(1),
                 hud.cyan,
             );
@@ -9402,15 +6777,26 @@ fn paint_device_glyph(
         InstrumentKind::UsbBridge => {
             let chip = Rect::from_center_size(c, egui::vec2(36.0, 28.0));
             painter.rect_filled(chip, CornerRadius::same(2), Color32::from_rgb(12, 28, 20));
-            painter.rect_stroke(chip, CornerRadius::same(2), stroke, egui::StrokeKind::Inside);
+            painter.rect_stroke(
+                chip,
+                CornerRadius::same(2),
+                stroke,
+                egui::StrokeKind::Inside,
+            );
             for i in 0..4 {
                 let y = chip.top() + 5.0 + i as f32 * 6.0;
                 painter.line_segment(
-                    [egui::pos2(chip.left() - 10.0, y), egui::pos2(chip.left(), y)],
+                    [
+                        egui::pos2(chip.left() - 10.0, y),
+                        egui::pos2(chip.left(), y),
+                    ],
                     Stroke::new(1.1_f32, accent),
                 );
                 painter.line_segment(
-                    [egui::pos2(chip.right(), y), egui::pos2(chip.right() + 10.0, y)],
+                    [
+                        egui::pos2(chip.right(), y),
+                        egui::pos2(chip.right() + 10.0, y),
+                    ],
                     Stroke::new(1.1_f32, accent),
                 );
             }
@@ -9418,11 +6804,19 @@ fn paint_device_glyph(
         InstrumentKind::WiparseDongle => {
             let body = Rect::from_center_size(c, egui::vec2(42.0, 22.0));
             painter.rect_filled(body, CornerRadius::same(3), Color32::from_rgb(10, 22, 40));
-            painter.rect_stroke(body, CornerRadius::same(3), stroke, egui::StrokeKind::Inside);
+            painter.rect_stroke(
+                body,
+                CornerRadius::same(3),
+                stroke,
+                egui::StrokeKind::Inside,
+            );
             for i in 0..3 {
                 let x = body.left() + 10.0 + i as f32 * 11.0;
                 painter.line_segment(
-                    [egui::pos2(x, body.bottom()), egui::pos2(x, r.bottom() - 8.0)],
+                    [
+                        egui::pos2(x, body.bottom()),
+                        egui::pos2(x, r.bottom() - 8.0),
+                    ],
                     Stroke::new(1.2_f32, accent),
                 );
             }
@@ -9615,7 +7009,11 @@ fn publish_instrument_event(bus: &crate::backend::EventBus, event: &Event) {
                 None,
             );
         }
-        Event::Error { id, job_id, message } => {
+        Event::Error {
+            id,
+            job_id,
+            message,
+        } => {
             bus.publish(
                 "instrument.error",
                 serde_json::json!({ "device_id": id, "job_id": job_id, "message": message }),
@@ -9641,59 +7039,247 @@ fn local(zh: bool, zh_text: &'static str, en_text: &'static str) -> &'static str
     }
 }
 
-
 #[cfg(test)]
 mod layout_audit {
     use super::*;
 
     #[test]
     fn connected_demo_workspaces_and_overview_render_at_small_sizes() {
-        let cfg = AppConfig::default();
-        let mut panel = InstrumentControlPanel::new(&cfg);
-        panel.debug_mode = true;
-        let kinds = [InstrumentKind::Oscilloscope, InstrumentKind::DcSource,
-            InstrumentKind::ElectronicLoad, InstrumentKind::Multimeter,
-            InstrumentKind::DebugProbe, InstrumentKind::UsbBridge, InstrumentKind::WiparseDongle];
-        let initial_ctx = egui::Context::default();
+        let mut panel = InstrumentControlPanel::new(&AppConfig::default());
+        let kinds = [
+            InstrumentKind::Oscilloscope,
+            InstrumentKind::DcSource,
+            InstrumentKind::ElectronicLoad,
+            InstrumentKind::Multimeter,
+            InstrumentKind::DebugProbe,
+            InstrumentKind::UsbBridge,
+            InstrumentKind::WiparseDongle,
+            InstrumentKind::Generic,
+        ];
+        let initial = egui::Context::default();
         for (i, kind) in kinds.iter().enumerate() {
             let session = open_demo_session(*kind).unwrap();
-            panel.handle_event(&initial_ctx, connected_event(i as u64 + 1, &session));
+            panel.handle_event(&initial, connected_event(i as u64 + 1, &session));
         }
+        // Presentation fixtures only; every rendered device is explicitly marked simulated.
+        for (i, kind) in kinds.iter().enumerate() {
+            let id = i as u64 + 1;
+            let readings: Vec<(String, f64, &str)> = match kind {
+                InstrumentKind::DcSource => (1..=3)
+                    .flat_map(|ch| {
+                        [
+                            (format!("CH{ch} Voltage"), 9.0021, "V"),
+                            (format!("CH{ch} Current"), 0.3205, "A"),
+                            (format!("CH{ch} Power"), 2.8852, "W"),
+                        ]
+                    })
+                    .collect(),
+                InstrumentKind::ElectronicLoad => vec![
+                    ("Voltage".into(), 8.9987, "V"),
+                    ("Current".into(), 1.0021, "A"),
+                    ("Power".into(), 9.0176, "W"),
+                ],
+                InstrumentKind::Multimeter => vec![("VOLT:DC".into(), 9.0012, "V")],
+                _ => Vec::new(),
+            };
+            for (channel, value, unit) in readings {
+                panel.latest.insert(
+                    (id, channel.clone()),
+                    Reading {
+                        channel,
+                        value,
+                        unit: unit.into(),
+                    },
+                );
+            }
+            panel.devices[i].controls.scope_meas_results[0] =
+                Some("CH1 Frequency: 150000 Hz".into());
+        }
+        let mut renders = 0;
         for lang in [Lang::Zh, Lang::En] {
-            for size in [egui::vec2(640.0, 360.0), egui::vec2(1100.0, 720.0), egui::vec2(1920.0, 1080.0)] {
-                for page in 0..=kinds.len() {
-                    if page < kinds.len() { panel.select_kind(kinds[page]); }
-                    else { panel.select_overview(); }
-                    let ctx = egui::Context::default();
-                    crate::fonts::install_cjk_fonts(&ctx);
-                    let tokens = crate::theme::apply_theme(&ctx, false);
-                    let output = ctx.run(egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)), ..Default::default()
-                    }, |ctx| { egui::CentralPanel::default().show(ctx, |ui| { panel.ui(ui, lang, &tokens); }); });
-                    assert!(!output.shapes.is_empty());
-                    if matches!(lang, Lang::Zh) && size.x == 1100.0 {
-                        if let Ok(dir) = std::env::var("WIPARSE_UI_AUDIT_OUTPUT") {
-                            crate::ui_audit::export_frame(&ctx, output,
-                                &std::path::PathBuf::from(dir), &format!("instrument-{page}"), size);
+            for light in [false, true] {
+                for size in [
+                    egui::vec2(640.0, 360.0),
+                    egui::vec2(1100.0, 720.0),
+                    egui::vec2(1920.0, 1080.0),
+                ] {
+                    for page in 0..=kinds.len() {
+                        if page < kinds.len() {
+                            panel.selected_kind = kinds[page];
+                            panel.selected_id = Some(page as u64 + 1);
+                            panel.overview_open = false;
+                        } else {
+                            panel.overview_open = true;
+                        }
+                        for tab in 0..if page == kinds.len() { 1 } else { 3 } {
+                            let variants = if tab == 0 && page < kinds.len() {
+                                match kinds[page] {
+                                    InstrumentKind::Oscilloscope => 2,
+                                    InstrumentKind::DebugProbe => 4,
+                                    InstrumentKind::UsbBridge => 3,
+                                    InstrumentKind::WiparseDongle => 6,
+                                    _ => 1,
+                                }
+                            } else {
+                                1
+                            };
+                            for mode in 0..variants {
+                                if page < kinds.len() {
+                                    let c = &mut panel.devices[page].controls;
+                                    c.probe_page = 0;
+                                    c.scope_setup_page = 0;
+                                    c.bridge_tab = 0;
+                                    c.dongle_tab = 0;
+                                    match kinds[page] {
+                                        InstrumentKind::Oscilloscope => c.scope_setup_page = mode,
+                                        InstrumentKind::DebugProbe => c.probe_page = mode,
+                                        InstrumentKind::UsbBridge => c.bridge_tab = mode,
+                                        InstrumentKind::WiparseDongle => {
+                                            if mode < 4 {
+                                                c.probe_page = mode;
+                                            } else {
+                                                c.dongle_tab = mode - 3;
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                let ctx = egui::Context::default();
+                                crate::fonts::install_cjk_fonts(&ctx);
+                                ctx.data_mut(|d| {
+                                    d.insert_temp(
+                                        egui::Id::new(("instrument-task", page as u64 + 1)),
+                                        tab as u8,
+                                    )
+                                });
+                                let tokens = crate::theme::apply_theme(&ctx, light);
+                                let mut output = ctx.run(
+                                    egui::RawInput {
+                                        screen_rect: Some(egui::Rect::from_min_size(
+                                            egui::Pos2::ZERO,
+                                            size,
+                                        )),
+                                        ..Default::default()
+                                    },
+                                    |ctx| {
+                                        egui::CentralPanel::default().show(ctx, |ui| {
+                                            panel.ui(ui, lang, &tokens);
+                                        });
+                                    },
+                                );
+                                for primitive in
+                                    ctx.tessellate(output.shapes.clone(), output.pixels_per_point)
+                                {
+                                    assert!(primitive.clip_rect.is_finite());
+                                    if let egui::epaint::Primitive::Mesh(mesh) = primitive.primitive
+                                    {
+                                        assert!(mesh.is_valid());
+                                    }
+                                }
+                                if matches!(lang, Lang::Zh) && size.x == 1100.0 {
+                                    if let Ok(dir) = std::env::var("WIPARSE_UI_AUDIT_OUTPUT") {
+                                        // Export settled row heights, while retaining all texture uploads.
+                                        for _ in 0..2 {
+                                            let next = ctx.run(egui::RawInput {
+                                                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
+                                                ..Default::default()
+                                            }, |ctx| { egui::CentralPanel::default().show(ctx, |ui| { panel.ui(ui,lang,&tokens); }); });
+                                            output.textures_delta.append(next.textures_delta);
+                                            output.shapes = next.shapes;
+                                            output.pixels_per_point = next.pixels_per_point;
+                                        }
+                                        output.textures_delta.set.retain(|(id,_)| *id != egui::TextureId::Managed(0));
+                                        output.textures_delta.set.push((egui::TextureId::Managed(0), egui::epaint::ImageDelta::full(ctx.fonts(|f| f.image()), egui::TextureOptions::LINEAR)));
+                                        crate::ui_audit::export_frame(
+                                            &ctx,
+                                            output,
+                                            &PathBuf::from(dir),
+                                            &format!(
+                                                "instrument-{page}-tab-{tab}-mode-{mode}-{}",
+                                                if light { "light" } else { "dark" }
+                                            ),
+                                            size,
+                                        );
+                                    }
+                                }
+                                renders += 1;
+                            }
                         }
                     }
                 }
             }
         }
+        assert_eq!(renders, 432);
+        assert!(panel.measurement_pending.is_empty());
+        panel.on_exit();
     }
-}
 
-
-fn responsive_three_cards(ui: &mut egui::Ui, mut add: impl FnMut(&mut egui::Ui, usize)) {
-    if ui.available_width() >= 1050.0 {
-        ui.columns(3, |columns| {
-            for (index, column) in columns.iter_mut().enumerate() {
-                add(column, index);
-            }
-        });
-    } else {
-        for index in 0..3 {
-            add(ui, index);
+    #[test]
+    fn source_setpoints_require_apply_and_do_not_enable_output() {
+        let mut panel = InstrumentControlPanel::new(&AppConfig::default());
+        let ctx = egui::Context::default();
+        crate::fonts::install_cjk_fonts(&ctx);
+        let session = open_demo_session(InstrumentKind::DcSource).unwrap();
+        panel.handle_event(&ctx, connected_event(1, &session));
+        panel.devices[0].controls.source_voltages[0] = 9.0;
+        panel.devices[0].controls.source_currents[0] = 2.0;
+        let tokens = Tokens::dark();
+        let mut time = 0.0;
+        let mut commands = Vec::new();
+        let mut frame = |events| {
+            time += 0.1;
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(480.0, 850.0),
+                    )),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        commands.extend(source_channel_controls(
+                            ui,
+                            Lang::Zh,
+                            &tokens,
+                            &mut panel.devices[0],
+                        ));
+                    });
+                },
+            )
+        };
+        let output = frame(vec![]);
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|shape| {
+                if let egui::Shape::Text(t) = &shape.shape {
+                    (t.galley.job.text == "应用设定").then_some(t.pos + t.galley.size() * 0.5)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        frame(vec![egui::Event::PointerMoved(pos)]);
+        for pressed in [true, false] {
+            frame(vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            }]);
         }
+        drop(frame);
+        assert_eq!(commands.len(), 2);
+        assert!(
+            matches!(commands[0], ControlCommand::SourceVoltage {channel: 1, value} if value == 9.0)
+        );
+        assert!(
+            matches!(commands[1], ControlCommand::SourceCurrent {channel: 1, value} if value == 2.0)
+        );
+        assert!(!panel.devices[0].controls.source_outputs[0]);
+        panel.on_exit();
     }
 }

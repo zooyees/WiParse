@@ -1,0 +1,12 @@
+{
+  "schema_version": "wiparse.fpga-station/1",
+  "late_tolerance_ms": 100,
+  "minimum_free_bytes": 1073741824,
+  "safe_power_state": "off",
+  "allow_public_ai": false,
+  "ai_profiles": {},
+  "paths": {
+    "stop_file": "{test_dir}/fpga.stop",
+    "status_file": "{test_dir}/status.json"
+  }
+}

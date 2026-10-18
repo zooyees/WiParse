@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {validateProject} from './lib/hub/project-config.mjs';
 /**
  * Discover and run WiParse test-tool plugins (lifecycle: preflight | run | stop).
  *
@@ -9,9 +10,14 @@
  */
 
 import fs from "node:fs";
+import {workspace} from "./lib/hub/manifest.mjs";
+import {ConfigStore} from "./lib/hub/config-store.mjs";
+import {retryWorkspaceLock} from "./lib/hub/retry.mjs";
+import {manifest as freezeManifest,completePreflight,beginRun,endRun,assertStationIdle} from "./lib/hub/run-binding.mjs";
+import {readJson,jail,fail as hubFail} from "./lib/hub/common.mjs";
 import path from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { createHttpClient, resolveCliPath } from "./lib/wiparse-sdk.mjs";
+import { createHttpClient, resolveCliPath, resolveApiUrl } from "./lib/wiparse-sdk.mjs";
 import {
   LIFECYCLES,
   checkEngines,
@@ -20,6 +26,8 @@ import {
   ensureTestInProject,
   loadOverlayFile,
   loadStationConfig,
+  applyParamPaths,
+  expandTemplates,
   makeStamp,
   mergeArgs,
   normalizeArtifacts,
@@ -61,6 +69,7 @@ function parseArgs(argv) {
     project: null,
     stamp: null,
     passthrough: [],
+    approvedRoots: [],
   };
   let i = 0;
   while (i < argv.length) {
@@ -91,6 +100,8 @@ function parseArgs(argv) {
       out.marketplaceDir = argv[++i];
     } else if ((a === "--plugins-root" || a === "--plugins_root") && argv[i + 1]) {
       out.pluginsRoot = argv[++i];
+    } else if (a === "--approved-config-root" && argv[i+1]) {
+      if(out.approvedRoots.length>=16) throw new Error("CONFIG.ROOT_LIMIT");out.approvedRoots.push(argv[++i]);
     } else if (a === "--overlay" && argv[i + 1]) {
       out.overlay = argv[++i];
     } else if (a === "--project" && argv[i + 1]) {
@@ -174,6 +185,7 @@ function readManifest(dir, { validate = true } = {}) {
     outputs: Array.isArray(raw.outputs) ? raw.outputs : [],
     publisher: raw.publisher ? String(raw.publisher) : undefined,
     sandbox: raw.sandbox && typeof raw.sandbox === "object" ? raw.sandbox : undefined,
+    ui: raw.ui,
     source: "bundled",
     dir,
     manifestPath,
@@ -402,11 +414,7 @@ async function main() {
   });
   const dataRoot = resolveDataRoot(opts.dataRoot || args.data_root);
   const configPath = resolveConfigPath(plugin.dir, plugin);
-  const url =
-    opts.url ||
-    (args.api ? String(args.api) : null) ||
-    process.env.WIPARSE_URL ||
-    "http://127.0.0.1:7878";
+  const url = resolveApiUrl(opts.url || (args.api ? String(args.api) : null));
 
   let lifecycle = resolveLifecycle({
     lifecycle: opts.lifecycle,
@@ -427,6 +435,15 @@ async function main() {
     process.exit(2);
   }
 
+  // configure is deliberately isolated from engine probing and project/run creation.
+  if (lifecycle === "configure") {
+    const {spawnSync} = await import('node:child_process');
+    const request=opts.overlay ? readJson(opts.overlay,2*1048576) : {};
+    const checked=spawnSync(process.execPath,[path.join(__dirname,'lib/hub/configure-worker.mjs')],{input:JSON.stringify({pluginDir:plugin.dir,entry:plugin.entry,values:[request.config ?? request.params?.config ?? {}]}),encoding:'utf8',timeout:10000,maxBuffer:4194304,windowsHide:true});
+    let value; try{value=JSON.parse(checked.stdout);}catch{value={ok:false,errors:[{code:'CONFIG.CONFIGURE_FAILED'}]};}
+    console.log(JSON.stringify({...value,lifecycle:'configure'}));if(checked.error||checked.status!==0||value.ok!==true)process.exitCode=1;
+    return;
+  }
   // Engines
   const wiparseVersion = await probeWiparseVersion(url);
   const eng = checkEngines(plugin.engines, { wiparseVersion });
@@ -454,6 +471,27 @@ async function main() {
     stamp,
     lifecycle,
   });
+  let hubStore=null, hubFrozen=null, hubBinding=null;
+  let lockWait={};
+  if(plugin.capabilities?.includes('configure') && lifecycle!=='stop') {
+    hubStore=new ConfigStore(workspace(plugin,{pluginDir:plugin.dir,dataRoot,project,testId,params:args,approvedRoots:opts.approvedRoots,protectedRoots:[pluginsRoot,marketplaceRoot].filter(Boolean)}));
+    let stopFile=path.join(layout.test_dir,'run.stop');
+    if(fs.existsSync(configPath)) {
+      const station=expandTemplates(applyParamPaths(readJson(configPath),plugin.params,args),{dataRoot,pluginDir:plugin.dir,layout});
+      if(typeof station.paths?.stop_file==='string') stopFile=path.resolve(plugin.dir,station.paths.stop_file);
+    }
+    stopFile=jail(stopFile,hubStore.s.roots);
+    // Preflight may publish validation metadata under a retained Stop, but may
+    // not acknowledge/remove it. Only an explicit new start clears old Stop.
+    lockWait={stopped:()=>lifecycle==='run'&&fs.existsSync(stopFile),onWait:()=>console.log('[runner] CONFIG.BUSY_WAIT: waiting briefly for the configuration repository')};
+    const selection=opts.overlay ? readJson(opts.overlay,2*1048576).test_matrix : null;
+    if(lifecycle==='preflight') hubFrozen=await retryWorkspaceLock(()=>hubStore.withLock(()=>{assertStationIdle(hubStore);fs.rmSync(path.join(hubStore.s.editorRoot,'preflight.json'),{force:true});const frozen=freezeManifest(hubStore,selection?.selected_item_ids);if(frozen.project_config_snapshot)validateProject(hubStore,frozen.project_config_snapshot.value);hubStore.validate(frozen.values.filter(v=>frozen.selected_item_ids.includes(v.id)));return frozen;}),lockWait);
+    else {
+      if(!selection?.config_manifest_sha256||!selection?.preflight_revision) throw new Error('PREFLIGHT.REQUIRED: run overlay must bind preflight');
+      hubBinding=await retryWorkspaceLock(()=>beginRun(hubStore,selection.selected_item_ids,layout.run_dir,selection),lockWait);
+      hubFrozen=hubBinding;
+    }
+  }
   try {
     if (lifecycle === "run") {
       ensureTestInProject(layout, plugin.id, {
@@ -491,6 +529,11 @@ async function main() {
     project,
     stamp,
     layout,
+    testMatrix: hubFrozen,
+    projectConfig: hubFrozen?.project_config_snapshot,
+    matrixFile: hubStore?.s.matrix,
+    overlay: {params:args,test_matrix:hubFrozen?{config_manifest_sha256:hubFrozen.manifest_sha256,preflight_revision:hubBinding?.preflight_revision,selected_item_ids:hubFrozen.selected_item_ids}:undefined},
+    configSnapshotDir: hubBinding?.snapshotDir,
   };
 
   console.log(
@@ -502,8 +545,11 @@ async function main() {
     if (lifecycle !== "stop" || fs.existsSync(entryPath)) {
       mod = await import(pathToFileURL(entryPath).href);
     }
+    if(hubStore&&lifecycle==='run'&&lockWait.stopped())hubFail('RUN.ABORTED','Stopped before plugin execution');
     const raw = await dispatchLifecycle(mod, ctx, lifecycle);
     const result = normalizeResult(raw, lifecycle);
+    if(hubStore && lifecycle==='preflight'&&result.ok!==false) await retryWorkspaceLock(()=>completePreflight(hubStore,hubFrozen,result),lockWait);
+    if(hubBinding) result.test_matrix={...result.test_matrix,manifest_sha256:hubBinding.manifest_sha256,preflight_revision:hubBinding.preflight_revision,schema_hash:hubStore.schemaHash,selected_item_ids:hubBinding.selected_item_ids,...(hubBinding.project_config?{project_config:hubBinding.project_config}:{})};
     if (lifecycle === "run" && layout.run_dir) {
       const collected =
         plugin.outputs && (!result.artifacts || !result.artifacts.items?.length)
@@ -535,8 +581,9 @@ async function main() {
     if (Array.isArray(result.checks)) {
       for (const c of result.checks) {
         const mark = c?.ok ? "OK" : "X ";
-        const detail = c?.detail ? `  ${c.detail}` : "";
-        console.log(`  ${mark} ${c?.id || "check"}${detail}`);
+        const explanation=c?.detail||c?.message||'';
+        const detail = explanation ? `  ${explanation}` : "";
+        console.log(`  ${mark} ${c?.id || c?.code || "check"}${detail}`);
       }
     }
     const envelope = {
@@ -546,9 +593,10 @@ async function main() {
       envelope.suggested_params = result.suggested_params;
       envelope.suggested_params_policy = result.suggested_params_policy || "untouched";
     }
+    if (result.test_matrix) envelope.test_matrix = result.test_matrix;
     if (result.session) envelope.session = result.session;
     if (result.artifacts) envelope.artifacts = result.artifacts;
-    if (envelope.suggested_params || envelope.artifacts || envelope.session) {
+    if (envelope.test_matrix || envelope.suggested_params || envelope.artifacts || envelope.session) {
       console.log(`[runner] result ${JSON.stringify(envelope)}`);
     }
     // Let pending HTTP handles and stdout drain; forced exit can abort libuv on Windows.
@@ -561,7 +609,7 @@ async function main() {
     console.error(`[runner] failed: ${result.error}`);
     console.log(`[runner] FAIL lifecycle=${result.lifecycle} error=${result.error}`);
     process.exitCode = 1;
-  }
+  } finally { if(hubBinding) endRun(hubStore,hubBinding); }
 }
 
 const isDirect =
@@ -569,5 +617,5 @@ const isDirect =
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (isDirect) {
-  main();
+  main().catch(e=>{console.error(`[runner] failed: ${e.message}`);process.exitCode=1;});
 }

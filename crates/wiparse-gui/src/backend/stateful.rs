@@ -36,6 +36,7 @@ pub fn drain_api_requests(bridge: &ApiBridge, mut host: UiHost<'_>) -> bool {
 }
 
 fn handle(bridge: &ApiBridge, host: &mut UiHost<'_>, req: PendingRequest) -> bool {
+    if (req.method.starts_with("ui.test_tool.config.") || req.method.starts_with("ui.test_tool.project.") || req.method == "ui.test_tool.result.get") || matches!(req.method.as_str(),"ui.test_tool.matrix.get"|"ui.test_tool.preflight.state"|"ui.test_tool.run.control") { host.test_tool.api_workspace(req);return false; }
     let PendingRequest {
         method,
         params,

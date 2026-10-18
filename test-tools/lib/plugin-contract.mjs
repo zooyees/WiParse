@@ -6,10 +6,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateUi } from './hub/manifest.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export const LIFECYCLES = Object.freeze(["preflight", "run", "stop"]);
+export const LIFECYCLES = Object.freeze(["configure", "preflight", "run", "stop"]);
 export const PLUGIN_TYPES = Object.freeze([
   "smoke",
   "serial",
@@ -485,6 +486,8 @@ export function writeRunJson(layout, plugin, result) {
   const doc = {
     schema: "wiparse.run/v1",
     plugin: plugin?.id,
+    plugin_version: plugin?.version,
+    test_matrix: result?.test_matrix ?? null,
     project: layout.project,
     stamp: layout.stamp,
     ok: result?.ok !== false,
@@ -496,6 +499,7 @@ export function writeRunJson(layout, plugin, result) {
     product_verdict: result?.product_verdict ?? null,
     validation_verdict: result?.validation_verdict ?? null,
     industrial_approved: result?.industrial_approved === true,
+    simulation_only: result?.simulation_only === true,
     run_id: result?.run_id ?? null,
     attempt_id: result?.attempt_id ?? null,
     artifacts,
@@ -578,6 +582,7 @@ export function validatePluginManifest(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return { ok: false, errors: ["manifest must be an object"] };
   }
+  try { validateUi(raw); } catch(e) { errors.push(e.message); }
   if (!raw.id || typeof raw.id !== "string") errors.push("id: required string");
   else if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(raw.id)) {
     errors.push("id: must match [a-zA-Z0-9][a-zA-Z0-9._-]*");
@@ -775,6 +780,11 @@ export function normalizeResult(raw, lifecycle = "run") {
     "run_id",
     "attempt_id",
     "first_error_id",
+    "test_matrix",
+    "errors",
+    "warnings",
+    "normalized_value",
+    "simulation_only",
   ]) {
     if (raw[key] !== undefined) out[key] = raw[key];
   }

@@ -1,0 +1,1171 @@
+{
+  "schema_version": "wiparse.release-source-freeze/1",
+  "software_version": "1.2.2",
+  "created_utc": "2026-10-18T10:55:07.872332+00:00",
+  "plugin_version": "0.5.0",
+  "industrial_approved": false,
+  "files": [
+    {
+      "path": "mcp/wiparse/dist/http.d.ts",
+      "bytes": 570,
+      "sha256": "42ccce5e6c5dec9e89da00502a4e7e432ab6782aed9d8bc9613453dfe6c53ea5"
+    },
+    {
+      "path": "mcp/wiparse/dist/http.js",
+      "bytes": 1295,
+      "sha256": "454a1b99698a33214eb34d37bb03f952ee415c1ff2bf0d68e8a24d5364e4cf5e"
+    },
+    {
+      "path": "mcp/wiparse/dist/index.d.ts",
+      "bytes": 31,
+      "sha256": "43e818adf60173644896298637f47b01d5819b17eda46eaa32d0c7d64724d012"
+    },
+    {
+      "path": "mcp/wiparse/dist/index.js",
+      "bytes": 9625,
+      "sha256": "b8254a847a963bd40b903c74ff8869ae307de4f6acd7ba98c724f94e3d2865a7"
+    },
+    {
+      "path": "mcp/wiparse/package-lock.json",
+      "bytes": 44035,
+      "sha256": "e0dd98407dd4c887361f61483c1c49e9878e3453fbb5c6fcf4e9b8da8a076a13"
+    },
+    {
+      "path": "mcp/wiparse/package.json",
+      "bytes": 613,
+      "sha256": "2212df9e67dffc6c2e164f6c96f6be45fb65d2b39c239d6377c8ccdc464cac18"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/.filename-migration.jsonl",
+      "bytes": 2925,
+      "sha256": "739efae01a44dd505a9bc3e1d381b11b646de445eb0cbe4fec2ca0e2cd1329b1"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_01_pll_clock.json",
+      "bytes": 2912,
+      "sha256": "01a4df5ee3bd21748fac82920e373e8e033727b0620cdf981457a9974b839f87"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_02_reset_controller.json",
+      "bytes": 2765,
+      "sha256": "41327bb29a300859ec205209fd76bb614d8273995a4dbca3783c2978479d6239"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_03_gpio.json",
+      "bytes": 2619,
+      "sha256": "ed5c01bbdf4c8a9688c948a5949e4382727d5e26e0e7a5432c71c72aaa5abbd3"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_04_uart.json",
+      "bytes": 2568,
+      "sha256": "8bc8390e5c1c1c3a5caed1aac4c6af46c53c244c54a94ca74ee5800b00c3adef"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_05_spi_master.json",
+      "bytes": 2626,
+      "sha256": "86ed756c822b03481574d8481648a81b9ca8d52de1b0018d29042d02c1fd22a1"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_06_spi_slave.json",
+      "bytes": 2753,
+      "sha256": "2bfdfdf2b4c86158e5ba6ace1042afbcb20b6f9cbbf0f866e077e2b5f4336309"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_07_i2c_master.json",
+      "bytes": 2629,
+      "sha256": "af3712b9003b80ca6f38d60471ae77ab67a282f0ed39326e55cde19c2fd043db"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_08_i2c_slave.json",
+      "bytes": 2571,
+      "sha256": "5025c3bb8ab4ffc9dedd3c07d527d480a35697caa59d277c4f948044b2241113"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_09_pwm.json",
+      "bytes": 3184,
+      "sha256": "d483ac39b6496217a6d988050ae4d41d5073f4858e20fdadae798ae2de641764"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_10_timer_counter.json",
+      "bytes": 2763,
+      "sha256": "d35cf7798d0a3ff62569f686a16179352c4b9b3e762ab8fbb35a5da145c2c1ef"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_11_watchdog.json",
+      "bytes": 2629,
+      "sha256": "3c7e5a52283d8577448aa3207e5e11d6d392e51240ea3378660759f28d0bdb65"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_12_sync_fifo.json",
+      "bytes": 2568,
+      "sha256": "695cda7364acb4177bb0ea7f2386f4ef5beb43426dcc85d614bd7925944e85cf"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_13_async_fifo.json",
+      "bytes": 2626,
+      "sha256": "6d60792ef7e466c990cd8fe94f765e8641f569c2c7c5a4b7a7f50c02be0fbcb4"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_14_block_ram.json",
+      "bytes": 2747,
+      "sha256": "94fb28191218f27c04aa6050148ed7eca3b45f6019a6710d9fb11c63280c334a"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_15_ddr_controller.json",
+      "bytes": 2639,
+      "sha256": "6e93edb515aef0cd6747a7d6f76837db193ae3fc56636da3036e8b763777433f"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_16_axi_lite.json",
+      "bytes": 2557,
+      "sha256": "c75cb3bec114977395908f4aa1e261c98716d93adf2b0f6b1a53cc8b118fee71"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_17_axi_stream.json",
+      "bytes": 2624,
+      "sha256": "28a46cdc5e9a3e3c53296cdf3071f792fa1b853c06880458a980c0fe3cf0a683"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_18_dma.json",
+      "bytes": 2744,
+      "sha256": "5f0600ddeb1599e2dd5be3d4e939ac1aa0688d05cc290d5bc28c2dd4255ebaa5"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_19_ethernet_mac.json",
+      "bytes": 2634,
+      "sha256": "1bab0690dde3fa85318d4988605aaaefb3623f7080dc9edcaace8df49d061557"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_20_crc32.json",
+      "bytes": 2559,
+      "sha256": "50f7ff49567f0782b53bdd19807682e2f845340789e540046f7d4e836d536d85"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/DEMO-说明.txt",
+      "bytes": 1977,
+      "sha256": "164865b6d19944d51eb4e95496f5a7da5fdcfe21684926ea9e52f68a1b0e74ac"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/firmware/demo-ip-suite.bin",
+      "bytes": 54,
+      "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/项目共享迁移说明.txt",
+      "bytes": 1206,
+      "sha256": "0db15a1f4a67b03fabf856045ae2a8a6817d549c1bd27a83ed7d189e0f9da9fd"
+    },
+    {
+      "path": "test-tools/hub-workspace.mjs",
+      "bytes": 6599,
+      "sha256": "a947c13001c462e92a2ad05309b7f05586b834b6c10c12486a89ccd256622c40"
+    },
+    {
+      "path": "test-tools/lib/hub/common.mjs",
+      "bytes": 4978,
+      "sha256": "84dea32f167b47e897ff3eec3e430329859eae22813bfc15263d07e9f80b1de2"
+    },
+    {
+      "path": "test-tools/lib/hub/config-store.mjs",
+      "bytes": 22501,
+      "sha256": "9d33cd828c5c78b345cf92037e33e4c221b0cb39f53e0a53f5d1192cf2b0c6a3"
+    },
+    {
+      "path": "test-tools/lib/hub/configure-worker.mjs",
+      "bytes": 2606,
+      "sha256": "437406e6e2a71c95f9dd8d0e7016891522dfa1608e1cf7d60179de8f7ba799e8"
+    },
+    {
+      "path": "test-tools/lib/hub/file-inspect.mjs",
+      "bytes": 2258,
+      "sha256": "c0ec140266864319039a556b9f144af67be0d1fb4c6be5e339d5142d36505e55"
+    },
+    {
+      "path": "test-tools/lib/hub/manifest.mjs",
+      "bytes": 5171,
+      "sha256": "418447a81a71ff6390ae7b95085fa4cfd0b79ae6ffcf61c4a93083d32258befd"
+    },
+    {
+      "path": "test-tools/lib/hub/matrix.mjs",
+      "bytes": 7057,
+      "sha256": "85433b85e0e6ae3fc5fd1e71247f2c7bca94e9c74746bbd4cb0d9f26af022da5"
+    },
+    {
+      "path": "test-tools/lib/hub/project-config.mjs",
+      "bytes": 7584,
+      "sha256": "06e62d67ee5fe129bde809ebcc73c27cb56656563c7b7bde369ef6f230deec9e"
+    },
+    {
+      "path": "test-tools/lib/hub/result-details.mjs",
+      "bytes": 2762,
+      "sha256": "ab7408487513e5138b26c36ec8259ec9c5af7cf78ffc6565e26e32c5983b2674"
+    },
+    {
+      "path": "test-tools/lib/hub/retry.mjs",
+      "bytes": 997,
+      "sha256": "69133b8769d5e7e614bf56d27fff0e6c903377ce44d206b968e767d69a2d7fd4"
+    },
+    {
+      "path": "test-tools/lib/hub/run-binding.mjs",
+      "bytes": 6089,
+      "sha256": "b53d889495927ab026cf59e63e398215bc27d9d8590c973bc773fb4936e9f779"
+    },
+    {
+      "path": "test-tools/lib/hub/run-control.mjs",
+      "bytes": 1355,
+      "sha256": "47bba848d957905cded5e88dc068d52844561c8fdb73fc1e388c709a17240b67"
+    },
+    {
+      "path": "test-tools/lib/hub/schema.mjs",
+      "bytes": 8160,
+      "sha256": "2554fb84804a4f68112ef0d4fb7a49b54b8176feb090ca6be6cd5007f6d8fa1a"
+    },
+    {
+      "path": "test-tools/package-lock.json",
+      "bytes": 3148,
+      "sha256": "99cb6c103be207b3d8a31540c5aa5da80134de548646f5b60cc82059b3916d83"
+    },
+    {
+      "path": "test-tools/package.json",
+      "bytes": 755,
+      "sha256": "0a53cf6d30bddf4777de249e16779c5ea5acd021b3bac6f77585548f004ba637"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/assets/simulation-waveform.png",
+      "bytes": 4333,
+      "sha256": "5f660afa1ee6e3716f7aac231dfe6d2c9ff170c530369044b43b421ee4a974ea"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/plugin-regression-0.5.0-2026-10-18.json",
+      "bytes": 5977,
+      "sha256": "46182ece40bb6e33945a50ad8bf6b45d944f55f65c97dbae52d52f487fc41159"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/plugin-regression-0.5.0-2026-10-18.log",
+      "bytes": 13578,
+      "sha256": "add6f9a94daa76df1df13083226061b0526a348fc197e66c75f6b7d65d6bcd20"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/plugin-regression-2026-10-18.json",
+      "bytes": 3007,
+      "sha256": "47d16723d05b17249b1aef2c1117e3dc26dcbb865432480b6c19b0193bd19f39"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/plugin-regression-2026-10-18.log",
+      "bytes": 11726,
+      "sha256": "7ba05b865c73edec33ef396639fa85711b46f8835a4ec0c2fb8213d2f867750f"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/startup-stop-2026-10-18.log",
+      "bytes": 972,
+      "sha256": "0e0aa62aa6d77592dd630dbd554cc8012b21f85eeadf088e217095c0edf07d60"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/ui-contract-2026-10-18.log",
+      "bytes": 403,
+      "sha256": "bc4c14066dec1598f498ace8a58cb3dda3a1a73ad045cb130625d57e81578521"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/freeze.mjs",
+      "bytes": 3101,
+      "sha256": "16c78a3d22a6ef6a8f850519e6b94d7dc395beab62cf64b50a66df442986703d"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/generate-schemas.mjs",
+      "bytes": 24102,
+      "sha256": "74e70f70d63bedc5b4e07a28f50a58a9a6e9abee7fce09e0a9392b8514b39cf8"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/HOST_HANDOFF.json",
+      "bytes": 1514,
+      "sha256": "c7139a4b0cafceabb679888b29ed90790b2d3be6ed220ea78ba658be80017226"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/index.mjs",
+      "bytes": 28210,
+      "sha256": "7bae427f83da9ec2ab6ac364615d63355c67877fcace9896e883694b13a96992"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/INTEGRATION_HANDOFF.md",
+      "bytes": 10985,
+      "sha256": "40eb15d62a60f52cbaf1387b8ec2af2ed02a80359aff48c9593c79139a8ed460"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/ai-adapter.mjs",
+      "bytes": 2116,
+      "sha256": "4098962bf1164df626b28a3721e47ac47ef2c7fc3a3aed6acb2533c132882311"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/common.mjs",
+      "bytes": 1794,
+      "sha256": "82c64bd46fa1bbbc1f36b9446c057658339439b7885ba3d0cc6da46cafe8c751"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/config-loader.mjs",
+      "bytes": 8129,
+      "sha256": "f85431af7057e1f4a8cddb5a01ea972b1430f14940b302d432d1a72681d3ae79"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/demo-fixtures.mjs",
+      "bytes": 898,
+      "sha256": "d57547233be1a29d6822e9b1f12c4f3e38e91eb8982c56bc2ee04e499c372d16"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/firmware.mjs",
+      "bytes": 1316,
+      "sha256": "a1a5eec6e9cc354cd20756d14753727ff8517eb313d2874b8cb486b51a98a687"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/host-adapter.mjs",
+      "bytes": 1019,
+      "sha256": "b8d0e09bb61ef41633deec35feabded0641368d994f721361a316456e31359b5"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/io-guard.mjs",
+      "bytes": 3893,
+      "sha256": "8d880cea46b9719fade4f01cb0288f3f5d4bfea58920e149b9624be75bf8ccc3"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/log-capture.mjs",
+      "bytes": 1163,
+      "sha256": "52db9ce05302041074d5ed640258f8704f4e1b4a7d454bf4e702efd6fd317a77"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/project-config.mjs",
+      "bytes": 5685,
+      "sha256": "358405c8436e131e98e588e9433b04a3b3e221b8cb32570e9e1b1d73a9fb1d72"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/project-declarations.mjs",
+      "bytes": 4897,
+      "sha256": "65f79a1a9ad2bdcc632f8af47fcd55e4559506fd2699f9b532cf7e7aaedd2060"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/project-migration.mjs",
+      "bytes": 5140,
+      "sha256": "57a9ba5ce1e09e583842710d1c84a7db9135155e330967c4c16bd337ff8265cb"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/report.mjs",
+      "bytes": 2843,
+      "sha256": "6dfcfd57e9fa526acb7e01c181b3941353657d05231de920955ddd6050de4331"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/resource-resolver.mjs",
+      "bytes": 894,
+      "sha256": "b2613f30b0d550a50d907d909183b4330551d7483921ba2620ef36568ec8d0cc"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/rule-contract.mjs",
+      "bytes": 4561,
+      "sha256": "55ff8542126df1b9511821c9e74c4bc4df457c7687f6bb4381d8a7630b879031"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/rule-executor.mjs",
+      "bytes": 899,
+      "sha256": "3b415351751655638f3b27b5549ccea62170fb5a45611c727809cc18b16ddc46"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/rule-worker.mjs",
+      "bytes": 260,
+      "sha256": "a54cfabea3d44c1d87c513eff22381bf51ffbf982783cab40ab011c58359d98c"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/rules.mjs",
+      "bytes": 2443,
+      "sha256": "add40997b521e55673b91e28bc5e0f2222d0a6b1a0902a0b48ca7919468fa682"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/run-control.mjs",
+      "bytes": 790,
+      "sha256": "7d7c95b885441a25b5591edd5aaa82a5bd7a78fbc2d88df583b8fac5fc52d107"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/scheduler.mjs",
+      "bytes": 4411,
+      "sha256": "e6c0c52011b4568f0954639989f3df63ca0672b332124f7499e683af2abed97c"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/simulation-adapter.mjs",
+      "bytes": 3061,
+      "sha256": "98c06085152d49a02cbcceefeaa8c7192f87309c71c3c8a1fd1829dc5f2e6ef0"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/planning/build-project-proposal.mjs",
+      "bytes": 5769,
+      "sha256": "1705a1bf5d13e2721d0e60f215b56e7e1ddd16ed3b2e5de7bcca3f13309b6151"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/planning/legacy-config-differences.json",
+      "bytes": 16068,
+      "sha256": "f66cdcee2406723f5327e8bf72df14dea68e22ee6f8c4fcb816f457369505681"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/planning/project.schema.proposal.json",
+      "bytes": 32159,
+      "sha256": "a8c539daca0ed49bb3a7dc41a904cca8c34ddaa9e4416e73bd5fb02813846c9b"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/planning/project.ui.proposal.json",
+      "bytes": 27917,
+      "sha256": "9f7be9cb8b7d4a7e158ee77e91236ea159c02520c34a8542e2da74df570e7b4e"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/planning/README.md",
+      "bytes": 3916,
+      "sha256": "dda8aac440cc079bf2d2de93e5b576db5811e8346d4f25c19d0682fe81f64bbb"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/plugin.json",
+      "bytes": 5751,
+      "sha256": "9131ae8da77ba8366944c60e08e0e77ae436f1f3d30611b2095064bf2c361089"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/PLUGIN_FREEZE.json",
+      "bytes": 17103,
+      "sha256": "497f2e8917075cbd01b2b38ae6d6546033328c6359846bc2116a50bce6694344"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/PROJECT_UPGRADE_0.5.0.md",
+      "bytes": 5506,
+      "sha256": "7eb84132def3d2cc128192d69b469298ecd795885ef07bd8179da93a3b23db44"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/README.md",
+      "bytes": 11176,
+      "sha256": "230a18e6bc6c32dcddac53d0074fa8e40290010529eda59cbe50566188689df6"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/REMEDIATION_EVIDENCE.md",
+      "bytes": 8636,
+      "sha256": "dd667bcf19d29a0875ee4a9f9b7fe43f66ae6ed4ca900d45d7b12f14724afc2d"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/fpga-matrix-status.schema.json",
+      "bytes": 3458,
+      "sha256": "b063563bc7e9a2d551b80ead072e5737787ceb22d249b76ef7d1889530afc8b5"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/fpga-test-case.legacy.schema.json",
+      "bytes": 59871,
+      "sha256": "72a28fab04d10c4d9dd288583291ab16791d1e4cb8f9194601ca2994c818308e"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/fpga-test-case.schema.json",
+      "bytes": 34590,
+      "sha256": "9ab887fbbd29fa984f0001105242956f4058df673bc47a4030e65a422203ee1f"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/fpga-test-case.ui.json",
+      "bytes": 67299,
+      "sha256": "4c565432d53a9ef3b6a3a667c348226b3da927a77e25fd95b99a26dfe72dbb38"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/project.schema.json",
+      "bytes": 34909,
+      "sha256": "a05612075a8bcbbfde8e447f2eeb87f18a98146e15809c39cca4ab83fa3a3bda"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/project.ui.json",
+      "bytes": 27942,
+      "sha256": "65479df0ada07019d3d732c6e193757588397fb2ec1bc59beb0f8b3192f0fd80"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/station.json",
+      "bytes": 294,
+      "sha256": "26a76fbffabf800af7ad077655d86c0814f0d3707d8296d3937cddca83b138c0"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/fault-matrix.test.mjs",
+      "bytes": 23164,
+      "sha256": "6b0fc8ef0e30e371097cd3476ac67ea8f73524fbc5bfeaff7b60c89aae5a31ec"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/fixtures/legacy-demo-cases.json",
+      "bytes": 58726,
+      "sha256": "1b68afddbafb10e5b16138194e23bfda33ba779a5e33da429a3344e86c08e66c"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/fixtures/project-fixture.mjs",
+      "bytes": 1825,
+      "sha256": "20f97c5fe877d48e51f7788b0d7dfaa0ab0c3be03f3e7a99ca3ab774f48ac044"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/hub-integration.test.mjs",
+      "bytes": 5386,
+      "sha256": "2e8c1962acb9e90210a873413fdfa9c9a4a55963b0fce57fb8a04fc78065f216"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/plugin.test.mjs",
+      "bytes": 7463,
+      "sha256": "4d80b83cc6f707313af00d1c33a8bda933e4460e1bfef09367fb0e05ea3133a7"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/project-config.test.mjs",
+      "bytes": 3688,
+      "sha256": "f4745940baee492112ba16d0e4b166740baa38e3f28c0c23b69bc07e556d07bb"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/project-hub.test.mjs",
+      "bytes": 4948,
+      "sha256": "fe0851c138ab5f990487711d967f32051636b424f0a2d237930b115d7eccde6e"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/project-migration.test.mjs",
+      "bytes": 3754,
+      "sha256": "0746713a09bfad69ce677f2ce8c45f7560726bfaca0c2a847a20dd673126c2dd"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/project-runtime.test.mjs",
+      "bytes": 6101,
+      "sha256": "0cf579da82e07f134c1946513f738c17e40cf863a344f99b03644767a09b97af"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/ui-contract.test.mjs",
+      "bytes": 4522,
+      "sha256": "e6323160139ce5c4d354bcd56a40967f785e196029c543fe7bc17dd1ff840e56"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/upgrade.test.mjs",
+      "bytes": 13377,
+      "sha256": "1d572c60af4c4b9094c0749f8634fe3cd492f32fd13c7b92c7e2c1a8d20f51af"
+    },
+    {
+      "path": "test-tools/runner.mjs",
+      "bytes": 22979,
+      "sha256": "351f2447208506fa6c2c86f6c2f8be4344286c9fdb1326f19dbe35800cd7646d"
+    },
+    {
+      "path": "test-tools/schemas/plugin.schema.json",
+      "bytes": 7009,
+      "sha256": "4dee2c9486c8057f35240535fd06635872c091ddf1ec3c3004a713f8b9fbd663"
+    }
+  ],
+  "build_inputs": [
+    {
+      "path": "Cargo.lock",
+      "bytes": 150171,
+      "sha256": "328e1cef62adf890e5690572271527142d3f6fe62d092133acec5fa40304b0eb"
+    },
+    {
+      "path": "Cargo.toml",
+      "bytes": 1439,
+      "sha256": "050b2efcb9bfd69e0b30d496ec70ed98b19b6a21f41070ee6b9bd10407367891"
+    },
+    {
+      "path": "crates/wiparse-cli/Cargo.toml",
+      "bytes": 522,
+      "sha256": "e9e457becb1a0e40c8d31c8e55b3bcd48586595de57200cb8694757f21079b0c"
+    },
+    {
+      "path": "crates/wiparse-cli/src/attach.rs",
+      "bytes": 3706,
+      "sha256": "989a2dd1d8824d216a7049d1152e09adc2e8cf9e5497f4d70e21a2a9dc71184e"
+    },
+    {
+      "path": "crates/wiparse-cli/src/hw.rs",
+      "bytes": 3299,
+      "sha256": "5e0aa58d350cbb01cf9b41c8f1a8ccb0bee7744f23b4d8cfb7ceefda7eab9222"
+    },
+    {
+      "path": "crates/wiparse-cli/src/main.rs",
+      "bytes": 88641,
+      "sha256": "dd10cb0efaeb07cf40ed70d6656f78789ecc2f6609381751e852400df4498e68"
+    },
+    {
+      "path": "crates/wiparse-cli/src/output.rs",
+      "bytes": 1756,
+      "sha256": "aebd87f92772d6234e5106952a0572d109f68644105a9f339b2e3037644a1789"
+    },
+    {
+      "path": "crates/wiparse-core/Cargo.toml",
+      "bytes": 1426,
+      "sha256": "0e4e54338299031bfc2e905baf2bfb65fc52799d8e5d915b4dc2305f39494f6d"
+    },
+    {
+      "path": "crates/wiparse-core/examples/inspect_bus.rs",
+      "bytes": 1365,
+      "sha256": "1a7c2e1fda59f705d7b798daa432c2d8acb0abdbfce853c8e47b4666c62bcfca"
+    },
+    {
+      "path": "crates/wiparse-core/src/ai.rs",
+      "bytes": 37154,
+      "sha256": "b4d80e3ab94c4baeffb98faa936c08389f305ccbdf319772c427b493c321684a"
+    },
+    {
+      "path": "crates/wiparse-core/src/automation/analysis.rs",
+      "bytes": 13807,
+      "sha256": "a65ee3805d2b1b8ec68c8a7e53e2ed4688b222636858534febf6be3505d7ad6b"
+    },
+    {
+      "path": "crates/wiparse-core/src/automation/contracts.rs",
+      "bytes": 6285,
+      "sha256": "47e675e640ec17e8cd506b3bbcbdbbac4e200ba273a7d2d47c637dec3d4f59c9"
+    },
+    {
+      "path": "crates/wiparse-core/src/automation/mod.rs",
+      "bytes": 148,
+      "sha256": "b51ef19171ac8d7c72081b3003f14de6b459eb2fd87694ab2df441310387181d"
+    },
+    {
+      "path": "crates/wiparse-core/src/automation/stream.rs",
+      "bytes": 4025,
+      "sha256": "bbd64e9ee68c15f6ab6d428b441015c8954b2773067de8a2877d4721822bc06b"
+    },
+    {
+      "path": "crates/wiparse-core/src/automation/time.rs",
+      "bytes": 6918,
+      "sha256": "ce606fc93eb850de4eb3a759486b95f1b256a90ed7d22e836fbb9d893c6947d2"
+    },
+    {
+      "path": "crates/wiparse-core/src/bridge.rs",
+      "bytes": 19246,
+      "sha256": "bc475b0f0867be7e3ce3d22454e6b35440e8673d027f124b38dec7ed625057dc"
+    },
+    {
+      "path": "crates/wiparse-core/src/brief.rs",
+      "bytes": 17229,
+      "sha256": "1c21b550c5676c9bf75fe21c4e19f4dbbcc7730b4e4998dd353c394091ede33d"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/charging.rs",
+      "bytes": 2698,
+      "sha256": "faf92f185e2dca3ac6109ff32f5ede658dd4f36a9cfcbcbcecbc3f454754c270"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/ddsss.rs",
+      "bytes": 59424,
+      "sha256": "34948741153e0ffab1713c195210bf18f0163e6693283179e2122688787e6213"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/digital.rs",
+      "bytes": 10982,
+      "sha256": "66339562943e2e0492803d426cd1b741f994b8855b2e4af980c2d5c9e00d949a"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/i2c.rs",
+      "bytes": 32701,
+      "sha256": "e8506dd7b3e246070b6fa1cb847d45429763702ca3c5669f0bbccbfb110bf57d"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/i2s.rs",
+      "bytes": 15086,
+      "sha256": "80d7dd8abd61a54e42243fe42c660b7924af5782bc17b3b0d61c18f8965d3fe0"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/mod.rs",
+      "bytes": 17673,
+      "sha256": "66be191ef59884c85dcc95ca5cd3707c34fdf14c7ac1078541b136110e0fa794"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/scp.rs",
+      "bytes": 13665,
+      "sha256": "03aa25a2282576b050b9c2bb8283cd255bb5c8cd98dfffd2bd40f94fb4b0f4ab"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/spi.rs",
+      "bytes": 26173,
+      "sha256": "268f884f5309aac051c98182c913fbe787a786f5b40967e819d834bf77381015"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/uart.rs",
+      "bytes": 21052,
+      "sha256": "a547190661a93ab136bf8f234d5aba9680b5002674c706ee1845e8579fee79a5"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/ufcs.rs",
+      "bytes": 8621,
+      "sha256": "8103c622de80746a806e55c79a5fe553e55290ee228775c9dc3dbcc323b39218"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/usb_pd.rs",
+      "bytes": 13459,
+      "sha256": "cb129599c5bd71e80742d28e4d8f9661ff683e5237e7b5c5f91050f8c4089a15"
+    },
+    {
+      "path": "crates/wiparse-core/src/charge_state.rs",
+      "bytes": 3283,
+      "sha256": "b8b6d297b8153d44b83f13a6458da14974fc18ac6f24eddb4782c6587cccaf1b"
+    },
+    {
+      "path": "crates/wiparse-core/src/config.rs",
+      "bytes": 23136,
+      "sha256": "b8af4a1aa96c76a023402115d7925cbd34daa083dce258c864d047a713b9728d"
+    },
+    {
+      "path": "crates/wiparse-core/src/db.rs",
+      "bytes": 7339,
+      "sha256": "6e95b5ed0f313db49c0b1f0f8fe7451d532e56643b0d48163bcda8e0e0ade140"
+    },
+    {
+      "path": "crates/wiparse-core/src/dongle.rs",
+      "bytes": 31716,
+      "sha256": "e272d301c8e021244f7235ee6c8376714c155aa539e65e2d5a8128ed185b9a04"
+    },
+    {
+      "path": "crates/wiparse-core/src/evidence.rs",
+      "bytes": 10785,
+      "sha256": "084cab24bcf25f5eb55c7a9d7b9f9ab1dfed32582305e4afdae7ad338b13741b"
+    },
+    {
+      "path": "crates/wiparse-core/src/i18n.rs",
+      "bytes": 46447,
+      "sha256": "e83819666c0d2c2ada856980603054ed48324ecc9eaeace0519d449fd6135dfb"
+    },
+    {
+      "path": "crates/wiparse-core/src/instrument/drivers.rs",
+      "bytes": 138887,
+      "sha256": "9d6b61ed6e9817923741e51a59bfac5104c89249081042a7d675d6c3a4483a7a"
+    },
+    {
+      "path": "crates/wiparse-core/src/instrument/mod.rs",
+      "bytes": 25681,
+      "sha256": "b09880f215eed698919862819cd3d23c416993b5f277e411121b0cd1217ff609"
+    },
+    {
+      "path": "crates/wiparse-core/src/instrument/recording.rs",
+      "bytes": 3620,
+      "sha256": "babd3b76dc68fdbfc240c1725c8547d839763fdad3cdbd48866e68b582fee5a8"
+    },
+    {
+      "path": "crates/wiparse-core/src/lib.rs",
+      "bytes": 629,
+      "sha256": "5bd1b8a5f15c7a7bec3ee5160bf23fd989cb6c799dcac403d2429b3e9a5db18a"
+    },
+    {
+      "path": "crates/wiparse-core/src/log/file.rs",
+      "bytes": 13919,
+      "sha256": "f4fa37a3ec10a85db056d6524ff90a3203f4ac90d3144ccaaa7b1d5e39352989"
+    },
+    {
+      "path": "crates/wiparse-core/src/log/filter.rs",
+      "bytes": 5633,
+      "sha256": "24545ce4ae50cc6396a2b01fdde111f0c46db1ae91f89c27316ae8010baf01e6"
+    },
+    {
+      "path": "crates/wiparse-core/src/log/live.rs",
+      "bytes": 6332,
+      "sha256": "7c28d47645885d2e8b717809d592dac63af44533e993c87770c6936d9fc4b0e7"
+    },
+    {
+      "path": "crates/wiparse-core/src/log/mod.rs",
+      "bytes": 521,
+      "sha256": "9f8e071e316031e0e729f986e8423de295a71ef71de069f380e53857bfb13086"
+    },
+    {
+      "path": "crates/wiparse-core/src/log/store.rs",
+      "bytes": 656,
+      "sha256": "2e2acb996bee89eed49fb9f5ef8c7065a175da6e2ed30130632420ea43c9f498"
+    },
+    {
+      "path": "crates/wiparse-core/src/marketplace/catalog.rs",
+      "bytes": 2697,
+      "sha256": "327b2a864aab1dd4aefe7ce755771be685b16cbbb9e70e95c0d892cf589ca78a"
+    },
+    {
+      "path": "crates/wiparse-core/src/marketplace/install_path.rs",
+      "bytes": 2352,
+      "sha256": "67dfe66c949a8baf51e7bce86fdbe1839ad95f1d50875ccc37bc71b900828350"
+    },
+    {
+      "path": "crates/wiparse-core/src/marketplace/mod.rs",
+      "bytes": 7478,
+      "sha256": "a117d746170c9a5927d202c928a24878799a0f55215c8c2e4d61690279f0b088"
+    },
+    {
+      "path": "crates/wiparse-core/src/marketplace/trust.rs",
+      "bytes": 6609,
+      "sha256": "21bdff19893f234a52c981868e97ae1ce155ab16cafacae43edec89afed8a8a1"
+    },
+    {
+      "path": "crates/wiparse-core/src/mdns_browse.rs",
+      "bytes": 14304,
+      "sha256": "656b92b7ec52dbe76378e3e5f9df723b504a795484ed51a3608fc02959947485"
+    },
+    {
+      "path": "crates/wiparse-core/src/metrics.rs",
+      "bytes": 2236,
+      "sha256": "acccc25a7af4d01fa5b285b8778ece454742395c007253b0dc3de1172081b053"
+    },
+    {
+      "path": "crates/wiparse-core/src/native_lib.rs",
+      "bytes": 4353,
+      "sha256": "444a195c281ce71d2bacfe3d1531cd2ed872cf2e3a6c0bb74b627350dccf92af"
+    },
+    {
+      "path": "crates/wiparse-core/src/paths.rs",
+      "bytes": 3926,
+      "sha256": "47fe56f4f0b9b7962d9d7fba079e5c4e4f529a547d0ad5a9dd247e2397a144bc"
+    },
+    {
+      "path": "crates/wiparse-core/src/probe.rs",
+      "bytes": 23042,
+      "sha256": "11a4a6a773db5d288a2f722e4e638a106f16b17ca3bef8e9a73ea95bc21c80c6"
+    },
+    {
+      "path": "crates/wiparse-core/src/project.rs",
+      "bytes": 49802,
+      "sha256": "8c927f27522a3eb4605cce3433b72ef780480e6209073fe3fbc3146e95085aac"
+    },
+    {
+      "path": "crates/wiparse-core/src/protocol/decode.rs",
+      "bytes": 55952,
+      "sha256": "763ea5aec5b12c1481e7a8d0d9bcd73c7763a745f5ae9f2937da500d21edfdc3"
+    },
+    {
+      "path": "crates/wiparse-core/src/protocol/defs.rs",
+      "bytes": 22002,
+      "sha256": "2da3e77b3944323757fb485e854e8b09c56ff5d3b84b29f9dbe45237622d4284"
+    },
+    {
+      "path": "crates/wiparse-core/src/protocol/line.rs",
+      "bytes": 4555,
+      "sha256": "d62f9bc58f95a2394d6c746e4fb736a754142e280e6af533bef96602f4317ef5"
+    },
+    {
+      "path": "crates/wiparse-core/src/protocol/mod.rs",
+      "bytes": 338,
+      "sha256": "401bdb389e35f30ca6de4286d644a87a22eed8740038284f4926b1c25d7bdeea"
+    },
+    {
+      "path": "crates/wiparse-core/src/protocol/tooltip.rs",
+      "bytes": 5171,
+      "sha256": "d3d636d7ce5f19fc68357c71c50824d26e3260a87e460c903d2560d2fd140755"
+    },
+    {
+      "path": "crates/wiparse-core/src/rigol_wfm.rs",
+      "bytes": 20797,
+      "sha256": "35f785a777b8ca3d870d5128bf9fd342ab514a776d13eb6d9e7d783bc597bb6d"
+    },
+    {
+      "path": "crates/wiparse-core/src/scope/binary.rs",
+      "bytes": 10075,
+      "sha256": "c730e4db3a4e547eee1148ed75bb273c594203e0de128c23d49223ddf08b5878"
+    },
+    {
+      "path": "crates/wiparse-core/src/scope/client.rs",
+      "bytes": 31958,
+      "sha256": "0e5700e428a19c8a7b1c50d85e56257d4ea53728fe56b8fc5767168710a25ccc"
+    },
+    {
+      "path": "crates/wiparse-core/src/scope/mod.rs",
+      "bytes": 852,
+      "sha256": "469f48137aae98227787ed4933c8c0c672afc649a592108e93608d01423069f5"
+    },
+    {
+      "path": "crates/wiparse-core/src/scope/visa.rs",
+      "bytes": 21141,
+      "sha256": "92bb08e5ca02698e6243591fdd96eeac35d9345e4c47c1fc9d40da57ad3315eb"
+    },
+    {
+      "path": "crates/wiparse-core/src/serial.rs",
+      "bytes": 25415,
+      "sha256": "933c26d9d1f2ed885f47da7913a049c0b2b4f1db750858bc31c15cb0faa7b3a5"
+    },
+    {
+      "path": "crates/wiparse-core/src/serial_windows.rs",
+      "bytes": 5565,
+      "sha256": "3d49f502b1cbc9c557fa0e6f627d31b67342a6b67a388285f6f5eeb436ddac1b"
+    },
+    {
+      "path": "crates/wiparse-core/src/serial_winusb.rs",
+      "bytes": 12505,
+      "sha256": "1eaf299ccac3e1f7b898f7b669b0343957224231b543e4c48b7eaf09660efe71"
+    },
+    {
+      "path": "crates/wiparse-core/src/serial_winusb_win.rs",
+      "bytes": 20705,
+      "sha256": "579564eb8d094920cf971b883b789dd975214f4e8ed4ea680bc45abe438a146b"
+    },
+    {
+      "path": "crates/wiparse-core/src/testrun.rs",
+      "bytes": 34592,
+      "sha256": "d68369b6525f0596f2ac84c96e464b813ceb2dd16e0960a558c53ae288eff90f"
+    },
+    {
+      "path": "crates/wiparse-core/src/update/fetch.rs",
+      "bytes": 774,
+      "sha256": "fc8250567b5dce9126e6b1b5b2d086e5f0c759109e87c01570bdef3fdc26c9c6"
+    },
+    {
+      "path": "crates/wiparse-core/src/update/manifest.rs",
+      "bytes": 1553,
+      "sha256": "98ae710e6ba7653fb36ef3442d719fd433cea98d7ef6367c45cac7ebb22599d4"
+    },
+    {
+      "path": "crates/wiparse-core/src/update/mod.rs",
+      "bytes": 2562,
+      "sha256": "9ae4658c0da0d58bd03faf65453840c75c06c5818e68277df0d2f2930e181102"
+    },
+    {
+      "path": "crates/wiparse-core/src/update/verify.rs",
+      "bytes": 1456,
+      "sha256": "666f15a8dd644cda2724f2896c44deb87579ca5995ee45ced0b34cb5a8cb99f1"
+    },
+    {
+      "path": "crates/wiparse-core/src/update/version.rs",
+      "bytes": 1416,
+      "sha256": "40e0b9da54bcf6c7aab1b212c9d12745624496665702a0c8093fd8b36c329d95"
+    },
+    {
+      "path": "crates/wiparse-core/src/usb.rs",
+      "bytes": 9646,
+      "sha256": "362bc7a3ee3279fd51f4b47272e235e72320cd2a99acc47fba3a181c9df5be85"
+    },
+    {
+      "path": "crates/wiparse-core/src/wave.rs",
+      "bytes": 6598,
+      "sha256": "e533a25490e5de4ceab758f4869745f0d1e327e8315a1280d4a1091edf9ae388"
+    },
+    {
+      "path": "crates/wiparse-core/src/wave_display.rs",
+      "bytes": 30449,
+      "sha256": "ff92db402c44340a0a9c8337cc88b35f118eb7aaaa75e6a8cd7743aba0466eea"
+    },
+    {
+      "path": "crates/wiparse-core/src/waveform_file.rs",
+      "bytes": 68870,
+      "sha256": "1904a18a9de2f000990feb94f8b31f718a9d63f857a89e80de5e52af3268e6d2"
+    },
+    {
+      "path": "crates/wiparse-gui/build.rs",
+      "bytes": 720,
+      "sha256": "f0540b4d04a53d55eca28a75eebf59225c873dcca296d5a32a2a1c3eb82a36d5"
+    },
+    {
+      "path": "crates/wiparse-gui/Cargo.toml",
+      "bytes": 1066,
+      "sha256": "cb0d92c64aad53387c88d9c8f10b09d767249728d50f7f7aaeacea70fa0e1ef3"
+    },
+    {
+      "path": "crates/wiparse-gui/src/ai.rs",
+      "bytes": 59781,
+      "sha256": "a9a6848317622436a66aab068570c08e1c02df5f76a03430d1775ca4ffeb36bd"
+    },
+    {
+      "path": "crates/wiparse-gui/src/app.rs",
+      "bytes": 67507,
+      "sha256": "1246d811aff383e5f5068c561b2d1c49c7f84f1f22f8997174230236262f1a58"
+    },
+    {
+      "path": "crates/wiparse-gui/src/backend/capabilities.rs",
+      "bytes": 15003,
+      "sha256": "799be89fd66731224461597f7629de9ae0b4e5013ea76748fb34e8c975a7c996"
+    },
+    {
+      "path": "crates/wiparse-gui/src/backend/dispatch.rs",
+      "bytes": 15405,
+      "sha256": "ccb15f6e56047817f1ec58283e6b9c6e6e0d2888726cdb8f7c063b4b29b75113"
+    },
+    {
+      "path": "crates/wiparse-gui/src/backend/events.rs",
+      "bytes": 5227,
+      "sha256": "f15cf4b833dbf46722b082fc93faab5933276eca44beed25471293ab0ec951d1"
+    },
+    {
+      "path": "crates/wiparse-gui/src/backend/mod.rs",
+      "bytes": 14153,
+      "sha256": "fe656afc87b0818a75d58a59bde04cddb0837984e8a772a3f67366ef39cfa9e6"
+    },
+    {
+      "path": "crates/wiparse-gui/src/backend/stateful.rs",
+      "bytes": 10768,
+      "sha256": "845a4d7e3964fd0b28b4670b3113e615cbb9f8a0b9ad5c506863de83ff41d42a"
+    },
+    {
+      "path": "crates/wiparse-gui/src/backend/ui.rs",
+      "bytes": 14769,
+      "sha256": "4f1ea28defa02df91a356644f3942d86d84147bbb2fd30e3f886efe26da5180e"
+    },
+    {
+      "path": "crates/wiparse-gui/src/calculator.rs",
+      "bytes": 94506,
+      "sha256": "d863db7a235b8da9010476d20aa105b3b807f0e6399b3037dd12dd70dfb7bd8e"
+    },
+    {
+      "path": "crates/wiparse-gui/src/converter.rs",
+      "bytes": 35048,
+      "sha256": "ed7dd81d064c791d7c60091188e79eed2fc608779557a0efd9a40d7f67fb07b0"
+    },
+    {
+      "path": "crates/wiparse-gui/src/data_analysis.rs",
+      "bytes": 129247,
+      "sha256": "69e57fd0fdd7b1d12340f00bae1d44fe8f9a3fb764b825d373a9e5120e54a04a"
+    },
+    {
+      "path": "crates/wiparse-gui/src/data_extract_cache.rs",
+      "bytes": 10939,
+      "sha256": "96c03738dd716fb73b41ff36d7f2e9deb3b25dc61bf9fb4f26f634c3e2f6c4cb"
+    },
+    {
+      "path": "crates/wiparse-gui/src/error_log.rs",
+      "bytes": 5237,
+      "sha256": "999448f713404e34f90fb74160deb173d0f5d3ac202bfcad00891d5791b865fe"
+    },
+    {
+      "path": "crates/wiparse-gui/src/fonts.rs",
+      "bytes": 1500,
+      "sha256": "85f1651c9e04d2b6704af36d7604da4ba5addb3a2f8f068a835f7c18ad67e554"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/workbench/channels.rs",
+      "bytes": 29448,
+      "sha256": "11626a3791e7e02cac5ba03a177107bcea44265affe224283238d43656e6239b"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/workbench/controls.rs",
+      "bytes": 23898,
+      "sha256": "ef5250cf9ffa620cb0e6b83e2cc0e9e898d746c954b246cd43d0dac4b84871fb"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/workbench/design.rs",
+      "bytes": 16931,
+      "sha256": "c67712d84ef9994f27902581faf60c0febae50ed0dc501b371c1bd22d1401f25"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/workbench/flat.rs",
+      "bytes": 24014,
+      "sha256": "b8c25609624aa07fcd2b913b8761ff3b17418ee0abc85f0f18814060ee163033"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/workbench/navigation.rs",
+      "bytes": 17084,
+      "sha256": "de3ba85514c5a2dea8aa961aad0e490a78b92ca1fdd742384207a63a382f4edc"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/workbench/ports.rs",
+      "bytes": 8899,
+      "sha256": "10b3fd955bd6a90b9075f85df7bde808aaa6eae158f633512cca6c1799735e4c"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/workbench/scope_layout.rs",
+      "bytes": 24422,
+      "sha256": "470c15c4bb684669a7aaf057109aa4c55f9b523cdf898ebf732b2bce9c5f4f8c"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/workbench.rs",
+      "bytes": 44379,
+      "sha256": "16c3ed33bcda7e3e770513c3dcde462505c26d32b10f0effb2f37d58ebee43ba"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control.rs",
+      "bytes": 272953,
+      "sha256": "fd648123cadb6689b2ec015f4235ee173556ecf31f81bee5bfea60b7c1be1a6f"
+    },
+    {
+      "path": "crates/wiparse-gui/src/log_tab.rs",
+      "bytes": 107594,
+      "sha256": "a5f9972d3bf794de15ef8111f759353bc1ac0188da7938c43fe32ab8516e48d0"
+    },
+    {
+      "path": "crates/wiparse-gui/src/log_view.rs",
+      "bytes": 89142,
+      "sha256": "381d103ca204d00bfddb8400cd2a1dc1ffc4e42ae8ba451833c6be06560aa686"
+    },
+    {
+      "path": "crates/wiparse-gui/src/main.rs",
+      "bytes": 4488,
+      "sha256": "90df026b95bb8498a0ceffe1914644056a9c1695e2b084d25f58bac149d05f74"
+    },
+    {
+      "path": "crates/wiparse-gui/src/market_jobs.rs",
+      "bytes": 10922,
+      "sha256": "acb8b84efbc1cb27070a9e5d28cab90d72d97de8cf81d22f23106297ebf97fd5"
+    },
+    {
+      "path": "crates/wiparse-gui/src/plot/mod.rs",
+      "bytes": 320,
+      "sha256": "72c0d72b4589844eb970ab35f8972d31c47a2667c3a636330f685d7a9ea7581c"
+    },
+    {
+      "path": "crates/wiparse-gui/src/plot/scope_columns.rs",
+      "bytes": 19397,
+      "sha256": "1171bd390d1b35a1da636a61b7cd2178fdbacabecc19699414a7c94ac0a12a64"
+    },
+    {
+      "path": "crates/wiparse-gui/src/plot/text_label.rs",
+      "bytes": 4906,
+      "sha256": "75b1f56e3329457ae44f7d69172a24abc61ccb1f74a911b7e6f433e7b92e5fbc"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool.rs",
+      "bytes": 152241,
+      "sha256": "5696ee73ed401fbd731740d4983a9042c03170c8ab647a80576fde97c234a2b9"
+    },
+    {
+      "path": "crates/wiparse-gui/src/tektronix.rs",
+      "bytes": 8610,
+      "sha256": "3d4f1cac7e93387c3994c3bb68218ad53359d0fbc93e51a23d0dd8feb1701f23"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_report.rs",
+      "bytes": 142071,
+      "sha256": "c0bb175a32f4890bafce2ba0ae3322524dd2e221ad0125aa9e2b180488c24b7b"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_tool/workspace/form_layout.rs",
+      "bytes": 18147,
+      "sha256": "11962ac9e47199a978303521c2f8ba4e40037a782e5580194e0efee0ae091af1"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_tool/workspace/project_matrix.rs",
+      "bytes": 33108,
+      "sha256": "f37f834583b2c69c6f6d67fce2fd6943f4f29ca1e7350ec6736adb29ff50d7c9"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_tool/workspace.rs",
+      "bytes": 176278,
+      "sha256": "b87e1a98e6316caf4c80b9eb974e317c8995caa3a19ff182abb24a4f22d46953"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_tool.rs",
+      "bytes": 179930,
+      "sha256": "d13eb3b5742c65b1a2d95a8d685752e5a4ec303243c5817194afd26b4046a14d"
+    },
+    {
+      "path": "crates/wiparse-gui/src/theme.rs",
+      "bytes": 29873,
+      "sha256": "142a13da87fdd69e62791551f61fbac474b4b7891def5b4fc36c78251f3bb1b4"
+    },
+    {
+      "path": "crates/wiparse-gui/src/ui_audit.rs",
+      "bytes": 9769,
+      "sha256": "7e33e31b603eb3594afe94d58b8c841b961c87fba4a73911897a0c94c53ec00c"
+    },
+    {
+      "path": "crates/wiparse-gui/src/update/mod.rs",
+      "bytes": 6795,
+      "sha256": "4b778c184f8e512aec965941e739dff751adcdafa084c90f3e6f884ac0dfd0eb"
+    },
+    {
+      "path": "crates/wiparse-gui/src/waveform_analysis.rs",
+      "bytes": 208144,
+      "sha256": "47a2704c6b8f98a238cf9b6d1406b7f05e10b2cb137c401d4252665f29276680"
+    },
+    {
+      "path": "crates/wiparse-gui/src/windows_icon.rs",
+      "bytes": 4045,
+      "sha256": "ee2388fc1c0d93a4eb9f7d3a2ab63773df61defb8e127cc4b9d62b2010aa7ba6"
+    },
+    {
+      "path": "crates/wiparse-service/Cargo.toml",
+      "bytes": 448,
+      "sha256": "c306d02316b12efef547ca768414f5b11cfad098d99042b54baae95690b44c92"
+    },
+    {
+      "path": "crates/wiparse-service/src/jobs.rs",
+      "bytes": 36008,
+      "sha256": "ea14cf68b6f5e1785d10714e0c8e9f066f2f27db4979ce5614eee1fca13ca260"
+    },
+    {
+      "path": "crates/wiparse-service/src/main.rs",
+      "bytes": 4666,
+      "sha256": "900ae2e75e364b8700e35b73520b4025f25ec146bef54a9d0136c7e75bbedd29"
+    },
+    {
+      "path": "crates/wiparse-service/src/storage.rs",
+      "bytes": 3513,
+      "sha256": "ba14b881deef84f67bdbf2e111350d3e84d158a11113bc404b7e046c6eb3f037"
+    }
+  ]
+}

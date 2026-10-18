@@ -26,12 +26,12 @@ import {
 import { discoverPluginsMerged } from "../runner.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const FIXTURE_PLUGIN = path.join(__dirname, "fixtures", "marketplace", "demo-plugin");
 
-function writeFixturePlugin() {
-  fs.mkdirSync(FIXTURE_PLUGIN, { recursive: true });
+function writeFixturePlugin(t) {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "wiparse-mkt-fixture-"));
+  t.after(() => fs.rmSync(fixture, {recursive:true,force:true}));
   fs.writeFileSync(
-    path.join(FIXTURE_PLUGIN, "plugin.json"),
+    path.join(fixture, "plugin.json"),
     JSON.stringify(
       {
         id: "demo-marketplace-plugin",
@@ -52,20 +52,23 @@ function writeFixturePlugin() {
     )
   );
   fs.writeFileSync(
-    path.join(FIXTURE_PLUGIN, "index.mjs"),
+    path.join(fixture, "index.mjs"),
     `export default async function run(ctx) {
   return { ok: true, plugin: "demo-marketplace-plugin", lifecycle: ctx.lifecycle };
+  return fixture;
 }
 export async function preflight(ctx) {
   return { ok: true, lifecycle: "preflight", checks: [{ id: "smoke", ok: true }] };
+  return fixture;
 }
 `
   );
+  return fixture;
 }
 
-test("validate package meta + install/list/discover", async () => {
-  writeFixturePlugin();
-  const zip = zipDirectory(FIXTURE_PLUGIN);
+test("validate package meta + install/list/discover", async (t) => {
+  const fixture = writeFixturePlugin(t);
+  const zip = zipDirectory(fixture);
   const meta = buildMetaFromZip(zip, {
     id: "demo-marketplace-plugin",
     version: "1.0.0",
@@ -107,9 +110,9 @@ test("validate package meta + install/list/discover", async () => {
   }
 });
 
-test("hash mismatch fails with E_HASH", () => {
-  writeFixturePlugin();
-  const zip = zipDirectory(FIXTURE_PLUGIN);
+test("hash mismatch fails with E_HASH", (t) => {
+  const fixture = writeFixturePlugin(t);
+  const zip = zipDirectory(fixture);
   const meta = buildMetaFromZip(zip, {
     id: "demo-marketplace-plugin",
     version: "1.0.0",
@@ -122,9 +125,9 @@ test("hash mismatch fails with E_HASH", () => {
   );
 });
 
-test("signature required + verify", () => {
-  writeFixturePlugin();
-  const zip = zipDirectory(FIXTURE_PLUGIN);
+test("signature required + verify", (t) => {
+  const fixture = writeFixturePlugin(t);
+  const zip = zipDirectory(fixture);
   const keys = generateEd25519KeyPair();
   const meta = buildMetaFromZip(zip, {
     id: "demo-marketplace-plugin",

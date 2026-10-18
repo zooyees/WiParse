@@ -1,5 +1,8 @@
 //! Testing Hub — discover Node.js plugins and run them via WiParse CLI / HTTP.
 
+mod workspace;
+use workspace::Workspace;
+
 use crate::market_jobs::{
     installed_map_from_registry, marketplace_cli_path, spawn_catalog_refresh, spawn_pull_install,
     spawn_uninstall, CatalogRow, HubMode, MarketJob, MarketJobEvent,
@@ -121,6 +124,7 @@ struct PluginInfo {
     source: String,
     params: Vec<PluginParam>,
     outputs: Vec<wiparse_core::project::OutputSpec>,
+    configure: bool,
 }
 
 impl PluginInfo {
@@ -230,13 +234,16 @@ pub struct TestToolPanel {
     artifact_epoch: u64,
     /// Plugin `advanced: true` params; not indented under CollapsingHeader.
     param_advanced_open: bool,
+    workspace: Workspace,
+    approved_config_roots: Vec<String>,
+    hub_api_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl TestToolPanel {
     pub fn new(cfg: &AppConfig) -> Self {
         let mut plugins_dir = cfg.apps.test_tool.plugins_dir.clone();
         if plugins_dir.trim().is_empty() {
-            plugins_dir = project_path("test-tools/plugins").display().to_string();
+            plugins_dir = "test-tools/plugins".into();
         }
         let mut cli_path = cfg.apps.test_tool.cli_path.clone();
         if cli_path.trim().is_empty() {
@@ -305,6 +312,9 @@ impl TestToolPanel {
             new_project_id: String::new(),
             artifact_epoch: 0,
             param_advanced_open: false,
+            workspace: Workspace::default(),
+            approved_config_roots: cfg.apps.test_tool.approved_config_roots.clone(),
+            hub_api_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         };
         panel.refresh_plugins();
         panel
@@ -313,6 +323,7 @@ impl TestToolPanel {
     pub fn set_project_id(&mut self, id: String) {
         let id = wiparse_core::project::sanitize_id(&id, "default");
         if self.project_id != id {
+            if self.workspace.dirty() { self.workspace_switch("__project",id);self.status="CONFIG.UNSAVED_CHANGES".into();return; }
             self.project_id = id;
             self.persist_config();
         }
@@ -481,7 +492,10 @@ impl TestToolPanel {
         if id.is_empty() {
             return err("ui.test_tool.run", "missing plugin id");
         }
+        if self.workspace.dirty(){return err("ui.test_tool.run","CONFIG.UNSAVED_CHANGES");}
         self.select_plugin(id.to_owned());
+        if self.selected.as_deref()!=Some(id) { return err("ui.test_tool.run","CONFIG.UNSAVED_CHANGES"); }
+        if let Some(binding)=params.get("test_matrix") { self.workspace.api_binding=Some(binding.clone()); }
         // API run needs station values immediately (no UI frame to defer into).
         self.merge_station_into_params();
         if let Some(obj) = params.get("params").and_then(|v| v.as_object()) {
@@ -1013,6 +1027,7 @@ impl TestToolPanel {
 
                 self.paint_runner_header(ui, lang, tokens, sel_idx);
 
+                if sel_idx.is_some_and(|i|self.plugins[i].configure) { self.paint_workspace(ui,lang,tokens);return; }
                 let body_h = ui.available_height().max(1.0);
                 let body_w = ui.available_width().max(1.0);
                 let gap = RUNNER_SPLIT_GAP * 2.0 + 1.0;
@@ -1035,6 +1050,20 @@ impl TestToolPanel {
         tokens: &Tokens,
         sel_idx: Option<usize>,
     ) {
+        // Configurable plugins have one authoritative execution bar in their workspace.
+        if let Some(plugin) = sel_idx.map(|i| &self.plugins[i]).filter(|p| p.configure).cloned() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(&plugin.name).size(ui_theme::FONT_SECTION).strong());
+                ui.weak(&plugin.version);
+                self.paint_status_chip(ui, lang, tokens);
+                if ui.small_button(tr(lang, "test_tool.clear_log")).clicked() { self.log.clear(); }
+                if plugin.source == "marketplace" && self.job.is_none() && !self.catalog_busy
+                    && ui.small_button(tr(lang, "test_tool.market_uninstall")).clicked() {
+                    self.uninstall_marketplace_plugin(&plugin.id, lang);
+                }
+            });
+            return;
+        }
         let running = self.job.is_some();
         let run_lbl = if running {
             tr(lang, "test_tool.stop")
@@ -2056,6 +2085,7 @@ impl TestToolPanel {
         if self.selected.as_deref() == Some(id.as_str()) {
             return;
         }
+        if self.workspace.dirty() { self.workspace_switch("__plugin",id);self.status = "CONFIG.UNSAVED_CHANGES".into(); return; }
         self.selected = Some(id);
         self.param_advanced_open = false;
         self.apply_param_defaults_fast();
@@ -2128,7 +2158,7 @@ impl TestToolPanel {
 
     fn refresh_plugins(&mut self) {
         let mut by_id: HashMap<String, PluginInfo> = HashMap::new();
-        for p in scan_plugins(Path::new(self.plugins_dir.trim())) {
+        for p in scan_plugins(&resolve_dir(self.plugins_dir.trim())) {
             by_id.insert(p.id.clone(), p);
         }
         let mkt_root = self.resolve_marketplace_root();
@@ -2178,7 +2208,7 @@ impl TestToolPanel {
                 if !path.is_dir() {
                     return;
                 }
-                self.plugins_dir = path.display().to_string();
+                self.plugins_dir = portable_path(&path);
                 self.refresh_plugins();
                 self.persist_config();
             }
@@ -2212,6 +2242,7 @@ impl TestToolPanel {
             cfg.apps.test_tool.cli_path = self.cli_path.clone();
             cfg.apps.test_tool.node_path = self.node_path.clone();
             cfg.apps.test_tool.data_root = self.data_root.clone();
+            cfg.apps.test_tool.approved_config_roots = self.approved_config_roots.clone();
             cfg.apps.test_tool.marketplace.install_dir = self.marketplace_install_dir.clone();
             cfg.apps.test_tool.marketplace.enabled = self.marketplace_enabled;
             cfg.apps.test_tool.marketplace.base_url = self.marketplace_base_url.clone();
@@ -2227,7 +2258,7 @@ impl TestToolPanel {
         if self.data_root.trim().is_empty() {
             project_path("").display().to_string()
         } else {
-            self.data_root.trim().to_owned()
+            resolve_dir(self.data_root.trim()).display().to_string()
         }
     }
 
@@ -2276,7 +2307,7 @@ impl TestToolPanel {
             self.catalog_status = tr(lang, "test_tool.market_no_url").to_string();
             return;
         }
-        let node = self.node_path.trim().to_owned();
+        let node = resolve_command(self.node_path.trim());
         let cli = marketplace_cli_path();
         if !cli.is_file() {
             self.catalog_status = format!("{} {}", tr(lang, "test_tool.market_missing_cli"), cli.display());
@@ -2339,7 +2370,7 @@ impl TestToolPanel {
             self.catalog_status = tr(lang, "test_tool.market_not_installed").to_string();
             return;
         };
-        let node = self.node_path.trim().to_owned();
+        let node = resolve_command(self.node_path.trim());
         let cli = marketplace_cli_path();
         if !cli.is_file() {
             self.status = format!("{} {}", tr(lang, "test_tool.market_missing_cli"), cli.display());
@@ -2863,10 +2894,11 @@ impl TestToolPanel {
                 );
             }
         }
-        if params.is_empty() {
+        if params.is_empty() && !plugin.configure {
             return Ok(None);
         }
-        let body = serde_json::json!({ "params": serde_json::Value::Object(params) });
+        let mut body = serde_json::json!({ "params": serde_json::Value::Object(params) });
+        if plugin.configure { body["test_matrix"]=self.workspace.binding(); }
         let path = std::env::temp_dir().join(format!(
             "wiparse-hub-overlay-{}-{}.json",
             plugin.id,
@@ -2883,11 +2915,7 @@ impl TestToolPanel {
         };
         let mut station = load_station_json(p);
         apply_param_overlays_to_station(&mut station, p, &self.param_values);
-        let data_root = if self.data_root.trim().is_empty() {
-            project_path("").display().to_string()
-        } else {
-            self.data_root.trim().to_owned()
-        };
+        let data_root = self.data_root_resolved();
         let plugin_dir = p.dir.display().to_string();
         let project = self.effective_project_id();
         let test_id = self.hub_test_id_for(p);
@@ -2927,6 +2955,7 @@ impl TestToolPanel {
             return Err(format!("invalid plugin id: {}", plugin.id));
         }
 
+        if plugin.configure { self.workspace_run_gate(self.preflight_only)?; }
         let runner = project_path("test-tools/runner.mjs");
         if !runner.is_file() {
             return Err(format!(
@@ -2936,7 +2965,7 @@ impl TestToolPanel {
             ));
         }
 
-        let node = self.node_path.trim().to_owned();
+        let node = resolve_command(self.node_path.trim());
         if node.is_empty() {
             return Err(tr(lang, "test_tool.status_no_node"));
         }
@@ -2952,20 +2981,17 @@ impl TestToolPanel {
                 "run".into()
             },
         ];
-        let cli = self.cli_path.trim().to_owned();
+        let cli = resolve_command(self.cli_path.trim());
         if !cli.is_empty() {
             args.push("--cli".into());
             args.push(cli);
         }
-        let data_root = if self.data_root.trim().is_empty() {
-            project_path("").display().to_string()
-        } else {
-            self.data_root.trim().to_owned()
-        };
+        let data_root = self.data_root_resolved();
         args.push("--data-root".into());
         args.push(data_root);
         args.push("--project".into());
         args.push(self.effective_project_id());
+        for root in &self.approved_config_roots {args.push("--approved-config-root".into());args.push(root.clone());}
         let report_name = self.hub_report_name(&plugin);
         let entry = wiparse_core::project::test_ref_from_report(&plugin.id, report_name);
         let test_id = entry.id.clone();
@@ -2981,7 +3007,7 @@ impl TestToolPanel {
         );
         self.bump_artifact_epoch();
         args.push("--plugins-root".into());
-        args.push(self.plugins_dir.trim().to_owned());
+        args.push(resolve_dir(self.plugins_dir.trim()).display().to_string());
         args.push("--marketplace-dir".into());
         args.push(self.resolve_marketplace_root().display().to_string());
 
@@ -3208,13 +3234,9 @@ impl TestToolPanel {
 
     fn stop_job(&mut self, lang: Lang) {
         let marketplace_dir = self.resolve_marketplace_root().display().to_string();
-        let plugins_dir = self.plugins_dir.trim().to_owned();
-        let node = self.node_path.trim().to_owned();
-        let data_root = if self.data_root.trim().is_empty() {
-            project_path("").display().to_string()
-        } else {
-            self.data_root.trim().to_owned()
-        };
+        let plugins_dir = resolve_dir(self.plugins_dir.trim()).display().to_string();
+        let node = resolve_command(self.node_path.trim());
+        let data_root = self.data_root_resolved();
         let project = self.effective_project_id();
         let Some(job) = self.job.as_mut() else {
             return;
@@ -3848,6 +3870,19 @@ fn format_json_log_line(s: &str) -> Option<String> {
     None
 }
 
+// Keep user configuration relocatable; resolve only at filesystem/process boundaries.
+fn portable_path(path: &Path) -> String {
+    path.strip_prefix(project_path("")).unwrap_or(path).display().to_string()
+}
+fn resolve_command(raw: &str) -> String {
+    let path = Path::new(raw);
+    if !path.is_absolute() && path.components().count() > 1 {
+        resolve_dir(raw).display().to_string()
+    } else {
+        raw.to_owned()
+    }
+}
+
 fn resolve_dir(raw: &str) -> PathBuf {
     let p = PathBuf::from(raw);
     if p.is_absolute() {
@@ -3937,7 +3972,7 @@ fn default_cli_path() -> String {
     ];
     for c in candidates {
         if c.is_file() {
-            return c.display().to_string();
+            return portable_path(&c);
         }
     }
     if cfg!(windows) {
@@ -4139,6 +4174,7 @@ fn read_plugin_info(path: &Path) -> Option<PluginInfo> {
         source: "bundled".into(),
         params,
         outputs: wiparse_core::project::OutputSpec::from_plugin_json(&v),
+        configure: v["capabilities"].as_array().is_some_and(|a|a.iter().any(|c|c=="configure")),
     })
 }
 

@@ -5,7 +5,7 @@
   "report_name": "WiparseI2c",
   "report_name_zh": "I2C RPC",
   "type": "instrument",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "entry": "index.mjs",
   "config": "station.json",
   "description": "Generic I2C master text RPC (WIPARSE-IF CH-I2C). TCP :1236 or USB MI_03. HELP/PING/SCAN/SPEED/TIMEOUT/RECOVER/WRITE/READ/WRITEREAD plus JSON or line recipes. Test case dir is report_name (override with file_prefix).",

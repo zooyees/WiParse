@@ -5,8 +5,8 @@ use std::sync::Arc;
 use crate::theme::Tokens;
 use egui::{
     text::{CCursor, CCursorRange, LayoutJob, TextFormat},
-    Align, Align2, Color32, Event, FontId, ImeEvent, Key, Layout, Margin, Pos2, Rect, Sense, Stroke,
-    Ui, UiBuilder, Vec2,
+    Align, Align2, Color32, Event, FontId, ImeEvent, Key, Layout, Margin, Pos2, Rect, Sense,
+    Stroke, Ui, UiBuilder, Vec2,
 };
 use wiparse_core::i18n::{tr, Lang};
 use wiparse_core::log::{match_ranges_in_line, LogStore};
@@ -287,9 +287,7 @@ fn horizontal_offset_for_hit(
 }
 
 fn layout_log_line(ui: &Ui, line: &str, font_size: f32, color: Color32) -> Arc<egui::Galley> {
-    ui.fonts(|fonts| {
-        fonts.layout_no_wrap(line.to_owned(), FontId::monospace(font_size), color)
-    })
+    ui.fonts(|fonts| fonts.layout_no_wrap(line.to_owned(), FontId::monospace(font_size), color))
 }
 
 fn log_row_text_pos(row_rect: Rect, line_height: f32, galley: &egui::Galley) -> Pos2 {
@@ -313,7 +311,11 @@ fn caret_col_from_pointer(
         .min(line_char_len)
 }
 
-fn selection_x_range(galley: &egui::Galley, start_col: usize, end_col: usize) -> Option<(f32, f32)> {
+fn selection_x_range(
+    galley: &egui::Galley,
+    start_col: usize,
+    end_col: usize,
+) -> Option<(f32, f32)> {
     if start_col >= end_col {
         return None;
     }
@@ -374,9 +376,8 @@ fn handle_copy_shortcut<S: LogStore + ?Sized>(
             )
         })
     });
-    let ctrl_a = ui.input(|i| {
-        (i.modifiers.ctrl || i.modifiers.command) && i.key_pressed(egui::Key::A)
-    });
+    let ctrl_a =
+        ui.input(|i| (i.modifiers.ctrl || i.modifiers.command) && i.key_pressed(egui::Key::A));
     if ctrl_a {
         if typing {
             return;
@@ -421,11 +422,12 @@ fn copy_current_line<S: LogStore + ?Sized>(store: &S, pane: &PaneState) -> Optio
 }
 
 /// Render a log store with vertical + horizontal scroll; only visible rows are loaded.
-pub fn show_virtual_log_pane<S: LogStore + ?Sized>(
+pub fn show_virtual_log_pane(
     ui: &mut Ui,
-    store: &S,
+    store: &dyn LogStore,
     pane: &mut PaneState,
     auto_scroll: bool,
+    live: bool,
     salt: &str,
     height: f32,
     scroll_to_row: Option<usize>,
@@ -439,6 +441,48 @@ pub fn show_virtual_log_pane<S: LogStore + ?Sized>(
     let ctrl = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
     let shift = ui.input(|i| i.modifiers.shift);
     let zoom_factor = ui.input(|i| i.zoom_delta());
+
+    let viewport_size = Vec2::new(ui.available_width().max(1.0), height.max(0.0));
+    let (viewport_rect, _) = ui.allocate_exact_size(viewport_size, Sense::hover());
+    if viewport_rect.height() <= 0.0 {
+        return;
+    }
+    let resumed = pane.resume_tail;
+    if resumed {
+        pane.history = None;
+        pane.resume_tail = false;
+        pane.scroll_pinned = true;
+        pane.scroll_to_master = None;
+        pane.scroll_hold_frames = 0;
+        pane.highlight_master = None;
+        pane.parse_row = None;
+        pane.clear_sel();
+    }
+    let upward = ui.input(|i| {
+        !ctrl
+            && !shift
+            && i.raw_scroll_delta.y > 0.0
+            && i.pointer
+                .hover_pos()
+                .is_some_and(|pos| viewport_rect.contains(pos))
+    });
+    if live && upward && pane.history.is_none() {
+        pane.history = Some(Arc::new(super::log_tab::HistoryStore::capture(store)));
+        pane.scroll_pinned = false;
+        pane.scroll_to_master = None;
+        pane.scroll_hold_frames = 0;
+    }
+    let history = pane.history.clone();
+    let store: &dyn LogStore = history
+        .as_deref()
+        .map(|s| s as &dyn LogStore)
+        .unwrap_or(store);
+    let scroll_to_row = if resumed || upward {
+        None
+    } else {
+        scroll_to_row
+    };
+    let highlight_row = if resumed { None } else { highlight_row };
 
     let total_lines = store.line_count();
     let line_h = if let Some((fs, h)) = pane.cached_row_height {
@@ -460,27 +504,19 @@ pub fn show_virtual_log_pane<S: LogStore + ?Sized>(
     let gutter_w = line_gutter_width(total_lines, glyph_w);
     let max_chars = store.max_line_chars().max(1);
     // Two cells per character is a safe upper bound for CJK fallback glyphs.
-    let content_w =
-        (gutter_w + max_chars as f32 * glyph_w * 2.0 + 24.0).max(ui.available_width());
+    let content_w = (gutter_w + max_chars as f32 * glyph_w * 2.0 + 24.0).max(ui.available_width());
 
-    if ui.input(|i| i.smooth_scroll_delta.y.abs() > 0.0 || i.raw_scroll_delta.y.abs() > 0.0) {
-        pane.scroll_pinned = false;
-    }
-
-    let viewport_size = Vec2::new(ui.available_width().max(1.0), height.max(0.0));
-    let (viewport_rect, _) = ui.allocate_exact_size(viewport_size, Sense::hover());
-    if viewport_rect.height() <= 0.0 {
-        return;
-    }
     let mut gutter_rows: Vec<(f32, f32, usize)> = Vec::new();
-    crate::theme::scope_in_allocated_rect(ui,
+    crate::theme::scope_in_allocated_rect(
+        ui,
         UiBuilder::new()
             .max_rect(viewport_rect)
             .layout(Layout::top_down(Align::Min)),
         |ui| {
             ui.set_clip_rect(viewport_rect);
-            let stick = auto_scroll
+            let stick = (auto_scroll || resumed)
                 && pane.scroll_pinned
+                && history.is_none()
                 && scroll_to_row.is_none()
                 && highlight_row.is_none();
 
@@ -520,6 +556,9 @@ pub fn show_virtual_log_pane<S: LogStore + ?Sized>(
                         viewport_rect.height(),
                     ));
             }
+            if resumed {
+                scroll_area = scroll_area.vertical_scroll_offset(total_lines as f32 * line_h);
+            }
             scroll_area.show(ui, |ui| {
                 let total_h = (total_lines as f32 * line_h).max(line_h);
                 let (body, _) =
@@ -535,10 +574,6 @@ pub fn show_virtual_log_pane<S: LogStore + ?Sized>(
                 let visible_rows =
                     visible_row_range(body.top(), clip.top(), clip.height(), line_h, total_lines);
                 pane.last_view_row = Some(visible_rows.start);
-
-                if auto_scroll && body.bottom() - clip.bottom() < line_h * 1.5 {
-                    pane.scroll_pinned = true;
-                }
 
                 let pointer = ui
                     .input(|i| i.pointer.latest_pos())
@@ -557,7 +592,8 @@ pub fn show_virtual_log_pane<S: LogStore + ?Sized>(
                         } else {
                             pane.selecting = true;
                             if in_gutter(pos) {
-                                let row = (((pos.y - body.top()) / line_h).floor().max(0.0) as usize)
+                                let row = (((pos.y - body.top()) / line_h).floor().max(0.0)
+                                    as usize)
                                     .min(total_lines.saturating_sub(1));
                                 let len = store
                                     .line_at(row)
@@ -592,15 +628,9 @@ pub fn show_virtual_log_pane<S: LogStore + ?Sized>(
                             pane.select_dragged = true;
                         }
                         if pane.select_dragged {
-                            if let Some(caret) = caret_at_pos(
-                                ui,
-                                store,
-                                body,
-                                pos,
-                                line_h,
-                                pane.font_size,
-                                gutter_w,
-                            ) {
+                            if let Some(caret) =
+                                caret_at_pos(ui, store, body, pos, line_h, pane.font_size, gutter_w)
+                            {
                                 pane.sel_focus = Some(caret);
                             }
                         }
@@ -619,7 +649,8 @@ pub fn show_virtual_log_pane<S: LogStore + ?Sized>(
                         response.request_focus();
                     } else {
                         pane.select_dragged = false;
-                        if origin.is_some_and(|pos| !pos_in_line_block(body, pos, line_h, total_lines))
+                        if origin
+                            .is_some_and(|pos| !pos_in_line_block(body, pos, line_h, total_lines))
                         {
                             pane.clear_sel();
                         } else {
@@ -712,9 +743,8 @@ pub fn show_virtual_log_pane<S: LogStore + ?Sized>(
                         Pos2::new(body.left() + gutter_w, row_rect.top()),
                         row_rect.max,
                     );
-                    let current = current_hit.and_then(|(hit_row, start, end)| {
-                        (hit_row == row).then_some((start, end))
-                    });
+                    let current = current_hit
+                        .and_then(|(hit_row, start, end)| (hit_row == row).then_some((start, end)));
                     let galley = if needles.is_empty() {
                         layout_log_line(ui, &line, pane.font_size, t.text_primary)
                     } else {
@@ -760,20 +790,18 @@ pub fn show_virtual_log_pane<S: LogStore + ?Sized>(
                                 pane.sel_anchor = Some(super::log_tab::TextCaret { row, col: 0 });
                                 pane.sel_focus = Some(super::log_tab::TextCaret { row, col: len });
                                 pane.last_selected_text = line.to_string();
-                            } else if let Some(caret) = caret_at_pos(
-                                ui,
-                                store,
-                                body,
-                                pos,
-                                line_h,
-                                pane.font_size,
-                                gutter_w,
-                            ) {
+                            } else if let Some(caret) =
+                                caret_at_pos(ui, store, body, pos, line_h, pane.font_size, gutter_w)
+                            {
                                 let (start, end) = word_char_range(&line, caret.col);
-                                pane.sel_anchor = Some(super::log_tab::TextCaret { row, col: start });
+                                pane.sel_anchor =
+                                    Some(super::log_tab::TextCaret { row, col: start });
                                 pane.sel_focus = Some(super::log_tab::TextCaret { row, col: end });
-                                pane.last_selected_text =
-                                    line.chars().skip(start).take(end.saturating_sub(start)).collect();
+                                pane.last_selected_text = line
+                                    .chars()
+                                    .skip(start)
+                                    .take(end.saturating_sub(start))
+                                    .collect();
                             }
                         }
                     }
@@ -829,6 +857,148 @@ pub fn show_virtual_log_pane<S: LogStore + ?Sized>(
             FontId::monospace(pane.font_size),
             t.text_muted,
         );
+    }
+    if live {
+        let button = tail_button_rect(viewport_rect);
+        let response = ui.interact(
+            button,
+            ui.id().with(("resume-log-tail", salt)),
+            Sense::click(),
+        );
+        ui.painter().rect_filled(
+            button,
+            3.0,
+            if pane.history.is_some() {
+                t.accent
+            } else {
+                t.button_bg
+            },
+        );
+        let c = button.center();
+        ui.painter().add(egui::Shape::convex_polygon(
+            vec![
+                c + Vec2::new(-4.0, -2.0),
+                c + Vec2::new(4.0, -2.0),
+                c + Vec2::new(0.0, 3.0),
+            ],
+            if pane.history.is_some() {
+                t.accent_text
+            } else {
+                t.text_primary
+            },
+            Stroke::NONE,
+        ));
+        if response.clicked() {
+            pane.resume_tail = true;
+            ui.ctx().request_repaint();
+        }
+        response.on_hover_text(match lang {
+            Lang::Zh => "跳到最新并恢复跟随",
+            _ => "Jump to latest and resume following",
+        });
+    }
+}
+
+pub(crate) fn tail_button_rect(viewport: Rect) -> Rect {
+    Rect::from_min_max(
+        viewport.right_bottom() - Vec2::splat(18.0),
+        viewport.right_bottom(),
+    )
+}
+
+#[cfg(test)]
+mod live_review_tests {
+    use super::*;
+    use wiparse_core::log::LiveLogStore;
+
+    #[test]
+    fn upward_wheel_freezes_history_through_fifo_rollover_until_tail_button() {
+        let ctx = egui::Context::default();
+        let mut pane = PaneState::default();
+        let mut store = LiveLogStore::new();
+        store.append_lines((0..5000).map(|i| format!("original {i}")));
+        let mut time = 0.0;
+        let mut frame = |store: &LiveLogStore, pane: &mut PaneState, events| {
+            time += 0.1;
+            let mut tail = Pos2::ZERO;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, 300.0))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        tail = tail_button_rect(Rect::from_min_size(
+                            ui.cursor().min,
+                            Vec2::new(ui.available_width(), 240.0),
+                        ))
+                        .center();
+                        show_virtual_log_pane(
+                            ui,
+                            store,
+                            pane,
+                            true,
+                            true,
+                            "review-test",
+                            240.0,
+                            None,
+                            None,
+                            &Tokens::dark(),
+                            Lang::En,
+                            &[],
+                            false,
+                            None,
+                        );
+                    });
+                },
+            );
+            tail
+        };
+        frame(&store, &mut pane, vec![]);
+        frame(
+            &store,
+            &mut pane,
+            vec![
+                egui::Event::PointerMoved(Pos2::new(250.0, 100.0)),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: Vec2::new(0.0, 80.0),
+                    modifiers: egui::Modifiers::default(),
+                },
+            ],
+        );
+        assert!(!pane.scroll_pinned);
+        assert_eq!(
+            pane.history.as_ref().unwrap().line_at(0).unwrap().as_ref(),
+            "original 0"
+        );
+        store.append_lines((0..10000).map(|i| format!("new {i}")));
+        let tail = frame(&store, &mut pane, vec![]);
+        assert_eq!(pane.history.as_ref().unwrap().line_count(), 5000);
+        assert_eq!(
+            pane.history.as_ref().unwrap().line_at(0).unwrap().as_ref(),
+            "original 0"
+        );
+        frame(&store, &mut pane, vec![egui::Event::PointerMoved(tail)]);
+        for pressed in [true, false] {
+            frame(
+                &store,
+                &mut pane,
+                vec![egui::Event::PointerButton {
+                    pos: tail,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                }],
+            );
+        }
+        frame(&store, &mut pane, vec![]);
+        assert!(pane.history.is_none());
+        assert!(pane.scroll_pinned);
+        assert!(pane.last_view_row.unwrap() > 4900);
+        assert_eq!(store.line_count(), 5000);
     }
 }
 
@@ -985,12 +1155,7 @@ fn search_caret_at_pos<S: LogStore + ?Sized>(
         caret_col_from_pointer(&prefix_galley, prefix_chars, prefix_text_pos, pos)
     } else {
         prefix_chars
-            + caret_col_from_pointer(
-                &rest_galley,
-                parts.rest.chars().count(),
-                rest_text_pos,
-                pos,
-            )
+            + caret_col_from_pointer(&rest_galley, parts.rest.chars().count(), rest_text_pos, pos)
     };
     Some(TextCaret { row, col })
 }
@@ -1026,7 +1191,8 @@ pub fn show_virtual_search_pane<S: LogStore + ?Sized>(
     }
     let mut frozen_rows = Vec::<FrozenRow>::new();
 
-    crate::theme::scope_in_allocated_rect(ui,
+    crate::theme::scope_in_allocated_rect(
+        ui,
         UiBuilder::new()
             .max_rect(viewport_rect)
             .layout(Layout::top_down(Align::Min)),
@@ -1239,9 +1405,8 @@ pub fn show_virtual_search_pane<S: LogStore + ?Sized>(
                                 let start_x = rest_galley
                                     .pos_from_ccursor(CCursor::new(local_start))
                                     .left();
-                                let end_x = rest_galley
-                                    .pos_from_ccursor(CCursor::new(local_end))
-                                    .left();
+                                let end_x =
+                                    rest_galley.pos_from_ccursor(CCursor::new(local_end)).left();
                                 ui.painter()
                                     .with_clip_rect(Rect::from_min_max(
                                         Pos2::new(clip.left() + prefix_width, row_rect.top()),
@@ -1327,8 +1492,8 @@ pub fn show_virtual_search_pane<S: LogStore + ?Sized>(
                         && !selection.selecting
                         && !selection.select_dragged
                     {
-                        if let Some(pos) =
-                            pointer.filter(|p| viewport_rect.contains(*p) && p.x < interact_rect.right())
+                        if let Some(pos) = pointer
+                            .filter(|p| viewport_rect.contains(*p) && p.x < interact_rect.right())
                         {
                             clicked = search_row_at_pos(body, line_h, row_count, pos);
                         }
@@ -1676,19 +1841,16 @@ pub fn show_virtual_line_editor(
                         repeat: false,
                         modifiers,
                         ..
-                    } if !(modifiers.ctrl || modifiers.command || modifiers.alt) => {
-                        match key {
-                            Key::Enter if !ime_busy => ate_enter = true,
-                            Key::Backspace if session.col == 0 => ate_backspace = true,
-                            Key::Delete
-                                if session.col
-                                    == session.lines[session.row].chars().count() =>
-                            {
-                                ate_delete = true;
-                            }
-                            _ => {}
+                    } if !(modifiers.ctrl || modifiers.command || modifiers.alt) => match key {
+                        Key::Enter if !ime_busy => ate_enter = true,
+                        Key::Backspace if session.col == 0 => ate_backspace = true,
+                        Key::Delete
+                            if session.col == session.lines[session.row].chars().count() =>
+                        {
+                            ate_delete = true;
                         }
-                    }
+                        _ => {}
+                    },
                     _ => {}
                 }
             }
@@ -1768,10 +1930,8 @@ pub fn show_virtual_line_editor(
         .fonts(|f| f.glyph_width(&FontId::monospace(font_size), '0'))
         .max(4.0);
     let gutter_w = line_gutter_width(total_lines, glyph_w);
-    let content_w = (gutter_w
-        + session.max_chars as f32 * glyph_w * 2.0
-        + 24.0)
-        .max(ui.available_width());
+    let content_w =
+        (gutter_w + session.max_chars as f32 * glyph_w * 2.0 + 24.0).max(ui.available_width());
 
     let viewport_size = Vec2::new(ui.available_width().max(1.0), height.max(0.0));
     let (viewport_rect, _) = ui.allocate_exact_size(viewport_size, Sense::hover());
@@ -1780,7 +1940,8 @@ pub fn show_virtual_line_editor(
     }
 
     let mut gutter_rows: Vec<(f32, f32, usize)> = Vec::new();
-    crate::theme::scope_in_allocated_rect(ui,
+    crate::theme::scope_in_allocated_rect(
+        ui,
         UiBuilder::new()
             .max_rect(viewport_rect)
             .layout(Layout::top_down(Align::Min)),
@@ -1814,13 +1975,10 @@ pub fn show_virtual_line_editor(
 
                 if response.contains_pointer() && ui.input(|i| i.pointer.primary_clicked()) {
                     if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-                        let row = ((pos.y - body.top()) / line_h)
-                            .floor()
-                            .max(0.0) as usize;
+                        let row = ((pos.y - body.top()) / line_h).floor().max(0.0) as usize;
                         let row = row.min(total_lines.saturating_sub(1));
                         if row != session.row {
-                            let col = ((pos.x - body.left() - gutter_w - TEXT_LEFT_PAD)
-                                / glyph_w)
+                            let col = ((pos.x - body.left() - gutter_w - TEXT_LEFT_PAD) / glyph_w)
                                 .floor()
                                 .max(0.0) as usize;
                             session.row = row;
@@ -1858,7 +2016,8 @@ pub fn show_virtual_line_editor(
                         let prev_len = session.lines[row].chars().count();
                         let mut line = std::mem::take(&mut session.lines[row]);
                         let editor_id = ui.id().with(("line-edit-row", salt));
-                        let inner = crate::theme::scope_in_allocated_rect(ui,
+                        let inner = crate::theme::scope_in_allocated_rect(
+                            ui,
                             UiBuilder::new()
                                 .max_rect(text_rect)
                                 .layout(Layout::left_to_right(Align::Center)),
@@ -1900,12 +2059,8 @@ pub fn show_virtual_line_editor(
                             session.note_line_chars(new_len);
                         }
                     } else {
-                        let galley = layout_log_line(
-                            ui,
-                            &session.lines[row],
-                            font_size,
-                            t.text_primary,
-                        );
+                        let galley =
+                            layout_log_line(ui, &session.lines[row], font_size, t.text_primary);
                         ui.painter().with_clip_rect(clip).galley(
                             Pos2::new(text_rect.left() + TEXT_LEFT_PAD, text_rect.top()),
                             galley,
@@ -2056,7 +2211,10 @@ mod tests {
         pane.sel_anchor = Some(TextCaret { row: 1, col: 0 });
         pane.sel_focus = Some(TextCaret { row: 1, col: 0 });
         pane.last_selected_text.clear();
-        assert_eq!(copy_current_line(&store, &pane).as_deref(), Some("FSK reply"));
+        assert_eq!(
+            copy_current_line(&store, &pane).as_deref(),
+            Some("FSK reply")
+        );
         assert_eq!(clipboard_text(&store, &pane), "FSK reply");
     }
 
@@ -2104,7 +2262,10 @@ mod tests {
     fn line_editor_preserves_windows_newlines() {
         let session = LineEditorSession::from_text("a\r\nb\r\n");
         assert_eq!(session.newline, "\r\n");
-        assert_eq!(session.lines, vec!["a".to_string(), "b".to_string(), String::new()]);
+        assert_eq!(
+            session.lines,
+            vec!["a".to_string(), "b".to_string(), String::new()]
+        );
         assert_eq!(session.to_text(), "a\r\nb\r\n");
     }
 
@@ -2113,7 +2274,10 @@ mod tests {
         let mut session = LineEditorSession::from_text("hello world");
         session.col = 5;
         editor_split_line(&mut session);
-        assert_eq!(session.lines, vec!["hello".to_string(), " world".to_string()]);
+        assert_eq!(
+            session.lines,
+            vec!["hello".to_string(), " world".to_string()]
+        );
         assert_eq!(session.row, 1);
         assert_eq!(session.col, 0);
         assert!(editor_join_prev(&mut session));
@@ -2129,7 +2293,10 @@ mod tests {
         assert_eq!(session.max_chars, 10);
         session.col = 1;
         editor_split_line(&mut session);
-        assert_eq!(session.lines, vec!["a".to_string(), "bcdefghij".to_string()]);
+        assert_eq!(
+            session.lines,
+            vec!["a".to_string(), "bcdefghij".to_string()]
+        );
         assert_eq!(session.max_chars, 9);
     }
 }

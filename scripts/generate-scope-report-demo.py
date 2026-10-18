@@ -10,7 +10,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 repo = Path(__file__).resolve().parents[1]
-stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+stamp = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime('%Y%m%d_%H%M%S')
+assert len(stamp) == 15 and stamp[8] == '_' and stamp.replace('_', '').isdigit()
+version = __import__('re').search(r'^version\s*=\s*"([^"]+)"', (repo/'Cargo.toml').read_text(), __import__('re').M)[1]
+demo_date = f'{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}'
 run = repo / 'projects/default/tests/ScopeSerialDemo/runs' / stamp
 artifacts = run / 'artifacts'
 for folder in ['reports', 'waves', 'shots', 'docs']:
@@ -58,9 +61,9 @@ for cycle, (trigger, frequency, fault) in enumerate([
              f'[SIM] [12:00:{cycle:02d}.020] EVENT={trigger} PWM_HZ={frequency}',
              f'[SIM] [12:00:{cycle:02d}.021] CAPTURE_REQUEST cycle={cycle}',
              f'[SIM] [12:00:{cycle:02d}.100] ' + ('VIN=4.80V FAULT=UV PWM=OFF' if fault else 'VIN=9.00V CAPTURE_OK=1')]
-    records.append(dict(cycle=cycle, trigger=trigger, stamp=stamp, timeText=f'2026-10-13 12:00:{cycle:02d} (模拟)',
+    records.append(dict(cycle=cycle, trigger=trigger, stamp=stamp, timeText=f'{demo_date} 12:00:{cycle:02d} (模拟)',
                         line=lines[1], context=lines, isfPath=str(isf), screenshot=str(shot), csvPath=str(csv_path),
-                        pdfPath=None, guiVersion='1.1.29 (模拟)', scopeId='SIM-SCOPE-001',
+                        pdfPath=None, guiVersion=f'{version} (模拟)', scopeId='SIM-SCOPE-001',
                         scopeModel='SIMULATED OSCILLOSCOPE', serialMonitoring=True,
                         preset_frequency_hz=frequency, simulated_fault=fault))
 metadata = dict(run_dir=str(run), stamp=stamp, records=records, simulation_only=True)

@@ -36,17 +36,17 @@ use wiparse_core::waveform_file::{
 };
 
 fn toolbar_height(width: f32) -> f32 {
-    if width < 1080.0 { 76.0 } else { 44.0 }
+    if width < 480.0 { 172.0 } else if width < 720.0 { 108.0 } else if width < 1080.0 { 76.0 } else { 44.0 }
 }
-const PANEL_GAP: f32 = 8.0;
-const SIDE_W: f32 = ui_theme::SIDEBAR_W;
+const PANEL_GAP: f32 = 12.0;
+const SIDE_W: f32 = 300.0;
 /// Compact Y-axis strip width (scope-style, right of plot).
 const CHANNEL_AXIS_COL_W: f32 = 28.0;
 const AXIS_HANDLE_RADIUS: f32 = 5.5;
 const AXIS_TICK_LEN: f32 = 4.0;
 const BTN: egui::Vec2 = egui::vec2(108.0, 28.0);
 const BTN_SM: egui::Vec2 = egui::vec2(72.0, 28.0);
-const CARD_MARGIN_X: i8 = 8;
+const CARD_MARGIN_X: i8 = 12;
 /// Cursor grab distance as a fraction of visible axis span.
 const CURSOR_GRAB_FRAC: f64 = 0.012;
 /// Max zoom-out: view may extend this factor beyond full data extent (X axis).
@@ -311,29 +311,25 @@ impl WaveformAnalysisPanel {
             return;
         }
 
-        let toolbar_rect =
-            egui::Rect::from_min_size(full.min, egui::vec2(full.width(), toolbar_height(full.width())));
-        let body_top = full.min.y + toolbar_height(full.width()) + PANEL_GAP;
-        let body_h = (full.max.y - body_top).max(1.0);
-        let body = egui::Rect::from_min_max(egui::pos2(full.left(), body_top), full.max);
-        let side_w = ui_theme::resizable_sidebar_width(ui, "waveform_analysis", body,
-            SIDE_W, 220.0, 200.0, PANEL_GAP, tokens);
-        let plot_w = (full.width() - side_w - PANEL_GAP).max(0.0);
-        let side_rect =
-            egui::Rect::from_min_size(egui::pos2(full.min.x, body_top), egui::vec2(side_w, body_h));
-        let plot_rect = egui::Rect::from_min_size(
-            egui::pos2(full.min.x + side_w + PANEL_GAP, body_top),
-            egui::vec2(plot_w, body_h),
-        );
+        let body_top = full.min.y;
+        let body_h = full.height().max(1.0);
+        let side_w = ui_theme::resizable_sidebar_width(ui, "waveform_analysis", full,
+            SIDE_W, 250.0, 180.0, PANEL_GAP, tokens);
+        let plot_w = (full.width() - side_w - PANEL_GAP).max(1.0);
+        let side_rect = egui::Rect::from_min_size(full.min, egui::vec2(side_w, body_h));
+        let toolbar_h = toolbar_height(plot_w).min(body_h);
+        let toolbar_rect = egui::Rect::from_min_size(egui::pos2(full.min.x + side_w + PANEL_GAP, body_top), egui::vec2(plot_w, toolbar_h));
+        let plot_top = (toolbar_rect.bottom() + PANEL_GAP).min(full.bottom());
+        let plot_rect = egui::Rect::from_min_max(egui::pos2(toolbar_rect.left(), plot_top), full.max);
 
         panel_in_rect(ui, toolbar_rect, |ui| {
             self.toolbar(ui, lang, tokens);
         });
 
-        // Browser (~45%) + bus decode (~30%) + measurements (rest).
+        // Keep protocol controls usable while the plot retains most of the page width.
         let body_inner = (body_h - PANEL_GAP * 2.0).max(1.0);
-        let browser_h = body_inner * 0.45;
-        let bus_h = body_inner * 0.30;
+        let browser_h = body_inner * 0.32;
+        let bus_h = body_inner * 0.42;
         let meas_h = (body_inner - browser_h - bus_h).max(1.0);
         let browser_rect =
             egui::Rect::from_min_size(side_rect.min, egui::vec2(side_w, browser_h));
@@ -565,9 +561,8 @@ impl WaveformAnalysisPanel {
                         self.request_zoom_to_cursors();
                     }
 
-                    // Compact zoom icon group
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
+                    // Each zoom button participates in the toolbar's wrapping layout.
+                    {
                         let z = egui::vec2(32.0, ui_theme::CTRL_H);
                         if ui_theme::ghost_btn_sized(ui, tokens, "X+", z, false)
                             .on_hover_text(t(lang, "横向放大", "Zoom in X"))
@@ -593,7 +588,7 @@ impl WaveformAnalysisPanel {
                         {
                             self.apply_y_zoom_factor(0.5);
                         }
-                    });
+                    }
 
                     if ui_theme::ghost_btn_sized_enabled(
                         ui,
@@ -935,8 +930,8 @@ impl WaveformAnalysisPanel {
         Frame::NONE
             .fill(tokens.surface_bg)
             .inner_margin(Margin::symmetric(CARD_MARGIN_X, 6))
-            .corner_radius(CornerRadius::same(6))
-            .stroke(Stroke::new(1.0_f32, tokens.divider))
+            .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
+            .stroke(Stroke::NONE)
             .show(ui, |ui| {
                 ui.set_min_width(inner_w);
                 ui.set_max_width(inner_w);
@@ -946,7 +941,7 @@ impl WaveformAnalysisPanel {
 
                 ui.label(
                     RichText::new(tr(lang, "wave.browser_dir"))
-                        .size(12.0)
+                        .size(ui_theme::FONT_SECTION)
                         .strong()
                         .color(tokens.text_primary),
                 );
@@ -3788,6 +3783,19 @@ impl WaveformAnalysisPanel {
         }
     }
 
+    /// Cached, bounded summary only; raw samples are not uploaded by this helper.
+    pub(crate) fn ai_summary(&self) -> serde_json::Value {
+        let channels: Vec<_> = self.waves.iter().take(16).map(|wave| serde_json::json!({
+            "channel": wave.trace.channel, "points": wave.measures.count, "sample_interval_s": wave.measures.dt,
+            "unit": wave.trace.y_unit, "min": wave.measures.min, "max": wave.measures.max,
+            "peak_to_peak": wave.measures.pp, "mean": wave.measures.mean, "rms": wave.measures.rms,
+            "frequency_hz": wave.measures.freq_hz, "period_s": wave.measures.period,
+            "measurements_pending": wave.measures_pending,
+        })).collect();
+        let frames: Vec<_> = self.bus_result.as_ref().map(|result| result.frames.iter().take(20).map(|frame| serde_json::json!({"start_s":frame.t_start,"end_s":frame.t_end,"summary":frame.summary.chars().take(240).collect::<String>(),"integrity":format!("{:?}", frame.error),"bytes":frame.bytes.iter().take(64).copied().collect::<Vec<_>>()})).collect()).unwrap_or_default();
+        serde_json::json!({"decoded_frame_sample":frames, "channels": channels, "protocol": self.bus_settings.kind.label(), "cursors": {"x1":self.x1,"x2":self.x2,"y1":self.y1,"y2":self.y2}, "raw_samples_included": false})
+    }
+
     pub fn api_snapshot(&self) -> serde_json::Value {
         let files: Vec<_> = self
             .waves
@@ -4749,11 +4757,12 @@ fn card_in_rect(
     add: impl FnOnce(&mut egui::Ui),
 ) {
     panel_in_rect(ui, rect, |ui| {
-        ui_theme::section_frame(tokens)
+        Frame::NONE.fill(tokens.surface_bg).corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD)).inner_margin(Margin::same(12))
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
                 ui.set_max_size(ui.available_size());
-                ui_theme::section_title(ui, tokens, title);
+                ui.label(RichText::new(title).size(ui_theme::FONT_SECTION).strong().color(tokens.text_primary));
+                ui.add_space(8.0);
                 let body = ui.available_size();
                 ui.allocate_ui_with_layout(body, egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_min_size(body);

@@ -599,13 +599,6 @@ function materializeScreenshot(src, trigger, recStamp) {
   return copyIfExists(src, dest);
 }
 
-function mdImageBlock(absShot) {
-  const rel = mdRelPath(summaryMd, absShot);
-  if (!rel) return "_无截图_";
-  if (/[\s()]/.test(rel)) return `![波形](<${rel}>)`;
-  return `![波形](${rel})`;
-}
-
 function appendSummaryRecord(rec) {
   ensureSummaryHeader();
   const recId = `${prefix}_${rec.trigger}_${rec.stamp}`;
@@ -613,11 +606,16 @@ function appendSummaryRecord(rec) {
     const mark = l === rec.line ? " <<HIT>>" : "";
     return mdFence(l) + mark;
   }).join("\n");
-  const shotMd = rec.screenshot ? mdImageBlock(String(rec.screenshot)) : "_无截图_";
+  const dataPath = path.join(docsDir || reportDir, `${recId}.json`);
+  const indexPath = path.join(docsDir || reportDir, "index.jsonl");
+  const dataLinks = [
+    ["记录数据", dataPath], ["采集索引", indexPath],
+  ].filter(([, file]) => fs.existsSync(file))
+    .map(([label, file]) => `| ${label} | ${mdFileLink(file)} |`).join("\n");
   const block = `
 ---
 
-## 第 ${rec.cycle} 轮 · ${rec.trigger} · ${rec.timeText}
+### 第 ${rec.cycle} 轮 · ${rec.trigger} · ${rec.timeText}
 
 **记录 ID：** \`${recId}\`
 
@@ -632,12 +630,9 @@ function appendSummaryRecord(rec) {
 | ISF | ${mdFileLink(rec.isfPath)} |
 | 截图 | ${mdFileLink(rec.screenshot)} |
 | PDF | ${mdFileLink(rec.pdfPath)} |
+${dataLinks}
 
-### 波形截图
-
-${shotMd}
-
-### Log 上下文
+#### Log 上下文
 
 ~~~
 ${ctx}

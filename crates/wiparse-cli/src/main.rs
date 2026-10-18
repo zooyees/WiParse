@@ -965,6 +965,16 @@ enum UiReportCmd {
 
 #[derive(Subcommand, Debug)]
 enum UiTestToolCmd {
+    /// Generic configuration operations; values are typed JSON objects, never executable scripts.
+    #[command(subcommand)]
+    Config(UiHubConfigCmd),
+    Matrix {
+        #[arg(long)] plugin: Option<String>,
+        #[arg(long, default_value_t=0)] offset: usize,
+        #[arg(long, default_value_t=100)] limit: usize,
+        #[arg(long)] query: Option<String>,
+    },
+    PreflightState { #[arg(long)] plugin: Option<String> },
     Run {
         #[arg(long)]
         id: String,
@@ -973,8 +983,37 @@ enum UiTestToolCmd {
         /// JSON object merged into Hub overlay params, e.g. `{"port":"COM7"}`.
         #[arg(long)]
         params: Option<String>,
+        #[arg(long)]
+        test_matrix: Option<String>,
     },
     Stop,
+}
+
+#[derive(Subcommand, Debug)]
+enum UiHubConfigCmd {
+    Validate(HubConfigArgs),
+    List(HubConfigArgs),
+    Get(HubConfigArgs),
+    Create(HubConfigArgs),
+    Save(HubConfigArgs),
+    Duplicate(HubConfigArgs),
+    Archive(HubConfigArgs),
+    Restore(HubConfigArgs),
+    Import(HubConfigArgs),
+    Export(HubConfigArgs),
+    Batch(HubConfigArgs),
+    Archives(HubConfigArgs),
+}
+#[derive(clap::Args, Debug)]
+struct HubConfigArgs {
+    #[arg(long)] plugin: Option<String>,
+    #[arg(long)] config: Option<String>,
+    #[arg(long)] file: Option<String>,
+    #[arg(long)] new_id: Option<String>,
+    #[arg(long)] expected_revision: Option<u64>,
+    #[arg(long)] expected_sha256: Option<String>,
+    #[arg(long,default_value="{}")]
+    params: String,
 }
 
 fn opts(cli: &Cli) -> OutputOptions {
@@ -1442,6 +1481,7 @@ fn map_to_invoke(cli: &Cli) -> Option<(String, serde_json::Value)> {
             id,
             preflight,
             params,
+            test_matrix,
         })) => {
             let mut p = json!({ "id": id });
             if let Some(v) = preflight {
@@ -1452,7 +1492,40 @@ fn map_to_invoke(cli: &Cli) -> Option<(String, serde_json::Value)> {
                     p["params"] = v;
                 }
             }
+            if let Some(raw)=test_matrix { p["test_matrix"]=serde_json::from_str(raw).unwrap_or(json!({"invalid":true})); }
             Some(("ui.test_tool.run".into(), p))
+        }
+        Commands::Ui(UiCmd::TestTool(UiTestToolCmd::Matrix {plugin,offset,limit,query})) => Some(("ui.test_tool.matrix.get".into(),json!({"plugin":plugin,"offset":offset,"limit":limit,"query":query}))),
+        Commands::Ui(UiCmd::TestTool(UiTestToolCmd::PreflightState {plugin})) => Some(("ui.test_tool.preflight.state".into(),json!({"plugin":plugin}))),
+        Commands::Ui(UiCmd::TestTool(UiTestToolCmd::Config(cmd))) => {
+            let (operation,options)=match cmd {
+                UiHubConfigCmd::Validate(options) => ("validate",options),
+                UiHubConfigCmd::List(options) => ("list",options),
+                UiHubConfigCmd::Get(options) => ("get",options),
+                UiHubConfigCmd::Create(options) => ("create",options),
+                UiHubConfigCmd::Save(options) => ("save",options),
+                UiHubConfigCmd::Duplicate(options) => ("duplicate",options),
+                UiHubConfigCmd::Archive(options) => ("archive",options),
+                UiHubConfigCmd::Restore(options) => ("restore",options),
+                UiHubConfigCmd::Import(options) => ("import",options),
+                UiHubConfigCmd::Export(options) => ("export",options),
+                UiHubConfigCmd::Batch(options) => ("batch",options),
+                UiHubConfigCmd::Archives(options) => ("archives",options),
+            };
+            let mut payload=serde_json::from_str::<serde_json::Value>(&options.params).unwrap_or(json!({"_invalid_json":true}));
+            if !payload.is_object(){payload=json!({"_invalid_json":true});}
+            if let Some(plugin)=&options.plugin {payload["plugin"]=json!(plugin);}
+            if let Some(config)=&options.config {payload["config_id"]=json!(config);}
+            if let Some(new_id)=&options.new_id {payload["new_id"]=json!(new_id);}
+            if let Some(revision)=options.expected_revision {payload["expected_revision"]=json!(revision);}
+            if let Some(hash)=&options.expected_sha256 {payload["expected_sha256"]=json!(hash);}
+            if let Some(file)=&options.file {
+                if operation=="save" {
+                    let value=std::fs::metadata(file).ok().filter(|m|m.len()<=1_048_576).and_then(|_|std::fs::read(file).ok()).and_then(|b|serde_json::from_slice::<serde_json::Value>(&b).ok());
+                    match value {Some(value)=>payload["value"]=value,None=>payload["_invalid_json"]=json!(true)}
+                }else{payload["file"]=json!(file);}
+            }
+            Some((format!("ui.test_tool.config.{operation}"),payload))
         }
         Commands::Ui(UiCmd::TestTool(UiTestToolCmd::Stop)) => {
             Some(("ui.test_tool.stop".into(), json!({})))

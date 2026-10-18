@@ -1,0 +1,16 @@
+✔ startup Stop at before-start survives initialization without reset/capture or lease leak (100.6777ms)
+✔ startup Stop at launcher-lock-wait survives initialization without reset/capture or lease leak (74.6918ms)
+✔ startup Stop at acquire-wait survives initialization without reset/capture or lease leak (74.0167ms)
+✔ startup Stop at before-first-reset survives initialization without reset/capture or lease leak (106.4362ms)
+✔ startup Stop at null-acquire-stop survives initialization without reset/capture or lease leak (72.1044ms)
+✔ residual Stop conservatively cancels; explicit launcher preparation permits a new run (322.7791ms)
+✔ Stop written after explicit new-start preparation is never treated as residual (72.8503ms)
+✔ F05 matrix is validated before a lease, and post-acquire file failure releases once (89.2242ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1002.0404

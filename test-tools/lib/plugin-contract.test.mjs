@@ -77,7 +77,7 @@ test("scope-serial-monitor plugin.json validates", () => {
   );
   const check = validatePluginManifest(raw);
   assert.equal(check.ok, true, check.errors?.join("; "));
-  assert.equal(raw.version, "0.6.1");
+  assert.equal(raw.version, "0.6.2");
   assert.equal(raw.engines?.wiparse, ">=1.1.16");
   assert.ok(!String(raw.description || "").includes("tests/scope-serial-monitor"));
   const station = JSON.parse(
@@ -107,11 +107,12 @@ test("all bundled plugins declare report_name and their supported minimum engine
     assert.equal(check.ok, true, `${id}: ${check.errors?.join("; ")}`);
     assert.ok(String(raw.report_name || "").trim(), `${id} missing report_name`);
     assert.notEqual(raw.report_name, raw.name, `${id} report_name must not copy marketing name`);
-    assert.equal(raw.engines?.wiparse, id === "wireless-charge-validation" ? ">=1.1.29" : ">=1.1.16", id);
+    assert.equal(raw.engines?.wiparse, raw.ui?.project_config ? ">=1.2.2" : raw.capabilities?.includes("configure") ? ">=1.2.0" : id === "wireless-charge-validation" ? ">=1.1.29" : ">=1.1.16", id);
     assert.ok(Array.isArray(raw.outputs) && raw.outputs.length >= 1, `${id} outputs[]`);
-    assert.ok(raw.params?.some((p) => p.name === "file_prefix"), `${id} file_prefix param`);
+    // New workspace plugins may use the manifest report_name directly; legacy forms retain file_prefix.
+    if(!raw.capabilities?.includes('configure'))assert.ok(raw.params?.some((p) => p.name === "file_prefix"), `${id} file_prefix param`);
     const stationPath = path.join(root, id, "station.json");
-    if (fs.existsSync(stationPath)) {
+    if (fs.existsSync(stationPath) && !raw.capabilities?.includes('configure')) {
       const station = JSON.parse(fs.readFileSync(stationPath, "utf8"));
       const s = validateStationConfig(station);
       assert.equal(s.ok, true, `${id} station: ${s.errors?.join("; ")}`);

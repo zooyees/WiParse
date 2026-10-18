@@ -1,0 +1,120 @@
+{
+  "schema_version": "wiparse.exe-preview-verification/1",
+  "software_version": "1.2.2",
+  "plugin_version": "0.5.0",
+  "ok": true,
+  "rust_passed": 426,
+  "node_passed": 251,
+  "plugin_passed": 160,
+  "ui_frames": 52,
+  "gui_runtime": {
+    "relative_paths_preserved": true,
+    "summary": {
+      "aborted": 0,
+      "error": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "pass": 20,
+      "pending": 0,
+      "running": 0,
+      "selected": 20,
+      "skipped": 0,
+      "total": 20
+    },
+    "auto_detected_root": false,
+    "version": "1.2.2",
+    "root": "<workspace>/tmp/hub-runtime-56082e983593463489573b56d93b5cec",
+    "exe_sha256": "42481492AD67338298A54E89D000952B5DCEE0A42559BA445076539DB209244D",
+    "simulation_only": true,
+    "foreign_working_directory": true,
+    "ok": true,
+    "configs": 20,
+    "opened": [
+      "summary.md",
+      "ip_output-SIMULATION.png",
+      "ip_output-SIMULATION.csv",
+      "serial.log",
+      "result.json"
+    ]
+  },
+  "gui_controls": {
+    "resume": "second_item_started",
+    "stop": "second_item_aborted",
+    "executable": "<workspace>/target/release/wiparse-gui.exe",
+    "configuration_count": 20,
+    "data_root": "<workspace>/tmp/fpga-compiled-6cc12f956b7046febdb9f68e98a20f8f",
+    "simulation_only": true,
+    "ok": true,
+    "pause": "acknowledged_at_boundary",
+    "summary": {
+      "aborted": 1,
+      "error": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "pass": 1,
+      "pending": 0,
+      "running": 0,
+      "selected": 2,
+      "skipped": 18,
+      "total": 20
+    }
+  },
+  "portable_preview": {
+    "relative_paths_preserved": true,
+    "summary": {
+      "aborted": 0,
+      "error": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "pass": 20,
+      "pending": 0,
+      "running": 0,
+      "selected": 20,
+      "skipped": 0,
+      "total": 20
+    },
+    "auto_detected_root": true,
+    "version": "1.2.2",
+    "root": "<workspace>/dist/wiparse-1.2.2-preview/tmp/hub-runtime-23bc11ab21a34b4085e3f28c340c352b",
+    "exe_sha256": "42481492AD67338298A54E89D000952B5DCEE0A42559BA445076539DB209244D",
+    "simulation_only": true,
+    "foreign_working_directory": true,
+    "ok": true,
+    "configs": 20,
+    "opened": [
+      "summary.md",
+      "ip_output-SIMULATION.png",
+      "ip_output-SIMULATION.csv",
+      "serial.log",
+      "result.json"
+    ]
+  },
+  "source_freeze_sha256": "0e767517855bedbfd783492ebc459d76eb215f21d0a2cd3c8c27eb8dc116d6d2",
+  "plugin_freeze_sha256": "497f2e8917075cbd01b2b38ae6d6546033328c6359846bc2116a50bce6694344",
+  "industrial_approved": false,
+  "zip_created": false,
+  "full_packaging_requires_user_confirmation": true,
+  "evidence_sha256": {
+    "fpga-20-fail.log": "790c38e49197d4bf03852f6e900cefe7dac953233b1ca24695c15eef5a118965",
+    "fpga-20-pass.log": "b008cb3884ee432231bdcf82ad659aa2bccc86349a1f60e09a0f1993d8d8a1f5",
+    "fpga-subset.log": "1d273fafd3e5366db1b790e6c6de09ad3114980e72bcafd5a75c3041ae82d3ed",
+    "gui-controls.log": "aef6bbd4226408a74fa355721085aace102530e88dd0a9aadbe0fe5bf69db205",
+    "gui-runtime.log": "08d1372c6b607e674e0610168a6e634d450dc69fc9949c5134a2b54a2fd35d60",
+    "mcp-tests.log": "de47c0a7fa9db5f4231f22a14aa810c263f2356f2e761ae1fdf34c6ddc093ef9",
+    "node-tests.log": "06ea494bb41df90188b2cea9007b46f625035e4698cd0821ccf9ec633e56a007",
+    "preview-runtime.log": "9899298af0e2811ed291f09f466ed11db00ecdb83a64b972f69fe2ad88203748",
+    "project-host.log": "bc82337beef80b1f7921f4cdb82f02215c2ad1e8c82c4da27b544d37abc6684f",
+    "release-build.log": "5feef1de7b47ea5bfb0f84edf64a24575f340e4f50f64cef6b490ffe7e3ed356",
+    "rule-pointer.log": "2898ea3c2576a78893895ac4eaacd0e1d2b54425b7d90998f7e6f8f66052011d",
+    "rust-tests.log": "8746c424ff9e855d8be95e944e1e56566f4123eb2c181b43a0233b0df8de813f",
+    "staging.log": "b19ee21b5033ffb259dc1659144c65bbb1c8d62f0e5e98b2568a44228a8c8d01",
+    "ui-frames.log": "b6813884bdfddf3a82ed640f1da16a4fe6f10e6f13e677ffb6a3135452e62a04"
+  },
+  "binary_sha256": {
+    "WiParse.exe": "42481492ad67338298a54e89d000952b5dcee0a42559ba445076539db209244d",
+    "WiParse-CLI.exe": "aecd2ae3e8788a96dcc1d494381e44e02a46a9de8046375290eeaefbb4022749",
+    "WiParse-Service.exe": "98eba6460e607f952b7afc50418ba06f7d5167d1b0a95300f99bfd2e219519a0",
+    "WiParse.pdb": "0ef67a6d705deebad8477e7a3fb838cd3c633067e9b12e52f067bd14be380a5c"
+  },
+  "preview_runtime_sources_match": 107
+}

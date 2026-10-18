@@ -1,0 +1,9 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,
+ "required":["id","name","enabled","tags","editor_revision","updated_at","duration_s","steps"],
+ "properties":{"id":{"type":"string","pattern":"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$","title":"ID"},
+ "name":{"type":"string","minLength":1,"maxLength":128,"title":"Name","x-title-zh":"名称"},
+ "enabled":{"type":"boolean","default":true,"title":"Enabled","x-title-zh":"启用"},
+ "tags":{"type":"array","maxItems":32,"uniqueItems":true,"items":{"type":"string","maxLength":64},"default":[]},
+ "editor_revision":{"type":"integer","minimum":0,"readOnly":true},"updated_at":{"type":"string","format":"date-time","readOnly":true},
+ "duration_s":{"type":"number","minimum":0.01,"maximum":10,"default":0.05,"title":"Duration (s)","x-title-zh":"时长（秒）"},
+ "steps":{"type":"array","maxItems":20,"default":[],"items":{"type":"object","required":["id","name"],"additionalProperties":false,"properties":{"id":{"type":"string","minLength":1},"name":{"type":"string","minLength":1},"mode":{"type":"string","enum":["inspect","measure"],"default":"inspect"}}}}}}

@@ -1,0 +1,20 @@
+✔ delivered plugin runs through real Hub/runner with five simulated cases and navigable evidence (8134.7728ms)
+✔ simulated FAIL remains a product failure with two selected and three skipped rows (8176.5856ms)
+✔ generated field labels remain independent across reused primitive and role schemas (1.7288ms)
+✔ status replacement retries transient Windows sharing and preserves old data on persistent failure (22.9596ms)
+✔ discovery ignores hidden/disabled files, rejects 501 and download (415.1118ms)
+✔ source overlap blocks, touching windows permitted (7.575ms)
+✔ required FAIL dominates missing evidence; truncated logs never PASS (1.714ms)
+✔ public AI permission gates transport and payload excludes identity/log (1.2528ms)
+✔ mock host end-to-end freezes evidence and creates independent cycle attempts (195.2031ms)
+✔ missing host adapter fails closed (6.8531ms)
+✔ stop during an attempt records ABORTED and never starts next item (207.6552ms)
+✔ valid 500 configurations retain deterministic natural order (4559.2846ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 16693.4922

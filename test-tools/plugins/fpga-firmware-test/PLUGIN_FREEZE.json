@@ -1,0 +1,442 @@
+{
+  "schema_version": "wiparse.fpga-plugin-source-freeze/1",
+  "date": "2026-10-18",
+  "plugin_id": "fpga-firmware-test",
+  "plugin_version": "0.5.0",
+  "minimum_wiparse": ">=1.2.2",
+  "status": "source_frozen_pending_host_acceptance",
+  "scope": "Plugin, original 20 migration sources and project migration evidence only; host EXE acceptance remains separate",
+  "required_widgets": [
+    "rule_builder",
+    "timeline",
+    "reference_selector"
+  ],
+  "evidence": "test-tools/plugins/fpga-firmware-test/evidence/plugin-regression-0.5.0-2026-10-18.json",
+  "regression": {
+    "passed": 160,
+    "failed": 0,
+    "fault_matrix": 112,
+    "ui_followup_passed": 0
+  },
+  "architecture_reliability_review": "passed within controlled software scope",
+  "host_acceptance": "pending",
+  "hardware_accepted": false,
+  "longest_aging_accepted": false,
+  "files": [
+    {
+      "path": "recipes/fpga-firmware-test/.filename-migration.jsonl",
+      "bytes": 2925,
+      "sha256": "739efae01a44dd505a9bc3e1d381b11b646de445eb0cbe4fec2ca0e2cd1329b1"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_01_pll_clock.json",
+      "bytes": 2912,
+      "sha256": "01a4df5ee3bd21748fac82920e373e8e033727b0620cdf981457a9974b839f87"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_02_reset_controller.json",
+      "bytes": 2765,
+      "sha256": "41327bb29a300859ec205209fd76bb614d8273995a4dbca3783c2978479d6239"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_03_gpio.json",
+      "bytes": 2619,
+      "sha256": "ed5c01bbdf4c8a9688c948a5949e4382727d5e26e0e7a5432c71c72aaa5abbd3"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_04_uart.json",
+      "bytes": 2568,
+      "sha256": "8bc8390e5c1c1c3a5caed1aac4c6af46c53c244c54a94ca74ee5800b00c3adef"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_05_spi_master.json",
+      "bytes": 2626,
+      "sha256": "86ed756c822b03481574d8481648a81b9ca8d52de1b0018d29042d02c1fd22a1"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_06_spi_slave.json",
+      "bytes": 2753,
+      "sha256": "2bfdfdf2b4c86158e5ba6ace1042afbcb20b6f9cbbf0f866e077e2b5f4336309"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_07_i2c_master.json",
+      "bytes": 2629,
+      "sha256": "af3712b9003b80ca6f38d60471ae77ab67a282f0ed39326e55cde19c2fd043db"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_08_i2c_slave.json",
+      "bytes": 2571,
+      "sha256": "5025c3bb8ab4ffc9dedd3c07d527d480a35697caa59d277c4f948044b2241113"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_09_pwm.json",
+      "bytes": 3184,
+      "sha256": "d483ac39b6496217a6d988050ae4d41d5073f4858e20fdadae798ae2de641764"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_10_timer_counter.json",
+      "bytes": 2763,
+      "sha256": "d35cf7798d0a3ff62569f686a16179352c4b9b3e762ab8fbb35a5da145c2c1ef"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_11_watchdog.json",
+      "bytes": 2629,
+      "sha256": "3c7e5a52283d8577448aa3207e5e11d6d392e51240ea3378660759f28d0bdb65"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_12_sync_fifo.json",
+      "bytes": 2568,
+      "sha256": "695cda7364acb4177bb0ea7f2386f4ef5beb43426dcc85d614bd7925944e85cf"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_13_async_fifo.json",
+      "bytes": 2626,
+      "sha256": "6d60792ef7e466c990cd8fe94f765e8641f569c2c7c5a4b7a7f50c02be0fbcb4"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_14_block_ram.json",
+      "bytes": 2747,
+      "sha256": "94fb28191218f27c04aa6050148ed7eca3b45f6019a6710d9fb11c63280c334a"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_15_ddr_controller.json",
+      "bytes": 2639,
+      "sha256": "6e93edb515aef0cd6747a7d6f76837db193ae3fc56636da3036e8b763777433f"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_16_axi_lite.json",
+      "bytes": 2557,
+      "sha256": "c75cb3bec114977395908f4aa1e261c98716d93adf2b0f6b1a53cc8b118fee71"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_17_axi_stream.json",
+      "bytes": 2624,
+      "sha256": "28a46cdc5e9a3e3c53296cdf3071f792fa1b853c06880458a980c0fe3cf0a683"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_18_dma.json",
+      "bytes": 2744,
+      "sha256": "5f0600ddeb1599e2dd5be3d4e939ac1aa0688d05cc290d5bc28c2dd4255ebaa5"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_19_ethernet_mac.json",
+      "bytes": 2634,
+      "sha256": "1bab0690dde3fa85318d4988605aaaefb3623f7080dc9edcaace8df49d061557"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/cases/fpga_20_crc32.json",
+      "bytes": 2559,
+      "sha256": "50f7ff49567f0782b53bdd19807682e2f845340789e540046f7d4e836d536d85"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/DEMO-说明.txt",
+      "bytes": 1977,
+      "sha256": "164865b6d19944d51eb4e95496f5a7da5fdcfe21684926ea9e52f68a1b0e74ac"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/firmware/demo-ip-suite.bin",
+      "bytes": 54,
+      "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d"
+    },
+    {
+      "path": "recipes/fpga-firmware-test/项目共享迁移说明.txt",
+      "bytes": 1206,
+      "sha256": "0db15a1f4a67b03fabf856045ae2a8a6817d549c1bd27a83ed7d189e0f9da9fd"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/assets/simulation-waveform.png",
+      "bytes": 4333,
+      "sha256": "5f660afa1ee6e3716f7aac231dfe6d2c9ff170c530369044b43b421ee4a974ea"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/plugin-regression-0.5.0-2026-10-18.json",
+      "bytes": 5977,
+      "sha256": "46182ece40bb6e33945a50ad8bf6b45d944f55f65c97dbae52d52f487fc41159"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/plugin-regression-0.5.0-2026-10-18.log",
+      "bytes": 13578,
+      "sha256": "add6f9a94daa76df1df13083226061b0526a348fc197e66c75f6b7d65d6bcd20"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/plugin-regression-2026-10-18.json",
+      "bytes": 3007,
+      "sha256": "47d16723d05b17249b1aef2c1117e3dc26dcbb865432480b6c19b0193bd19f39"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/plugin-regression-2026-10-18.log",
+      "bytes": 11726,
+      "sha256": "7ba05b865c73edec33ef396639fa85711b46f8835a4ec0c2fb8213d2f867750f"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/startup-stop-2026-10-18.log",
+      "bytes": 972,
+      "sha256": "0e0aa62aa6d77592dd630dbd554cc8012b21f85eeadf088e217095c0edf07d60"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/ui-contract-2026-10-18.log",
+      "bytes": 403,
+      "sha256": "bc4c14066dec1598f498ace8a58cb3dda3a1a73ad045cb130625d57e81578521"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/freeze.mjs",
+      "bytes": 3101,
+      "sha256": "16c78a3d22a6ef6a8f850519e6b94d7dc395beab62cf64b50a66df442986703d"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/generate-schemas.mjs",
+      "bytes": 24102,
+      "sha256": "74e70f70d63bedc5b4e07a28f50a58a9a6e9abee7fce09e0a9392b8514b39cf8"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/HOST_HANDOFF.json",
+      "bytes": 1514,
+      "sha256": "c7139a4b0cafceabb679888b29ed90790b2d3be6ed220ea78ba658be80017226"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/index.mjs",
+      "bytes": 28210,
+      "sha256": "7bae427f83da9ec2ab6ac364615d63355c67877fcace9896e883694b13a96992"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/INTEGRATION_HANDOFF.md",
+      "bytes": 10985,
+      "sha256": "40eb15d62a60f52cbaf1387b8ec2af2ed02a80359aff48c9593c79139a8ed460"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/ai-adapter.mjs",
+      "bytes": 2116,
+      "sha256": "4098962bf1164df626b28a3721e47ac47ef2c7fc3a3aed6acb2533c132882311"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/common.mjs",
+      "bytes": 1794,
+      "sha256": "82c64bd46fa1bbbc1f36b9446c057658339439b7885ba3d0cc6da46cafe8c751"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/config-loader.mjs",
+      "bytes": 8129,
+      "sha256": "f85431af7057e1f4a8cddb5a01ea972b1430f14940b302d432d1a72681d3ae79"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/demo-fixtures.mjs",
+      "bytes": 898,
+      "sha256": "d57547233be1a29d6822e9b1f12c4f3e38e91eb8982c56bc2ee04e499c372d16"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/firmware.mjs",
+      "bytes": 1316,
+      "sha256": "a1a5eec6e9cc354cd20756d14753727ff8517eb313d2874b8cb486b51a98a687"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/host-adapter.mjs",
+      "bytes": 1019,
+      "sha256": "b8d0e09bb61ef41633deec35feabded0641368d994f721361a316456e31359b5"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/io-guard.mjs",
+      "bytes": 3893,
+      "sha256": "8d880cea46b9719fade4f01cb0288f3f5d4bfea58920e149b9624be75bf8ccc3"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/log-capture.mjs",
+      "bytes": 1163,
+      "sha256": "52db9ce05302041074d5ed640258f8704f4e1b4a7d454bf4e702efd6fd317a77"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/project-config.mjs",
+      "bytes": 5685,
+      "sha256": "358405c8436e131e98e588e9433b04a3b3e221b8cb32570e9e1b1d73a9fb1d72"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/project-declarations.mjs",
+      "bytes": 4897,
+      "sha256": "65f79a1a9ad2bdcc632f8af47fcd55e4559506fd2699f9b532cf7e7aaedd2060"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/project-migration.mjs",
+      "bytes": 5140,
+      "sha256": "57a9ba5ce1e09e583842710d1c84a7db9135155e330967c4c16bd337ff8265cb"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/report.mjs",
+      "bytes": 2843,
+      "sha256": "6dfcfd57e9fa526acb7e01c181b3941353657d05231de920955ddd6050de4331"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/resource-resolver.mjs",
+      "bytes": 894,
+      "sha256": "b2613f30b0d550a50d907d909183b4330551d7483921ba2620ef36568ec8d0cc"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/rule-contract.mjs",
+      "bytes": 4561,
+      "sha256": "55ff8542126df1b9511821c9e74c4bc4df457c7687f6bb4381d8a7630b879031"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/rule-executor.mjs",
+      "bytes": 899,
+      "sha256": "3b415351751655638f3b27b5549ccea62170fb5a45611c727809cc18b16ddc46"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/rule-worker.mjs",
+      "bytes": 260,
+      "sha256": "a54cfabea3d44c1d87c513eff22381bf51ffbf982783cab40ab011c58359d98c"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/rules.mjs",
+      "bytes": 2443,
+      "sha256": "add40997b521e55673b91e28bc5e0f2222d0a6b1a0902a0b48ca7919468fa682"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/run-control.mjs",
+      "bytes": 790,
+      "sha256": "7d7c95b885441a25b5591edd5aaa82a5bd7a78fbc2d88df583b8fac5fc52d107"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/scheduler.mjs",
+      "bytes": 4411,
+      "sha256": "e6c0c52011b4568f0954639989f3df63ca0672b332124f7499e683af2abed97c"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/simulation-adapter.mjs",
+      "bytes": 3061,
+      "sha256": "98c06085152d49a02cbcceefeaa8c7192f87309c71c3c8a1fd1829dc5f2e6ef0"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/planning/build-project-proposal.mjs",
+      "bytes": 5769,
+      "sha256": "1705a1bf5d13e2721d0e60f215b56e7e1ddd16ed3b2e5de7bcca3f13309b6151"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/planning/legacy-config-differences.json",
+      "bytes": 16068,
+      "sha256": "f66cdcee2406723f5327e8bf72df14dea68e22ee6f8c4fcb816f457369505681"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/planning/project.schema.proposal.json",
+      "bytes": 32159,
+      "sha256": "a8c539daca0ed49bb3a7dc41a904cca8c34ddaa9e4416e73bd5fb02813846c9b"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/planning/project.ui.proposal.json",
+      "bytes": 27917,
+      "sha256": "9f7be9cb8b7d4a7e158ee77e91236ea159c02520c34a8542e2da74df570e7b4e"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/planning/README.md",
+      "bytes": 3916,
+      "sha256": "dda8aac440cc079bf2d2de93e5b576db5811e8346d4f25c19d0682fe81f64bbb"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/plugin.json",
+      "bytes": 5751,
+      "sha256": "9131ae8da77ba8366944c60e08e0e77ae436f1f3d30611b2095064bf2c361089"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/PROJECT_UPGRADE_0.5.0.md",
+      "bytes": 5506,
+      "sha256": "7eb84132def3d2cc128192d69b469298ecd795885ef07bd8179da93a3b23db44"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/README.md",
+      "bytes": 11176,
+      "sha256": "230a18e6bc6c32dcddac53d0074fa8e40290010529eda59cbe50566188689df6"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/REMEDIATION_EVIDENCE.md",
+      "bytes": 8636,
+      "sha256": "dd667bcf19d29a0875ee4a9f9b7fe43f66ae6ed4ca900d45d7b12f14724afc2d"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/fpga-matrix-status.schema.json",
+      "bytes": 3458,
+      "sha256": "b063563bc7e9a2d551b80ead072e5737787ceb22d249b76ef7d1889530afc8b5"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/fpga-test-case.legacy.schema.json",
+      "bytes": 59871,
+      "sha256": "72a28fab04d10c4d9dd288583291ab16791d1e4cb8f9194601ca2994c818308e"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/fpga-test-case.schema.json",
+      "bytes": 34590,
+      "sha256": "9ab887fbbd29fa984f0001105242956f4058df673bc47a4030e65a422203ee1f"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/fpga-test-case.ui.json",
+      "bytes": 67299,
+      "sha256": "4c565432d53a9ef3b6a3a667c348226b3da927a77e25fd95b99a26dfe72dbb38"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/project.schema.json",
+      "bytes": 34909,
+      "sha256": "a05612075a8bcbbfde8e447f2eeb87f18a98146e15809c39cca4ab83fa3a3bda"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/project.ui.json",
+      "bytes": 27942,
+      "sha256": "65479df0ada07019d3d732c6e193757588397fb2ec1bc59beb0f8b3192f0fd80"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/station.json",
+      "bytes": 294,
+      "sha256": "26a76fbffabf800af7ad077655d86c0814f0d3707d8296d3937cddca83b138c0"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/fault-matrix.test.mjs",
+      "bytes": 23164,
+      "sha256": "6b0fc8ef0e30e371097cd3476ac67ea8f73524fbc5bfeaff7b60c89aae5a31ec"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/fixtures/legacy-demo-cases.json",
+      "bytes": 58726,
+      "sha256": "1b68afddbafb10e5b16138194e23bfda33ba779a5e33da429a3344e86c08e66c"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/fixtures/project-fixture.mjs",
+      "bytes": 1825,
+      "sha256": "20f97c5fe877d48e51f7788b0d7dfaa0ab0c3be03f3e7a99ca3ab774f48ac044"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/hub-integration.test.mjs",
+      "bytes": 5386,
+      "sha256": "2e8c1962acb9e90210a873413fdfa9c9a4a55963b0fce57fb8a04fc78065f216"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/plugin.test.mjs",
+      "bytes": 7463,
+      "sha256": "4d80b83cc6f707313af00d1c33a8bda933e4460e1bfef09367fb0e05ea3133a7"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/project-config.test.mjs",
+      "bytes": 3688,
+      "sha256": "f4745940baee492112ba16d0e4b166740baa38e3f28c0c23b69bc07e556d07bb"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/project-hub.test.mjs",
+      "bytes": 4948,
+      "sha256": "fe0851c138ab5f990487711d967f32051636b424f0a2d237930b115d7eccde6e"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/project-migration.test.mjs",
+      "bytes": 3754,
+      "sha256": "0746713a09bfad69ce677f2ce8c45f7560726bfaca0c2a847a20dd673126c2dd"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/project-runtime.test.mjs",
+      "bytes": 6101,
+      "sha256": "0cf579da82e07f134c1946513f738c17e40cf863a344f99b03644767a09b97af"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/ui-contract.test.mjs",
+      "bytes": 4522,
+      "sha256": "e6323160139ce5c4d354bcd56a40967f785e196029c543fe7bc17dd1ff840e56"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/upgrade.test.mjs",
+      "bytes": 13377,
+      "sha256": "1d572c60af4c4b9094c0749f8634fe3cd492f32fd13c7b92c7e2c1a8d20f51af"
+    }
+  ]
+}

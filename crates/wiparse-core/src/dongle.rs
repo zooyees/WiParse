@@ -129,10 +129,7 @@ impl DongleSession {
         })
     }
 
-    pub fn execute(
-        &mut self,
-        command: ControlCommand,
-    ) -> Result<Option<String>, InstrumentError> {
+    pub fn execute(&mut self, command: ControlCommand) -> Result<Option<String>, InstrumentError> {
         match command {
             ControlCommand::DongleInfo => self.info(),
             ControlCommand::DongleSetLink {
@@ -223,10 +220,9 @@ impl DongleSession {
                 "UART tcp {}:{} @{} open",
                 self.spec.host, self.spec.uart_port, self.uart_baud
             ),
-            Some(UartLink::Serial(_)) => format!(
-                "UART {} @{} open",
-                self.spec.uart_com, self.uart_baud
-            ),
+            Some(UartLink::Serial(_)) => {
+                format!("UART {} @{} open", self.spec.uart_com, self.uart_baud)
+            }
             Some(UartLink::WinUsb(_)) => format!("UART WinUSB MI_01 @{} open", self.uart_baud),
             None if self.demo => format!(
                 "UART tcp {}:{} @{} (demo)",
@@ -245,14 +241,10 @@ impl DongleSession {
         };
         let i2c = match &self.i2c {
             Some(I2cLink::WinUsb(_)) => "I2C WinUSB MI_03 open".into(),
-            Some(I2cLink::Tcp(_)) => format!(
-                "I2C tcp {}:{} open",
-                self.spec.host, self.spec.i2c_port
-            ),
-            None if self.demo => format!(
-                "I2C tcp {}:{} demo",
-                self.spec.host, self.spec.i2c_port
-            ),
+            Some(I2cLink::Tcp(_)) => {
+                format!("I2C tcp {}:{} open", self.spec.host, self.spec.i2c_port)
+            }
+            None if self.demo => format!("I2C tcp {}:{} demo", self.spec.host, self.spec.i2c_port),
             None => format!(
                 "I2C idle (USB MI_03 then tcp {}:{})",
                 self.spec.host, self.spec.i2c_port
@@ -271,6 +263,9 @@ impl DongleSession {
         i2c_port: u16,
     ) -> Result<Option<String>, InstrumentError> {
         let host = host.trim();
+        let host_changed = !host.is_empty() && host != self.spec.host;
+        let uart_changed = uart_port > 0 && uart_port != self.spec.uart_port;
+        let i2c_changed = i2c_port > 0 && i2c_port != self.spec.i2c_port;
         if !host.is_empty() {
             self.spec.host = host.to_owned();
         }
@@ -280,8 +275,12 @@ impl DongleSession {
         if i2c_port > 0 {
             self.spec.i2c_port = i2c_port;
         }
-        self.i2c = None;
-        if matches!(self.uart, Some(UartLink::Tcp(_))) {
+        // Applying the same settings is idempotent. TCP endpoint changes must
+        // not close the other interface or a local COM/WinUSB connection.
+        if (host_changed || i2c_changed) && matches!(self.i2c, Some(I2cLink::Tcp(_))) {
+            self.i2c = None;
+        }
+        if (host_changed || uart_changed) && matches!(self.uart, Some(UartLink::Tcp(_))) {
             self.uart = None;
         }
         self.info()
@@ -419,7 +418,11 @@ impl DongleSession {
             return Err(InstrumentError::Io("UART write is empty".into()));
         }
         if self.demo {
-            return Ok(Some(format!("UART TX {} B  {}", bytes.len(), hex_compact(&bytes))));
+            return Ok(Some(format!(
+                "UART TX {} B  {}",
+                bytes.len(),
+                hex_compact(&bytes)
+            )));
         }
         match self.uart.as_mut() {
             Some(UartLink::Tcp(stream)) => stream
@@ -444,14 +447,20 @@ impl DongleSession {
         let n = match self.uart.as_mut() {
             Some(UartLink::Tcp(stream)) => match stream.read(&mut buf) {
                 Ok(n) => n,
-                Err(e) if e.kind() == std::io::ErrorKind::TimedOut || e.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::TimedOut
+                        || e.kind() == std::io::ErrorKind::WouldBlock =>
+                {
                     return Ok(None);
                 }
                 Err(e) => return Err(InstrumentError::Io(format!("UART read: {e}"))),
             },
             Some(UartLink::Serial(port)) => match port.read(&mut buf) {
                 Ok(n) => n,
-                Err(e) if e.kind() == std::io::ErrorKind::TimedOut || e.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::TimedOut
+                        || e.kind() == std::io::ErrorKind::WouldBlock =>
+                {
                     return Ok(None);
                 }
                 Err(e) => return Err(InstrumentError::Io(format!("UART read: {e}"))),
@@ -717,14 +726,14 @@ fn i2c_addr_token(addr: &str) -> Result<String, InstrumentError> {
     if s.is_empty() {
         return Err(InstrumentError::Io("I2C address required".into()));
     }
-    let n = if s.starts_with("0x") || s.starts_with("0X") || s.chars().all(|c| c.is_ascii_hexdigit())
-    {
-        u32::from_str_radix(s.trim_start_matches("0x").trim_start_matches("0X"), 16)
-            .map_err(|_| InstrumentError::Io(format!("invalid I2C address: {addr}")))?
-    } else {
-        s.parse::<u32>()
-            .map_err(|_| InstrumentError::Io(format!("invalid I2C address: {addr}")))?
-    };
+    let n =
+        if s.starts_with("0x") || s.starts_with("0X") || s.chars().all(|c| c.is_ascii_hexdigit()) {
+            u32::from_str_radix(s.trim_start_matches("0x").trim_start_matches("0X"), 16)
+                .map_err(|_| InstrumentError::Io(format!("invalid I2C address: {addr}")))?
+        } else {
+            s.parse::<u32>()
+                .map_err(|_| InstrumentError::Io(format!("invalid I2C address: {addr}")))?
+        };
     if n > 0x7F {
         return Err(InstrumentError::Io(format!(
             "I2C address out of 7-bit range: {addr}"
@@ -763,9 +772,10 @@ pub fn uart_tcp_baud_preamble(baud: u32) -> Option<Vec<u8>> {
 }
 
 fn format_uart_chunk(bytes: &[u8]) -> String {
-    if bytes.iter().all(|b| {
-        matches!(b, 0x09 | 0x0A | 0x0D) || (0x20..=0x7E).contains(b)
-    }) {
+    if bytes
+        .iter()
+        .all(|b| matches!(b, 0x09 | 0x0A | 0x0D) || (0x20..=0x7E).contains(b))
+    {
         String::from_utf8_lossy(bytes).into_owned()
     } else {
         hex_compact(bytes)
@@ -784,10 +794,7 @@ fn demo_i2c_reply(line: &str) -> String {
         "PING" => "OK PING".into(),
         "RECOVER" | "BUSRESET" => "OK RECOVER".into(),
         "SPEED" => {
-            let hz = line
-                .split_whitespace()
-                .nth(1)
-                .unwrap_or("400000");
+            let hz = line.split_whitespace().nth(1).unwrap_or("400000");
             format!("OK SPEED {hz}")
         }
         "TIMEOUT" => {
@@ -806,6 +813,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn applying_i2c_endpoint_preserves_uart_and_identical_settings_keep_both_links() {
+        fn socket_pair() -> (TcpStream, TcpStream) {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            let (server, _) = listener.accept().unwrap();
+            (client, server)
+        }
+        let mut session = DongleSession::demo("dongle://wiparse");
+        let (uart, mut uart_peer) = socket_pair();
+        let (i2c, _i2c_peer) = socket_pair();
+        session.uart = Some(UartLink::Tcp(uart));
+        session.i2c = Some(I2cLink::Tcp(i2c));
+        let host = session.spec.host.clone();
+        let uart_port = session.spec.uart_port;
+        let i2c_port = session.spec.i2c_port;
+        session.set_link(host.clone(), uart_port, i2c_port).unwrap();
+        assert!(session.uart.is_some());
+        assert!(session.i2c.is_some());
+        session
+            .set_link(host.clone(), uart_port, i2c_port + 1)
+            .unwrap();
+        assert!(session.i2c.is_none());
+        let Some(UartLink::Tcp(link)) = &mut session.uart else {
+            panic!("I2C change closed UART");
+        };
+        link.write_all(b"alive").unwrap();
+        uart_peer
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let mut bytes = [0; 5];
+        uart_peer.read_exact(&mut bytes).unwrap();
+        assert_eq!(&bytes, b"alive");
+        let (i2c, _peer) = socket_pair();
+        session.i2c = Some(I2cLink::Tcp(i2c));
+        session.set_link(host, uart_port + 1, i2c_port + 1).unwrap();
+        assert!(session.uart.is_none());
+        assert!(session.i2c.is_some());
+        session
+            .set_link("192.0.2.99".into(), uart_port + 1, i2c_port + 1)
+            .unwrap();
+        assert!(session.i2c.is_none());
+    }
+
+    #[test]
     fn parses_dongle_urls() {
         let a = parse_dongle_resource("dongle://wiparse/serial=ABC").unwrap();
         assert_eq!(a.serial, "ABC");
@@ -820,10 +871,7 @@ mod tests {
     #[test]
     fn demo_i2c_and_uart() {
         let mut d = DongleSession::demo("dongle://wiparse/serial=DEMO");
-        let scan = d
-            .execute(ControlCommand::DongleI2cScan)
-            .unwrap()
-            .unwrap();
+        let scan = d.execute(ControlCommand::DongleI2cScan).unwrap().unwrap();
         assert!(scan.contains("OK SCAN"));
         let info = d.execute(ControlCommand::DongleInfo).unwrap().unwrap();
         assert!(info.contains(IF_ID));

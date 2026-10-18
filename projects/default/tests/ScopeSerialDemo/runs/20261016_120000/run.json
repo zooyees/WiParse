@@ -1,0 +1,75 @@
+{
+  "plugin": "scope-serial-monitor",
+  "plugin_id": "scope-serial-monitor",
+  "project": "default",
+  "test_id": "ScopeSerialDemo",
+  "stamp": "20261016_120000",
+  "ok": true,
+  "simulation_only": true,
+  "product_verdict": "INCONCLUSIVE",
+  "summary_md": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261016_120000\\artifacts\\reports\\ScopeSerialDemo_summary_20261016_120000.md",
+  "artifacts": {
+    "items": [
+      {
+        "output": "reports",
+        "path": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261016_120000\\artifacts\\reports\\ScopeSerialDemo_summary_20261016_120000.md",
+        "view": "report"
+      },
+      {
+        "output": "waves",
+        "path": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261016_120000\\artifacts\\waves\\ScopeSerialDemo_PING_START_20261016_120000.csv",
+        "view": "wave"
+      },
+      {
+        "output": "waves",
+        "path": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261016_120000\\artifacts\\waves\\ScopeSerialDemo_PING_START_20261016_120000.isf",
+        "view": "wave"
+      },
+      {
+        "output": "waves",
+        "path": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261016_120000\\artifacts\\waves\\ScopeSerialDemo_POWER_TRANSFER_20261016_120000.csv",
+        "view": "wave"
+      },
+      {
+        "output": "waves",
+        "path": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261016_120000\\artifacts\\waves\\ScopeSerialDemo_POWER_TRANSFER_20261016_120000.isf",
+        "view": "wave"
+      },
+      {
+        "output": "waves",
+        "path": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261016_120000\\artifacts\\waves\\ScopeSerialDemo_VIN_UV_FAULT_20261016_120000.csv",
+        "view": "wave"
+      },
+      {
+        "output": "waves",
+        "path": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261016_120000\\artifacts\\waves\\ScopeSerialDemo_VIN_UV_FAULT_20261016_120000.isf",
+        "view": "wave"
+      },
+      {
+        "output": "shots",
+        "path": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261016_120000\\artifacts\\shots\\ScopeSerialDemo_PING_START_20261016_120000.png",
+        "view": "external"
+      },
+      {
+        "output": "shots",
+        "path": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261016_120000\\artifacts\\shots\\ScopeSerialDemo_POWER_TRANSFER_20261016_120000.png",
+        "view": "external"
+      },
+      {
+        "output": "shots",
+        "path": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261016_120000\\artifacts\\shots\\ScopeSerialDemo_VIN_UV_FAULT_20261016_120000.png",
+        "view": "external"
+      },
+      {
+        "output": "docs",
+        "path": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261016_120000\\artifacts\\docs\\capture-records.json",
+        "view": "log"
+      },
+      {
+        "output": "docs",
+        "path": "D:\\windlink\\windlink\\WiParse-R\\projects\\default\\tests\\ScopeSerialDemo\\runs\\20261016_120000\\artifacts\\docs\\serial-monitor.log",
+        "view": "log"
+      }
+    ]
+  }
+}

@@ -7,7 +7,9 @@
 #   dist\WiParse.exe / dist\WiParse-CLI.exe (runtime copy)
 
 param(
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [string]$FpgaDemoRoot = "",
+    [string]$VerificationDir = "evidence/release-1.2.1-2026-10-18"
 )
 
 $ErrorActionPreference = "Stop"
@@ -118,34 +120,92 @@ if ((Test-Path -LiteralPath $GuiPdb) -and $RuntimeGuiMatches) {
     Write-Utf8NoBom (Join-Path $Root "dist\WiParse.symbols.json") $symbolManifest
     Write-Host "[package] saved matching GUI symbols -> $DistPdb"
 }
-Copy-Tree (Join-Path $Root "test-tools") (Join-Path $Root "dist\test-tools")
+if ($RuntimeGuiMatches) {
+    Copy-Tree (Join-Path $Root "test-tools") (Join-Path $Root "dist\test-tools")
+} else {
+    Write-Host '[package] preserve daily runtime plugins while its GUI executable is in use or differs'
+}
 
 Copy-Tree (Join-Path $Root "test-tools") (Join-Path $Out "test-tools")
+$HubDestinations=@((Join-Path $Out 'test-tools/node_modules'))
+if ($RuntimeGuiMatches) { $HubDestinations += (Join-Path $Root 'dist/test-tools/node_modules') }
+foreach ($hubDestination in $HubDestinations) {
+    & robocopy (Join-Path $Root 'test-tools/node_modules') $hubDestination /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw 'Copy Hub offline schema dependencies failed; run npm ci --prefix test-tools' }
+}
 if (-not (Test-Path -LiteralPath (Join-Path $Root 'mcp/wiparse/dist/index.js'))) { throw 'Build MCP before packaging: npm run build --prefix mcp/wiparse' }
 Copy-Tree (Join-Path $Root 'mcp/wiparse') (Join-Path $Out 'mcp/wiparse')
 # Generated registrations contain this workstation's paths and are not portable.
 Remove-Item -LiteralPath (Join-Path $Out 'mcp/wiparse/cursor.mcp.generated.json') -Force -ErrorAction SilentlyContinue
 & robocopy (Join-Path $Root 'mcp/wiparse/node_modules') (Join-Path $Out 'mcp/wiparse/node_modules') /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
 if ($LASTEXITCODE -ge 8) { throw 'Copy MCP offline dependencies failed' }
-foreach ($document in @('DEPLOY_MCP.md','DEPLOY_API.md','CLI_REFERENCE.md','WORKSTATION_CLOSED_LOOP.md','UPDATE.md')) {
+foreach ($document in @('DEPLOY_MCP.md','DEPLOY_API.md','CLI_REFERENCE.md','WORKSTATION_CLOSED_LOOP.md','UPDATE.md','AI_INTERFACE.md','TESTING_HUB_WORKSPACE.md','HUB_UI_FIELDS_CONTRACT.md','FPGA_PLUGIN_UPGRADE_0.4.0.md','FPGA_PLUGIN_INTEGRATION_REVIEW.md')) {
     Copy-Item -LiteralPath (Join-Path $Root "docs/$document") -Destination (Join-Path $Out "docs/$document") -Force
 }
+New-Item -ItemType Directory -Force -Path (Join-Path $Out 'docs/reviews') | Out-Null
+Copy-Item -LiteralPath (Join-Path $Root 'docs/reviews/fpga-testing-hub-integration-result-2026-10-18.md') -Destination (Join-Path $Out 'docs/reviews/fpga-testing-hub-integration-result-2026-10-18.md') -Force
 Copy-Item -LiteralPath (Join-Path $Root 'docs/DEPLOY_MCP.md') -Destination (Join-Path $Out 'DEPLOY_MCP.md') -Force
 Copy-Item -LiteralPath (Join-Path $Root 'docs/DEPLOY_API.md') -Destination (Join-Path $Out 'DEPLOY_API.md') -Force
 Copy-Tree (Join-Path $Root 'docs/releases') (Join-Path $Out 'docs/releases')
+Copy-Tree (Join-Path $Root 'docs/ui-testing-hub-1.2.1') (Join-Path $Out 'docs/ui-testing-hub-1.2.1')
+Copy-Tree (Join-Path $Root 'docs/ui-testing-hub-1.2.0') (Join-Path $Out 'docs/ui-testing-hub-1.2.0')
+Copy-Tree (Join-Path $Root 'docs/ui-ai-2026-10-18') (Join-Path $Out 'docs/ui-ai-2026-10-18')
+Copy-Tree (Join-Path $Root 'docs/ui-ai-assistant-2026-10-18') (Join-Path $Out 'docs/ui-ai-assistant-2026-10-18')
+Copy-Tree (Join-Path $Root 'docs/ui-release-1.1.36') (Join-Path $Out 'docs/ui-release-1.1.36')
+Copy-Item -LiteralPath (Join-Path $Root 'docs/ui-flat-instruments-1.1.33.md') -Destination (Join-Path $Out 'docs/ui-flat-instruments-1.1.33.md') -Force
+Copy-Tree (Join-Path $Root 'docs/ui-flat-instruments-1.1.33') (Join-Path $Out 'docs/ui-flat-instruments-1.1.33')
+Copy-Item -LiteralPath (Join-Path $Root 'docs/ui-instrument-workspace-1.1.34.md') -Destination (Join-Path $Out 'docs/ui-instrument-workspace-1.1.34.md') -Force
+Copy-Tree (Join-Path $Root 'docs/ui-instrument-workspace-1.1.34') (Join-Path $Out 'docs/ui-instrument-workspace-1.1.34')
+Copy-Item -LiteralPath (Join-Path $Root 'docs/ui-all-channels-2026-10-17.md') -Destination (Join-Path $Out 'docs/ui-all-channels-2026-10-17.md') -Force
+Copy-Tree (Join-Path $Root 'docs/ui-all-channels-2026-10-17') (Join-Path $Out 'docs/ui-all-channels-2026-10-17')
+Copy-Item -LiteralPath (Join-Path $Root 'docs/ui-instrument-redesign-2026-10-16.md') -Destination (Join-Path $Out 'docs/ui-instrument-redesign-2026-10-16.md') -Force
+Copy-Item -LiteralPath (Join-Path $Root 'docs/serial-realtime-resource-analysis-2026-10-16.md') -Destination (Join-Path $Out 'docs/serial-realtime-resource-analysis-2026-10-16.md') -Force
+Copy-Item -LiteralPath (Join-Path $Root 'docs/system-audit-1.1.32-2026-10-16.md') -Destination (Join-Path $Out 'docs/system-audit-1.1.32-2026-10-16.md') -Force
+Copy-Tree (Join-Path $Root 'docs/ui-system-audit-1.1.32-2026-10-16') (Join-Path $Out 'docs/ui-system-audit-1.1.32-2026-10-16')
+Copy-Tree (Join-Path $Root 'docs/ui-instrument-redesign-2026-10-16') (Join-Path $Out 'docs/ui-instrument-redesign-2026-10-16')
+Copy-Item -LiteralPath (Join-Path $Root 'scripts/start-ui-demo.ps1') -Destination (Join-Path $Out 'start-ui-demo.ps1') -Force
 Copy-Tree (Join-Path $Root 'docs/examples') (Join-Path $Out 'docs/examples')
-Copy-Item -LiteralPath (Join-Path $Root 'evidence/release-1.1.30-2026-10-13/verification-summary.json') -Destination (Join-Path $Out 'docs/verification/release-1.1.30.json') -Force
-Copy-Item -LiteralPath (Join-Path $Root 'evidence/release-1.1.30-2026-10-13/verification-summary.json') -Destination (Join-Path $Out 'docs/verification/wireless-plugin-verification.json') -Force
-$DemoRelative = 'projects/default/tests/ScopeSerialDemo/runs/20261013_231510'
+Copy-Item -LiteralPath (Join-Path $Root "$VerificationDir/verification-summary.json") -Destination (Join-Path $Out 'docs/verification/release-1.2.1.json') -Force
+Copy-Item -LiteralPath (Join-Path $Root "$VerificationDir/source-freeze.json") -Destination (Join-Path $Out 'docs/verification/source-freeze.json') -Force
+$SafeVerificationLogs=@('build-release.log','rust-tests.log','node-tests.log','mcp-tests.log','hub-runtime.log','hub-controls.log','hub-lock-retry-tests.log','matrix-provenance-tests.log','fpga-20-pass.log','fpga-20-fail.log','resource-pressure.log','automation-service-smoke.log','wireless-service-smoke.log','fpga-ui-com.log','fpga-ui-dongle.log','rule-ui-pointer.log','gui-smoke.log','build-profile.json')
+New-Item -ItemType Directory -Force -Path (Join-Path $Out 'docs/verification/logs') | Out-Null
+foreach($log in $SafeVerificationLogs){Copy-Item -LiteralPath (Join-Path $Root "$VerificationDir/$log") -Destination (Join-Path $Out "docs/verification/logs/$log") -Force}
+
+Copy-Item -LiteralPath (Join-Path $Root 'evidence/serial-resource-1.1.32-2026-10-16/summary.json') -Destination (Join-Path $Out 'docs/verification/serial-resource-1.1.32.json') -Force
+Copy-Item -LiteralPath (Join-Path $Root 'evidence/serial-resource-2026-10-16/summary.json') -Destination (Join-Path $Out 'docs/verification/serial-resource-1.1.31.json') -Force
+Copy-Item -LiteralPath (Join-Path $Root "$VerificationDir/verification-summary.json") -Destination (Join-Path $Out 'docs/verification/wireless-plugin-verification.json') -Force
+$DemoRelative = 'projects/default/tests/ScopeSerialDemo/runs/20261016_120000'
 Copy-Tree (Join-Path $Root $DemoRelative) (Join-Path $Out $DemoRelative)
 $DemoRunFile = Join-Path $Out "$DemoRelative/run.json"
 $DemoRun = Get-Content -LiteralPath $DemoRunFile -Raw -Encoding UTF8 | ConvertFrom-Json
 foreach ($artifact in $DemoRun.artifacts.items) {
     $artifact.path = "artifacts/$($artifact.output)/$([IO.Path]::GetFileName($artifact.path))"
 }
-$DemoRun.summary_md = 'artifacts/reports/ScopeSerialDemo_summary_20261013_231510.md'
+$DemoRun.summary_md = 'artifacts/reports/ScopeSerialDemo_summary_20261016_120000.md'
 Write-Utf8NoBom $DemoRunFile ($DemoRun | ConvertTo-Json -Depth 20)
-$DemoProject = @{schema='wiparse.project/v1'; id='default'; name='default'; tests=@(@{id='ScopeSerialDemo';plugin_id='scope-serial-monitor';name='示波器串口监控（模拟效果检查）'})}
+if (-not $FpgaDemoRoot) {
+    $FpgaDemoRoot=Join-Path $Root ('tmp/fpga-package-demo-'+[Guid]::NewGuid().ToString('N'))
+    & node (Join-Path $Root 'scripts/verify-fpga-upgrade.mjs') $FpgaDemoRoot
+    if ($LASTEXITCODE -ne 0) { throw 'Generate verified FPGA simulation demo failed' }
+}
+if (-not (Test-Path -LiteralPath (Join-Path $FpgaDemoRoot 'verification.json'))) { throw 'FPGA demo verification missing' }
+$FpgaVerification=Get-Content -LiteralPath (Join-Path $FpgaDemoRoot 'verification.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+$FpgaRelative = $FpgaVerification.run
+if (-not $FpgaRelative -or [IO.Path]::IsPathRooted($FpgaRelative) -or $FpgaRelative -match '\.\.') { throw 'Invalid verified FPGA run path' }
+$FpgaCount=@(Get-ChildItem -LiteralPath (Join-Path $FpgaDemoRoot 'recipes/fpga-firmware-test/cases') -File -Filter '*.json').Count
+if ($FpgaCount -ne $FpgaVerification.item_count) { throw 'FPGA verified configuration count differs' }
+Copy-Tree (Join-Path $Root 'recipes/fpga-firmware-test') (Join-Path $Out 'recipes/fpga-firmware-test')
+# This is a verified historical run, not a runtime root: its logs are report evidence.
+& robocopy (Join-Path $FpgaDemoRoot $FpgaRelative) (Join-Path $Out $FpgaRelative) /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
+if ($LASTEXITCODE -ge 8) { throw 'Copy FPGA report evidence failed' }
+Copy-Item -LiteralPath (Join-Path $FpgaDemoRoot 'projects/default/tests/FpgaFirmwareTest/matrix.json') -Destination (Join-Path $Out 'projects/default/tests/FpgaFirmwareTest/matrix.json') -Force
+$FpgaRunFile=Join-Path $Out "$FpgaRelative/run.json"
+$FpgaRun=Get-Content -LiteralPath $FpgaRunFile -Raw -Encoding UTF8 | ConvertFrom-Json
+if (-not $FpgaRun.simulation_only) { throw 'FPGA demo must be explicit simulation' }
+foreach ($artifact in $FpgaRun.artifacts.items) { $artifact.path="artifacts/$($artifact.output)/$([IO.Path]::GetFileName($artifact.path))" }
+$FpgaRun | Add-Member -NotePropertyName summary_md -NotePropertyValue 'artifacts/reports/summary.md' -Force
+Write-Utf8NoBom $FpgaRunFile ($FpgaRun | ConvertTo-Json -Depth 30)
+$DemoProject = @{schema='wiparse.project/v1'; id='default'; name='default'; tests=@(@{id='ScopeSerialDemo';plugin_id='scope-serial-monitor';name='示波器串口监控（模拟效果检查）'},@{id='FpgaFirmwareTest';plugin_id='fpga-firmware-test';name="FPGA固件测试（$FpgaCount 项模拟效果检查）"})}
 Write-Utf8NoBom (Join-Path $Out 'projects/default/project.json') ($DemoProject | ConvertTo-Json -Depth 6)
 Copy-Tree (Join-Path $Root "services\testing-hub-marketplace") (Join-Path $Out "services\testing-hub-marketplace")
 Write-Host "[package] seed marketplace data into package"
@@ -260,7 +320,7 @@ $env:WIPARSE_SERVICE_ROOT = Join-Path $PSScriptRoot 'automation-data'
 '@
 Write-Utf8NoBom (Join-Path $Out "start-automation-service.ps1") $startService
 
-$automationNotice = @'
+$automationNotice = @"
 
 ## Automation service (development verification)
 
@@ -269,9 +329,10 @@ Read docs/AUTOMATION-SERVICE.md and docs/specs/wireless-test/04-software-impleme
 industrial_approved=false. Complete SW-01..SW-12 and physical system acceptance are pending.
 This bundle does not install a Windows Service or provide Dongle capture firmware.
 wireless-charge-validation 0.1.1 provides offline configuration/rule replay only; live stimulus and industrial acceptance remain blocked.
-MCP 1.1.30 and its dependencies are bundled under mcp/wiparse; Node.js 18+ is still required.
-Read docs/releases/1.1.30.md. The Test Report default project includes ScopeSerialDemo (synthetic data only).
-'@
+Testing Hub includes $FpgaCount FPGA simulation configurations under recipes/fpga-firmware-test/cases. Historical report snapshots use shortened simulation timing; editable configurations retain original frozen timing. Select execution_mode=simulation explicitly before preflight/run. Hardware mode requires a separately accepted host adapter.
+MCP 1.2.1 and its dependencies are bundled under mcp/wiparse; Node.js 18+ is still required.
+Read docs/releases/1.2.1.md. The Test Report default project includes ScopeSerialDemo (synthetic data only).
+"@
 Add-Content -LiteralPath (Join-Path $Out 'README-MARKETPLACE-DEMO.md') -Value $automationNotice -Encoding utf8
 $versionMatch = [regex]::Match([IO.File]::ReadAllText((Join-Path $Root 'Cargo.toml')), '(?m)^version\s*=\s*"([^"]+)"')
 if (-not $versionMatch.Success) { throw 'Cannot read workspace version' }
@@ -280,24 +341,19 @@ $releaseManifest = @{
     mcp_version = (Get-Content -LiteralPath (Join-Path $Out 'mcp/wiparse/package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
     plugins = @(Get-ChildItem -LiteralPath (Join-Path $Out 'test-tools/plugins') -Directory | ForEach-Object { Get-Content -LiteralPath (Join-Path $_.FullName 'plugin.json') -Raw -Encoding UTF8 | ConvertFrom-Json | Select-Object id,version })
     demo = @{run=$DemoRelative; simulation_only=$true}
+    fpga_demo = @{run=$FpgaRelative; simulation_only=$true; item_count=$FpgaCount; current_configs="original frozen business configurations"; historical_run_configs="isolated shortened simulation snapshots"}
     schema_version = 'wiparse.automation/1'
     industrial_approved = $false
     scope = 'SW automation foundations; complete software spec and joint industrial acceptance pending'
     built_at_utc = [DateTime]::UtcNow.ToString('o')
+    source_freeze_sha256 = (Get-FileHash -LiteralPath (Join-Path $Out 'docs/verification/source-freeze.json') -Algorithm SHA256).Hash
     files = @(Get-ChildItem -LiteralPath (Join-Path $Out 'bin') -File | ForEach-Object { @{ path = "bin/$($_.Name)"; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash; bytes = $_.Length } })
     symbols = @(Get-ChildItem -LiteralPath (Join-Path $Out 'symbols') -File | ForEach-Object { @{ path = "symbols/$($_.Name)"; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash } })
 }
 Write-Utf8NoBom (Join-Path $Out 'release-manifest.json') ($releaseManifest | ConvertTo-Json -Depth 8)
 
 Write-Host "[package] writing archive $Archive"
-if (Test-Path $Archive) { Remove-Item $Archive -Force }
-Push-Location (Split-Path $Out)
-try {
-    tar -a -c -f $Archive (Split-Path $Out -Leaf)
-    if ($LASTEXITCODE -ne 0) { throw "Archive creation failed ($LASTEXITCODE)" }
-} finally {
-    Pop-Location
-}
+& (Join-Path $PSScriptRoot 'write-portable-archive.ps1') -SourceDirectory $Out -Archive $Archive
 if (-not (Test-Path $Archive)) {
     Compress-Archive -Path $Out -DestinationPath $Archive -Force
 }

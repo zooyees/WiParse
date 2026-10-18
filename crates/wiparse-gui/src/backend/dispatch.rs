@@ -109,18 +109,19 @@ pub fn invoke(bridge: &ApiBridge, method: &str, params: Value) -> InvokeReply {
 }
 
 fn invoke_stateful(bridge: &ApiBridge, method: &str, params: Value) -> InvokeReply {
+    let budget=Duration::from_secs(if method.starts_with("ui.test_tool.config.") || method.starts_with("ui.test_tool.project."){65}else{15});
     let (tx, rx) = crossbeam_channel::bounded(1);
     let pending = PendingRequest {
         method: method.to_string(),
         params,
         reply: tx,
-        deadline: Instant::now() + Duration::from_secs(15),
+        deadline: Instant::now() + budget,
     };
     if bridge.request_tx.try_send(pending).is_err() {
         return err(method, "GUI API bridge busy or closed");
     }
     bridge.wake_ui();
-    match rx.recv_timeout(Duration::from_secs(15)) {
+    match rx.recv_timeout(budget) {
         Ok(reply) => reply,
         Err(_) => err(method, "timeout waiting for GUI (is WiParse running?)"),
     }

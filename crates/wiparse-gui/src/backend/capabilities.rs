@@ -108,6 +108,27 @@ fn method_catalog() -> Vec<Value> {
         json!({"method": "ui.project.list", "params": {}, "stateful": true}),
         json!({"method": "ui.project.select", "params": {"id": "default"}, "stateful": true}),
         json!({"method": "ui.project.create", "params": {"id": "lot-1", "name": "Lot 1"}, "stateful": true}),
+        json!({"method":"ui.test_tool.config.validate","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.config.list","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.config.get","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.config.create","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.config.save","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.config.duplicate","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.config.archive","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.config.restore","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.config.import","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.config.export","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.config.batch","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.config.archives","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.run.control","params":{"plugin":"fpga-firmware-test","action":"pause","run_id":"current-run-id"},"stateful":true}),
+        json!({"method":"ui.test_tool.project.get","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.project.save","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.project.validate","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.project.migration.preview","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.project.migration.commit","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.result.get","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.matrix.get","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
+        json!({"method":"ui.test_tool.preflight.state","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
         json!({"method": "ui.project.add_test", "params": {"id": "example-smoke"}, "stateful": true}),
         json!({"method": "ui.project.remove_test", "params": {"id": "example-smoke"}, "stateful": true}),
         json!({"method": "instrument.command", "params": {"device_id": 2, "command": {"BridgeSpi": {"mode": 0, "clock_hz": 1000000, "write_hex": "9F", "read_len": 4}}}, "stateful": true}),
@@ -129,7 +150,7 @@ fn method_catalog() -> Vec<Value> {
 }
 
 pub fn is_stateful(method: &str) -> bool {
-    matches!(
+    (method.starts_with("ui.test_tool.config.") || method.starts_with("ui.test_tool.project.") || method == "ui.test_tool.result.get") || matches!(method,"ui.test_tool.matrix.get"|"ui.test_tool.preflight.state"|"ui.test_tool.run.control") || matches!(
         method,
         "system.ui.state"
             | "ui.state"

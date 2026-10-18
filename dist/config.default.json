@@ -1,4 +1,17 @@
 {
+  "ai": {
+    "enabled": false,
+    "provider": "custom",
+    "protocol": "chat_completions",
+    "base_url": "https://api.openai.com/v1",
+    "model": "",
+    "protected_api_key": "",
+    "api_key_env": "",
+    "timeout_sec": 60,
+    "max_output_tokens": 2048,
+    "stream": false,
+    "thinking": null
+  },
   "system": {
     "db_name": "charging_data.db",
     "log_file": "monitor.log",
@@ -30,7 +43,11 @@
     "full_charge_debounce_sec": 20.0
   },
   "serial": {
-    "default_baudrates": ["115200", "1000000", "2000000"],
+    "default_baudrates": [
+      "115200",
+      "1000000",
+      "2000000"
+    ],
     "demo_mode": false,
     "auto_reconnect": true,
     "reconnect_interval_sec": 3.0,
@@ -69,7 +86,8 @@
         "base_url": "http://127.0.0.1:8787",
         "install_dir": "",
         "channel": "stable"
-      }
+      },
+      "approved_config_roots": []
     }
   },
   "update": {

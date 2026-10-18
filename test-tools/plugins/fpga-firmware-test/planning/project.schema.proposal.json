@@ -1,0 +1,1065 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FPGA project configuration",
+  "x-title-zh": "FPGA 工程共享配置",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "wiparse.fpga-project/1"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "title": "Project name",
+      "x-title-zh": "工程名称"
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 2048,
+      "title": "Description",
+      "x-title-zh": "工程说明"
+    },
+    "dut": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string",
+          "title": "model",
+          "x-title-zh": "型号"
+        },
+        "serial_required": {
+          "type": "boolean",
+          "title": "serial required",
+          "x-title-zh": "要求产品序列号"
+        },
+        "board_revision": {
+          "type": "string",
+          "title": "board revision",
+          "x-title-zh": "板卡版本"
+        },
+        "fpga_model": {
+          "type": "string",
+          "title": "fpga model",
+          "x-title-zh": "FPGA 型号"
+        },
+        "fixture_id": {
+          "type": "string",
+          "title": "fixture id",
+          "x-title-zh": "治具编号"
+        },
+        "station_id": {
+          "type": "string",
+          "title": "station id",
+          "x-title-zh": "工位编号"
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "title": "dut",
+      "x-title-zh": "DUT 身份"
+    },
+    "instruments": {
+      "type": "object",
+      "properties": {
+        "programmer": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "debug_probe",
+                "oscilloscope",
+                "dc_source",
+                "serial_port",
+                "wiparse_dongle_uart",
+                "wiparse_dongle",
+                "dmm",
+                "load",
+                "bridge"
+              ],
+              "title": "kind",
+              "x-title-zh": "设备类型"
+            },
+            "selector": {
+              "type": "object",
+              "properties": {
+                "serial": {
+                  "type": "string",
+                  "title": "serial",
+                  "x-title-zh": "序列号"
+                },
+                "resource": {
+                  "type": "string",
+                  "title": "resource",
+                  "x-title-zh": "资源地址"
+                },
+                "manufacturer": {
+                  "type": "string",
+                  "title": "manufacturer"
+                },
+                "model": {
+                  "type": "string",
+                  "title": "model",
+                  "x-title-zh": "型号"
+                },
+                "dongle_serial": {
+                  "type": "string",
+                  "title": "dongle serial"
+                },
+                "uart_channel": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "title": "uart channel"
+                },
+                "port": {
+                  "type": "string",
+                  "title": "port",
+                  "x-title-zh": "串口"
+                },
+                "baud": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "title": "baud",
+                  "x-title-zh": "波特率"
+                },
+                "data_bits": {
+                  "type": "integer",
+                  "title": "data bits"
+                },
+                "stop_bits": {
+                  "type": "number",
+                  "minimum": 0,
+                  "title": "stop bits"
+                },
+                "parity": {
+                  "enum": [
+                    "none",
+                    "even",
+                    "odd"
+                  ],
+                  "title": "parity"
+                },
+                "flow_control": {
+                  "type": "string",
+                  "title": "flow control"
+                }
+              },
+              "required": [],
+              "additionalProperties": false,
+              "title": "selector",
+              "x-title-zh": "选择条件"
+            },
+            "required": {
+              "type": "boolean",
+              "title": "required",
+              "x-title-zh": "必需"
+            }
+          },
+          "required": [
+            "kind",
+            "selector"
+          ],
+          "additionalProperties": false,
+          "title": "programmer",
+          "x-title-zh": "调试探针"
+        },
+        "scope": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "debug_probe",
+                "oscilloscope",
+                "dc_source",
+                "serial_port",
+                "wiparse_dongle_uart",
+                "wiparse_dongle",
+                "dmm",
+                "load",
+                "bridge"
+              ],
+              "title": "kind",
+              "x-title-zh": "设备类型"
+            },
+            "selector": {
+              "type": "object",
+              "properties": {
+                "serial": {
+                  "type": "string",
+                  "title": "serial",
+                  "x-title-zh": "序列号"
+                },
+                "resource": {
+                  "type": "string",
+                  "title": "resource",
+                  "x-title-zh": "资源地址"
+                },
+                "manufacturer": {
+                  "type": "string",
+                  "title": "manufacturer"
+                },
+                "model": {
+                  "type": "string",
+                  "title": "model",
+                  "x-title-zh": "型号"
+                },
+                "dongle_serial": {
+                  "type": "string",
+                  "title": "dongle serial"
+                },
+                "uart_channel": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "title": "uart channel"
+                },
+                "port": {
+                  "type": "string",
+                  "title": "port",
+                  "x-title-zh": "串口"
+                },
+                "baud": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "title": "baud",
+                  "x-title-zh": "波特率"
+                },
+                "data_bits": {
+                  "type": "integer",
+                  "title": "data bits"
+                },
+                "stop_bits": {
+                  "type": "number",
+                  "minimum": 0,
+                  "title": "stop bits"
+                },
+                "parity": {
+                  "enum": [
+                    "none",
+                    "even",
+                    "odd"
+                  ],
+                  "title": "parity"
+                },
+                "flow_control": {
+                  "type": "string",
+                  "title": "flow control"
+                }
+              },
+              "required": [],
+              "additionalProperties": false,
+              "title": "selector",
+              "x-title-zh": "选择条件"
+            },
+            "required": {
+              "type": "boolean",
+              "title": "required",
+              "x-title-zh": "必需"
+            }
+          },
+          "required": [
+            "kind",
+            "selector"
+          ],
+          "additionalProperties": false,
+          "title": "scope",
+          "x-title-zh": "示波器"
+        },
+        "power": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "debug_probe",
+                "oscilloscope",
+                "dc_source",
+                "serial_port",
+                "wiparse_dongle_uart",
+                "wiparse_dongle",
+                "dmm",
+                "load",
+                "bridge"
+              ],
+              "title": "kind",
+              "x-title-zh": "设备类型"
+            },
+            "selector": {
+              "type": "object",
+              "properties": {
+                "serial": {
+                  "type": "string",
+                  "title": "serial",
+                  "x-title-zh": "序列号"
+                },
+                "resource": {
+                  "type": "string",
+                  "title": "resource",
+                  "x-title-zh": "资源地址"
+                },
+                "manufacturer": {
+                  "type": "string",
+                  "title": "manufacturer"
+                },
+                "model": {
+                  "type": "string",
+                  "title": "model",
+                  "x-title-zh": "型号"
+                },
+                "dongle_serial": {
+                  "type": "string",
+                  "title": "dongle serial"
+                },
+                "uart_channel": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "title": "uart channel"
+                },
+                "port": {
+                  "type": "string",
+                  "title": "port",
+                  "x-title-zh": "串口"
+                },
+                "baud": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "title": "baud",
+                  "x-title-zh": "波特率"
+                },
+                "data_bits": {
+                  "type": "integer",
+                  "title": "data bits"
+                },
+                "stop_bits": {
+                  "type": "number",
+                  "minimum": 0,
+                  "title": "stop bits"
+                },
+                "parity": {
+                  "enum": [
+                    "none",
+                    "even",
+                    "odd"
+                  ],
+                  "title": "parity"
+                },
+                "flow_control": {
+                  "type": "string",
+                  "title": "flow control"
+                }
+              },
+              "required": [],
+              "additionalProperties": false,
+              "title": "selector",
+              "x-title-zh": "选择条件"
+            },
+            "required": {
+              "type": "boolean",
+              "title": "required",
+              "x-title-zh": "必需"
+            }
+          },
+          "required": [
+            "kind",
+            "selector"
+          ],
+          "additionalProperties": false,
+          "title": "power",
+          "x-title-zh": "电源"
+        },
+        "log": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "serial_port",
+                  "title": "kind",
+                  "x-title-zh": "设备类型"
+                },
+                "selector": {
+                  "type": "object",
+                  "properties": {
+                    "serial": {
+                      "type": "string",
+                      "title": "serial",
+                      "x-title-zh": "序列号"
+                    },
+                    "resource": {
+                      "type": "string",
+                      "title": "resource",
+                      "x-title-zh": "资源地址"
+                    },
+                    "manufacturer": {
+                      "type": "string",
+                      "title": "manufacturer"
+                    },
+                    "model": {
+                      "type": "string",
+                      "title": "model",
+                      "x-title-zh": "型号"
+                    },
+                    "dongle_serial": {
+                      "type": "string",
+                      "title": "dongle serial"
+                    },
+                    "uart_channel": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "title": "uart channel"
+                    },
+                    "port": {
+                      "type": "string",
+                      "title": "port",
+                      "x-title-zh": "串口"
+                    },
+                    "baud": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "title": "baud",
+                      "x-title-zh": "波特率"
+                    },
+                    "data_bits": {
+                      "type": "integer",
+                      "title": "data bits"
+                    },
+                    "stop_bits": {
+                      "type": "number",
+                      "minimum": 0,
+                      "title": "stop bits"
+                    },
+                    "parity": {
+                      "enum": [
+                        "none",
+                        "even",
+                        "odd"
+                      ],
+                      "title": "parity"
+                    },
+                    "flow_control": {
+                      "type": "string",
+                      "title": "flow control"
+                    }
+                  },
+                  "required": [
+                    "port",
+                    "baud"
+                  ],
+                  "additionalProperties": false,
+                  "title": "selector",
+                  "x-title-zh": "选择条件"
+                },
+                "required": {
+                  "type": "boolean",
+                  "title": "required",
+                  "x-title-zh": "必需"
+                }
+              },
+              "required": [
+                "kind",
+                "selector"
+              ],
+              "additionalProperties": false,
+              "title": "COM serial port",
+              "x-title-zh": "普通 COM 串口"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "wiparse_dongle_uart",
+                  "title": "kind",
+                  "x-title-zh": "设备类型"
+                },
+                "selector": {
+                  "type": "object",
+                  "properties": {
+                    "serial": {
+                      "type": "string",
+                      "title": "serial",
+                      "x-title-zh": "序列号"
+                    },
+                    "resource": {
+                      "type": "string",
+                      "title": "resource",
+                      "x-title-zh": "资源地址"
+                    },
+                    "manufacturer": {
+                      "type": "string",
+                      "title": "manufacturer"
+                    },
+                    "model": {
+                      "type": "string",
+                      "title": "model",
+                      "x-title-zh": "型号"
+                    },
+                    "dongle_serial": {
+                      "type": "string",
+                      "title": "dongle serial"
+                    },
+                    "uart_channel": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "title": "uart channel"
+                    },
+                    "port": {
+                      "type": "string",
+                      "title": "port",
+                      "x-title-zh": "串口"
+                    },
+                    "baud": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "title": "baud",
+                      "x-title-zh": "波特率"
+                    },
+                    "data_bits": {
+                      "type": "integer",
+                      "title": "data bits"
+                    },
+                    "stop_bits": {
+                      "type": "number",
+                      "minimum": 0,
+                      "title": "stop bits"
+                    },
+                    "parity": {
+                      "enum": [
+                        "none",
+                        "even",
+                        "odd"
+                      ],
+                      "title": "parity"
+                    },
+                    "flow_control": {
+                      "type": "string",
+                      "title": "flow control"
+                    }
+                  },
+                  "required": [
+                    "dongle_serial",
+                    "uart_channel",
+                    "baud"
+                  ],
+                  "additionalProperties": false,
+                  "title": "selector",
+                  "x-title-zh": "选择条件"
+                },
+                "required": {
+                  "type": "boolean",
+                  "title": "required",
+                  "x-title-zh": "必需"
+                }
+              },
+              "required": [
+                "kind",
+                "selector"
+              ],
+              "additionalProperties": false,
+              "title": "WiParse Dongle UART",
+              "x-title-zh": "WiParse Dongle UART"
+            }
+          ],
+          "title": "log",
+          "x-title-zh": "串口日志"
+        },
+        "dmm": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "debug_probe",
+                "oscilloscope",
+                "dc_source",
+                "serial_port",
+                "wiparse_dongle_uart",
+                "wiparse_dongle",
+                "dmm",
+                "load",
+                "bridge"
+              ],
+              "title": "kind",
+              "x-title-zh": "设备类型"
+            },
+            "selector": {
+              "type": "object",
+              "properties": {
+                "serial": {
+                  "type": "string",
+                  "title": "serial",
+                  "x-title-zh": "序列号"
+                },
+                "resource": {
+                  "type": "string",
+                  "title": "resource",
+                  "x-title-zh": "资源地址"
+                },
+                "manufacturer": {
+                  "type": "string",
+                  "title": "manufacturer"
+                },
+                "model": {
+                  "type": "string",
+                  "title": "model",
+                  "x-title-zh": "型号"
+                },
+                "dongle_serial": {
+                  "type": "string",
+                  "title": "dongle serial"
+                },
+                "uart_channel": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "title": "uart channel"
+                },
+                "port": {
+                  "type": "string",
+                  "title": "port",
+                  "x-title-zh": "串口"
+                },
+                "baud": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "title": "baud",
+                  "x-title-zh": "波特率"
+                },
+                "data_bits": {
+                  "type": "integer",
+                  "title": "data bits"
+                },
+                "stop_bits": {
+                  "type": "number",
+                  "minimum": 0,
+                  "title": "stop bits"
+                },
+                "parity": {
+                  "enum": [
+                    "none",
+                    "even",
+                    "odd"
+                  ],
+                  "title": "parity"
+                },
+                "flow_control": {
+                  "type": "string",
+                  "title": "flow control"
+                }
+              },
+              "required": [],
+              "additionalProperties": false,
+              "title": "selector",
+              "x-title-zh": "选择条件"
+            },
+            "required": {
+              "type": "boolean",
+              "title": "required",
+              "x-title-zh": "必需"
+            }
+          },
+          "required": [
+            "kind",
+            "selector"
+          ],
+          "additionalProperties": false,
+          "title": "dmm"
+        },
+        "load": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "debug_probe",
+                "oscilloscope",
+                "dc_source",
+                "serial_port",
+                "wiparse_dongle_uart",
+                "wiparse_dongle",
+                "dmm",
+                "load",
+                "bridge"
+              ],
+              "title": "kind",
+              "x-title-zh": "设备类型"
+            },
+            "selector": {
+              "type": "object",
+              "properties": {
+                "serial": {
+                  "type": "string",
+                  "title": "serial",
+                  "x-title-zh": "序列号"
+                },
+                "resource": {
+                  "type": "string",
+                  "title": "resource",
+                  "x-title-zh": "资源地址"
+                },
+                "manufacturer": {
+                  "type": "string",
+                  "title": "manufacturer"
+                },
+                "model": {
+                  "type": "string",
+                  "title": "model",
+                  "x-title-zh": "型号"
+                },
+                "dongle_serial": {
+                  "type": "string",
+                  "title": "dongle serial"
+                },
+                "uart_channel": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "title": "uart channel"
+                },
+                "port": {
+                  "type": "string",
+                  "title": "port",
+                  "x-title-zh": "串口"
+                },
+                "baud": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "title": "baud",
+                  "x-title-zh": "波特率"
+                },
+                "data_bits": {
+                  "type": "integer",
+                  "title": "data bits"
+                },
+                "stop_bits": {
+                  "type": "number",
+                  "minimum": 0,
+                  "title": "stop bits"
+                },
+                "parity": {
+                  "enum": [
+                    "none",
+                    "even",
+                    "odd"
+                  ],
+                  "title": "parity"
+                },
+                "flow_control": {
+                  "type": "string",
+                  "title": "flow control"
+                }
+              },
+              "required": [],
+              "additionalProperties": false,
+              "title": "selector",
+              "x-title-zh": "选择条件"
+            },
+            "required": {
+              "type": "boolean",
+              "title": "required",
+              "x-title-zh": "必需"
+            }
+          },
+          "required": [
+            "kind",
+            "selector"
+          ],
+          "additionalProperties": false,
+          "title": "load"
+        },
+        "bridge": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "debug_probe",
+                "oscilloscope",
+                "dc_source",
+                "serial_port",
+                "wiparse_dongle_uart",
+                "wiparse_dongle",
+                "dmm",
+                "load",
+                "bridge"
+              ],
+              "title": "kind",
+              "x-title-zh": "设备类型"
+            },
+            "selector": {
+              "type": "object",
+              "properties": {
+                "serial": {
+                  "type": "string",
+                  "title": "serial",
+                  "x-title-zh": "序列号"
+                },
+                "resource": {
+                  "type": "string",
+                  "title": "resource",
+                  "x-title-zh": "资源地址"
+                },
+                "manufacturer": {
+                  "type": "string",
+                  "title": "manufacturer"
+                },
+                "model": {
+                  "type": "string",
+                  "title": "model",
+                  "x-title-zh": "型号"
+                },
+                "dongle_serial": {
+                  "type": "string",
+                  "title": "dongle serial"
+                },
+                "uart_channel": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "title": "uart channel"
+                },
+                "port": {
+                  "type": "string",
+                  "title": "port",
+                  "x-title-zh": "串口"
+                },
+                "baud": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "title": "baud",
+                  "x-title-zh": "波特率"
+                },
+                "data_bits": {
+                  "type": "integer",
+                  "title": "data bits"
+                },
+                "stop_bits": {
+                  "type": "number",
+                  "minimum": 0,
+                  "title": "stop bits"
+                },
+                "parity": {
+                  "enum": [
+                    "none",
+                    "even",
+                    "odd"
+                  ],
+                  "title": "parity"
+                },
+                "flow_control": {
+                  "type": "string",
+                  "title": "flow control"
+                }
+              },
+              "required": [],
+              "additionalProperties": false,
+              "title": "selector",
+              "x-title-zh": "选择条件"
+            },
+            "required": {
+              "type": "boolean",
+              "title": "required",
+              "x-title-zh": "必需"
+            }
+          },
+          "required": [
+            "kind",
+            "selector"
+          ],
+          "additionalProperties": false,
+          "title": "bridge"
+        },
+        "log_com": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "serial_port",
+              "title": "kind",
+              "x-title-zh": "设备类型"
+            },
+            "selector": {
+              "type": "object",
+              "properties": {
+                "serial": {
+                  "type": "string",
+                  "title": "serial",
+                  "x-title-zh": "序列号"
+                },
+                "resource": {
+                  "type": "string",
+                  "title": "resource",
+                  "x-title-zh": "资源地址"
+                },
+                "manufacturer": {
+                  "type": "string",
+                  "title": "manufacturer"
+                },
+                "model": {
+                  "type": "string",
+                  "title": "model",
+                  "x-title-zh": "型号"
+                },
+                "dongle_serial": {
+                  "type": "string",
+                  "title": "dongle serial"
+                },
+                "uart_channel": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "title": "uart channel"
+                },
+                "port": {
+                  "type": "string",
+                  "title": "port",
+                  "x-title-zh": "串口"
+                },
+                "baud": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "title": "baud",
+                  "x-title-zh": "波特率"
+                },
+                "data_bits": {
+                  "type": "integer",
+                  "title": "data bits"
+                },
+                "stop_bits": {
+                  "type": "number",
+                  "minimum": 0,
+                  "title": "stop bits"
+                },
+                "parity": {
+                  "enum": [
+                    "none",
+                    "even",
+                    "odd"
+                  ],
+                  "title": "parity"
+                },
+                "flow_control": {
+                  "type": "string",
+                  "title": "flow control"
+                }
+              },
+              "required": [
+                "port",
+                "baud"
+              ],
+              "additionalProperties": false,
+              "title": "selector",
+              "x-title-zh": "选择条件"
+            },
+            "required": {
+              "type": "boolean",
+              "title": "required",
+              "x-title-zh": "必需"
+            }
+          },
+          "required": [
+            "kind",
+            "selector"
+          ],
+          "additionalProperties": false,
+          "title": "log_com",
+          "x-title-zh": "COM 日志角色"
+        },
+        "log_dongle": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "wiparse_dongle_uart",
+              "title": "kind",
+              "x-title-zh": "设备类型"
+            },
+            "selector": {
+              "type": "object",
+              "properties": {
+                "serial": {
+                  "type": "string",
+                  "title": "serial",
+                  "x-title-zh": "序列号"
+                },
+                "resource": {
+                  "type": "string",
+                  "title": "resource",
+                  "x-title-zh": "资源地址"
+                },
+                "manufacturer": {
+                  "type": "string",
+                  "title": "manufacturer"
+                },
+                "model": {
+                  "type": "string",
+                  "title": "model",
+                  "x-title-zh": "型号"
+                },
+                "dongle_serial": {
+                  "type": "string",
+                  "title": "dongle serial"
+                },
+                "uart_channel": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "title": "uart channel"
+                },
+                "port": {
+                  "type": "string",
+                  "title": "port",
+                  "x-title-zh": "串口"
+                },
+                "baud": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "title": "baud",
+                  "x-title-zh": "波特率"
+                },
+                "data_bits": {
+                  "type": "integer",
+                  "title": "data bits"
+                },
+                "stop_bits": {
+                  "type": "number",
+                  "minimum": 0,
+                  "title": "stop bits"
+                },
+                "parity": {
+                  "enum": [
+                    "none",
+                    "even",
+                    "odd"
+                  ],
+                  "title": "parity"
+                },
+                "flow_control": {
+                  "type": "string",
+                  "title": "flow control"
+                }
+              },
+              "required": [
+                "dongle_serial",
+                "uart_channel",
+                "baud"
+              ],
+              "additionalProperties": false,
+              "title": "selector",
+              "x-title-zh": "选择条件"
+            },
+            "required": {
+              "type": "boolean",
+              "title": "required",
+              "x-title-zh": "必需"
+            }
+          },
+          "required": [
+            "kind",
+            "selector"
+          ],
+          "additionalProperties": false,
+          "title": "log_dongle",
+          "x-title-zh": "Dongle UART 日志角色"
+        }
+      },
+      "additionalProperties": false,
+      "title": "instruments",
+      "x-title-zh": "仪器绑定"
+    }
+  },
+  "required": [
+    "schema_version",
+    "name",
+    "dut",
+    "instruments"
+  ],
+  "additionalProperties": false
+}

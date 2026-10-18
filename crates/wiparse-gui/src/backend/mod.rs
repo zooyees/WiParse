@@ -295,7 +295,12 @@ fn handle_invoke(mut request: Request, bridge: &ApiBridge) -> Result<(), String>
     let payload = if reply.ok {
         envelope_ok(&reply.cmd, reply.data)
     } else {
-        envelope_err(&reply.cmd, reply.error.as_deref().unwrap_or("error"))
+        let mut error=envelope_err(&reply.cmd, reply.error.as_deref().unwrap_or("error"));
+        if reply.cmd.starts_with("ui.test_tool.config.")||matches!(reply.cmd.as_str(),"ui.test_tool.matrix.get"|"ui.test_tool.preflight.state"){
+            error["error"]["code"]=json!(reply.error.as_deref().unwrap_or("CONFIG.OPERATION_FAILED"));
+            if reply.data.is_object(){error["error"]["details"]=reply.data;}
+        }
+        error
     };
     respond_json(request, code, &payload)
 }

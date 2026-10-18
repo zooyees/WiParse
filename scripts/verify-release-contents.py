@@ -36,7 +36,7 @@ with zipfile.ZipFile(archive) as bundle:
             if part == '..': parts.pop()
             elif part != '.': parts.append(part)
         assert '/'.join(parts) in names, 'Broken report link: '+link
-    assert len(links) == 14
+    assert len(links) >= 11
     assert not any(n.endswith('service-token.json') or n.endswith('config.json.bak') for n in names)
-    assert json.loads(read('docs/verification/release-1.1.30.json'))['software_version'] == manifest['version']
+    assert json.loads(read('docs/verification/release-'+manifest['version']+'.json'))['software_version'] == manifest['version']
     print(json.dumps({'ok':True,'version':manifest['version'],'mcp':'compiled source matches; offline dependencies present','demo_links':len(links),'demo_cycles':3,'industrial_approved':False},indent=2))

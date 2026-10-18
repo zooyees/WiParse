@@ -4,78 +4,170 @@
   "title": "WiParse Test Plugin Manifest",
   "type": "object",
   "additionalProperties": true,
-  "required": ["id", "name", "type", "report_name"],
+  "required": [
+    "id",
+    "name",
+    "type",
+    "report_name"
+  ],
   "properties": {
-    "id": { "type": "string", "minLength": 1, "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$" },
-    "name": { "type": "string", "minLength": 1 },
-    "name_zh": { "type": "string" },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name_zh": {
+      "type": "string"
+    },
     "report_name": {
       "type": "string",
       "minLength": 1,
       "description": "Test Report sidebar title and default tests/{test_id}/ plus file_prefix. Not a run stamp."
     },
-    "report_name_zh": { "type": "string" },
+    "report_name_zh": {
+      "type": "string"
+    },
     "type": {
       "type": "string",
-      "enum": ["smoke", "serial", "instrument", "capture_loop", "custom"]
+      "enum": [
+        "smoke",
+        "serial",
+        "instrument",
+        "capture_loop",
+        "custom"
+      ]
     },
-    "version": { "type": "string" },
-    "entry": { "type": "string" },
-    "config": { "type": "string" },
-    "description": { "type": "string" },
+    "version": {
+      "type": "string"
+    },
+    "entry": {
+      "type": "string"
+    },
+    "config": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
     "capabilities": {
       "type": "array",
-      "items": { "type": "string", "enum": ["preflight", "run", "stop"] }
+      "items": {
+        "type": "string",
+        "enum": [
+          "configure",
+          "preflight",
+          "run",
+          "stop"
+        ]
+      }
     },
     "engines": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "node": { "type": "string" },
-        "wiparse": { "type": "string" }
+        "node": {
+          "type": "string"
+        },
+        "wiparse": {
+          "type": "string"
+        }
       }
     },
     "params": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["name"],
+        "required": [
+          "name"
+        ],
         "additionalProperties": true,
         "properties": {
-          "name": { "type": "string", "minLength": 1 },
-          "type": { "type": "string", "enum": ["string", "number", "boolean", "path", "device", "enum", "serial_port", "json", "text"] },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "string",
+              "number",
+              "boolean",
+              "path",
+              "device",
+              "enum",
+              "serial_port",
+              "json",
+              "text"
+            ]
+          },
           "default": {},
-          "path": { "type": "string" },
-          "label": { "type": "string" },
-          "label_zh": { "type": "string" },
-          "help": { "type": "string" },
-          "hidden": { "type": "boolean" },
-          "group": { "type": "string" },
-          "group_zh": { "type": "string" },
-          "advanced": { "type": "boolean" },
+          "path": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "label_zh": {
+            "type": "string"
+          },
+          "help": {
+            "type": "string"
+          },
+          "hidden": {
+            "type": "boolean"
+          },
+          "group": {
+            "type": "string"
+          },
+          "group_zh": {
+            "type": "string"
+          },
+          "advanced": {
+            "type": "boolean"
+          },
           "filter": {
             "type": "object",
             "properties": {
-              "kind": { "type": "string" }
+              "kind": {
+                "type": "string"
+              }
             }
           },
-          "filter_from": { "type": "string" },
+          "filter_from": {
+            "type": "string"
+          },
           "fills": {
             "type": "object",
-            "additionalProperties": { "type": "string" }
+            "additionalProperties": {
+              "type": "string"
+            }
           },
           "options": {
             "type": "array",
             "items": {
               "oneOf": [
-                { "type": "string" },
+                {
+                  "type": "string"
+                },
                 {
                   "type": "object",
-                  "required": ["value"],
+                  "required": [
+                    "value"
+                  ],
                   "properties": {
-                    "value": { "type": "string" },
-                    "label": { "type": "string" },
-                    "label_zh": { "type": "string" }
+                    "value": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "label_zh": {
+                      "type": "string"
+                    }
                   }
                 }
               ]
@@ -84,16 +176,26 @@
         }
       }
     },
-    "publisher": { "type": "string" },
-    "license": { "type": "string" },
-    "repository": { "type": "string" },
+    "publisher": {
+      "type": "string"
+    },
+    "license": {
+      "type": "string"
+    },
+    "repository": {
+      "type": "string"
+    },
     "marketplace": {
       "type": "object",
       "additionalProperties": true,
       "properties": {
         "channel": {
           "type": "string",
-          "enum": ["stable", "beta", "internal"]
+          "enum": [
+            "stable",
+            "beta",
+            "internal"
+          ]
         }
       }
     },
@@ -121,7 +223,9 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "additionalProperties": true,
         "properties": {
           "id": {
@@ -129,18 +233,95 @@
             "minLength": 1,
             "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
           },
-          "label": { "type": "string" },
-          "label_zh": { "type": "string" },
+          "label": {
+            "type": "string"
+          },
+          "label_zh": {
+            "type": "string"
+          },
           "view": {
             "type": "string",
-            "enum": ["wave", "log", "report", "external"]
+            "enum": [
+              "wave",
+              "log",
+              "report",
+              "external"
+            ]
           },
-          "dir": { "type": "string" },
+          "dir": {
+            "type": "string"
+          },
           "include": {
             "type": "array",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           },
-          "always": { "type": "boolean" }
+          "always": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "required": [
+        "mode",
+        "max_items",
+        "matrix_status_file",
+        "config_editor"
+      ],
+      "properties": {
+        "mode": {
+          "const": "test_matrix"
+        },
+        "max_items": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "matrix_status_file": {
+          "type": "string"
+        },
+        "config_editor": {
+          "type": "object",
+          "required": [
+            "schema",
+            "repository"
+          ],
+          "properties": {
+            "schema": {
+              "type": "string"
+            },
+            "ui_schema": {
+              "type": "string"
+            },
+            "repository": {
+              "type": "string"
+            },
+            "source_view": {
+              "enum": [
+                "hidden",
+                "read_only"
+              ]
+            }
+          }
+        },
+        "execution_controls": {
+          "type": "object",
+          "required": [
+            "control_file",
+            "pause_mode"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "control_file": {
+              "type": "string"
+            },
+            "pause_mode": {
+              "const": "between_items"
+            }
+          }
         }
       }
     }

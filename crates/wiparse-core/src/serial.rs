@@ -2,8 +2,8 @@
 
 use crate::dongle::uart_tcp_baud_preamble;
 use crate::mdns_browse::{self, UartBridgeRecord};
-use crate::paths::app_root;
 use crate::metrics::{parse_metric_frame, MetricSample};
+use crate::paths::app_root;
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -16,7 +16,9 @@ use thiserror::Error;
 mod serial_windows;
 #[path = "serial_winusb.rs"]
 mod serial_winusb;
-pub use serial_winusb::{open_winusb_i2c, open_winusb_uart, WinUsbI2c, WinUsbUart, WINUSB_UART_PREFIX};
+pub use serial_winusb::{
+    open_winusb_i2c, open_winusb_uart, WinUsbI2c, WinUsbUart, WINUSB_UART_PREFIX,
+};
 
 struct WifiUartCache {
     revision: u64,
@@ -184,7 +186,11 @@ fn list_ports_inner(_force_wifi: bool) -> Result<Vec<PortInfo>, SerialError> {
     out.sort_by(|a, b| {
         transport_rank(&a.transport)
             .cmp(&transport_rank(&b.transport))
-            .then_with(|| a.device.to_ascii_lowercase().cmp(&b.device.to_ascii_lowercase()))
+            .then_with(|| {
+                a.device
+                    .to_ascii_lowercase()
+                    .cmp(&b.device.to_ascii_lowercase())
+            })
     });
     Ok(out)
 }
@@ -276,8 +282,7 @@ fn port_from_available(p: &serialport::SerialPortInfo) -> PortInfo {
             let product = info.product.clone().unwrap_or_default();
             let manufacturer = info.manufacturer.clone().unwrap_or_default();
             let iface = info.interface;
-            let wiparse =
-                is_wiparse_uart_usb(info.vid, info.pid, &product, &manufacturer, iface);
+            let wiparse = is_wiparse_uart_usb(info.vid, info.pid, &product, &manufacturer, iface);
             let description = if product.is_empty() {
                 if wiparse {
                     "WIPARSE UART".into()
@@ -553,6 +558,11 @@ impl SerialSession {
     pub fn poll_events(&mut self) -> Result<Vec<CapturedEvent>, SerialError> {
         let mut tmp = [0u8; 2048];
         match self.port.read(&mut tmp) {
+            Ok(0) if matches!(&self.port, PortBackend::Tcp(_)) => {
+                return Err(SerialError::Message(
+                    "TCP UART peer closed the connection".into(),
+                ));
+            }
             Ok(0) => {}
             Ok(n) => self.buf.extend_from_slice(&tmp[..n]),
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
@@ -582,7 +592,12 @@ impl SerialSession {
     }
 }
 
-fn open_tcp_uart(host: &str, port: u16, baud: u32, device: &str) -> Result<SerialSession, SerialError> {
+fn open_tcp_uart(
+    host: &str,
+    port: u16,
+    baud: u32,
+    device: &str,
+) -> Result<SerialSession, SerialError> {
     let resolved = mdns_browse::resolve_uart_ipv4(host)
         .map(|ip| ip.to_string())
         .unwrap_or_else(|| host.to_owned());
@@ -631,34 +646,10 @@ mod tests {
 
     #[test]
     fn wiparse_usb_vid_pid_and_product() {
-        assert!(is_wiparse_uart_usb(
-            0xC251,
-            0xF01A,
-            "",
-            "WIPARSE",
-            Some(1)
-        ));
-        assert!(is_wiparse_uart_usb(
-            0xC251,
-            0xF01A,
-            "",
-            "WIPARSE",
-            Some(2)
-        ));
-        assert!(!is_wiparse_uart_usb(
-            0xC251,
-            0xF01A,
-            "",
-            "WIPARSE",
-            Some(3)
-        ));
-        assert!(!is_wiparse_uart_usb(
-            0xC251,
-            0xF01A,
-            "",
-            "WIPARSE",
-            Some(0)
-        ));
+        assert!(is_wiparse_uart_usb(0xC251, 0xF01A, "", "WIPARSE", Some(1)));
+        assert!(is_wiparse_uart_usb(0xC251, 0xF01A, "", "WIPARSE", Some(2)));
+        assert!(!is_wiparse_uart_usb(0xC251, 0xF01A, "", "WIPARSE", Some(3)));
+        assert!(!is_wiparse_uart_usb(0xC251, 0xF01A, "", "WIPARSE", Some(0)));
         assert!(!is_wiparse_uart_usb(0xC251, 0xF01A, "", "WIPARSE", None));
         assert!(is_wiparse_uart_usb(
             0x1234,

@@ -1,0 +1,603 @@
+{
+  "stage": "A-read-only",
+  "total": 20,
+  "distinct_ids": 20,
+  "distinct_names": 20,
+  "sources": [
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_01_pll_clock.json",
+      "sha256": "01a4df5ee3bd21748fac82920e373e8e033727b0620cdf981457a9974b839f87"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_02_reset_controller.json",
+      "sha256": "41327bb29a300859ec205209fd76bb614d8273995a4dbca3783c2978479d6239"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_03_gpio.json",
+      "sha256": "ed5c01bbdf4c8a9688c948a5949e4382727d5e26e0e7a5432c71c72aaa5abbd3"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_04_uart.json",
+      "sha256": "8bc8390e5c1c1c3a5caed1aac4c6af46c53c244c54a94ca74ee5800b00c3adef"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_05_spi_master.json",
+      "sha256": "86ed756c822b03481574d8481648a81b9ca8d52de1b0018d29042d02c1fd22a1"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_06_spi_slave.json",
+      "sha256": "2bfdfdf2b4c86158e5ba6ace1042afbcb20b6f9cbbf0f866e077e2b5f4336309"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_07_i2c_master.json",
+      "sha256": "af3712b9003b80ca6f38d60471ae77ab67a282f0ed39326e55cde19c2fd043db"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_08_i2c_slave.json",
+      "sha256": "5025c3bb8ab4ffc9dedd3c07d527d480a35697caa59d277c4f948044b2241113"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_09_pwm.json",
+      "sha256": "d483ac39b6496217a6d988050ae4d41d5073f4858e20fdadae798ae2de641764"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_10_timer_counter.json",
+      "sha256": "d35cf7798d0a3ff62569f686a16179352c4b9b3e762ab8fbb35a5da145c2c1ef"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_11_watchdog.json",
+      "sha256": "3c7e5a52283d8577448aa3207e5e11d6d392e51240ea3378660759f28d0bdb65"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_12_sync_fifo.json",
+      "sha256": "695cda7364acb4177bb0ea7f2386f4ef5beb43426dcc85d614bd7925944e85cf"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_13_async_fifo.json",
+      "sha256": "6d60792ef7e466c990cd8fe94f765e8641f569c2c7c5a4b7a7f50c02be0fbcb4"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_14_block_ram.json",
+      "sha256": "94fb28191218f27c04aa6050148ed7eca3b45f6019a6710d9fb11c63280c334a"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_15_ddr_controller.json",
+      "sha256": "6e93edb515aef0cd6747a7d6f76837db193ae3fc56636da3036e8b763777433f"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_16_axi_lite.json",
+      "sha256": "c75cb3bec114977395908f4aa1e261c98716d93adf2b0f6b1a53cc8b118fee71"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_17_axi_stream.json",
+      "sha256": "28a46cdc5e9a3e3c53296cdf3071f792fa1b853c06880458a980c0fe3cf0a683"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_18_dma.json",
+      "sha256": "5f0600ddeb1599e2dd5be3d4e939ac1aa0688d05cc290d5bc28c2dd4255ebaa5"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_19_ethernet_mac.json",
+      "sha256": "1bab0690dde3fa85318d4988605aaaefb3623f7080dc9edcaace8df49d061557"
+    },
+    {
+      "file": "recipes/fpga-firmware-test/cases/fpga_20_crc32.json",
+      "sha256": "50f7ff49567f0782b53bdd19807682e2f845340789e540046f7d4e836d536d85"
+    }
+  ],
+  "dut_groups": [
+    {
+      "value": {
+        "model": "DEMO-FPGA-BOARD",
+        "serial_required": true,
+        "board_revision": "DEMO-REV-A",
+        "fpga_model": "DEMO-FPGA",
+        "fixture_id": "DEMO-FIXTURE-01",
+        "station_id": "DEMO-STATION-01"
+      },
+      "ids": [
+        "fpga_01_pll_clock",
+        "fpga_02_reset_controller",
+        "fpga_03_gpio",
+        "fpga_04_uart",
+        "fpga_05_spi_master",
+        "fpga_06_spi_slave",
+        "fpga_07_i2c_master",
+        "fpga_08_i2c_slave",
+        "fpga_09_pwm",
+        "fpga_10_timer_counter",
+        "fpga_11_watchdog",
+        "fpga_12_sync_fifo",
+        "fpga_13_async_fifo",
+        "fpga_14_block_ram",
+        "fpga_15_ddr_controller",
+        "fpga_16_axi_lite",
+        "fpga_17_axi_stream",
+        "fpga_18_dma",
+        "fpga_19_ethernet_mac",
+        "fpga_20_crc32"
+      ],
+      "count": 20
+    }
+  ],
+  "instrument_groups": [
+    {
+      "value": {
+        "programmer": {
+          "kind": "debug_probe",
+          "selector": {
+            "serial": "DEMO-DONGLE-001"
+          },
+          "required": true
+        },
+        "scope": {
+          "kind": "oscilloscope",
+          "selector": {
+            "serial": "DEMO-SCOPE-001"
+          },
+          "required": true
+        },
+        "log": {
+          "kind": "wiparse_dongle_uart",
+          "selector": {
+            "dongle_serial": "DEMO-DONGLE-001",
+            "uart_channel": 0,
+            "baud": 115200
+          },
+          "required": true
+        }
+      },
+      "ids": [
+        "fpga_01_pll_clock",
+        "fpga_03_gpio",
+        "fpga_05_spi_master",
+        "fpga_07_i2c_master",
+        "fpga_09_pwm",
+        "fpga_11_watchdog",
+        "fpga_13_async_fifo",
+        "fpga_15_ddr_controller",
+        "fpga_17_axi_stream",
+        "fpga_19_ethernet_mac"
+      ],
+      "count": 10
+    },
+    {
+      "value": {
+        "programmer": {
+          "kind": "debug_probe",
+          "selector": {
+            "serial": "DEMO-DONGLE-001"
+          },
+          "required": true
+        },
+        "scope": {
+          "kind": "oscilloscope",
+          "selector": {
+            "serial": "DEMO-SCOPE-001"
+          },
+          "required": true
+        },
+        "log": {
+          "kind": "serial_port",
+          "selector": {
+            "port": "COM3",
+            "baud": 115200
+          },
+          "required": true
+        },
+        "power": {
+          "kind": "dc_source",
+          "selector": {
+            "serial": "DEMO-POWER-001"
+          },
+          "required": true
+        }
+      },
+      "ids": [
+        "fpga_02_reset_controller",
+        "fpga_06_spi_slave",
+        "fpga_10_timer_counter",
+        "fpga_14_block_ram",
+        "fpga_18_dma"
+      ],
+      "count": 5
+    },
+    {
+      "value": {
+        "programmer": {
+          "kind": "debug_probe",
+          "selector": {
+            "serial": "DEMO-DONGLE-001"
+          },
+          "required": true
+        },
+        "scope": {
+          "kind": "oscilloscope",
+          "selector": {
+            "serial": "DEMO-SCOPE-001"
+          },
+          "required": true
+        },
+        "log": {
+          "kind": "serial_port",
+          "selector": {
+            "port": "COM3",
+            "baud": 115200
+          },
+          "required": true
+        }
+      },
+      "ids": [
+        "fpga_04_uart",
+        "fpga_08_i2c_slave",
+        "fpga_12_sync_fifo",
+        "fpga_16_axi_lite",
+        "fpga_20_crc32"
+      ],
+      "count": 5
+    }
+  ],
+  "reset_groups": [
+    {
+      "value": "wiparse_dongle",
+      "ids": [
+        "fpga_01_pll_clock",
+        "fpga_03_gpio",
+        "fpga_04_uart",
+        "fpga_05_spi_master",
+        "fpga_07_i2c_master",
+        "fpga_08_i2c_slave",
+        "fpga_09_pwm",
+        "fpga_11_watchdog",
+        "fpga_12_sync_fifo",
+        "fpga_13_async_fifo",
+        "fpga_15_ddr_controller",
+        "fpga_16_axi_lite",
+        "fpga_17_axi_stream",
+        "fpga_19_ethernet_mac",
+        "fpga_20_crc32"
+      ],
+      "count": 15
+    },
+    {
+      "value": "dc_power",
+      "ids": [
+        "fpga_02_reset_controller",
+        "fpga_06_spi_slave",
+        "fpga_10_timer_counter",
+        "fpga_14_block_ram",
+        "fpga_18_dma"
+      ],
+      "count": 5
+    }
+  ],
+  "timeout_groups": [
+    {
+      "value": 120,
+      "ids": [
+        "fpga_01_pll_clock",
+        "fpga_02_reset_controller",
+        "fpga_03_gpio",
+        "fpga_04_uart",
+        "fpga_05_spi_master",
+        "fpga_06_spi_slave",
+        "fpga_07_i2c_master",
+        "fpga_08_i2c_slave",
+        "fpga_09_pwm",
+        "fpga_10_timer_counter",
+        "fpga_11_watchdog",
+        "fpga_12_sync_fifo",
+        "fpga_13_async_fifo",
+        "fpga_14_block_ram",
+        "fpga_15_ddr_controller",
+        "fpga_16_axi_lite",
+        "fpga_17_axi_stream",
+        "fpga_18_dma",
+        "fpga_19_ethernet_mac",
+        "fpga_20_crc32"
+      ],
+      "count": 20
+    }
+  ],
+  "conflicts": [
+    {
+      "path": "instruments.log.kind",
+      "variants": [
+        {
+          "value": {
+            "present": true,
+            "value": "wiparse_dongle_uart"
+          },
+          "ids": [
+            "fpga_01_pll_clock",
+            "fpga_03_gpio",
+            "fpga_05_spi_master",
+            "fpga_07_i2c_master",
+            "fpga_09_pwm",
+            "fpga_11_watchdog",
+            "fpga_13_async_fifo",
+            "fpga_15_ddr_controller",
+            "fpga_17_axi_stream",
+            "fpga_19_ethernet_mac"
+          ],
+          "count": 10
+        },
+        {
+          "value": {
+            "present": true,
+            "value": "serial_port"
+          },
+          "ids": [
+            "fpga_02_reset_controller",
+            "fpga_04_uart",
+            "fpga_06_spi_slave",
+            "fpga_08_i2c_slave",
+            "fpga_10_timer_counter",
+            "fpga_12_sync_fifo",
+            "fpga_14_block_ram",
+            "fpga_16_axi_lite",
+            "fpga_18_dma",
+            "fpga_20_crc32"
+          ],
+          "count": 10
+        }
+      ]
+    },
+    {
+      "path": "instruments.log.selector.dongle_serial",
+      "variants": [
+        {
+          "value": {
+            "present": true,
+            "value": "DEMO-DONGLE-001"
+          },
+          "ids": [
+            "fpga_01_pll_clock",
+            "fpga_03_gpio",
+            "fpga_05_spi_master",
+            "fpga_07_i2c_master",
+            "fpga_09_pwm",
+            "fpga_11_watchdog",
+            "fpga_13_async_fifo",
+            "fpga_15_ddr_controller",
+            "fpga_17_axi_stream",
+            "fpga_19_ethernet_mac"
+          ],
+          "count": 10
+        },
+        {
+          "value": {
+            "present": false
+          },
+          "ids": [
+            "fpga_02_reset_controller",
+            "fpga_04_uart",
+            "fpga_06_spi_slave",
+            "fpga_08_i2c_slave",
+            "fpga_10_timer_counter",
+            "fpga_12_sync_fifo",
+            "fpga_14_block_ram",
+            "fpga_16_axi_lite",
+            "fpga_18_dma",
+            "fpga_20_crc32"
+          ],
+          "count": 10
+        }
+      ]
+    },
+    {
+      "path": "instruments.log.selector.port",
+      "variants": [
+        {
+          "value": {
+            "present": false
+          },
+          "ids": [
+            "fpga_01_pll_clock",
+            "fpga_03_gpio",
+            "fpga_05_spi_master",
+            "fpga_07_i2c_master",
+            "fpga_09_pwm",
+            "fpga_11_watchdog",
+            "fpga_13_async_fifo",
+            "fpga_15_ddr_controller",
+            "fpga_17_axi_stream",
+            "fpga_19_ethernet_mac"
+          ],
+          "count": 10
+        },
+        {
+          "value": {
+            "present": true,
+            "value": "COM3"
+          },
+          "ids": [
+            "fpga_02_reset_controller",
+            "fpga_04_uart",
+            "fpga_06_spi_slave",
+            "fpga_08_i2c_slave",
+            "fpga_10_timer_counter",
+            "fpga_12_sync_fifo",
+            "fpga_14_block_ram",
+            "fpga_16_axi_lite",
+            "fpga_18_dma",
+            "fpga_20_crc32"
+          ],
+          "count": 10
+        }
+      ]
+    },
+    {
+      "path": "instruments.log.selector.uart_channel",
+      "variants": [
+        {
+          "value": {
+            "present": true,
+            "value": 0
+          },
+          "ids": [
+            "fpga_01_pll_clock",
+            "fpga_03_gpio",
+            "fpga_05_spi_master",
+            "fpga_07_i2c_master",
+            "fpga_09_pwm",
+            "fpga_11_watchdog",
+            "fpga_13_async_fifo",
+            "fpga_15_ddr_controller",
+            "fpga_17_axi_stream",
+            "fpga_19_ethernet_mac"
+          ],
+          "count": 10
+        },
+        {
+          "value": {
+            "present": false
+          },
+          "ids": [
+            "fpga_02_reset_controller",
+            "fpga_04_uart",
+            "fpga_06_spi_slave",
+            "fpga_08_i2c_slave",
+            "fpga_10_timer_counter",
+            "fpga_12_sync_fifo",
+            "fpga_14_block_ram",
+            "fpga_16_axi_lite",
+            "fpga_18_dma",
+            "fpga_20_crc32"
+          ],
+          "count": 10
+        }
+      ]
+    },
+    {
+      "path": "instruments.power.kind",
+      "variants": [
+        {
+          "value": {
+            "present": false
+          },
+          "ids": [
+            "fpga_01_pll_clock",
+            "fpga_03_gpio",
+            "fpga_04_uart",
+            "fpga_05_spi_master",
+            "fpga_07_i2c_master",
+            "fpga_08_i2c_slave",
+            "fpga_09_pwm",
+            "fpga_11_watchdog",
+            "fpga_12_sync_fifo",
+            "fpga_13_async_fifo",
+            "fpga_15_ddr_controller",
+            "fpga_16_axi_lite",
+            "fpga_17_axi_stream",
+            "fpga_19_ethernet_mac",
+            "fpga_20_crc32"
+          ],
+          "count": 15
+        },
+        {
+          "value": {
+            "present": true,
+            "value": "dc_source"
+          },
+          "ids": [
+            "fpga_02_reset_controller",
+            "fpga_06_spi_slave",
+            "fpga_10_timer_counter",
+            "fpga_14_block_ram",
+            "fpga_18_dma"
+          ],
+          "count": 5
+        }
+      ]
+    },
+    {
+      "path": "instruments.power.required",
+      "variants": [
+        {
+          "value": {
+            "present": false
+          },
+          "ids": [
+            "fpga_01_pll_clock",
+            "fpga_03_gpio",
+            "fpga_04_uart",
+            "fpga_05_spi_master",
+            "fpga_07_i2c_master",
+            "fpga_08_i2c_slave",
+            "fpga_09_pwm",
+            "fpga_11_watchdog",
+            "fpga_12_sync_fifo",
+            "fpga_13_async_fifo",
+            "fpga_15_ddr_controller",
+            "fpga_16_axi_lite",
+            "fpga_17_axi_stream",
+            "fpga_19_ethernet_mac",
+            "fpga_20_crc32"
+          ],
+          "count": 15
+        },
+        {
+          "value": {
+            "present": true,
+            "value": true
+          },
+          "ids": [
+            "fpga_02_reset_controller",
+            "fpga_06_spi_slave",
+            "fpga_10_timer_counter",
+            "fpga_14_block_ram",
+            "fpga_18_dma"
+          ],
+          "count": 5
+        }
+      ]
+    },
+    {
+      "path": "instruments.power.selector.serial",
+      "variants": [
+        {
+          "value": {
+            "present": false
+          },
+          "ids": [
+            "fpga_01_pll_clock",
+            "fpga_03_gpio",
+            "fpga_04_uart",
+            "fpga_05_spi_master",
+            "fpga_07_i2c_master",
+            "fpga_08_i2c_slave",
+            "fpga_09_pwm",
+            "fpga_11_watchdog",
+            "fpga_12_sync_fifo",
+            "fpga_13_async_fifo",
+            "fpga_15_ddr_controller",
+            "fpga_16_axi_lite",
+            "fpga_17_axi_stream",
+            "fpga_19_ethernet_mac",
+            "fpga_20_crc32"
+          ],
+          "count": 15
+        },
+        {
+          "value": {
+            "present": true,
+            "value": "DEMO-POWER-001"
+          },
+          "ids": [
+            "fpga_02_reset_controller",
+            "fpga_06_spi_slave",
+            "fpga_10_timer_counter",
+            "fpga_14_block_ram",
+            "fpga_18_dma"
+          ],
+          "count": 5
+        }
+      ]
+    }
+  ],
+  "automatic_migration_allowed": false,
+  "shared_candidate": null,
+  "role_reference_extension": "proposal_pending_architecture_confirmation",
+  "sample_scope": "DEMO fixtures only; no normalization of user configurations"
+}

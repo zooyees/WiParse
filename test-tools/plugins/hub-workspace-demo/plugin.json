@@ -1,0 +1,47 @@
+{
+  "id": "hub-workspace-demo",
+  "name": "Configuration workspace demo",
+  "name_zh": "配置工作区示例",
+  "report_name": "HubWorkspaceDemo",
+  "type": "custom",
+  "version": "1.0.0",
+  "entry": "index.mjs",
+  "capabilities": [
+    "configure",
+    "preflight",
+    "run",
+    "stop"
+  ],
+  "params": [
+    {
+      "name": "file_prefix",
+      "type": "string",
+      "default": "HubWorkspaceDemo",
+      "label": "Report name",
+      "label_zh": "报告名称"
+    }
+  ],
+  "ui": {
+    "mode": "test_matrix",
+    "max_items": 500,
+    "matrix_status_file": "{test_dir}/matrix.json",
+    "config_editor": {
+      "schema": "config.schema.json",
+      "ui_schema": "config.ui.json",
+      "repository": "{data_root}/projects/{project}/configs/{plugin_id}",
+      "source_view": "read_only"
+    }
+  },
+  "engines": {
+    "node": ">=20",
+    "wiparse": ">=1.2.0"
+  },
+  "outputs": [
+    {
+      "id": "reports",
+      "kind": "report",
+      "title": "Reports",
+      "glob": "reports/*.md"
+    }
+  ]
+}

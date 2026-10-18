@@ -61,6 +61,8 @@ struct ExtraLink {
 }
 
 pub struct SerialToolPanel {
+    repaint: Option<egui::Context>,
+    repaint_visible: Arc<AtomicBool>,
     ports: Vec<PortInfo>,
     selected_port: usize,
     baud: String,
@@ -184,6 +186,8 @@ impl SerialToolPanel {
             recording_settings_open: false,
             last_live_flush: Instant::now(),
             last_lang: lang,
+            repaint: None,
+            repaint_visible: Arc::new(AtomicBool::new(true)),
             tab_scroll_x: 0.0,
             tab_wheel_last_switch_at: None,
             pending_loads: Vec::new(),
@@ -296,10 +300,7 @@ impl SerialToolPanel {
     }
 
     fn refresh_ports(&mut self, lang: Lang) {
-        let current = self
-            .ports
-            .get(self.selected_port)
-            .map(|p| p.device.clone());
+        let current = self.ports.get(self.selected_port).map(|p| p.device.clone());
         self.ports = refresh_ports().unwrap_or_default();
         if let Some(cur) = current {
             if let Some(idx) = self.ports.iter().position(|p| p.device == cur) {
@@ -330,10 +331,7 @@ impl SerialToolPanel {
     }
 
     fn merge_discovered_ports(&mut self) {
-        let current = self
-            .ports
-            .get(self.selected_port)
-            .map(|p| p.device.clone());
+        let current = self.ports.get(self.selected_port).map(|p| p.device.clone());
         let fresh = list_ports().unwrap_or_default();
         let same = fresh.len() == self.ports.len()
             && fresh
@@ -369,7 +367,8 @@ impl SerialToolPanel {
         if let Some(idx) = self.ports.iter().position(|p| p.device == device) {
             self.selected_port = idx;
         } else {
-            self.ports.insert(0, PortInfo::from_device(device.to_owned()));
+            self.ports
+                .insert(0, PortInfo::from_device(device.to_owned()));
             self.selected_port = 0;
         }
     }
@@ -604,7 +603,9 @@ impl SerialToolPanel {
                 }
             }
         } else {
-            if let Err(e) = self.close_live_writer() { self.recording_error = Some(e.to_string()); }
+            if let Err(e) = self.close_live_writer() {
+                self.recording_error = Some(e.to_string());
+            }
         }
         self.persist_open_log_files();
     }
@@ -705,7 +706,19 @@ impl SerialToolPanel {
         let (write_tx, write_rx) = unbounded();
         let stop_c = Arc::clone(&stop);
         let port_for_thread = port.clone();
-        thread::spawn(move || serial_worker(port_for_thread, baud, stop_c, tx, write_rx));
+        let repaint = self.repaint.clone();
+        let visible = Arc::clone(&self.repaint_visible);
+        thread::spawn(move || {
+            serial_worker(
+                port_for_thread,
+                baud,
+                stop_c,
+                tx,
+                write_rx,
+                repaint,
+                visible,
+            )
+        });
         self.stop_flag = Some(stop);
         self.rx = Some(rx);
         self.write_tx = Some(write_tx);
@@ -739,7 +752,19 @@ impl SerialToolPanel {
         let (write_tx, write_rx) = unbounded();
         let stop_c = Arc::clone(&stop);
         let port_for_thread = port.clone();
-        thread::spawn(move || serial_worker(port_for_thread, baud, stop_c, tx, write_rx));
+        let repaint = self.repaint.clone();
+        let visible = Arc::clone(&self.repaint_visible);
+        thread::spawn(move || {
+            serial_worker(
+                port_for_thread,
+                baud,
+                stop_c,
+                tx,
+                write_rx,
+                repaint,
+                visible,
+            )
+        });
         let title = self
             .ports
             .iter()
@@ -804,7 +829,13 @@ impl SerialToolPanel {
             let mut batch = Vec::new();
             let mut stopped = false;
             let tab = self.extras[i].tab;
-            while let Ok(ev) = self.extras[i].rx.try_recv() {
+            let started = Instant::now();
+            let mut remaining = DRAIN_LINES_PER_FRAME;
+            while remaining > 0 && started.elapsed() < DRAIN_TIME_PER_FRAME {
+                let Ok(ev) = self.extras[i].rx.try_recv() else {
+                    break;
+                };
+                remaining -= 1;
                 match ev {
                     SerialEvent::Line(line) => batch.push(line),
                     SerialEvent::Error(e) => batch.push(format!("[ERR] {e}")),
@@ -1109,13 +1140,19 @@ impl SerialToolPanel {
             let row = start_row + i as u64;
             let result = self.live_brief.ingest_line(row, line);
             if let Some(t) = self.live_test.as_mut() {
-                if let Err(e) = t.pack.append_serial_line(line) { first_error.get_or_insert(e); }
+                if let Err(e) = t.pack.append_serial_line(line) {
+                    first_error.get_or_insert(e);
+                }
                 match &result {
                     IngestResult::Event(ev) => {
-                        if let Err(e) = t.pack.on_event(ev) { first_error.get_or_insert(e); }
+                        if let Err(e) = t.pack.on_event(ev) {
+                            first_error.get_or_insert(e);
+                        }
                     }
                     IngestResult::Metric { t: ts, sample } => {
-                        if let Err(e) = t.pack.on_metric(*ts, sample) { first_error.get_or_insert(e); }
+                        if let Err(e) = t.pack.on_metric(*ts, sample) {
+                            first_error.get_or_insert(e);
+                        }
                     }
                     IngestResult::None => {}
                 }
@@ -1189,7 +1226,11 @@ impl SerialToolPanel {
                     if let Some(t) = self.live_test.as_mut() {
                         let fail_act = t.driver.fail(&e);
                         match fail_act {
-                            TickAction::Capture { tag, save, device_id } => {
+                            TickAction::Capture {
+                                tag,
+                                save,
+                                device_id,
+                            } => {
                                 self.queue_capture(tag, save, device_id);
                             }
                             other => self.apply_tick_action(other),
@@ -1221,10 +1262,7 @@ impl SerialToolPanel {
                     });
                 }
             }
-            TickAction::Command {
-                device_id,
-                command,
-            } => {
+            TickAction::Command { device_id, command } => {
                 if let Some(t) = self.live_test.as_mut() {
                     t.instrument_jobs
                         .push(TestInstrumentJob::Command { device_id, command });
@@ -1315,13 +1353,21 @@ impl SerialToolPanel {
         }
     }
 
-    fn finish_test(&mut self, verdict: RunVerdict, reason: &str) -> Result<serde_json::Value, String> {
+    fn finish_test(
+        &mut self,
+        verdict: RunVerdict,
+        reason: &str,
+    ) -> Result<serde_json::Value, String> {
         let Some(mut t) = self.live_test.take() else {
             return Err("no test".into());
         };
         t.finished = true;
         let evidence_error = self.recording_error.clone();
-        let final_verdict = if evidence_error.is_some() { RunVerdict::Failed } else { verdict };
+        let final_verdict = if evidence_error.is_some() {
+            RunVerdict::Failed
+        } else {
+            verdict
+        };
         let final_reason = evidence_error
             .as_ref()
             .map(|e| format!("evidence incomplete: {e}"))
@@ -1375,7 +1421,9 @@ impl SerialToolPanel {
         self.write_tx = None;
         self.primary_device = None;
         self.monitoring = !self.extras.is_empty();
-        if let Err(e) = self.close_live_writer() { self.recording_error = Some(e.to_string()); }
+        if let Err(e) = self.close_live_writer() {
+            self.recording_error = Some(e.to_string());
+        }
         self.status = tr(lang, "status.stopped");
     }
 
@@ -1398,7 +1446,9 @@ impl SerialToolPanel {
             self.status = format!("{}: {e}", tr(lang, "status.create_failed"));
             return;
         }
-        if let Err(e) = self.close_live_writer() { self.recording_error = Some(e.to_string()); }
+        if let Err(e) = self.close_live_writer() {
+            self.recording_error = Some(e.to_string());
+        }
         let Some(archived_path) = self.live_file.take() else {
             self.status = tr(lang, "status.create_failed").into();
             return;
@@ -1590,7 +1640,11 @@ impl SerialToolPanel {
                 .unwrap_or_else(|| path.display().to_string());
             folders.push(LogBrowserFolder { name, files: txts });
         }
-        folders.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+        folders.sort_by(|a, b| {
+            a.name
+                .to_ascii_lowercase()
+                .cmp(&b.name.to_ascii_lowercase())
+        });
         self.browser_folders = folders;
     }
 
@@ -1700,7 +1754,9 @@ impl SerialToolPanel {
         let drain_started = Instant::now();
         if let Some(rx) = &self.rx {
             while budget > 0 && drain_started.elapsed() < DRAIN_TIME_PER_FRAME {
-                let Ok(ev) = rx.try_recv() else { break; };
+                let Ok(ev) = rx.try_recv() else {
+                    break;
+                };
                 budget -= 1;
                 match ev {
                     SerialEvent::Line(line) => {
@@ -1733,7 +1789,9 @@ impl SerialToolPanel {
             self.stop_flag = None;
             self.rx = None;
             self.write_tx = None;
-            if let Err(e) = self.close_live_writer() { self.recording_error = Some(e.to_string()); }
+            if let Err(e) = self.close_live_writer() {
+                self.recording_error = Some(e.to_string());
+            }
             self.status = tr(self.last_lang, "status.stopped");
             if let Some(api) = api {
                 api.set_monitoring(false, None, None);
@@ -1818,6 +1876,20 @@ impl SerialToolPanel {
         self.monitoring
     }
 
+    pub fn attach_repaint_context(&mut self, ctx: &egui::Context) {
+        self.repaint = Some(ctx.clone());
+    }
+
+    pub fn set_live_view_visible(&self, visible: bool) {
+        self.repaint_visible.store(visible, Ordering::Relaxed);
+    }
+
+    pub fn has_pending_rx(&self) -> bool {
+        self.rx.as_ref().is_some_and(|rx| !rx.is_empty())
+            || self.extras.iter().any(|source| !source.rx.is_empty())
+            || (self.monitoring && self.repaint.is_none())
+    }
+
     pub fn active_live_visible(&self) -> bool {
         self.active_tab == 0
     }
@@ -1894,15 +1966,26 @@ impl SerialToolPanel {
         // Independent left sidebar + content (must force top-down
         // layouts). Independent max_rects so ComboBox selected_text cannot leak
         // width into the parent and open a gap beside the card.
-        const SIDE_MAIN_GAP: f32 = 8.0;
+        const SIDE_MAIN_GAP: f32 = 16.0;
 
         let full = ui.available_rect_before_wrap();
         let _ = ui.allocate_exact_size(full.size(), egui::Sense::hover());
-        let side_w = ui_theme::resizable_sidebar_width(ui, "serial_tool", full,
-            ui_theme::SIDEBAR_W, 230.0, 200.0, SIDE_MAIN_GAP, t);
+        let side_w = ui_theme::resizable_sidebar_width(
+            ui,
+            "serial_tool",
+            full,
+            300.0,
+            250.0,
+            160.0,
+            SIDE_MAIN_GAP,
+            t,
+        );
         let side_rect = egui::Rect::from_min_size(full.min, egui::vec2(side_w, full.height()));
         let content_rect = egui::Rect::from_min_max(
-            egui::pos2((side_rect.max.x + SIDE_MAIN_GAP).min(full.max.x), full.min.y),
+            egui::pos2(
+                (side_rect.max.x + SIDE_MAIN_GAP).min(full.max.x),
+                full.min.y,
+            ),
             full.max,
         );
         {
@@ -1912,7 +1995,8 @@ impl SerialToolPanel {
                 egui::pos2(side_rect.min.x + SIDE_PAD, side_rect.min.y),
                 egui::pos2(side_rect.max.x - SIDE_PAD, side_rect.max.y),
             );
-            crate::theme::scope_in_allocated_rect(ui,
+            crate::theme::scope_in_allocated_rect(
+                ui,
                 egui::UiBuilder::new()
                     .max_rect(side_inner)
                     .layout(egui::Layout::top_down(egui::Align::Min)),
@@ -1921,18 +2005,22 @@ impl SerialToolPanel {
                     ui.set_max_width(card_w);
                     ui.set_min_width(card_w);
                     ui.set_clip_rect(side_rect.intersect(ui.clip_rect()));
-                    const CARD_MARGIN_X: i8 = 8;
+                    egui::ScrollArea::vertical().id_salt("serial-controls-scroll").max_height(side_inner.height()).auto_shrink([false, false]).show(ui, |ui| {
+                    let card_w = ui.available_width();
+                    const CARD_MARGIN_X: i8 = 12;
                     let inner_w = (card_w - f32::from(CARD_MARGIN_X) * 2.0).max(1.0);
 
                     // Group 1: serial port controls — fill + Inside stroke (no Frame stroke clip).
                     ui.set_width(card_w);
                     let g1 = Frame::NONE
                         .fill(t.surface_bg)
-                        .inner_margin(Margin::symmetric(CARD_MARGIN_X, 6))
-                        .corner_radius(CornerRadius::same(ui_theme::RADIUS_CTRL))
+                        .inner_margin(Margin::symmetric(CARD_MARGIN_X, 12))
+                        .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
                         .show(ui, |ui| {
                             ui.set_width(inner_w);
                             ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
+                            ui.label(egui::RichText::new(if matches!(lang, Lang::Zh) { "连接与采集" } else { "Connection & capture" }).size(ui_theme::FONT_SECTION).strong());
+                            ui.add_space(6.0);
                             let ctrl_w = inner_w;
 
                             let port_text = self
@@ -1946,31 +2034,39 @@ impl SerialToolPanel {
                                 .map(|p| p.display_label().to_owned())
                                 .unwrap_or_else(|| port_text.clone());
                             ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
-                            let refresh_w = ui_theme::CTRL_H;
-                            let port_w = (ctrl_w - refresh_w - ui_theme::SPACE_SM).max(80.0);
-                            egui::ComboBox::from_id_salt("serial_port")
-                                .width(port_w)
-                                .truncate()
-                                .selected_text(port_text)
-                                .show_ui(ui, |ui| {
-                                    ui.set_min_width(port_w);
-                                    if self.ports.is_empty() {
-                                        ui.label(tr(lang, "status.port_none"));
-                                    }
-                                    for (i, p) in self.ports.iter().enumerate() {
-                                        ui.selectable_value(
-                                            &mut self.selected_port,
-                                            i,
-                                            p.display_label(),
-                                        );
-                                    }
-                                })
-                                .response
-                                .on_hover_text(port_hover);
-                            if ui_theme::secondary_btn_sized(ui, t, "⟳", egui::vec2(refresh_w, ui_theme::CTRL_H)).on_hover_text(tr(lang, "btn.refresh_ports")).clicked() {
-                                self.refresh_ports(lang);
-                            }
+                                ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
+                                let refresh_w = ui_theme::CTRL_H;
+                                let port_w = (ctrl_w - refresh_w - ui_theme::SPACE_SM).max(80.0);
+                                egui::ComboBox::from_id_salt("serial_port")
+                                    .width(port_w)
+                                    .truncate()
+                                    .selected_text(port_text)
+                                    .show_ui(ui, |ui| {
+                                        ui.set_min_width(port_w);
+                                        if self.ports.is_empty() {
+                                            ui.label(tr(lang, "status.port_none"));
+                                        }
+                                        for (i, p) in self.ports.iter().enumerate() {
+                                            ui.selectable_value(
+                                                &mut self.selected_port,
+                                                i,
+                                                p.display_label(),
+                                            );
+                                        }
+                                    })
+                                    .response
+                                    .on_hover_text(port_hover);
+                                if ui_theme::secondary_btn_sized(
+                                    ui,
+                                    t,
+                                    "⟳",
+                                    egui::vec2(refresh_w, ui_theme::CTRL_H),
+                                )
+                                .on_hover_text(tr(lang, "btn.refresh_ports"))
+                                .clicked()
+                                {
+                                    self.refresh_ports(lang);
+                                }
                             });
                             let manual = ui.add_sized(
                                 [ctrl_w, ui_theme::CTRL_H],
@@ -1979,11 +2075,12 @@ impl SerialToolPanel {
                             );
                             if manual.lost_focus() && !self.manual_tcp.trim().is_empty() {
                                 let raw = self.manual_tcp.trim().to_owned();
-                                let device = if raw.starts_with("tcp://") || raw.starts_with("TCP://") {
-                                    raw
-                                } else {
-                                    format!("tcp://{raw}")
-                                };
+                                let device =
+                                    if raw.starts_with("tcp://") || raw.starts_with("TCP://") {
+                                        raw
+                                    } else {
+                                        format!("tcp://{raw}")
+                                    };
                                 self.ensure_listed_device(&device);
                             }
 
@@ -2038,11 +2135,8 @@ impl SerialToolPanel {
                                         .hint_text(tr(lang, "serial.baud_custom_hint")),
                                 );
                                 if baud_edit.changed() {
-                                    self.baud = self
-                                        .baud
-                                        .chars()
-                                        .filter(|c| c.is_ascii_digit())
-                                        .collect();
+                                    self.baud =
+                                        self.baud.chars().filter(|c| c.is_ascii_digit()).collect();
                                 }
                             }
 
@@ -2055,7 +2149,11 @@ impl SerialToolPanel {
                                     .get(self.selected_port)
                                     .map(|p| p.compact_label())
                                     .unwrap_or_else(|| "-".into());
-                                let live = format!("●  {port}  ·  {}  ·  {}", self.baud, tr(lang, "status.live"));
+                                let live = format!(
+                                    "●  {port}  ·  {}  ·  {}",
+                                    self.baud,
+                                    tr(lang, "status.live")
+                                );
                                 let (bar, _) = ui.allocate_exact_size(
                                     egui::vec2(ctrl_w, ui_theme::CTRL_H),
                                     egui::Sense::hover(),
@@ -2110,9 +2208,21 @@ impl SerialToolPanel {
                                 }
                             });
 
-                            let summary = format!("{} · {}", self.live_name, if self.save_live_to_disk { tr(lang, "log.save_data") } else { tr(lang, "status.ready") });
+                            let summary = format!(
+                                "{} · {}",
+                                self.live_name,
+                                if self.save_live_to_disk {
+                                    tr(lang, "log.save_data")
+                                } else {
+                                    tr(lang, "status.ready")
+                                }
+                            );
                             let record_label = if self.recording_settings_open {
-                                if lang == Lang::Zh { "记录设置  ▾" } else { "Recording  ▾" }
+                                if lang == Lang::Zh {
+                                    "记录设置  ▾"
+                                } else {
+                                    "Recording  ▾"
+                                }
                             } else if lang == Lang::Zh {
                                 "记录设置  ▸"
                             } else {
@@ -2130,93 +2240,94 @@ impl SerialToolPanel {
                                 self.recording_settings_open = !self.recording_settings_open;
                             }
                             if self.recording_settings_open {
-                            ui.add_space(2.0);
-                            ui.label(
-                                egui::RichText::new(tr(lang, "log.filename"))
-                                    .size(12.0)
-                                    .color(t.text_muted),
-                            );
-                            let name_edit = ui.add_sized(
-                                [ctrl_w, ui_theme::CTRL_H],
-                                ui_theme::singleline_sized(&mut self.live_name, ctrl_w),
-                            );
-                            let enter_pressed = ui.input(|input| {
-                                input.events.iter().any(|event| {
-                                    matches!(
-                                        event,
-                                        egui::Event::Key {
-                                            key: egui::Key::Enter,
-                                            pressed: true,
-                                            ..
-                                        }
-                                    )
-                                })
-                            });
-                            if (name_edit.has_focus() || name_edit.lost_focus()) && enter_pressed {
-                                self.commit_live_name(lang);
-                            }
-
-                            let mut save_data = self.save_live_to_disk;
-                            let save_chk = ui
-                                .checkbox(
-                                    &mut save_data,
-                                    egui::RichText::new(tr(lang, "log.save_data"))
+                                ui.add_space(2.0);
+                                ui.label(
+                                    egui::RichText::new(tr(lang, "log.filename"))
                                         .size(12.0)
                                         .color(t.text_muted),
-                                )
-                                .on_hover_text(tr(lang, "log.save_data_hint"));
-                            if save_chk.changed() {
-                                self.set_save_live_to_disk(save_data);
-                            }
-
-                            ui.label(
-                                egui::RichText::new(tr(lang, "log.save_dir"))
-                                    .size(12.0)
-                                    .color(t.text_muted),
-                            );
-                            let _ = ui.add_sized(
-                                [ctrl_w, ui_theme::CTRL_H],
-                                ui_theme::singleline_sized(&mut self.live_dir, ctrl_w),
-                            );
-
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
-                                let half = ui_theme::equal_widths(ctrl_w, 2)[0];
-                                if ui_theme::secondary_btn_sized(
-                                    ui,
-                                    t,
-                                    tr(lang, "btn.browse_dir"),
-                                    egui::vec2(half, ui_theme::CTRL_H),
-                                )
-                                .clicked()
+                                );
+                                let name_edit = ui.add_sized(
+                                    [ctrl_w, ui_theme::CTRL_H],
+                                    ui_theme::singleline_sized(&mut self.live_name, ctrl_w),
+                                );
+                                let enter_pressed = ui.input(|input| {
+                                    input.events.iter().any(|event| {
+                                        matches!(
+                                            event,
+                                            egui::Event::Key {
+                                                key: egui::Key::Enter,
+                                                pressed: true,
+                                                ..
+                                            }
+                                        )
+                                    })
+                                });
+                                if (name_edit.has_focus() || name_edit.lost_focus())
+                                    && enter_pressed
                                 {
-                                    self.browse_dir();
+                                    self.commit_live_name(lang);
                                 }
-                                if ui_theme::secondary_btn_sized(
-                                    ui,
-                                    t,
-                                    tr(lang, "btn.open_log"),
-                                    egui::vec2(half, ui_theme::CTRL_H),
-                                )
-                                .clicked()
-                                {
-                                    self.open_files();
+
+                                let mut save_data = self.save_live_to_disk;
+                                let save_chk = ui
+                                    .checkbox(
+                                        &mut save_data,
+                                        egui::RichText::new(tr(lang, "log.save_data"))
+                                            .size(12.0)
+                                            .color(t.text_muted),
+                                    )
+                                    .on_hover_text(tr(lang, "log.save_data_hint"));
+                                if save_chk.changed() {
+                                    self.set_save_live_to_disk(save_data);
                                 }
-                            });
+
+                                ui.label(
+                                    egui::RichText::new(tr(lang, "log.save_dir"))
+                                        .size(12.0)
+                                        .color(t.text_muted),
+                                );
+                                let _ = ui.add_sized(
+                                    [ctrl_w, ui_theme::CTRL_H],
+                                    ui_theme::singleline_sized(&mut self.live_dir, ctrl_w),
+                                );
+
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
+                                    let half = ui_theme::equal_widths(ctrl_w, 2)[0];
+                                    if ui_theme::secondary_btn_sized(
+                                        ui,
+                                        t,
+                                        tr(lang, "btn.browse_dir"),
+                                        egui::vec2(half, ui_theme::CTRL_H),
+                                    )
+                                    .clicked()
+                                    {
+                                        self.browse_dir();
+                                    }
+                                    if ui_theme::secondary_btn_sized(
+                                        ui,
+                                        t,
+                                        tr(lang, "btn.open_log"),
+                                        egui::vec2(half, ui_theme::CTRL_H),
+                                    )
+                                    .clicked()
+                                    {
+                                        self.open_files();
+                                    }
+                                });
                             }
                         });
                     paint_sidebar_card_border(ui, g1.response.rect, card_w, t.border);
 
-                    ui.add_space(8.0);
+                    ui.add_space(12.0);
 
                     // Group 2: log directory browser — same fixed width as Group 1.
-                    let browser_h = ui.available_height().max(120.0);
-                    let browser_rect = egui::Rect::from_min_size(
-                        ui.cursor().min,
-                        egui::vec2(card_w, browser_h),
-                    );
+                    let browser_h = (side_inner.bottom() - ui.cursor().min.y).max(160.0);
+                    let browser_rect =
+                        egui::Rect::from_min_size(ui.cursor().min, egui::vec2(card_w, browser_h));
                     ui.advance_cursor_after_rect(browser_rect);
-                    crate::theme::scope_in_allocated_rect(ui,
+                    crate::theme::scope_in_allocated_rect(
+                        ui,
                         egui::UiBuilder::new()
                             .max_rect(browser_rect)
                             .layout(egui::Layout::top_down(egui::Align::Min)),
@@ -2228,7 +2339,7 @@ impl SerialToolPanel {
                             // Fill first; border painted after so it sits above fill and isn't clipped.
                             ui.painter().rect_filled(
                                 browser_rect,
-                                CornerRadius::same(ui_theme::RADIUS_CTRL),
+                                CornerRadius::same(ui_theme::RADIUS_CARD),
                                 t.surface_bg,
                             );
                             ui.painter().rect_stroke(
@@ -2237,11 +2348,10 @@ impl SerialToolPanel {
                                 Stroke::new(1.0_f32, t.border),
                                 egui::StrokeKind::Inside,
                             );
-                            let content = browser_rect.shrink2(egui::vec2(
-                                1.0 + f32::from(CARD_MARGIN_X),
-                                1.0 + 6.0,
-                            ));
-                            crate::theme::scope_in_allocated_rect(ui,
+                            let content = browser_rect
+                                .shrink2(egui::vec2(1.0 + f32::from(CARD_MARGIN_X), 1.0 + 6.0));
+                            crate::theme::scope_in_allocated_rect(
+                                ui,
                                 egui::UiBuilder::new()
                                     .max_rect(content)
                                     .layout(egui::Layout::top_down(egui::Align::Min)),
@@ -2255,7 +2365,7 @@ impl SerialToolPanel {
 
                                     ui.label(
                                         egui::RichText::new(tr(lang, "log.browser_dir"))
-                                            .size(12.0)
+                                            .size(ui_theme::FONT_SECTION)
                                             .strong()
                                             .color(t.text_primary),
                                     );
@@ -2346,8 +2456,10 @@ impl SerialToolPanel {
                                                     ))
                                                     .default_open(false)
                                                     .show(ui, |ui| {
-                                                        let row_w =
-                                                            ui.available_width().min(list_w).max(1.0);
+                                                        let row_w = ui
+                                                            .available_width()
+                                                            .min(list_w)
+                                                            .max(1.0);
                                                         ui.set_min_width(row_w);
                                                         ui.spacing_mut().item_spacing.y = 1.0;
                                                         for (name, path) in &folder.files {
@@ -2374,11 +2486,13 @@ impl SerialToolPanel {
                             ); // end browser content
                         },
                     ); // end browser card scope
+                    }); // scroll controls on short windows
                 },
             ); // end sidebar scope_builder
 
             // ── Right: file tabs + LogTabPage ─────────────────────────
-            crate::theme::scope_in_allocated_rect(ui,
+            crate::theme::scope_in_allocated_rect(
+                ui,
                 egui::UiBuilder::new()
                     .max_rect(content_rect)
                     .layout(egui::Layout::top_down(egui::Align::Min)),
@@ -2386,8 +2500,8 @@ impl SerialToolPanel {
                     ui.set_max_width(content_rect.width());
                     ui.set_clip_rect(content_rect.intersect(ui.clip_rect()));
                     Frame::NONE
-                        .fill(t.header_bg)
-                        .inner_margin(Margin::symmetric(10, 6))
+                        .fill(t.surface_bg)
+                        .inner_margin(Margin::same(12))
                         .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
                         .stroke(Stroke::new(1.0_f32, t.border))
                         .show(ui, |ui| {
@@ -2781,6 +2895,13 @@ impl SerialToolPanel {
         self.persist_open_log_files();
     }
 
+    /// Explicit AI-context capture; bounded to the active tab's latest 50 lines.
+    pub(crate) fn ai_summary(&self) -> serde_json::Value {
+        let tab = self.tabs.get(self.active_tab);
+        let lines: Vec<String> = tab.map(|tab| tab.recent_lines(50).into_iter().map(|line| line.chars().take(400).collect()).collect()).unwrap_or_default();
+        serde_json::json!({"monitor_status": self.monitor_status_text(), "active_tab": tab.map(|t| t.display_title()), "total_lines": tab.map(|t| t.line_count()), "sample": "latest 50 lines, each limited to 400 characters", "recent_lines": lines})
+    }
+
     pub fn status_text(&self) -> &str {
         &self.status
     }
@@ -2889,7 +3010,10 @@ impl SerialToolPanel {
         )
     }
 
-    pub fn api_set_browser_dir(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+    pub fn api_set_browser_dir(
+        &mut self,
+        params: &serde_json::Value,
+    ) -> crate::backend::InvokeReply {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let Some(dir) = params.get("dir").and_then(|v| v.as_str()) else {
             return err("ui.serial.browser", "missing dir");
@@ -2936,7 +3060,8 @@ fn log_browser_file_row(
             );
         }
         // Left-aligned single-line label; truncate overflow with ellipsis.
-        crate::theme::scope_in_allocated_rect(ui,
+        crate::theme::scope_in_allocated_rect(
+            ui,
             egui::UiBuilder::new()
                 .max_rect(rect)
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
@@ -2946,11 +3071,9 @@ fn log_browser_file_row(
                 ui.set_max_width(rect.width());
                 ui.add_space(4.0);
                 ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(name).size(12.0).color(color),
-                    )
-                    .truncate()
-                    .selectable(false),
+                    egui::Label::new(egui::RichText::new(name).size(12.0).color(color))
+                        .truncate()
+                        .selectable(false),
                 );
             },
         );
@@ -3107,16 +3230,24 @@ fn serial_worker(
     stop: Arc<AtomicBool>,
     tx: Sender<SerialEvent>,
     write_rx: Receiver<Vec<u8>>,
+    repaint: Option<egui::Context>,
+    visible: Arc<AtomicBool>,
 ) {
     let mut session = match SerialSession::open(&port, baud) {
         Ok(s) => s,
         Err(e) => {
             let _ = tx.send(SerialEvent::Error(e.to_string()));
             let _ = tx.send(SerialEvent::Stopped);
+            if let Some(ctx) = &repaint {
+                ctx.request_repaint();
+            }
             return;
         }
     };
     let _ = tx.send(SerialEvent::Status(format!("open {}", session.device)));
+    if let Some(ctx) = &repaint {
+        ctx.request_repaint();
+    }
     let mut last_stamp = Local::now().naive_local() - chrono::Duration::milliseconds(1);
     while !stop.load(Ordering::SeqCst) {
         while let Ok(bytes) = write_rx.try_recv() {
@@ -3126,6 +3257,7 @@ fn serial_worker(
         }
         match session.poll_events() {
             Ok(events) => {
+                let idle = events.is_empty();
                 for ev in events {
                     match ev {
                         CapturedEvent::Metrics(m) => {
@@ -3159,15 +3291,34 @@ fn serial_worker(
                         }
                     }
                 }
+                if !idle {
+                    if let Some(ctx) = &repaint {
+                        ctx.request_repaint_after(Duration::from_millis(
+                            if visible.load(Ordering::Relaxed) {
+                                33
+                            } else {
+                                500
+                            },
+                        ));
+                    }
+                } else {
+                    // Some USB transports return an empty packet without waiting.
+                    thread::sleep(Duration::from_millis(1));
+                }
             }
             Err(e) => {
                 let _ = tx.send(SerialEvent::Error(e.to_string()));
                 break;
             }
         }
-        thread::sleep(Duration::from_millis(20));
+        // The transport already blocks with a read timeout when idle. Sleeping
+        // here limits a continuous stream to 2048 bytes per 20 ms at best.
+        thread::yield_now();
     }
     let _ = tx.send(SerialEvent::Stopped);
+    if let Some(ctx) = &repaint {
+        ctx.request_repaint();
+    }
 }
 
 /// Python `SerialWorker.get_strict_timestamp` parity: `[HH:MM:SS.mmm]`, strictly increasing.
@@ -3279,10 +3430,7 @@ mod tests {
         fs::write(&data_new, b"\xEF\xBB\xBF").unwrap();
         assert!(data_old.exists());
         assert!(data_new.exists());
-        assert_ne!(
-            fs::read(&data_old).unwrap(),
-            fs::read(&data_new).unwrap()
-        );
+        assert_ne!(fs::read(&data_old).unwrap(), fs::read(&data_new).unwrap());
 
         let _ = fs::remove_dir_all(dir);
     }

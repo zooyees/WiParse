@@ -1,0 +1,253 @@
+{
+  "id": "fpga-firmware-test",
+  "name": "FPGA Firmware Test",
+  "name_zh": "FPGA固件测试",
+  "type": "custom",
+  "version": "0.5.0",
+  "entry": "index.mjs",
+  "config": "station.json",
+  "report_name": "FpgaFirmwareTest",
+  "description": "Configuration-driven FPGA engineering validation; host adapter required.",
+  "capabilities": [
+    "configure",
+    "preflight",
+    "run",
+    "stop"
+  ],
+  "engines": {
+    "node": ">=18",
+    "wiparse": ">=1.2.2"
+  },
+  "sandbox": {
+    "permissions": [
+      "gui.api",
+      "fs.data_root"
+    ]
+  },
+  "ui": {
+    "mode": "test_matrix",
+    "execution_controls": {
+      "control_file": "{test_dir}/fpga-control.json",
+      "pause_mode": "between_items"
+    },
+    "matrix_status_file": "{test_dir}/matrix.json",
+    "max_items": 500,
+    "config_editor": {
+      "schema": "schemas/fpga-test-case.schema.json",
+      "ui_schema": "schemas/fpga-test-case.ui.json",
+      "repository": "{config_dir}",
+      "max_items": 500,
+      "source_view": "read_only"
+    },
+    "project_config": {
+      "protocol": "wiparse.project-config/1",
+      "schema": "schemas/project.schema.json",
+      "ui_schema": "schemas/project.ui.json"
+    },
+    "result_details": {
+      "protocol": "wiparse.result-details/1",
+      "schema_version": "wiparse.fpga-result/2"
+    }
+  },
+  "params": [
+    {
+      "name": "execution_mode",
+      "type": "enum",
+      "label": "execution_mode",
+      "default": "hardware",
+      "options": [
+        {
+          "value": "hardware",
+          "label": "Hardware (adapter required)",
+          "label_zh": "真实硬件（需要适配器）"
+        },
+        {
+          "value": "simulation",
+          "label": "Simulation (no hardware)",
+          "label_zh": "模拟演示（不连接仪器）"
+        }
+      ],
+      "label_zh": "运行模式"
+    },
+    {
+      "name": "simulation_scenario",
+      "type": "enum",
+      "label": "simulation_scenario",
+      "default": "pass",
+      "options": [
+        {
+          "value": "pass",
+          "label": "Pass fixture",
+          "label_zh": "成功场景"
+        },
+        {
+          "value": "fail",
+          "label": "Failure fixture",
+          "label_zh": "失败场景"
+        }
+      ],
+      "label_zh": "模拟结果"
+    },
+    {
+      "name": "config_dir",
+      "type": "path",
+      "label": "config_dir",
+      "default": "recipes/fpga-firmware-test/cases",
+      "label_zh": "配置目录"
+    },
+    {
+      "name": "selected_ids",
+      "type": "string",
+      "label": "selected_ids",
+      "default": "",
+      "hidden": true,
+      "label_zh": "selected_ids"
+    },
+    {
+      "name": "name_filter",
+      "type": "string",
+      "label": "name_filter",
+      "default": "",
+      "hidden": true,
+      "label_zh": "name_filter"
+    },
+    {
+      "name": "tag_filter",
+      "type": "string",
+      "label": "tag_filter",
+      "default": "",
+      "hidden": true,
+      "label_zh": "tag_filter"
+    },
+    {
+      "name": "dut_serial",
+      "type": "string",
+      "label": "dut_serial",
+      "default": "",
+      "label_zh": "产品序列号"
+    },
+    {
+      "name": "board_revision",
+      "type": "string",
+      "label": "board_revision",
+      "default": "",
+      "label_zh": "板卡版本"
+    },
+    {
+      "name": "fpga_model",
+      "type": "string",
+      "label": "fpga_model",
+      "default": "",
+      "label_zh": "FPGA型号"
+    },
+    {
+      "name": "fixture_id",
+      "type": "string",
+      "label": "fixture_id",
+      "default": "",
+      "label_zh": "治具编号"
+    },
+    {
+      "name": "station_id",
+      "type": "string",
+      "label": "station_id",
+      "default": "",
+      "label_zh": "工位编号"
+    },
+    {
+      "name": "operator",
+      "type": "string",
+      "label": "operator",
+      "default": "",
+      "label_zh": "操作员"
+    },
+    {
+      "name": "loop_count",
+      "type": "number",
+      "label": "loop_count",
+      "default": 1,
+      "label_zh": "循环次数"
+    },
+    {
+      "name": "duration_limit_s",
+      "type": "number",
+      "label": "duration_limit_s",
+      "default": 0,
+      "label_zh": "老化时长上限（秒）"
+    },
+    {
+      "name": "stop_on_fail",
+      "type": "boolean",
+      "label": "stop_on_fail",
+      "default": false,
+      "label_zh": "失败即停"
+    },
+    {
+      "name": "resume_mode",
+      "type": "enum",
+      "label": "resume_mode",
+      "default": "fresh",
+      "options": [
+        {
+          "value": "fresh",
+          "label": "Fresh run",
+          "label_zh": "新建测试"
+        },
+        {
+          "value": "failed",
+          "label": "Retry failures",
+          "label_zh": "重试失败项"
+        },
+        {
+          "value": "unfinished",
+          "label": "Resume unfinished",
+          "label_zh": "继续未完成项"
+        }
+      ],
+      "label_zh": "恢复模式"
+    },
+    {
+      "name": "resume_from",
+      "type": "path",
+      "label": "resume_from",
+      "default": "",
+      "label_zh": "历史结果（suite-result.json）"
+    },
+    {
+      "name": "ai_global_enable",
+      "type": "boolean",
+      "label": "ai_global_enable",
+      "default": false,
+      "label_zh": "启用 AI 辅助"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "reports",
+      "label": "reports",
+      "view": "report",
+      "dir": "{artifacts_dir}/reports",
+      "include": [
+        "**/*"
+      ]
+    },
+    {
+      "id": "docs",
+      "label": "docs",
+      "view": "external",
+      "dir": "{artifacts_dir}/docs",
+      "include": [
+        "**/*"
+      ]
+    },
+    {
+      "id": "items",
+      "label": "items",
+      "view": "external",
+      "dir": "{artifacts_dir}/items",
+      "include": [
+        "**/*"
+      ]
+    }
+  ]
+}

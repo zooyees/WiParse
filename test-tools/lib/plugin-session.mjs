@@ -117,12 +117,20 @@ export function writeReportWithEvidence(plugin, layout, file, text) {
   });
   const files = [...new Set(Object.values(outputs).flat())].filter(p=>
     path.resolve(p)!==path.resolve(file) && !/\.(md|markdown)$/i.test(p));
-  const links = files.map(p=>{
+  const sections = new Map();
+  for (const p of files) {
+    const ext = path.extname(p).toLowerCase();
+    const section = /\.(isf|wfm|trc|vcd|csv)$/.test(ext) ? '波形与采样数据 / Waveforms'
+      : /\.(png|jpg|jpeg|gif|bmp|webp)$/.test(ext) ? '图片 / Images'
+      : /\.(json|jsonl|log|txt)$/.test(ext) ? '记录与日志 / Records'
+      : '其他文件 / Other files';
     const label=path.basename(p).replaceAll('|','\\|').replaceAll('[','\\[').replaceAll(']','\\]');
     const url=path.relative(path.dirname(file),p).split(path.sep).map(encodeURIComponent).join('/');
-    return `- [${label}](${url})`;
-  });
-  return writeText(file, text + (links.length ? `\n\n## 数据与附件 / Evidence\n\n${links.join('\n')}\n` : ''));
+    if (!sections.has(section)) sections.set(section, []);
+    sections.get(section).push(`- [${label}](${url})`);
+  }
+  const evidence = [...sections].map(([title, links])=>`### ${title}\n\n${links.join('\n')}`).join('\n\n');
+  return writeText(file, text + (evidence ? `\n\n## 数据与附件 / Evidence\n\n${evidence}\n` : ''));
 }
 
 export function writeJson(file, obj) {

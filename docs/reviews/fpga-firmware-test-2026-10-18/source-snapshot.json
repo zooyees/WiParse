@@ -1,0 +1,112 @@
+{
+  "review_date": "2026-10-18",
+  "plugin_version": "0.3.1",
+  "head": "ce25f584f81afa49a89f0a405e5b1a8674b374b4",
+  "node": "v24.15.0",
+  "files": [
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/generate-schemas.mjs",
+      "sha256": "04d839ac3e6d95dc8ce51dc307321ea5b2923d1b358b0335ebdbf10377ff4a2b"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/index.mjs",
+      "sha256": "2a3ff03bc33122cd19abe1a6e2f763aa50cd6144c82233c2357a00e0e0de88a3"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/ai-adapter.mjs",
+      "sha256": "2eea1de528ad3eac6b7c1a6f16fb218cddba194ab39ff6a022f6449686e68ce9"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/common.mjs",
+      "sha256": "82c64bd46fa1bbbc1f36b9446c057658339439b7885ba3d0cc6da46cafe8c751"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/config-loader.mjs",
+      "sha256": "032ef956a9a9650c579a35b93fd7be38ea6c8233e194b5f4f938f293f26b643f"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/firmware.mjs",
+      "sha256": "a1a5eec6e9cc354cd20756d14753727ff8517eb313d2874b8cb486b51a98a687"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/host-adapter.mjs",
+      "sha256": "95b7dea8578ec0c908a5fbbc35b7762db920d29a1ba5cd9ae6df4e738a0d12d8"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/log-capture.mjs",
+      "sha256": "9128e733588e69c0050bf10b16b8111f1f0ca971aff6da5d4361c89ec6ae26bb"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/resource-resolver.mjs",
+      "sha256": "768c6ed33c506989d86796b2d46c241a189d73b719afb244254a0ce89ddf462c"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/rules.mjs",
+      "sha256": "10956a9c9a0edf1179d1d9659f418cbc6a5341558d227b1e5795d39c2ed69119"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/scheduler.mjs",
+      "sha256": "3c6d02595b01a0a735869cd251affb1ad1b833a4679687debf74ec5bd48acfa3"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/simulation-adapter.mjs",
+      "sha256": "f10a82dbc45d6109aac87f5e6a3746ae8f1721c26b419bd39a8d2333a8723da9"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/plugin.json",
+      "sha256": "91eb7323890f13d55cb96daac68e85130b33b59ac36490b55b0ce0f712c12314"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/README.md",
+      "sha256": "849f0699f904debf12aa180f9a7dec9944b302b1e0bc6968f4bbd86f7dfd2969"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/fpga-matrix-status.schema.json",
+      "sha256": "b14582d0168578f4669a67be958dbb5abce069b695931f2f459aac9c87d16377"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/fpga-test-case.schema.json",
+      "sha256": "3abd566546138578d6646cc67e4342af98931ce1107b210847a5be10d17de8be"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/fpga-test-case.ui.json",
+      "sha256": "0d2e275662c6dc135c4684a48dcbf2d8a85fa0572caff48b81f0a14f2b0a4d67"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/station.json",
+      "sha256": "4da8b8bd3f37dcb4fb8dbcec41747942ef44c4a7f386211a721c2f2b960aa3d5"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/hub-integration.test.mjs",
+      "sha256": "2842b07a2b9f03f980091631a0060c8583d0c04f7b0bdafe62f69db050011be9"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/plugin.test.mjs",
+      "sha256": "af6eb8df8eb977e4a0bbbbe6d8e6388fbfebf829e271463104af86a3625c843b"
+    },
+    {
+      "path": "test-tools/runner.mjs",
+      "sha256": "cf0f83b6800e6a7cae2fa28ca91d79b9bbcc3c4516082ba0c3bdafa491f475c9"
+    },
+    {
+      "path": "test-tools/package.json",
+      "sha256": "c1ae23b03ea4941b387bc11af8fcc94ce39668ae9444276e1d35ca5bd7001bce"
+    },
+    {
+      "path": "test-tools/lib/hub/config-store.mjs",
+      "sha256": "5798cc1584508abe5177f4aba80003309756e531ba8a157c7f244f8a4841d49a"
+    },
+    {
+      "path": "test-tools/lib/hub/run-binding.mjs",
+      "sha256": "27fa1a443036c1baa81ccef48b607179fd66e80c7de67961cc28abdd90c79637"
+    },
+    {
+      "path": "test-tools/lib/hub/matrix.mjs",
+      "sha256": "6a66a7f9a123dec8ac2857adc50af388f48109924a5953d3de43e8b247ce1145"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_tool/workspace.rs",
+      "sha256": "b6c34a5012f2dfe273db306cbb0fef329dd71164e00e10cffdbb4ab3aec691b3"
+    }
+  ]
+}

@@ -16,6 +16,8 @@ fn intern(s: &str) -> LogLine {
 
 pub struct LiveLogStore {
     lines: VecDeque<LogLine>,
+    /// Monotonic queue of (absolute line sequence, character count).
+    widths: VecDeque<(usize, usize)>,
     max_line_chars: usize,
     /// Lines popped from the front for FIFO. Absolute seq = dropped + window index.
     dropped: usize,
@@ -25,6 +27,7 @@ impl Default for LiveLogStore {
     fn default() -> Self {
         Self {
             lines: VecDeque::new(),
+            widths: VecDeque::new(),
             max_line_chars: 0,
             dropped: 0,
         }
@@ -38,6 +41,7 @@ impl LiveLogStore {
 
     pub fn clear(&mut self) {
         self.lines.clear();
+        self.widths.clear();
         self.max_line_chars = 0;
         self.dropped = 0;
     }
@@ -55,28 +59,25 @@ impl LiveLogStore {
     /// Append lines and return how many rows were evicted from the front.
     pub fn append_lines(&mut self, lines: impl IntoIterator<Item = impl AsRef<str>>) -> usize {
         let mut evicted = 0usize;
-        let mut recalc_max = false;
         for line in lines {
             let s = line.as_ref();
+            let sequence = self.dropped + evicted + self.lines.len();
             while self.lines.len() >= MAX_LIVE_LINES {
-                if let Some(old) = self.lines.pop_front() {
-                    recalc_max |= old.chars().count() == self.max_line_chars;
+                if self.lines.pop_front().is_some() {
                     evicted += 1;
                 }
             }
             let n = s.chars().count();
-            if n > self.max_line_chars {
-                self.max_line_chars = n;
+            while self.widths.back().is_some_and(|(_, width)| *width <= n) {
+                self.widths.pop_back();
             }
+            self.widths.push_back((sequence, n));
+            let first = self.dropped + evicted;
+            while self.widths.front().is_some_and(|(seq, _)| *seq < first) {
+                self.widths.pop_front();
+            }
+            self.max_line_chars = self.widths.front().map_or(0, |(_, width)| *width);
             self.lines.push_back(intern(s));
-        }
-        if recalc_max {
-            self.max_line_chars = self
-                .lines
-                .iter()
-                .map(|line| line.chars().count())
-                .max()
-                .unwrap_or(0);
         }
         self.dropped = self.dropped.saturating_add(evicted);
         evicted
@@ -139,6 +140,28 @@ impl LogStore for LiveLogStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn width_index_tracks_multiple_rollovers_unicode_and_clear() {
+        let mut store = LiveLogStore::new();
+        let mut expected = VecDeque::new();
+        for i in 0..MAX_LIVE_LINES * 3 {
+            let line = "界".repeat((i * 17) % 83);
+            expected.push_back(line.chars().count());
+            if expected.len() > MAX_LIVE_LINES {
+                expected.pop_front();
+            }
+            store.append_lines([line]);
+            if i % 97 == 0 {
+                assert_eq!(store.max_line_chars(), *expected.iter().max().unwrap());
+            }
+            assert!(store.widths.len() <= MAX_LIVE_LINES);
+        }
+        store.clear();
+        store.append_lines(["short"]);
+        assert_eq!(store.max_line_chars(), 5);
+        assert_eq!(store.dropped(), 0);
+    }
 
     #[test]
     fn append_reports_front_eviction_and_refreshes_max_width() {

@@ -1,0 +1,39 @@
+FPGA IP 功能演示配置（20项）
+
+配置目录：D:\windlink\windlink\WiParse-R\recipes\fpga-firmware-test\cases
+在 FPGA固件测试插件中将 config_dir 设为此目录。
+
+仅用于查看配置列表、编辑器、标签分组、复位方式、采集任务和规则效果。
+附带 BIN 是文本占位文件，不是 FPGA 可烧录固件；所有 download=false、AI关闭。
+演示仪器身份 DEMO-* 和 COM3 需要在真实执行前通过编辑器替换。
+日志成功标记、时钟/PWM限值仅为演示约定，不代表真实IP已覆盖或已通过。
+PWM duty_cycle 示例采用 ratio 0–1，真实执行时须与驱动输出单位一致。
+
+运行身份演示值：
+dut_serial=DEMO-SN-0001
+board_revision=DEMO-REV-A
+fpga_model=DEMO-FPGA
+fixture_id=DEMO-FIXTURE-01
+station_id=DEMO-STATION-01
+
+列表：
+1. PLL 时钟锁定与输出频率验证 (fpga_01_pll_clock)
+2. Reset Controller 复位时序验证 (fpga_02_reset_controller)
+3. GPIO 输入输出与中断验证 (fpga_03_gpio)
+4. UART 串口收发与回环验证 (fpga_04_uart)
+5. SPI Master 主机传输验证 (fpga_05_spi_master)
+6. SPI Slave 从机响应验证 (fpga_06_spi_slave)
+7. I2C Master 读写与应答验证 (fpga_07_i2c_master)
+8. I2C Slave 地址与寄存器验证 (fpga_08_i2c_slave)
+9. PWM 输出频率与占空比验证 (fpga_09_pwm)
+10. Timer Counter 定时计数验证 (fpga_10_timer_counter)
+11. Watchdog 看门狗超时复位验证 (fpga_11_watchdog)
+12. Sync FIFO 同步读写与满空验证 (fpga_12_sync_fifo)
+13. Async FIFO 跨时钟域传输验证 (fpga_13_async_fifo)
+14. Block RAM 存储读写验证 (fpga_14_block_ram)
+15. DDR Controller 内存训练与访问验证 (fpga_15_ddr_controller)
+16. AXI4-Lite 寄存器接口验证 (fpga_16_axi_lite)
+17. AXI4-Stream 数据流与背压验证 (fpga_17_axi_stream)
+18. DMA 数据搬运与中断验证 (fpga_18_dma)
+19. Ethernet MAC 帧收发与校验验证 (fpga_19_ethernet_mac)
+20. CRC32 数据校验计算验证 (fpga_20_crc32)

@@ -1,0 +1,11 @@
+✔ published editor metadata loads and retains all twenty business configurations (423.428ms)
+✔ F13 rejects noncanonical waveform units and incompatible reset roles (5.4434ms)
+✔ F15 nested report retains child limits and escapes text without inventing log links (19.3059ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 964.5334
