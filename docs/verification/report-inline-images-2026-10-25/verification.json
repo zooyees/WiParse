@@ -1,0 +1,48 @@
+{
+  "kind": "report_inline_images_preview",
+  "date": "2026-10-25",
+  "version": "1.2.2",
+  "scope_serial_plugin_version": "0.7.1",
+  "exe_sha256": "2d9a074a177cd04922af56d8859d3de867f16bf04a7a2c5341e8becf420f7a5f",
+  "rust_report_tests": {
+    "passed": 25,
+    "failed": 0
+  },
+  "node_tests": {
+    "passed": 16,
+    "failed": 0
+  },
+  "ui_source_frames": 6,
+  "rendered_frames": [
+    "inline-image-new-640-dark",
+    "inline-image-new-1100-light",
+    "inline-image-legacy-1100-light",
+    "inline-image-legacy-1920-dark"
+  ],
+  "runtime_smoke": {
+    "passed": true,
+    "pages": 7,
+    "simulated_instrument_kinds": 8,
+    "report_artifact_types": [
+      "markdown",
+      "json",
+      "log",
+      "png",
+      "isf"
+    ],
+    "evidence": "tmp/ui-release-smoke-a008ef36b2044d448d9512bc9891a552"
+  },
+  "old_reports_modified": false,
+  "physical_capture_test": false,
+  "full_zip_created": false,
+  "source_sha256": {
+    "crates/wiparse-gui/src/test_report.rs": "afc39af21a1858b4b3b6cc6410cdd91aede052e1d94359a82ba850fd1290b0cd",
+    "crates/wiparse-gui/src/test_report/inline_images.rs": "f0184008547a90fe23f00bbd8779488902fa9053765415b59a2c3149defd1fa9",
+    "crates/wiparse-gui/src/test_report/inline_images/tests.rs": "b6b8156d3bfd80a9070d4c2d8382364fd97cdeb886cc5969bb81c06dd92292b4",
+    "test-tools/plugins/scope-serial-monitor/loop.mjs": "e6b0861f1e3d36446c13f53be2d766334d374be3c81e3e0b60bdba601fdd9d24",
+    "test-tools/plugins/scope-serial-monitor/plugin.json": "42bf99f4d8c5d259df8b8cc792820fd02a3b91debca1ca25e5912081545140a1",
+    "test-tools/plugins/fpga-firmware-test/lib/report.mjs": "ba6a866c3d27bcebbca9756f3db20b378b7e9e23022e39d4e58fb94a72fbe5c6",
+    "test-tools/test/scope-report.test.mjs": "72e7824097d16e096fe4c31a113db625fdc91d7ed82940eb0c467b0dd5e40039",
+    "scripts/verify-serial-trigger-ui.ps1": "57bd6f0100d6081ef6e5076592391bec0db7b651e30bc7cc106a98bad4d4d109"
+  }
+}

@@ -1,0 +1,19 @@
+✔ compileTriggers skips disabled and honors unless (17.7281ms)
+✔ contains match and Hub JSON string overlay (2.0131ms)
+✔ rising-edge fires once per inactive→active (2.2973ms)
+✔ level match (rising_edge false) fires every line (0.9773ms)
+✔ first_match: earlier rule wins on the same line (1.0572ms)
+✔ global and sticky regexes do not leak lastIndex across lines (1.6424ms)
+✔ global exclude regex is reset before every line (0.8601ms)
+✔ visual string rules preserve literal punctuation, case and exclusions (0.7548ms)
+✔ duplicate enabled IDs including sanitized collisions are rejected (3.0061ms)
+✔ visual editor manifest retains JSON overlays and the factory recipe (10.9722ms)
+✔ scope report nests captures under the session and opens evidence through portable links (151.8788ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 695.2901

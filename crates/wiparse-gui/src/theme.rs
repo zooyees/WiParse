@@ -17,7 +17,8 @@ pub const SPACE_LG: f32 = 16.0;
 
 /// Unified control height.
 pub const CTRL_H: f32 = 28.0;
-pub const SIDEBAR_W: f32 = 272.0;
+pub const SIDEBAR_W: f32 = 200.0;
+pub const SIDEBAR_MIN_W: f32 = 200.0;
 
 /// Width bounds always fit both panes, including unusually small windows.
 fn sidebar_width_bounds(total: f32, gap: f32, min_side: f32, min_main: f32) -> (f32, f32) {
@@ -764,7 +765,7 @@ mod tests {
     #[test]
     fn sidebar_bounds_fit_small_windows_and_reserve_main_content() {
         for total in [0.0, 4.0, 8.0, 40.0, 160.0, 640.0, 1920.0] {
-            let (min, max) = super::sidebar_width_bounds(total, 8.0, 220.0, 280.0);
+            let (min, max) = super::sidebar_width_bounds(total, 8.0, super::SIDEBAR_MIN_W, 280.0);
             assert!(min >= 0.0 && max >= min);
             assert!(max <= (total - 8.0_f32).max(0.0));
             if total > 8.0 { assert!(max < total - 8.0); }
@@ -786,27 +787,27 @@ mod tests {
             }, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let (body, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
-                    width = super::resizable_sidebar_width(ui, key, body, 272.0, 220.0, 200.0, 8.0, &tokens);
+                    width = super::resizable_sidebar_width(ui, key, body, super::SIDEBAR_W, super::SIDEBAR_MIN_W, 200.0, 8.0, &tokens);
                 });
             });
             (width, output.platform_output.cursor_icon)
         };
         let button = |pos, pressed| Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: egui::Modifiers::default() };
-        let start = Pos2::new(8.0 + 272.0 + 4.0, 100.0);
-        assert_eq!(frame("wave", 900.0, vec![]).0, 272.0);
+        let start = Pos2::new(8.0 + 200.0 + 4.0, 100.0);
+        assert_eq!(frame("wave", 900.0, vec![]).0, 200.0);
         assert_eq!(frame("wave", 900.0, vec![Event::PointerMoved(start)]).1, egui::CursorIcon::ResizeHorizontal);
         frame("wave", 900.0, vec![button(start, true)]);
         let end = start + Vec2::new(60.0, 0.0);
-        assert_eq!(frame("wave", 900.0, vec![Event::PointerMoved(end)]).0, 332.0);
+        assert_eq!(frame("wave", 900.0, vec![Event::PointerMoved(end)]).0, 260.0);
         frame("wave", 900.0, vec![button(end, false)]);
-        assert_eq!(frame("wave", 900.0, vec![]).0, 332.0);
-        assert_eq!(frame("serial", 900.0, vec![]).0, 272.0);
+        assert_eq!(frame("wave", 900.0, vec![]).0, 260.0);
+        assert_eq!(frame("serial", 900.0, vec![]).0, 200.0);
         assert!(frame("wave", 160.0, vec![]).0 < 160.0);
-        assert_eq!(frame("wave", 900.0, vec![]).0, 332.0);
+        assert_eq!(frame("wave", 900.0, vec![]).0, 260.0);
         frame("wave", 900.0, vec![Event::PointerMoved(end), button(end, true)]);
         frame("wave", 900.0, vec![button(end, false)]);
         frame("wave", 900.0, vec![button(end, true)]);
-        assert_eq!(frame("wave", 900.0, vec![button(end, false)]).0, 272.0);
+        assert_eq!(frame("wave", 900.0, vec![button(end, false)]).0, 200.0);
     }
 
     #[test]

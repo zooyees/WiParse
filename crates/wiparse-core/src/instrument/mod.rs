@@ -119,6 +119,9 @@ pub enum InstrumentError {
 }
 
 pub trait Transport: Send {
+    fn connection_lost(&self) -> bool {
+        false
+    }
     fn write(&mut self, command: &str) -> Result<(), InstrumentError>;
     fn query(&mut self, command: &str) -> Result<String, InstrumentError>;
     fn read_raw(&mut self) -> Result<Vec<u8>, InstrumentError>;
@@ -160,6 +163,9 @@ impl VisaTransport {
 }
 
 impl Transport for VisaTransport {
+    fn connection_lost(&self) -> bool {
+        self.instrument.connection_lost()
+    }
     fn write(&mut self, command: &str) -> Result<(), InstrumentError> {
         self.instrument.write_str(command)?;
         Ok(())
@@ -190,6 +196,9 @@ pub struct ScpiSession {
 }
 
 impl ScpiSession {
+    pub fn connection_lost(&self) -> bool {
+        self.transport.connection_lost()
+    }
     pub fn new(transport: Box<dyn Transport>) -> Self {
         Self { transport }
     }
@@ -268,7 +277,11 @@ impl ScpiSession {
     }
 
     pub fn identify(&mut self) -> Result<Identity, InstrumentError> {
-        Ok(Identity::parse(self.query("*IDN?")?))
+        let response = self.query("*IDN?")?;
+        if response.trim().is_empty() {
+            return Err(InstrumentError::InvalidResponse { command: "*IDN?".into(), response });
+        }
+        Ok(Identity::parse(response))
     }
 
     pub fn clear(&mut self) -> Result<(), InstrumentError> {
@@ -321,6 +334,15 @@ pub fn discover_resources_with_library(
     library: Option<&str>,
     timeout_ms: u32,
 ) -> Result<Vec<ResourceInfo>, InstrumentError> {
+    discover_resources_with_known_sessions(library, timeout_ms, &[])
+}
+
+/// Reuse identities of live sessions instead of opening a second USBTMC handle.
+pub fn discover_resources_with_known_sessions(
+    library: Option<&str>,
+    timeout_ms: u32,
+    known: &[ResourceInfo],
+) -> Result<Vec<ResourceInfo>, InstrumentError> {
     let usb = crate::usb::discover_usb_instruments();
     let visa = list_resources_with_library(library);
     let mut resources = match visa {
@@ -333,6 +355,11 @@ pub fn discover_resources_with_library(
     };
     let probe_timeout = timeout_ms.clamp(500, 10_000);
     for resource in &mut resources {
+        if let Some(live) = known.iter().find(|live| live.address == resource.address) {
+            resource.kind = live.kind;
+            resource.identity = live.identity.clone();
+            continue;
+        }
         if crate::usb::is_usb_session_address(&resource.address) {
             continue;
         }
@@ -520,9 +547,9 @@ impl DemoTransport {
         &[
             0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
             0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
-            0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08,
-            0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0xFE,
-            0xD4, 0xEF, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+            0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9C, 0x63, 0x10, 0x50, 0x30, 0x00, 0x00, 0x00, 0xA4, 0x00, 0x61, 0x34, 0x66, 0x7D,
+            0x72, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
         ]
     }
 
@@ -716,6 +743,12 @@ impl Transport for DemoTransport {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn empty_identification_is_not_a_connected_instrument() {
+        let mock = super::MockTransport::scripted([("*IDN?", "  \n")]);
+        let mut session = super::ScpiSession::new(Box::new(mock));
+        assert!(matches!(session.identify(), Err(super::InstrumentError::InvalidResponse { .. })));
+    }
     use super::*;
 
     #[test]

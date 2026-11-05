@@ -23,6 +23,7 @@ mod market_jobs;
 mod test_report;
 mod test_tool;
 mod waveform_analysis;
+mod waveform_protocol_html;
 mod windows_icon;
 #[cfg(test)]
 mod ui_audit;

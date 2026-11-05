@@ -18,7 +18,7 @@ test('delivered plugin runs through real Hub/runner with five simulated cases an
  const testDir=path.join(root,'projects/default/tests/FpgaFirmwareTest'),snapshot=JSON.parse(fs.readFileSync(path.join(testDir,'matrix.json')));
  validateMatrix(snapshot,{pluginId:'fpga-firmware-test',projectRoot:path.join(root,'projects/default')});
  const schema=loadSchema(path.join(pluginDir,'schemas/fpga-matrix-status.schema.json'),pluginDir);assert.deepEqual(schema.errors(snapshot),[]);
- const runDir=path.join(testDir,'runs/20261018_150000_simulation'),meta=JSON.parse(fs.readFileSync(path.join(runDir,'run.json')));assert.equal(meta.simulation_only,true);assert.equal(meta.industrial_approved,false);assert.equal(meta.plugin_version,'0.5.0');
+ const runDir=path.join(testDir,'runs/20261018_150000_simulation'),meta=JSON.parse(fs.readFileSync(path.join(runDir,'run.json')));assert.equal(meta.simulation_only,true);assert.equal(meta.industrial_approved,false);assert.equal(meta.plugin_version,JSON.parse(fs.readFileSync(path.join(pluginDir,'plugin.json'),'utf8')).version);
  const report=path.join(runDir,'artifacts/reports/summary.md'),md=fs.readFileSync(report,'utf8');assert.match(md,/模拟演示/);
  const links=[...md.matchAll(/\]\(([^)]+)\)/g)].map(m=>decodeURI(m[1]));assert.equal(links.length,20);for(const link of links)assert(fs.existsSync(path.resolve(path.dirname(report),link)),link);
  const context={pluginDir,dataRoot:root,project:'default',testId:'FpgaFirmwareTest',params:fixture.params};

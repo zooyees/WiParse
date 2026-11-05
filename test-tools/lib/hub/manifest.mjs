@@ -13,8 +13,52 @@ export function validateUi(manifest) {
   for (const [key,max] of [['max_item_bytes',1048576],['max_total_bytes',33554432]]) if (e[key] !== undefined && (!Number.isInteger(e[key]) || e[key] < 1 || e[key] > max)) fail('PLUGIN.UI_SCHEMA_INVALID',`Invalid ${key}`);
   if (e.source_view && !['hidden','read_only'].includes(e.source_view)) fail('PLUGIN.UI_SCHEMA_INVALID','Source must be read-only');
   if(ui.project_config && (ui.project_config.protocol!=='wiparse.project-config/1'||!ui.project_config.schema))fail('PLUGIN.UI_SCHEMA_INVALID','Invalid project configuration declaration');
+  if(ui.project_files){
+    const spec=ui.project_files;
+    if(typeof spec.directory!=='string'||!spec.directory.trim()||path.isAbsolute(spec.directory)||/^[A-Za-z]:[\\/]/.test(spec.directory)||spec.directory.startsWith('\\\\'))fail('PLUGIN.UI_SCHEMA_INVALID','Project file directory must be a relative template');
+    if(spec.max_cases!=null&&(!Number.isInteger(spec.max_cases)||spec.max_cases<1||spec.max_cases>500))fail('PLUGIN.UI_SCHEMA_INVALID','Project files allow at most 500 cases');
+  }
+  if(ui.project_config?.seed!=null && (typeof ui.project_config.seed!=='string' || !ui.project_config.seed.trim() || path.isAbsolute(ui.project_config.seed) || /^[A-Za-z]:[\\/]/.test(ui.project_config.seed) || ui.project_config.seed.startsWith('\\\\'))) fail('PLUGIN.SEED_PATH','Project seed must be a relative template');
   for (const f of [e.schema,e.ui_schema,ui.project_config?.schema,ui.project_config?.ui_schema].filter(Boolean)) if (path.isAbsolute(f) || /^[A-Za-z]:/.test(f) || f.split(/[\\/]/).includes('..')) fail('PLUGIN.UI_SCHEMA_INVALID','Schema path must be plugin-relative');
   return ui;
+}
+function canonicalPath(file) {
+  const absolute = path.resolve(file);
+  let cursor = absolute;
+  while (true) {
+    try { if (fs.lstatSync(cursor).isSymbolicLink()) fail('PLUGIN.SEED_PATH', 'Seed path must not follow a link'); }
+    catch (e) { if (e.code !== 'ENOENT') throw e; }
+    const parent = path.dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  let existing = absolute;
+  const tail = [];
+  while (!fs.existsSync(existing)) {
+    tail.unshift(path.basename(existing));
+    const parent = path.dirname(existing);
+    if (parent === existing) break;
+    existing = parent;
+  }
+  return path.join(fs.realpathSync.native(existing), ...tail);
+}
+function samePath(a, b) {
+  const left = path.normalize(a).replace(/[\\/]+$/, '');
+  const right = path.normalize(b).replace(/[\\/]+$/, '');
+  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+// Seed is not a schema path. `{config_dir}/../project.json` is valid only when its
+// real path is the config repository's parent and stays inside data_root.
+function resolveProjectSeed(seed, expand, dataRoot, repository) {
+  const expanded = expand(seed);
+  const resolved = path.resolve(dataRoot, expanded);
+  jail(resolved, [dataRoot]);
+  const seedReal = canonicalPath(resolved);
+  const configRoot = path.dirname(canonicalPath(repository));
+  const dataReal = canonicalPath(dataRoot);
+  if (!samePath(path.dirname(seedReal), configRoot)) fail('PLUGIN.SEED_PATH', 'Seed must resolve to the parent of the configuration repository');
+  if (!inside(configRoot, dataReal) || !inside(seedReal, dataReal)) fail('PLUGIN.SEED_PATH', 'Seed escapes data_root');
+  return seedReal;
 }
 export function workspace(manifest, context) {
   const ui = validateUi(manifest); if (!ui) fail('PLUGIN.UI_SCHEMA_INVALID','Plugin does not declare configure');
@@ -33,6 +77,16 @@ export function workspace(manifest, context) {
   const e = ui.config_editor;
   const protectedRoots=[pluginRoot,...(context.protectedRoots||[])].filter(Boolean).map(p=>path.resolve(p));
   const repository = jail(path.resolve(root,expand(e.repository)),[root,...approvedRoots]);
+  const seedFile = ui.project_config?.seed ? resolveProjectSeed(ui.project_config.seed, expand, root, repository) : null;
+  let projectFilesDir=null;
+  if(ui.project_files?.directory){
+    const resolved=jail(path.resolve(root,expand(ui.project_files.directory)),[root,...approvedRoots]);
+    const parent=path.dirname(canonicalPath(resolved));
+    const configRoot=path.dirname(canonicalPath(repository));
+    if(!samePath(parent,configRoot))fail('PLUGIN.SEED_PATH','Project files must sit beside the configuration repository');
+    if(!inside(parent,canonicalPath(root))&&!approvedRoots.some(extra=>inside(parent,canonicalPath(extra))))fail('PLUGIN.SEED_PATH','Project files escape data_root');
+    projectFilesDir=resolved;
+  }
   if (protectedRoots.some(p=>inside(repository,p))) fail('CONFIG.PATH_OUTSIDE_ROOT','Repository cannot be inside plugin installation');
   // Host-owned metadata stays under data_root, even when an explicitly approved
   // repository is external. Project-config plugins share one scope lock/journal
@@ -51,7 +105,8 @@ export function workspace(manifest, context) {
     normalizedParams[p.name]=v;
   }
   return {plugin:manifest, params:normalizedParams, pluginDir:pluginRoot, dataRoot:root, project, testDir,controlFile,
-    repository, editorRoot, archive, audit, roots:[root,...approvedRoots],protectedRoots,
+    repository, editorRoot, archive, audit, roots:[root,...approvedRoots],protectedRoots, seedFile, projectFilesDir,
+    projectFileLimit:Math.min(ui.max_items||500,ui.project_files?.max_cases||ui.max_items||500),
     projectFile:jail(path.join(testDir,'.hub',manifest.id,'project-config.json'),[testDir]),
     matrix: jail(path.resolve(root,expand(ui.matrix_status_file,true)),[testDir]),
     schema: jail(path.join(pluginRoot,e.schema),[pluginRoot]),

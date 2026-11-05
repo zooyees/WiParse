@@ -1,9 +1,10 @@
 {
   "id": "fpga-firmware-test",
-  "name": "FPGA Firmware Test",
-  "name_zh": "FPGA固件测试",
+  "name": "FPGA Verification",
+  "name_zh": "FPGA验证",
   "type": "custom",
-  "version": "0.5.0",
+  "version": "0.5.5",
+  "host_adapter": "wiparse.fpga-host/1",
   "entry": "index.mjs",
   "config": "station.json",
   "report_name": "FpgaFirmwareTest",
@@ -42,7 +43,12 @@
     "project_config": {
       "protocol": "wiparse.project-config/1",
       "schema": "schemas/project.schema.json",
-      "ui_schema": "schemas/project.ui.json"
+      "ui_schema": "schemas/project.ui.json",
+      "seed": "{config_dir}/../project.json"
+    },
+    "project_files": {
+      "directory": "{config_dir}/../projects",
+      "max_cases": 500
     },
     "result_details": {
       "protocol": "wiparse.result-details/1",
@@ -222,6 +228,36 @@
     }
   ],
   "outputs": [
+    {
+      "id": "waves",
+      "label": "waves",
+      "label_zh": "波形",
+      "view": "wave",
+      "dir": "{artifacts_dir}/items",
+      "include": [
+        "**/waves/**"
+      ]
+    },
+    {
+      "id": "logs",
+      "label": "logs",
+      "label_zh": "日志",
+      "view": "log",
+      "dir": "{artifacts_dir}/items",
+      "include": [
+        "**/logs/**"
+      ]
+    },
+    {
+      "id": "shots",
+      "label": "shots",
+      "label_zh": "截图",
+      "view": "external",
+      "dir": "{artifacts_dir}/items",
+      "include": [
+        "**/shots/**"
+      ]
+    },
     {
       "id": "reports",
       "label": "reports",

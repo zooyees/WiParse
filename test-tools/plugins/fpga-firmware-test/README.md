@@ -1,4 +1,4 @@
-# FPGA固件测试 0.5.0
+# FPGA固件测试 0.5.5
 
 插件实现和模拟宿主测试；硬件运行需要 `wiparse.fpga-host/1` 适配器。未提供适配器时以 `HOST.ADAPTER_REQUIRED` 阻断，不能将模拟执行当作硬件验收。固件下载保留接口，`download=true` 始终阻断，无 ProbeFlash 调用。
 
@@ -13,6 +13,8 @@
 配置入口由宿主加载 `schemas/fpga-test-case.schema.json` 和 UI schema 提供；JSON 仅用于持久化、导入导出和只读预览。`generate-schemas.mjs` 是 schema/manifest 可重复生成源。跨字段校验导出 `validateCase`，返回控件路径和错误码。当前无内置 custom adapter，引用它会明确阻断。limit_ref 为相对配置文件的 `../limits/file.json#entry-id`。数值指标要求 quality=good 且单位精确匹配，缺失和坏质量保持 INCONCLUSIVE。所有结果固定未经工业审批。
 
 运行参数支持 selected_ids（逗号分隔或宿主数组）、名称/标签过滤、循环、老化时长、失败即停。老化时长到达后停止启动新项，当前项仍完成。单次运行一个 DUT、一个工位；资源租约必须由宿主跨进程互斥。每项每轮独立 UUID attempt，证据永不覆盖、默认不删除。
+
+本插件只做 FPGA 固件运行验证：板上固件已在位，复位后读 UART/Dongle 日志和示波器证据。不做 DFT/ATE、扫描链、工业签核，也不在插件内 ProbeFlash。Hub 通过 `outputs` 打开 items 下的波形、日志和截图；`result.json` 只保留最多 200 行 log.preview，全文在 `logs/serial.log`。`hardware_accepted` 在实验室签核前保持 false。
 
 ## 硬件宿主适配契约（实机验收待完成）
 
@@ -32,7 +34,7 @@ adapter.version = `wiparse.fpga-host/1`；capabilities 必须包含 host-adapter
 | probeReset(resource,{hardware:true}) | 映射 ProbeReset，返回时确认复位释放 |
 | collectLog({resource,config,start_mono_ms,end_mono_ms,dir,stopped}) | 从租约的原始字节游标采集严格时间窗口；分页≤2000并持续排空环形缓冲；返回 raw_base64、lines（单调时间戳/UTC/原字节映射）、start_cursor、end_cursor、dropped_lines、window_covered、complete、truncated。插件保存 raw/jsonl/log 并严格 UTF-8 解码 |
 | capture({resource,config,dir,stopped}) | 映射 instrument.capture，真实保存截图到 dir/shots，返回 {screenshot:{path,sha256}} |
-| waveformSource({resource,config,dir,stopped}) | 保存原始源波形到 dir/waves；返回 {artifact:{path,sha256},metrics:{CH1:{frequency_hz:{value,unit,quality}}}} |
+| waveformSource({resource,config,dir,stopped}) | 保存原始源波形到 dir/waves；返回 {artifact:{path,sha256},metrics}。metrics 只转发示波器解析后的实测值（quality=good），缺失指标省略，禁止编造 |
 | cleanup({config,resources,safe_power_state}) | 无论停止/异常均安全清理，DC电源进入工位安全状态；返回可审计结果 |
 | ai({profile,payload,audit}) | 可选；宿主凭据库解析 credential_ref，白名单 provider transport；只接收安全 allowlist 字段。返回结构化 recommendation/confidence |
 
@@ -73,3 +75,9 @@ AI 默认关闭。公网默认无外发许可，跳过 provider；只发送规�
 传输 Promise 直接或迟延 reject、同步 throw 均默认视为设备状态未确认，须有界调用 cancelAndConfirm；仅可信适配器明确附带 quiescent=true 的业务错误可跳过本动作取消。同项任一采集失败会取消仍在途的其他采集，确认期间不接受新设备动作；任一确认失败则禁止清理动作及租约释放。取消确认必须代表设备已停止，不能仅代表取消消息已发送。
 
 最终归档以 suite-result.json 和 run-state.json 共同确认，只有 archive_complete=true 且状态 completed 才表示流程完成。归档失败保留旧证据并进入 error/finalizing；unfinished 恢复会重新执行归档不完整运行的已选项，新attempt关联旧记录。磁盘持续不可写时，某个旧 matrix 快照可能仍显示 running，需以 run-state/matrix-final/suite 的错误或未完成状态识别，并在存储恢复后重新预检重建；不承诺在不可写文件上强制写成终态。
+
+## 0.5.5 审查修正（2026-10-25）
+
+预检中任何阻断错误均使本轮失败，不再静默移除失败项继续启动；禁用/不存在的选择项和缺少measure能力在设备占用前阻止。原始日志Base64严格校验，缺测/坏质量/单位错误分别记录。结果新增诊断、处置建议和有界逐项覆盖计数，报告明确未执行项目及结束原因。恢复相对路径以当前test目录为基准，例如runs/历史运行目录，仍限制在该测试的runs中。schema生成器已同步0.5.5与工程及证据声明。
+
+完整审查、能力缺口和后续验收目标见 docs/reviews/ai-layout-and-fpga-0.5.5-review-2026-10-25.md。硬件适配器、真实时间精度和工业批准仍需独立实机验收。

@@ -1,5 +1,6 @@
 import {resultDetails} from './lib/hub/result-details.mjs';
 import {getProject,saveProject,validateProject,previewMigration,commitMigration} from './lib/hub/project-config.mjs';
+import {activateProjectFile,exportProjectFile,importProjectFile,projectFileSnapshot} from './lib/hub/project-files.mjs';
 /** Bounded IPC for the generic Hub workspace. Never run on the GUI thread. */
 import fs from 'node:fs';
 import {inspectFile} from './lib/hub/file-inspect.mjs';
@@ -24,7 +25,10 @@ export function execute(request) {
   const operation=method.replace(/^ui\.test_tool\./,'');
   if(operation==='config.inspect_file'&&!request.internal)fail('CONFIG.INTERNAL_METHOD');
   const perform=()=>{switch(operation) {
-    case 'workspace.open': data={...store.list({limit:500}),schema:store.schema.schema,documents:store.schema.documents,ui:store.ui,archives:store.archives(),preflight:preflightState(store),locked:store.runLocks(),project_config:projectData(store),matrix:matrixData(store,{limit:500}),...(request.internal?{matrix_file:store.s.matrix}:{})};break;
+    case 'workspace.open': data={...store.list({limit:500}),schema:store.schema.schema,documents:store.schema.documents,ui:store.ui,archives:store.archives(),preflight:preflightState(store),locked:store.runLocks(),project_config:projectData(store),project_files:projectFileSnapshot(store),matrix:matrixData(store,{limit:500}),...(request.internal?{matrix_file:store.s.matrix}:{})};break;
+    case 'project.file.activate': data=activateProjectFile(store,params);break;
+    case 'project.file.import': data=importProjectFile(store,params,{internal:request.internal===true});break;
+    case 'project.file.export': data=exportProjectFile(store,params,{internal:request.internal===true});break;
     case 'project.get':data=projectData(store);break;
     case 'project.save':data=saveProject(store,params);break;
     case 'project.validate':data={valid:true,warnings:validateProject(store,params.value)};break;
@@ -36,7 +40,7 @@ export function execute(request) {
     case 'config.create': data=store.draft(params.config_id);break;
     case 'config.duplicate': data=store.draft(params.new_id,store.get(params.config_id).value);break;
     case 'config.save': data=store.save(params,params.operation==='duplicate'?'duplicate':'save');break;
-    case 'config.validate': {const errors=store.schema.errors(params.value);try{store.checkPathFields(params.value);}catch(e){errors.push({path:'/',message:e.code});}data={valid:!errors.length,errors};break;}
+    case 'config.validate': {const errors=store.blockingErrors(params.value);try{store.checkPathFields(params.value);}catch(e){errors.push({path:'/',message:e.code});}data={valid:!errors.length,errors};break;}
     case 'config.archive': data=store.archive(params);break;
     case 'config.restore': data=store.restore(params);break;
     case 'config.archives': data={items:store.archives()};break;
@@ -51,7 +55,7 @@ export function execute(request) {
   }return data;};
   // A read holds the same mutex through its entire snapshot, including recovery.
   // Mutations own their transactions; matrix polling stays independent of imports.
-  data=['project.save','project.migration.preview','project.migration.commit','config.save','config.archive','config.restore','config.batch','config.import','config.export','matrix.get','result.get','config.validate','run.control'].includes(operation)?perform():store.withLock(perform);
+  data=['project.save','project.migration.preview','project.migration.commit','project.file.activate','project.file.import','project.file.export','config.save','config.archive','config.restore','config.batch','config.import','config.export','matrix.get','result.get','config.validate','run.control'].includes(operation)?perform():store.withLock(perform);
   if(!request.internal){if(data?.value){const def=operation.startsWith('project.')?store.projectDefinition?.schema:store.schema;if(def)data.value=redactSchema(data.value,def.schema,def.documents);}if(data?.project_config?.value&&store.projectDefinition)data.project_config.value=redactSchema(data.project_config.value,store.projectDefinition.schema.schema,store.projectDefinition.schema.documents);const errors=data?.errors;data=redact(data);if(errors)data.errors=safeErrors(errors);}
   return data;
 }
@@ -73,4 +77,4 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   } catch(e) {const details=redact(e.data||{});if(e.data?.errors)details.errors=safeErrors(e.data.errors);process.stdout.write(JSON.stringify({ok:false,error:{code:e.code||'CONFIG.OPERATION_FAILED',message:e.code||'Configuration operation failed',...details}}));process.exitCode=1;}
 }
 
-function projectData(store){const record=getProject(store);return record?{...record,schema:store.projectDefinition.schema.schema,documents:store.projectDefinition.schema.documents,ui:store.projectDefinition.ui}:null;}
+function projectData(store){const record=getProject(store);if(!record)return null;return {...record,schema:store.projectDefinition.schema.schema,documents:store.projectDefinition.schema.documents,ui:store.projectDefinition.ui};}

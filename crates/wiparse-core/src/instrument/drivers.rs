@@ -880,6 +880,19 @@ pub struct InstrumentDevice {
 }
 
 impl InstrumentDevice {
+    pub fn connection_lost(&self) -> bool {
+        self.session.connection_lost()
+    }
+
+    /// Explicit scan checks an existing USB handle before reusing its identity.
+    /// No reset, clear or output-changing command is sent during this check.
+    pub fn check_connection(&mut self) -> Result<(), InstrumentError> {
+        let _ = self.session.set_timeout(1_000);
+        let result = self.session.identify().map(|_| ());
+        let _ = self.session.set_timeout(self.io_timeout_ms);
+        result
+    }
+
     pub fn connect(
         resource: impl Into<String>,
         timeout_ms: u32,

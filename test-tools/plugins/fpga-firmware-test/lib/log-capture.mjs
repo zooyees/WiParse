@@ -4,6 +4,7 @@ import { fail } from './common.mjs';
 export function preserveLog(log, dir, config) {
   const folder=path.join(dir,'logs'); fs.mkdirSync(folder,{recursive:true});
   if(!log || !Array.isArray(log.lines) || typeof log.raw_base64!=='string') throw fail('LOG.RAW_EVIDENCE_REQUIRED');
+  if(!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(log.raw_base64) || Buffer.from(log.raw_base64,'base64').toString('base64')!==log.raw_base64) throw fail('LOG.RAW_ENCODING_INVALID','原始日志Base64无效，不能作为完整证据');
   fs.writeFileSync(path.join(folder,'serial.raw'),Buffer.from(log.raw_base64,'base64'));
   const raw=Buffer.from(log.raw_base64,'base64');
   let decoded=true,text='';

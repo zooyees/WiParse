@@ -18,8 +18,13 @@ use std::thread;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use rayon::prelude::*;
 use wiparse_core::bus_decode::{
-    compact_bus_decode_indices, decode_bus, BusDecodeResult, BusDecodeSettings, BusKind,
-    DdsssExtension, DdsssSequence, I2sFormat, SpiMode, SpiWire, UartParity,
+    compact_bus_decode_indices, decode_bus, explain_frame, BusChannelMap, BusDecodeResult, BusDecodeSettings,
+    BusFrameError, BusKind, MAX_DECODE_BYTES, DdsssExtension, DdsssSequence, I2sFormat, SpiMode, SpiWire,
+    UartParity,
+};
+use crate::waveform_protocol_html::{
+    render_protocol_report, write_protocol_html, ProtocolReport, ProtocolReportField, ProtocolReportFrame,
+    ProtocolReportLane, ProtocolReportWave,
 };
 use wiparse_core::protocol::describe_ask_bytes;
 use wiparse_core::config::{load_config, save_config, AppConfig};
@@ -39,7 +44,7 @@ fn toolbar_height(width: f32) -> f32 {
     if width < 480.0 { 172.0 } else if width < 720.0 { 108.0 } else if width < 1080.0 { 76.0 } else { 44.0 }
 }
 const PANEL_GAP: f32 = 12.0;
-const SIDE_W: f32 = 300.0;
+const SIDE_W: f32 = ui_theme::SIDEBAR_W;
 /// Compact Y-axis strip width (scope-style, right of plot).
 const CHANNEL_AXIS_COL_W: f32 = 28.0;
 const AXIS_HANDLE_RADIUS: f32 = 5.5;
@@ -151,10 +156,26 @@ struct PendingViewportBuild {
     rx: Receiver<(u64, HashMap<usize, WaveViewportSeries>)>,
 }
 
-struct PendingBusDecode {
-    generation: u64,
-    rx: Receiver<(u64, BusDecodeResult)>,
+struct LaneDecodeJob {
+    id: u64,
+    traces: Vec<WaveformTrace>,
+    settings: BusDecodeSettings,
 }
+
+struct PendingBusDecode {
+    rx: Receiver<(u64, Vec<(u64, BusDecodeResult)>)>,
+}
+
+/// One protocol assignment. Several lanes decode at the same time.
+struct ProtocolLane {
+    id: u64,
+    settings: BusDecodeSettings,
+    uart_baud_text: String,
+    ddsss_fop_text: String,
+    result: Option<BusDecodeResult>,
+}
+
+const MAX_BUS_LANES: usize = 16;
 
 /// Finished viewport LOD waiting for zoom/pan to settle (avoids flash while wheeling).
 struct DeferredViewportCache {
@@ -225,6 +246,11 @@ pub struct WaveformAnalysisPanel {
     bus_decode_gen: u64,
     pending_bus_decode: Option<PendingBusDecode>,
     selected_bus_frame: Option<usize>,
+    bus_frame_popup: Option<usize>,
+    bus_lanes: Vec<ProtocolLane>,
+    active_bus_lane: usize,
+    next_bus_lane_id: u64,
+    protocol_html_path: Option<PathBuf>,
     bus_decode_dirty: bool,
     /// Optional manual UART baud entry (empty = auto).
     uart_baud_text: String,
@@ -282,6 +308,17 @@ impl WaveformAnalysisPanel {
             bus_decode_gen: 0,
             pending_bus_decode: None,
             selected_bus_frame: None,
+            bus_frame_popup: None,
+            bus_lanes: vec![ProtocolLane {
+                id: 0,
+                settings: BusDecodeSettings::default(),
+                uart_baud_text: String::new(),
+                ddsss_fop_text: String::new(),
+                result: None,
+            }],
+            active_bus_lane: 0,
+            next_bus_lane_id: 1,
+            protocol_html_path: None,
             bus_decode_dirty: false,
             uart_baud_text: String::new(),
             ddsss_fop_text: String::new(),
@@ -302,8 +339,10 @@ impl WaveformAnalysisPanel {
             self.bus_decode_dirty = false;
         }
         let typing = ui.ctx().wants_keyboard_input();
-        if !typing && ui.input(|i| i.key_pressed(egui::Key::Escape)) && self.selected.is_some() {
-            self.selected = None;
+        if !typing && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if self.bus_frame_popup.take().is_none() && self.selected.is_some() {
+                self.selected = None;
+            }
         }
         let avail = ui.available_size();
         let (full, _) = ui.allocate_exact_size(avail, egui::Sense::hover());
@@ -313,53 +352,46 @@ impl WaveformAnalysisPanel {
 
         let body_top = full.min.y;
         let body_h = full.height().max(1.0);
-        let side_w = ui_theme::resizable_sidebar_width(ui, "waveform_analysis", full,
-            SIDE_W, 250.0, 180.0, PANEL_GAP, tokens);
-        let plot_w = (full.width() - side_w - PANEL_GAP).max(1.0);
-        let side_rect = egui::Rect::from_min_size(full.min, egui::vec2(side_w, body_h));
+        let right_w = protocol_column_width(full.width());
+        let right_rect = egui::Rect::from_min_max(
+            egui::pos2(full.max.x - right_w, full.min.y),
+            full.max,
+        );
+        let center = egui::Rect::from_min_max(
+            full.min,
+            egui::pos2(right_rect.min.x - PANEL_GAP, full.max.y),
+        );
+        let side_w = ui_theme::resizable_sidebar_width(ui, "waveform_analysis", center,
+            SIDE_W, ui_theme::SIDEBAR_MIN_W, 180.0, PANEL_GAP, tokens);
+        let mid_left = center.min.x + side_w + PANEL_GAP;
+        let mid_right = center.max.x;
+        let plot_w = (mid_right - mid_left).max(1.0);
+        let side_rect = egui::Rect::from_min_size(center.min, egui::vec2(side_w, body_h));
         let toolbar_h = toolbar_height(plot_w).min(body_h);
-        let toolbar_rect = egui::Rect::from_min_size(egui::pos2(full.min.x + side_w + PANEL_GAP, body_top), egui::vec2(plot_w, toolbar_h));
+        let toolbar_rect = egui::Rect::from_min_size(egui::pos2(mid_left, body_top), egui::vec2(plot_w, toolbar_h));
         let plot_top = (toolbar_rect.bottom() + PANEL_GAP).min(full.bottom());
-        let plot_rect = egui::Rect::from_min_max(egui::pos2(toolbar_rect.left(), plot_top), full.max);
+        let plot_rect = egui::Rect::from_min_max(
+            egui::pos2(mid_left, plot_top),
+            egui::pos2(mid_right, full.max.y.max(plot_top + 80.0)),
+        );
 
         panel_in_rect(ui, toolbar_rect, |ui| {
             self.toolbar(ui, lang, tokens);
         });
 
-        // Keep protocol controls usable while the plot retains most of the page width.
-        let body_inner = (body_h - PANEL_GAP * 2.0).max(1.0);
-        let browser_h = body_inner * 0.32;
-        let bus_h = body_inner * 0.42;
-        let meas_h = (body_inner - browser_h - bus_h).max(1.0);
+        let body_inner = (body_h - PANEL_GAP).max(1.0);
+        let browser_h = body_inner * 0.58;
+        let meas_h = (body_inner - browser_h).max(1.0);
         let browser_rect =
             egui::Rect::from_min_size(side_rect.min, egui::vec2(side_w, browser_h));
-        let bus_rect = egui::Rect::from_min_size(
-            egui::pos2(side_rect.min.x, side_rect.min.y + browser_h + PANEL_GAP),
-            egui::vec2(side_w, bus_h),
-        );
         let meas_rect = egui::Rect::from_min_size(
-            egui::pos2(side_rect.min.x, side_rect.min.y + browser_h + bus_h + PANEL_GAP * 2.0),
+            egui::pos2(side_rect.min.x, side_rect.min.y + browser_h + PANEL_GAP),
             egui::vec2(side_w, meas_h),
         );
 
         panel_in_rect(ui, browser_rect, |ui| {
             self.browser_panel(ui, lang, tokens);
         });
-        card_in_rect(
-            ui,
-            bus_rect,
-            tokens,
-            &t(lang, "协议分析", "Bus Decode"),
-            |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("waveform-bus-settings")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.set_max_width(ui.available_width());
-                        self.bus_decode_panel(ui, lang, tokens);
-                    });
-            },
-        );
         card_in_rect(
             ui,
             meas_rect,
@@ -373,6 +405,21 @@ impl WaveformAnalysisPanel {
             tokens,
             &t(lang, "波形图", "Plot"),
             |ui| self.plot_area(ui, lang, tokens),
+        );
+        card_in_rect(
+            ui,
+            right_rect,
+            tokens,
+            &t(lang, "协议分析", "Bus Decode"),
+            |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("waveform-bus-settings")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.set_max_width(ui.available_width());
+                        self.bus_decode_panel(ui, lang, tokens);
+                    });
+            },
         );
     }
 
@@ -468,6 +515,10 @@ impl WaveformAnalysisPanel {
                                 self.bus_result = None;
                                 self.pending_bus_decode = None;
                                 self.selected_bus_frame = None;
+                                self.bus_frame_popup = None;
+                                for lane in &mut self.bus_lanes {
+                                    lane.result = None;
+                                }
                             } else {
                                 self.activate_wave(0);
                             }
@@ -1494,93 +1545,184 @@ impl WaveformAnalysisPanel {
         }
     }
 
-    fn bus_channels_ready(&self) -> bool {
-        match self.bus_settings.kind {
-            BusKind::Off => false,
-            BusKind::Uart => self.bus_settings.channels.uart_signal.is_some(),
-            BusKind::I2c => {
-                self.bus_settings.channels.i2c_scl.is_some()
-                    && self.bus_settings.channels.i2c_sda.is_some()
+    fn x_cursors_should_redecode(&self) -> bool {
+        self.bus_lanes.iter().enumerate().any(|(index, lane)| {
+            let kind = if index == self.active_bus_lane { self.bus_settings.kind } else { lane.settings.kind };
+            !matches!(kind, BusKind::Off | BusKind::Ddsss)
+        })
+    }
+
+    fn commit_active_lane(&mut self) {
+        if self.bus_lanes.is_empty() {
+            self.bus_lanes.push(ProtocolLane {
+                id: self.next_bus_lane_id,
+                settings: self.bus_settings.clone(),
+                uart_baud_text: self.uart_baud_text.clone(),
+                ddsss_fop_text: self.ddsss_fop_text.clone(),
+                result: self.bus_result.clone(),
+            });
+            self.next_bus_lane_id = self.next_bus_lane_id.wrapping_add(1);
+            self.active_bus_lane = 0;
+            return;
+        }
+        let index = self.active_bus_lane.min(self.bus_lanes.len() - 1);
+        self.active_bus_lane = index;
+        let lane = &mut self.bus_lanes[index];
+        lane.settings = self.bus_settings.clone();
+        lane.uart_baud_text = self.uart_baud_text.clone();
+        lane.ddsss_fop_text = self.ddsss_fop_text.clone();
+    }
+
+    fn load_bus_lane(&mut self, index: usize) {
+        let Some(lane) = self.bus_lanes.get(index) else { return };
+        self.bus_settings = lane.settings.clone();
+        self.uart_baud_text = lane.uart_baud_text.clone();
+        self.ddsss_fop_text = lane.ddsss_fop_text.clone();
+        self.bus_result = lane.result.clone();
+        self.active_bus_lane = index;
+        self.selected_bus_frame = None;
+        self.bus_frame_popup = None;
+    }
+
+    fn show_protocol_lane(&mut self, index: usize) {
+        if index == self.active_bus_lane || index >= self.bus_lanes.len() {
+            return;
+        }
+        self.commit_active_lane();
+        self.load_bus_lane(index);
+    }
+
+    fn add_protocol_lane(&mut self) {
+        if self.bus_lanes.len() >= MAX_BUS_LANES {
+            return;
+        }
+        self.commit_active_lane();
+        let mut settings = self.bus_settings.clone();
+        settings.channels = BusChannelMap::default();
+        let id = self.next_bus_lane_id;
+        self.next_bus_lane_id = self.next_bus_lane_id.wrapping_add(1);
+        self.bus_lanes.push(ProtocolLane {
+            id,
+            settings,
+            uart_baud_text: self.uart_baud_text.clone(),
+            ddsss_fop_text: self.ddsss_fop_text.clone(),
+            result: None,
+        });
+        self.load_bus_lane(self.bus_lanes.len() - 1);
+    }
+
+    fn decode_remaining_channels(&mut self) {
+        if !single_signal_kind(self.bus_settings.kind) || self.waves.is_empty() {
+            return;
+        }
+        self.commit_active_lane();
+        let kind = self.bus_settings.kind;
+        let mut used = std::collections::HashSet::new();
+        for (index, lane) in self.bus_lanes.iter().enumerate() {
+            if index == self.active_bus_lane {
+                continue;
             }
-            BusKind::Spi => {
-                let clk = self.bus_settings.channels.spi_clk.is_some();
-                let io0 = self.bus_settings.channels.spi_mosi.is_some();
-                match self.bus_settings.spi.wire {
-                    SpiWire::TwoWire | SpiWire::FourWire => clk && io0,
-                    SpiWire::Dual => {
-                        clk && io0 && self.bus_settings.channels.spi_miso.is_some()
-                    }
-                    SpiWire::Quad => {
-                        clk && io0
-                            && self.bus_settings.channels.spi_miso.is_some()
-                            && self.bus_settings.channels.spi_io2.is_some()
-                            && self.bus_settings.channels.spi_io3.is_some()
-                    }
+            if lane.settings.kind == kind {
+                if let Some(channel) = primary_signal(&lane.settings) {
+                    used.insert(channel);
                 }
             }
-            BusKind::I2s => {
-                self.bus_settings.channels.i2s_bclk.is_some()
-                    && self.bus_settings.channels.i2s_ws.is_some()
-                    && self.bus_settings.channels.i2s_data.is_some()
-            }
-            BusKind::Ddsss => self.bus_settings.channels.ddsss_signal.is_some(),
-            BusKind::UsbPd | BusKind::Scp | BusKind::Ufcs => self.bus_settings.channels.charging_signal.is_some(),
         }
+        if let Some(channel) = primary_signal(&self.bus_settings) {
+            used.insert(channel);
+        } else if let Some(channel) = (0..self.waves.len()).find(|index| !used.contains(index)) {
+            assign_primary(&mut self.bus_settings, channel);
+            used.insert(channel);
+            self.commit_active_lane();
+        }
+        for channel in 0..self.waves.len() {
+            if used.contains(&channel) || self.bus_lanes.len() >= MAX_BUS_LANES {
+                continue;
+            }
+            let mut settings = self.bus_settings.clone();
+            settings.channels = BusChannelMap::default();
+            assign_primary(&mut settings, channel);
+            let id = self.next_bus_lane_id;
+            self.next_bus_lane_id = self.next_bus_lane_id.wrapping_add(1);
+            self.bus_lanes.push(ProtocolLane {
+                id,
+                settings,
+                uart_baud_text: self.uart_baud_text.clone(),
+                ddsss_fop_text: self.ddsss_fop_text.clone(),
+                result: None,
+            });
+            used.insert(channel);
+        }
+        self.bus_decode_dirty = true;
     }
 
-    fn effective_bus_settings(&self) -> BusDecodeSettings {
-        let mut settings = self.bus_settings.clone();
-        settings.uart.baud = self
-            .uart_baud_text
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|&b| b > 0.0)
-            .or(settings.uart.baud);
-        settings.ddsss.fop_hz = self
-            .ddsss_fop_text
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|&f| f > 0.0)
-            .or(settings.ddsss.fop_hz);
-        settings.time_gate = cursor_measure_time_gate(settings.kind, self.x1, self.x2);
-        settings
-    }
-
-    fn x_cursors_should_redecode(&self) -> bool {
-        !matches!(self.bus_settings.kind, BusKind::Off | BusKind::Ddsss)
+    fn remove_protocol_lane(&mut self) {
+        if self.bus_lanes.len() <= 1 {
+            return;
+        }
+        self.bus_lanes.remove(self.active_bus_lane);
+        let index = self.active_bus_lane.min(self.bus_lanes.len() - 1);
+        self.load_bus_lane(index);
+        self.bus_decode_dirty = true;
     }
 
     fn schedule_bus_decode(&mut self) -> bool {
-        if self.bus_settings.kind == BusKind::Off || self.waves.is_empty() {
+        self.commit_active_lane();
+        if self.waves.is_empty() {
             self.bus_result = None;
             self.pending_bus_decode = None;
             self.selected_bus_frame = None;
-            return true;
-        }
-        if !self.bus_channels_ready() {
-            self.bus_result = None;
+            self.bus_frame_popup = None;
+            for lane in &mut self.bus_lanes {
+                lane.result = None;
+            }
             return true;
         }
         if self.pending_bus_decode.is_some() {
             return false;
         }
-        let settings = self.effective_bus_settings();
-        let (indices, settings) =
-            compact_bus_decode_indices(self.waves.len(), &settings);
-        let traces: Vec<WaveformTrace> = indices
-            .iter()
-            .filter_map(|&i| self.waves.get(i).map(|w| w.trace.clone()))
+        let wave_count = self.waves.len();
+        let x1 = self.x1;
+        let x2 = self.x2;
+        let mut prepared = Vec::new();
+        for lane in &mut self.bus_lanes {
+            let settings = settings_for_decode(&lane.settings, &lane.uart_baud_text, &lane.ddsss_fop_text, x1, x2);
+            if !channels_ready(&settings) {
+                lane.result = None;
+                continue;
+            }
+            let (indices, settings) = compact_bus_decode_indices(wave_count, &settings);
+            prepared.push((lane.id, indices, settings));
+        }
+        let active_id = self.bus_lanes.get(self.active_bus_lane).map(|lane| lane.id);
+        let active_ready = active_id.is_some_and(|id| prepared.iter().any(|(lane_id, _, _)| *lane_id == id));
+        if !active_ready {
+            self.bus_result = None;
+            self.selected_bus_frame = None;
+            self.bus_frame_popup = None;
+        }
+        if prepared.is_empty() {
+            return true;
+        }
+        let jobs: Vec<LaneDecodeJob> = prepared
+            .into_iter()
+            .map(|(id, indices, settings)| LaneDecodeJob {
+                id,
+                traces: indices.iter().filter_map(|&index| self.waves.get(index).map(|wave| wave.trace.clone())).collect(),
+                settings,
+            })
             .collect();
         let generation = self.bus_decode_gen.wrapping_add(1);
         self.bus_decode_gen = generation;
-        tracing::info!(protocol = settings.kind.label(), channels = traces.len(), generation, "bus decode started");
+        tracing::info!(lanes = jobs.len(), generation, "bus decode started");
         let (tx, rx) = unbounded();
-        self.pending_bus_decode = Some(PendingBusDecode { generation, rx });
+        self.pending_bus_decode = Some(PendingBusDecode { rx });
         thread::spawn(move || {
-            let result = decode_bus(&traces, &settings);
-            let _ = tx.send((generation, result));
+            let results: Vec<(u64, BusDecodeResult)> = jobs
+                .into_par_iter()
+                .map(|job| (job.id, decode_bus(&job.traces, &job.settings)))
+                .collect();
+            let _ = tx.send((generation, results));
         });
         true
     }
@@ -1589,16 +1731,225 @@ impl WaveformAnalysisPanel {
         let Some(pending) = self.pending_bus_decode.as_ref() else {
             return;
         };
-        let Ok((gen, result)) = pending.rx.try_recv() else {
+        let Ok((gen, results)) = pending.rx.try_recv() else {
             return;
         };
         self.pending_bus_decode = None;
         if gen != self.bus_decode_gen {
             return;
         }
-        tracing::info!(generation = gen, frames = result.frames.len(), bytes = result.byte_spans.len(), bits = result.bits.len(), chips = result.chips.len(), truncated = result.truncated, "bus decode completed");
-        self.bus_result = Some(result);
+        let frames: usize = results.iter().map(|(_, result)| result.frames.len()).sum();
+        tracing::info!(generation = gen, lanes = results.len(), frames, "bus decode completed");
+        for (id, result) in results {
+            if let Some(lane) = self.bus_lanes.iter_mut().find(|lane| lane.id == id) {
+                lane.result = Some(result);
+            }
+        }
+        self.bus_result = self.bus_lanes.get(self.active_bus_lane).and_then(|lane| lane.result.clone());
         self.selected_bus_frame = None;
+        self.bus_frame_popup = None;
+    }
+
+    fn open_protocol_report(&mut self, lang: Lang) {
+        self.commit_active_lane();
+        let zh = matches!(lang, Lang::Zh);
+        let lanes = self.protocol_report_lanes(zh);
+        if lanes.is_empty() {
+            self.status = t(lang, "先选择协议和通道", "Choose a protocol and channels first").into();
+            return;
+        }
+        let mut sources = Vec::new();
+        for wave in &self.waves {
+            let text = wave.path.display().to_string();
+            if !sources.contains(&text) {
+                sources.push(text);
+            }
+        }
+        let focus = self.bus_lanes.get(self.active_bus_lane).and_then(|lane| {
+            self.bus_frame_popup.or(self.selected_bus_frame).map(|index| (lane.id, index))
+        });
+        let html = render_protocol_report(&ProtocolReport {
+            zh,
+            sources,
+            byte_limit: MAX_DECODE_BYTES,
+            focus,
+            waves: self.report_waves(&lanes),
+            lanes,
+        });
+        match write_protocol_html(&mut self.protocol_html_path, &html) {
+            Ok(path) => {
+                if crate::test_report::open_path_external(&path) {
+                    let count = self.bus_lanes.iter().filter(|lane| lane.settings.kind != BusKind::Off).count();
+                    self.status = t(
+                        lang,
+                        &format!("已在浏览器打开 {count} 路协议解析"),
+                        &format!("Opened {count} protocol lanes in the browser"),
+                    );
+                } else {
+                    self.status = format!("{} {}", t(lang, "无法打开", "Could not open"), path.display());
+                }
+            }
+            Err(err) => self.status = err,
+        }
+    }
+
+    fn protocol_report_lanes(&self, zh: bool) -> Vec<ProtocolReportLane> {
+        self.bus_lanes
+            .iter()
+            .enumerate()
+            .filter(|(_, lane)| lane.settings.kind != BusKind::Off)
+            .map(|(index, lane)| {
+                let ready = channels_ready(&lane.settings);
+                let frames = lane.result.as_ref().map(|result| {
+                    let origin = result.frames.first().map(|frame| frame.t_start).unwrap_or(0.0);
+                    result.frames.iter().enumerate().map(|(frame_index, frame)| {
+                        let mut fields = Vec::new();
+                        report_field(&mut fields, if zh { "相对时间" } else { "Time" }, rel_stamp(origin, frame.t_start), false, zh);
+                        report_field(&mut fields, if zh { "时长" } else { "Duration" }, duration_text(frame.t_start, frame.t_end), false, zh);
+                        report_field(&mut fields, if zh { "时间轴" } else { "Timeline" }, format!("{:.9} s … {:.9} s", frame.t_start, frame.t_end), false, zh);
+                        report_field(&mut fields, if zh { "完整性" } else { "Integrity" }, integrity_text(frame.error, zh), false, zh);
+                        for line in explain_frame(lane.settings.kind, &result.frames, frame_index, zh) {
+                            let (name, value, raw) = field_parts(&line, zh);
+                            report_field(&mut fields, &name, value, raw, zh);
+                        }
+                        ProtocolReportFrame {
+                            index: frame_index,
+                            t0: frame.t_start,
+                            t1: frame.t_end,
+                            summary: frame.summary.clone(),
+                            error: frame.has_error(),
+                            fields,
+                        }
+                    }).collect::<Vec<_>>()
+                }).unwrap_or_default();
+                ProtocolReportLane {
+                    id: lane.id,
+                    title: protocol_lane_chip(&lane.settings, &self.waves, zh),
+                    channels: protocol_channel_text(&lane.settings, &self.waves, zh),
+                    wave: lane_wave_index(&lane.settings).filter(|index| *index < self.waves.len().min(12)),
+                    ready,
+                    on_plot: index == self.active_bus_lane,
+                    brief: protocol_brief(lane.settings.kind, zh),
+                    info: lane.result.as_ref().map(|result| result.info.clone()).unwrap_or_default(),
+                    error: lane.result.as_ref().and_then(|result| result.error.clone()),
+                    truncated: lane.result.as_ref().is_some_and(|result| result.truncated),
+                    frames,
+                }
+            })
+            .collect()
+    }
+
+    fn report_waves(&self, lanes: &[ProtocolReportLane]) -> Vec<ProtocolReportWave> {
+        let windows = detail_windows(lanes);
+        let count = self.waves.len().min(12).max(1);
+        let budget = (600_000 / count).clamp(120_000, 300_000);
+        self.waves.iter().take(12).map(|wave| {
+            let unit = if wave.trace.y_unit.is_empty() { "V".into() } else { wave.trace.y_unit.clone() };
+            ProtocolReportWave::new(
+                wave.label.clone(),
+                unit,
+                wave_overview_columns(wave),
+                detail_columns(&wave.trace.x, &wave.trace.y, &windows, budget),
+            )
+        }).collect()
+    }
+
+    fn protocol_lane_bar(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        let zh = matches!(lang, Lang::Zh);
+        let rows: Vec<(String, String)> = (0..self.bus_lanes.len())
+            .map(|index| {
+                let settings = if index == self.active_bus_lane { &self.bus_settings } else { &self.bus_lanes[index].settings };
+                let count = if index == self.active_bus_lane {
+                    self.bus_result.as_ref().map(|result| result.frames.len())
+                } else {
+                    self.bus_lanes[index].result.as_ref().map(|result| result.frames.len())
+                };
+                (protocol_lane_chip(settings, &self.waves, zh), count.map(|count| count.to_string()).unwrap_or_default())
+            })
+            .collect();
+        let unused = self.unused_single_channels();
+        let mut switch = None;
+        let mut add = false;
+        let mut remove = false;
+        let mut fill = false;
+        let mut open = false;
+        let width = ui.available_width();
+        let list_h = (rows.len() as f32 * 30.0).min(120.0);
+        egui::ScrollArea::vertical().id_salt("protocol-lanes").max_height(list_h).auto_shrink([false, false]).show(ui, |ui| {
+            ui.set_width(width);
+            for (index, (name, count)) in rows.iter().enumerate() {
+                let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::click());
+                if index == self.active_bus_lane {
+                    ui.painter().rect_filled(rect, 4.0, tokens.accent_soft);
+                    ui.painter().rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(3.0, rect.height())), 0.0, tokens.accent);
+                }
+                let font = egui::FontId::proportional(13.0);
+                let count_w = if count.is_empty() { 0.0 } else { 36.0 };
+                let name = fit_text(ui, name, font.clone(), tokens.text_primary, (rect.width() - count_w - 20.0).max(24.0));
+                ui.painter().text(egui::pos2(rect.left() + 10.0, rect.center().y), egui::Align2::LEFT_CENTER, name, font.clone(), tokens.text_primary);
+                if !count.is_empty() {
+                    ui.painter().text(egui::pos2(rect.right() - 8.0, rect.center().y), egui::Align2::RIGHT_CENTER, count, font, tokens.text_muted);
+                }
+                if response.clicked() {
+                    switch = Some(index);
+                }
+            }
+        });
+        ui.add_space(6.0);
+        let gap = 6.0_f32;
+        let half = ((width - gap) / 2.0).max(40.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            if ui.add_sized([half, 28.0], egui::Button::new(t(lang, "添加一路", "Add lane"))).clicked() && self.bus_lanes.len() < MAX_BUS_LANES {
+                add = true;
+            }
+            if ui.add_enabled_ui(self.bus_lanes.len() > 1, |ui| ui.add_sized([half, 28.0], egui::Button::new(t(lang, "移除", "Remove")))).inner.clicked() {
+                remove = true;
+            }
+        });
+        if unused > 0 && ui.add_sized([width, 28.0], egui::Button::new(t(lang, "其余通道同时解析", "Decode the other channels"))).clicked() {
+            fill = true;
+        }
+        if ui_theme::primary_btn_sized(ui, tokens, t(lang, "在浏览器中分析", "Analyze in browser"), egui::vec2(width, 30.0)).clicked() {
+            open = true;
+        }
+        ui.label(RichText::new(t(
+            lang,
+            "在这里选择协议和通道。波形、时序和字段在浏览器中查看。",
+            "Choose the protocol and channels here. The browser page shows the waveform, timing, and fields.",
+        )).small().color(tokens.text_muted));
+        if let Some(index) = switch {
+            self.show_protocol_lane(index);
+        }
+        if add {
+            self.add_protocol_lane();
+        }
+        if remove {
+            self.remove_protocol_lane();
+        }
+        if fill {
+            self.decode_remaining_channels();
+        }
+        if open {
+            self.open_protocol_report(lang);
+        }
+    }
+
+    fn unused_single_channels(&self) -> usize {
+        if !single_signal_kind(self.bus_settings.kind) {
+            return 0;
+        }
+        let kind = self.bus_settings.kind;
+        let mut used = std::collections::HashSet::new();
+        for (index, lane) in self.bus_lanes.iter().enumerate() {
+            let settings = if index == self.active_bus_lane { &self.bus_settings } else { &lane.settings };
+            if settings.kind == kind {
+                if let Some(channel) = primary_signal(settings) {
+                    used.insert(channel);
+                }
+            }
+        }
+        (0..self.waves.len()).filter(|index| !used.contains(index)).count()
     }
 
     fn bus_decode_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
@@ -1611,6 +1962,9 @@ impl WaveformAnalysisPanel {
             );
             return;
         }
+
+        self.protocol_lane_bar(ui, lang, tokens);
+        ui.add_space(6.0);
 
         let layout = bus_form_layout(ui);
         ui.spacing_mut().item_spacing.y = 4.0;
@@ -1647,20 +2001,27 @@ impl WaveformAnalysisPanel {
                             if self.bus_settings.kind == BusKind::UsbPd { "CC" } else if self.bus_settings.kind == BusKind::Scp { "D- (SCP)" } else { "D+ (UFCS)" },
                             &self.waves, &mut self.bus_settings.channels.charging_signal);
                         bus_grid_label(ui, layout, &t(lang, "阈值 V", "Threshold V"));
-                        ui.horizontal(|ui| {
-                            let mut manual = self.bus_settings.threshold.is_some();
-                            if ui.checkbox(&mut manual, t(lang, "手动", "Manual")).changed() {
-                                self.bus_settings.threshold = if manual { Some(if self.bus_settings.kind == BusKind::Scp { 1.1 } else { 0.6 }) } else { None };
-                                changed = true;
-                            }
-                            if let Some(value) = self.bus_settings.threshold.as_mut() {
-                                changed |= ui.add(egui::DragValue::new(value).speed(0.01).range(-20.0..=20.0)).changed();
-                            }
-                        });
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(layout.field_w, layout.row_h),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.set_max_width(layout.field_w);
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                let mut manual = self.bus_settings.threshold.is_some();
+                                if ui.checkbox(&mut manual, t(lang, "手动", "Manual")).changed() {
+                                    self.bus_settings.threshold = if manual { Some(if self.bus_settings.kind == BusKind::Scp { 1.1 } else { 0.6 }) } else { None };
+                                    changed = true;
+                                }
+                                if let Some(value) = self.bus_settings.threshold.as_mut() {
+                                    changed |= ui.add(egui::DragValue::new(value).speed(0.01).range(-20.0..=20.0)).changed();
+                                }
+                            },
+                        );
                         ui.end_row();
                         if self.bus_settings.kind == BusKind::Ufcs {
                             bus_grid_label(ui, layout, &t(lang, "波特率", "Baud"));
                             egui::ComboBox::from_id_salt("ufcs_baud").selected_text(self.bus_settings.ufcs.baud.to_string())
+                                .width(layout.field_w)
                                 .show_ui(ui, |ui| {
                                     for baud in [38400, 57600, 115200, 230400] {
                                         changed |= ui.selectable_value(&mut self.bus_settings.ufcs.baud, baud, baud.to_string()).changed();
@@ -1753,29 +2114,9 @@ impl WaveformAnalysisPanel {
                             &self.waves,
                             &mut self.bus_settings.channels.i2c_sda,
                         );
-                        bus_grid_label(ui, layout, &t(lang, "寄存器位宽", "Reg bits"));
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            let bits = if self.bus_settings.i2c.reg_addr_bits == 16 {
-                                16u8
-                            } else {
-                                8
-                            };
-                            for (label, value) in [("8", 8u8), ("16", 16)] {
-                                if ui
-                                    .add_sized(
-                                        [28.0, layout.row_h],
-                                        egui::Button::new(label).selected(bits == value),
-                                    )
-                                    .clicked()
-                                    && bits != value
-                                {
-                                    self.bus_settings.i2c.reg_addr_bits = value;
-                                    changed = true;
-                                }
-                            }
-                        });
-                        ui.end_row();
+                        let mut bits = if self.bus_settings.i2c.reg_addr_bits == 16 { 16u8 } else { 8 };
+                        changed |= bus_segment(ui, layout, &t(lang, "寄存器位宽", "Reg bits"), &mut bits, &[("8", 8), ("16", 16)]);
+                        self.bus_settings.i2c.reg_addr_bits = bits;
                     }
                     BusKind::Spi => {
                         changed |= bus_grid_spi_wire(
@@ -1891,25 +2232,9 @@ impl WaveformAnalysisPanel {
                             &self.waves,
                             &mut self.bus_settings.channels.i2s_data,
                         );
-                        bus_grid_label(ui, layout, &t(lang, "位宽", "Bits"));
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            let bits = self.bus_settings.i2s.bits_per_sample;
-                            for (label, value) in [("16", 16u8), ("24", 24), ("32", 32)] {
-                                if ui
-                                    .add_sized(
-                                        [28.0, layout.row_h],
-                                        egui::Button::new(label).selected(bits == value),
-                                    )
-                                    .clicked()
-                                    && bits != value
-                                {
-                                    self.bus_settings.i2s.bits_per_sample = value;
-                                    changed = true;
-                                }
-                            }
-                        });
-                        ui.end_row();
+                        let mut bits = self.bus_settings.i2s.bits_per_sample;
+                        changed |= bus_segment(ui, layout, &t(lang, "位宽", "Bits"), &mut bits, &[("16", 16u8), ("24", 24), ("32", 32)]);
+                        self.bus_settings.i2s.bits_per_sample = bits;
                         changed |= bus_grid_i2s_format(
                             ui,
                             layout,
@@ -2006,8 +2331,8 @@ impl WaveformAnalysisPanel {
                 ui.label(
                     RichText::new(t(
                         lang,
-                        "已达 512 字节上限，后续数据未解析",
-                        "Stopped at 512-byte limit; remaining data was not decoded",
+                        &format!("已达 {MAX_DECODE_BYTES} 字节上限，后续数据未解析"),
+                        &format!("Stopped at {MAX_DECODE_BYTES}-byte limit; remaining data was not decoded"),
                     ))
                     .small()
                     .color(tokens.text_muted),
@@ -2092,6 +2417,14 @@ impl WaveformAnalysisPanel {
                     }),
                 );
             }
+        }
+    }
+
+    fn open_bus_frame(&mut self, index: usize) {
+        self.selected_bus_frame = Some(index);
+        self.bus_frame_popup = Some(index);
+        if let Some(frame) = self.bus_result.as_ref().and_then(|result| result.frames.get(index)).cloned() {
+            self.zoom_to_bus_frame(&frame);
         }
     }
 
@@ -3618,15 +3951,7 @@ impl WaveformAnalysisPanel {
             }
         }
         if let Some(i) = click_bus_frame {
-            self.selected_bus_frame = Some(i);
-            if let Some(frame) = self
-                .bus_result
-                .as_ref()
-                .and_then(|r| r.frames.get(i))
-                .cloned()
-            {
-                self.zoom_to_bus_frame(&frame);
-            }
+            self.open_bus_frame(i);
         } else if let Some((t0, t1)) = click_bus_span {
             self.zoom_to_bus_frame(&wiparse_core::bus_decode::BusFrame {
                 t_start: t0,
@@ -4774,6 +5099,16 @@ fn card_in_rect(
     });
 }
 
+/// Right-hand protocol column. The plot keeps at least 360 px; the column stays between 220 and 360.
+fn protocol_column_width(total: f32) -> f32 {
+    let room = total - 200.0 - 360.0 - PANEL_GAP * 2.0;
+    if room >= 220.0 {
+        room.clamp(240.0, 360.0)
+    } else {
+        (total * 0.34).clamp(200.0, 280.0)
+    }
+}
+
 fn bus_form_layout(ui: &egui::Ui) -> BusFormLayout {
     let w = ui.available_width().max(140.0);
     let label_w = 78.0_f32.min(w * 0.36).max(54.0);
@@ -4835,6 +5170,38 @@ fn bus_grid_channel_combo(
     changed
 }
 
+fn bus_segment<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    layout: BusFormLayout,
+    label: &str,
+    current: &mut T,
+    options: &[(&str, T)],
+) -> bool {
+    let mut changed = false;
+    bus_grid_label(ui, layout, label);
+    let count = options.len().max(1) as f32;
+    let gap = 4.0_f32;
+    let btn_w = ((layout.field_w - gap * (count - 1.0)) / count).max(18.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(layout.field_w, layout.row_h),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(layout.field_w);
+            ui.set_max_width(layout.field_w);
+            ui.spacing_mut().item_spacing.x = gap;
+            let cur = *current;
+            for (text, value) in options {
+                if ui.add_sized([btn_w, layout.row_h], egui::Button::new(*text).selected(cur == *value)).clicked() && cur != *value {
+                    *current = *value;
+                    changed = true;
+                }
+            }
+        },
+    );
+    ui.end_row();
+    changed
+}
+
 fn bus_grid_buttons(
     ui: &mut egui::Ui,
     layout: BusFormLayout,
@@ -4843,27 +5210,8 @@ fn bus_grid_buttons(
     options: &[(&str, u8)],
     btn_w: f32,
 ) -> bool {
-    let mut changed = false;
-    bus_grid_label(ui, layout, label);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let cur = *current;
-        for (text, value) in options {
-            if ui
-                .add_sized(
-                    [btn_w, layout.row_h],
-                    egui::Button::new(*text).selected(cur == *value),
-                )
-                .clicked()
-                && cur != *value
-            {
-                *current = *value;
-                changed = true;
-            }
-        }
-    });
-    ui.end_row();
-    changed
+    let _ = btn_w;
+    bus_segment(ui, layout, label, current, options)
 }
 
 fn bus_grid_parity(
@@ -4872,31 +5220,7 @@ fn bus_grid_parity(
     label: &str,
     current: &mut UartParity,
 ) -> bool {
-    let mut changed = false;
-    bus_grid_label(ui, layout, label);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let cur = *current;
-        for (text, value) in [
-            ("N", UartParity::None),
-            ("E", UartParity::Even),
-            ("O", UartParity::Odd),
-        ] {
-            if ui
-                .add_sized(
-                    [22.0, layout.row_h],
-                    egui::Button::new(text).selected(cur == value),
-                )
-                .clicked()
-                && cur != value
-            {
-                *current = value;
-                changed = true;
-            }
-        }
-    });
-    ui.end_row();
-    changed
+    bus_segment(ui, layout, label, current, &[("N", UartParity::None), ("E", UartParity::Even), ("O", UartParity::Odd)])
 }
 
 fn bus_grid_ddsss_extension(
@@ -4905,31 +5229,7 @@ fn bus_grid_ddsss_extension(
     label: &str,
     current: &mut DdsssExtension,
 ) -> bool {
-    let mut changed = false;
-    bus_grid_label(ui, layout, label);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let cur = *current;
-        for (text, value) in [
-            ("Auto", DdsssExtension::Auto),
-            ("Off", DdsssExtension::Off),
-            ("On", DdsssExtension::On),
-        ] {
-            if ui
-                .add_sized(
-                    [36.0, layout.row_h],
-                    egui::Button::new(text).selected(cur == value),
-                )
-                .clicked()
-                && cur != value
-            {
-                *current = value;
-                changed = true;
-            }
-        }
-    });
-    ui.end_row();
-    changed
+    bus_segment(ui, layout, label, current, &[("Auto", DdsssExtension::Auto), ("Off", DdsssExtension::Off), ("On", DdsssExtension::On)])
 }
 
 fn bus_grid_spi_wire(
@@ -4938,33 +5238,7 @@ fn bus_grid_spi_wire(
     label: &str,
     current: &mut SpiWire,
 ) -> bool {
-    let mut changed = false;
-    bus_grid_label(ui, layout, label);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 3.0;
-        let cur = *current;
-        for (text, value) in [
-            ("2", SpiWire::TwoWire),
-            ("4", SpiWire::FourWire),
-            ("Dual", SpiWire::Dual),
-            ("Quad", SpiWire::Quad),
-        ] {
-            let w = if text.len() > 1 { 40.0 } else { 24.0 };
-            if ui
-                .add_sized(
-                    [w, layout.row_h],
-                    egui::Button::new(text).selected(cur == value),
-                )
-                .clicked()
-                && cur != value
-            {
-                *current = value;
-                changed = true;
-            }
-        }
-    });
-    ui.end_row();
-    changed
+    bus_segment(ui, layout, label, current, &[("2", SpiWire::TwoWire), ("4", SpiWire::FourWire), ("Dual", SpiWire::Dual), ("Quad", SpiWire::Quad)])
 }
 
 fn bus_grid_spi_mode(
@@ -4973,32 +5247,7 @@ fn bus_grid_spi_mode(
     label: &str,
     current: &mut SpiMode,
 ) -> bool {
-    let mut changed = false;
-    bus_grid_label(ui, layout, label);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let cur = *current;
-        for (text, value) in [
-            ("0", SpiMode::Mode0),
-            ("1", SpiMode::Mode1),
-            ("2", SpiMode::Mode2),
-            ("3", SpiMode::Mode3),
-        ] {
-            if ui
-                .add_sized(
-                    [22.0, layout.row_h],
-                    egui::Button::new(text).selected(cur == value),
-                )
-                .clicked()
-                && cur != value
-            {
-                *current = value;
-                changed = true;
-            }
-        }
-    });
-    ui.end_row();
-    changed
+    bus_segment(ui, layout, label, current, &[("0", SpiMode::Mode0), ("1", SpiMode::Mode1), ("2", SpiMode::Mode2), ("3", SpiMode::Mode3)])
 }
 
 fn bus_grid_bool_pair(
@@ -5008,28 +5257,7 @@ fn bus_grid_bool_pair(
     current: &mut bool,
     (false_l, true_l): (&str, &str),
 ) -> bool {
-    let mut changed = false;
-    bus_grid_label(ui, layout, label);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let cur = *current;
-        for (text, value) in [(false_l, false), (true_l, true)] {
-            let w = (text.len() as f32 * 8.0 + 12.0).clamp(28.0, 52.0);
-            if ui
-                .add_sized(
-                    [w, layout.row_h],
-                    egui::Button::new(text).selected(cur == value),
-                )
-                .clicked()
-                && cur != value
-            {
-                *current = value;
-                changed = true;
-            }
-        }
-    });
-    ui.end_row();
-    changed
+    bus_segment(ui, layout, label, current, &[(false_l, false), (true_l, true)])
 }
 
 fn bus_grid_i2s_format(
@@ -5038,28 +5266,390 @@ fn bus_grid_i2s_format(
     label: &str,
     current: &mut I2sFormat,
 ) -> bool {
-    let mut changed = false;
-    bus_grid_label(ui, layout, label);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let cur = *current;
-        for (text, value) in [("Philips", I2sFormat::Philips), ("Left-J", I2sFormat::LeftJustified)]
-        {
-            if ui
-                .add_sized(
-                    [52.0, layout.row_h],
-                    egui::Button::new(text).selected(cur == value),
-                )
-                .clicked()
-                && cur != value
-            {
-                *current = value;
-                changed = true;
+    bus_segment(ui, layout, label, current, &[("Philips", I2sFormat::Philips), ("Left-J", I2sFormat::LeftJustified)])
+}
+
+fn rel_stamp(origin: f64, t: f64) -> String {
+    let dt = t - origin;
+    let sign = if dt < 0.0 { "-" } else { "+" };
+    let abs = dt.abs();
+    if abs < 1e-3 {
+        format!("{sign}{:.1} µs", abs * 1e6)
+    } else if abs < 1.0 {
+        format!("{sign}{:.3} ms", abs * 1e3)
+    } else {
+        format!("{sign}{:.6} s", abs)
+    }
+}
+
+fn fit_text(ui: &egui::Ui, text: &str, font: egui::FontId, color: egui::Color32, max_w: f32) -> String {
+    let full = ui.painter().layout(text.to_string(), font.clone(), color, f32::INFINITY);
+    if full.size().x <= max_w {
+        return text.to_string();
+    }
+    let count = text.chars().count().max(1);
+    let keep = ((count as f32) * (max_w / full.size().x.max(1.0))).floor() as usize;
+    let kept: String = text.chars().take(keep.saturating_sub(1).max(1).min(count)).collect();
+    format!("{kept}…")
+}
+
+fn duration_text(start: f64, end: f64) -> String {
+    let text = rel_stamp(start, end);
+    text.strip_prefix('+').unwrap_or(&text).to_string()
+}
+
+fn integrity_text(error: BusFrameError, zh: bool) -> String {
+    match error {
+        BusFrameError::None => if zh { "正常" } else { "OK" },
+        BusFrameError::Checksum => if zh { "校验错误" } else { "Checksum error" },
+        BusFrameError::Parity => if zh { "奇偶错误" } else { "Parity error" },
+        BusFrameError::Framing => if zh { "帧格式错误" } else { "Framing error" },
+    }
+    .into()
+}
+
+fn lane_wave_index(settings: &BusDecodeSettings) -> Option<usize> {
+    primary_signal(settings).or(match settings.kind {
+        BusKind::I2c => settings.channels.i2c_sda.or(settings.channels.i2c_scl),
+        BusKind::Spi => settings.channels.spi_clk.or(settings.channels.spi_mosi),
+        BusKind::I2s => settings.channels.i2s_data.or(settings.channels.i2s_bclk),
+        _ => None,
+    })
+}
+
+fn decimate_series(x: &[f64], y: &[f64], max_cols: usize) -> Vec<[f64; 4]> {
+    let n = x.len().min(y.len());
+    if n == 0 || max_cols == 0 {
+        return Vec::new();
+    }
+    if n <= max_cols {
+        return (0..n).map(|index| {
+            let end = if index + 1 < n { x[index + 1] } else { x[index] };
+            [x[index], end.max(x[index]), y[index], y[index]]
+        }).collect();
+    }
+    let mut out = Vec::with_capacity(max_cols);
+    for bucket in 0..max_cols {
+        let start = bucket * n / max_cols;
+        let end = ((bucket + 1) * n / max_cols).max(start + 1).min(n);
+        let mut ymin = f64::INFINITY;
+        let mut ymax = f64::NEG_INFINITY;
+        for index in start..end {
+            ymin = ymin.min(y[index]);
+            ymax = ymax.max(y[index]);
+        }
+        out.push([x[start], x[end - 1].max(x[start]), ymin, ymax]);
+    }
+    out
+}
+
+fn thin_columns(columns: &[[f64; 4]], max_cols: usize) -> Vec<[f64; 4]> {
+    if columns.len() <= max_cols || max_cols == 0 {
+        return columns.iter().copied().filter(|col| col.iter().all(|value| value.is_finite())).collect();
+    }
+    let mut out = Vec::with_capacity(max_cols);
+    for bucket in 0..max_cols {
+        let start = bucket * columns.len() / max_cols;
+        let end = ((bucket + 1) * columns.len() / max_cols).max(start + 1).min(columns.len());
+        let mut x0 = f64::INFINITY;
+        let mut x1 = f64::NEG_INFINITY;
+        let mut ymin = f64::INFINITY;
+        let mut ymax = f64::NEG_INFINITY;
+        for col in &columns[start..end] {
+            if !col.iter().all(|value| value.is_finite()) {
+                continue;
+            }
+            x0 = x0.min(col[0]);
+            x1 = x1.max(col[1]);
+            ymin = ymin.min(col[2]);
+            ymax = ymax.max(col[3]);
+        }
+        if x0.is_finite() {
+            out.push([x0, x1.max(x0), ymin, ymax]);
+        }
+    }
+    out
+}
+
+fn wave_overview_columns(wave: &LoadedWave) -> Vec<[f64; 4]> {
+    const MAX_COLS: usize = 4800;
+    if !wave.overview.is_empty() {
+        let columns: Vec<[f64; 4]> = wave.overview.iter().map(|column| [column.x0, column.x1, column.y_min, column.y_max]).collect();
+        return thin_columns(&columns, MAX_COLS);
+    }
+    decimate_series(&wave.trace.x, &wave.trace.y, MAX_COLS)
+}
+
+/// Time spans that need sample-level edges: each decoded frame, plus one frame of context.
+fn detail_windows(lanes: &[ProtocolReportLane]) -> Vec<(f64, f64)> {
+    let mut spans: Vec<(f64, f64)> = lanes.iter().flat_map(|lane| lane.frames.iter()).filter_map(|frame| {
+        if frame.t0.is_finite() && frame.t1.is_finite() {
+            Some((frame.t0.min(frame.t1), frame.t0.max(frame.t1)))
+        } else {
+            None
+        }
+    }).collect();
+    if spans.is_empty() {
+        return spans;
+    }
+    spans.sort_by(|left, right| left.0.total_cmp(&right.0));
+    let mut widths: Vec<f64> = spans.iter().map(|(start, end)| end - start).filter(|width| *width > 0.0).collect();
+    widths.sort_by(|left, right| left.total_cmp(right));
+    let typical = widths.get(widths.len() / 2).copied().unwrap_or(0.0);
+    let pad = (typical * 2.0).max(1e-12);
+    let mut merged = Vec::<(f64, f64)>::new();
+    for (start, end) in spans {
+        let start = start - pad;
+        let end = end + pad;
+        if let Some(last) = merged.last_mut() {
+            if start <= last.1 {
+                last.1 = last.1.max(end);
+                continue;
             }
         }
-    });
-    ui.end_row();
-    changed
+        merged.push((start, end));
+    }
+    merged
+}
+
+/// High-resolution min/max columns around decoded frames. The overview stays coarse.
+fn detail_columns(x: &[f64], y: &[f64], windows: &[(f64, f64)], budget: usize) -> Vec<[f64; 4]> {
+    let n = x.len().min(y.len());
+    if n == 0 || budget == 0 {
+        return Vec::new();
+    }
+    if windows.is_empty() || n <= budget {
+        return decimate_series(&x[..n], &y[..n], budget.min(n));
+    }
+    let mut ranges = Vec::<(usize, usize)>::new();
+    let mut covered = 0usize;
+    for (start_t, end_t) in windows {
+        let start = x[..n].partition_point(|time| *time < *start_t);
+        let end = x[..n].partition_point(|time| *time <= *end_t).max(start).min(n);
+        if start < end {
+            covered += end - start;
+            ranges.push((start, end));
+        }
+    }
+    if ranges.is_empty() {
+        return decimate_series(&x[..n], &y[..n], budget.min(n));
+    }
+    if covered <= budget {
+        let mut out = Vec::with_capacity(covered);
+        for (start, end) in ranges {
+            out.extend(decimate_series(&x[start..end], &y[start..end], end - start));
+        }
+        return out;
+    }
+    let lengths: Vec<usize> = ranges.iter().map(|(start, end)| end - start).collect();
+    let shares = share_columns(&lengths, budget);
+    let mut out = Vec::new();
+    for ((start, end), share) in ranges.iter().zip(shares) {
+        if share == 0 {
+            continue;
+        }
+        out.extend(decimate_series(&x[*start..*end], &y[*start..*end], share));
+    }
+    if out.is_empty() { decimate_series(&x[..n], &y[..n], budget.min(n)) } else { out }
+}
+
+/// Split a sample budget across frame windows without dropping a later frame to zero.
+fn share_columns(lengths: &[usize], budget: usize) -> Vec<usize> {
+    let covered: usize = lengths.iter().sum();
+    if covered == 0 || budget == 0 {
+        return vec![0; lengths.len()];
+    }
+    let mut shares: Vec<usize> = lengths.iter().map(|len| {
+        let raw = ((budget as f64) * (*len as f64) / (covered as f64)).round() as usize;
+        raw.clamp(1, *len)
+    }).collect();
+    let mut sum: usize = shares.iter().sum();
+    while sum > budget {
+        let Some((index, _)) = shares.iter().enumerate().filter(|(_, share)| **share > 1).max_by_key(|(_, share)| *share) else {
+            break;
+        };
+        shares[index] -= 1;
+        sum -= 1;
+    }
+    shares
+}
+
+fn report_field(fields: &mut Vec<ProtocolReportField>, name: &str, value: String, raw: bool, zh: bool) {
+    let (code, value) = split_code_value(&value);
+    fields.push(ProtocolReportField { name: name.to_string(), value, code, raw, note: field_note(name, zh) });
+}
+
+fn split_code_value(value: &str) -> (String, String) {
+    if let Some((code, actual)) = value.split_once("  →  ") {
+        let code = code.trim().trim_start_matches("码").trim();
+        return (code.to_string(), actual.trim().to_string());
+    }
+    (String::new(), value.to_string())
+}
+
+fn protocol_brief(kind: BusKind, zh: bool) -> String {
+    let (zh_text, en_text) = match kind {
+        BusKind::Uart => ("异步串口。一帧是一个字符，含起始位、数据位、可选校验和停止位。脉宽是这个字符在波形上的宽度。", "Asynchronous serial. One frame is a character: start, data, optional parity, and stop. Width is how long that character occupies."),
+        BusKind::I2c => ("两线总线。地址帧给出 7 位地址和读/写，数据帧是一个字节。ACK 表示从机应答，NAK 表示无应答。", "Two-wire bus. An address frame carries the 7-bit address and read/write; a data frame is one byte. ACK means the slave answered."),
+        BusKind::Spi => ("同步串行。时钟沿上移出数据。位宽和位序决定这些字节如何拼成一个字，片选标出这一次传输。", "Synchronous serial. Data shifts on the clock edge. Word size and bit order group the bytes; chip-select bounds the transfer."),
+        BusKind::I2s => ("音频串行口。BCLK 是位时钟，WS 区分左右声道，DATA 是采样值。", "Digital audio. BCLK is the bit clock, WS selects the channel, and DATA is the sample."),
+        BusKind::UsbPd => ("USB 功率协商。一条消息含 SOP、消息头、数据对象和 CRC-32。电压和电流已按规范步进换算。", "USB power negotiation. A message has SOP, a header, data objects, and CRC-32. Voltage and current are scaled to physical units."),
+        BusKind::Scp => ("单线超级充电。首字节是命令，随后是寄存器地址或数据，末字节是 CRC-8。寄存器值已按该寄存器的单位换算。", "Single-wire charging. The first byte is the command, then a register or data, and the last byte is CRC-8. Register values use that register's unit."),
+        BusKind::Ufcs => ("融合快充，承载在 UART 上。请求帧中的电压、电流已按 0.01 V 和 0.01 A 换算。", "Fused charging over UART. Requested voltage and current are scaled by 0.01 V and 0.01 A."),
+        BusKind::Ddsss => ("Qi 的 ASK/FSK 包。能识别的包列出规格字段；识别不了的只保留原始字节。", "Qi ASK/FSK packet. Recognized packets list specification fields; others keep the raw bytes."),
+        BusKind::Off => ("未选择协议。", "No protocol selected."),
+    };
+    if zh { zh_text } else { en_text }.to_string()
+}
+
+fn field_note(name: &str, zh: bool) -> String {
+    let (zh_text, en_text) = if name.starts_with("PDO") || name.starts_with("APDO") {
+        ("电源数据对象。电压和电流已按 USB PD 的步进换算，不是原始码。", "Power data object. Voltage and current use the USB PD step size, not the raw code.")
+    } else if name.contains("CRC") {
+        ("按协议多项式重算校验。一致表示这帧字节没有传错。", "Checksum recalculated with the protocol polynomial. A match means these bytes arrived intact.")
+    } else if name == "原始字节" || name == "Raw" {
+        ("线上字节，按时间顺序排列，不含起始位和停止位。", "Bytes on the wire, in time order, without start or stop bits.")
+    } else if name == "相对时间" || name == "Time" {
+        ("从这一路第一帧的起点算起。", "Measured from the start of the first frame on this lane.")
+    } else if name == "时长" || name == "Duration" {
+        ("这一帧起止时刻之差，也就是它在波形上的宽度。", "End minus start: how wide this frame is on the waveform.")
+    } else if name == "时间轴" || name == "Timeline" {
+        ("捕获时间轴上的绝对起止，用来和光标对照。", "Absolute start and end on the capture timeline, for comparison with the cursors.")
+    } else if name == "完整性" || name == "Integrity" {
+        ("解码器对校验、奇偶或帧格式的判断。", "The decoder's check of the checksum, parity, or frame shape.")
+    } else if name == "数据" || name == "Data" || name == "数据字节" || name == "Data byte" || name == "9 位数据" || name == "9-bit data" {
+        ("这一帧的数据。十进制便于读，十六进制便于对照规格。", "The frame's data. Decimal is easier to read; hex matches the specification.")
+    } else if name == "字符" || name == "Character" {
+        ("这个数据字节对应的可打印字符。", "The printable character for this data byte.")
+    } else if name.contains("电压") || name.to_ascii_lowercase().contains("voltage") {
+        ("已换算成伏特，不是寄存器里的原码。", "Scaled to volts, not the raw register code.")
+    } else if name.contains("电流") || name.to_ascii_lowercase().contains("current") {
+        ("已换算成安培，不是寄存器里的原码。", "Scaled to amperes, not the raw register code.")
+    } else if name.contains("地址") || name.to_ascii_lowercase().contains("address") {
+        ("总线上的器件地址或寄存器地址。", "A device address or register address on the bus.")
+    } else if name.contains("ACK") || name.contains("NAK") {
+        ("从机是否应答。ACK 表示收到，NAK 表示没有设备或拒绝。", "Whether the slave answered. ACK means accepted; NAK means no device or a refusal.")
+    } else if name == "说明" || name == "Note" {
+        ("解码器对这一帧的直接说明。", "The decoder's plain-language note for this frame.")
+    } else if zh {
+        ("协议字段。右侧是解码并换算后的值。", "Protocol field. The value is decoded and scaled.")
+    } else {
+        ("Protocol field. The value is decoded and scaled.", "Protocol field. The value is decoded and scaled.")
+    };
+    if zh { zh_text } else { en_text }.to_string()
+}
+
+fn channels_ready(settings: &BusDecodeSettings) -> bool {
+    match settings.kind {
+        BusKind::Off => false,
+        BusKind::Uart => settings.channels.uart_signal.is_some(),
+        BusKind::I2c => settings.channels.i2c_scl.is_some() && settings.channels.i2c_sda.is_some(),
+        BusKind::Spi => {
+            let clk = settings.channels.spi_clk.is_some();
+            let io0 = settings.channels.spi_mosi.is_some();
+            match settings.spi.wire {
+                SpiWire::TwoWire | SpiWire::FourWire => clk && io0,
+                SpiWire::Dual => clk && io0 && settings.channels.spi_miso.is_some(),
+                SpiWire::Quad => {
+                    clk && io0 && settings.channels.spi_miso.is_some() && settings.channels.spi_io2.is_some() && settings.channels.spi_io3.is_some()
+                }
+            }
+        }
+        BusKind::I2s => settings.channels.i2s_bclk.is_some() && settings.channels.i2s_ws.is_some() && settings.channels.i2s_data.is_some(),
+        BusKind::Ddsss => settings.channels.ddsss_signal.is_some(),
+        BusKind::UsbPd | BusKind::Scp | BusKind::Ufcs => settings.channels.charging_signal.is_some(),
+    }
+}
+
+fn settings_for_decode(settings: &BusDecodeSettings, uart_text: &str, fop_text: &str, x1: Option<f64>, x2: Option<f64>) -> BusDecodeSettings {
+    let mut settings = settings.clone();
+    settings.uart.baud = uart_text.trim().parse::<f64>().ok().filter(|&baud| baud > 0.0).or(settings.uart.baud);
+    settings.ddsss.fop_hz = fop_text.trim().parse::<f64>().ok().filter(|&fop| fop > 0.0).or(settings.ddsss.fop_hz);
+    settings.time_gate = cursor_measure_time_gate(settings.kind, x1, x2);
+    settings
+}
+
+fn single_signal_kind(kind: BusKind) -> bool {
+    matches!(kind, BusKind::Uart | BusKind::Ddsss | BusKind::UsbPd | BusKind::Scp | BusKind::Ufcs)
+}
+
+fn primary_signal(settings: &BusDecodeSettings) -> Option<usize> {
+    match settings.kind {
+        BusKind::Uart => settings.channels.uart_signal,
+        BusKind::Ddsss => settings.channels.ddsss_signal,
+        BusKind::UsbPd | BusKind::Scp | BusKind::Ufcs => settings.channels.charging_signal,
+        _ => None,
+    }
+}
+
+fn assign_primary(settings: &mut BusDecodeSettings, index: usize) {
+    match settings.kind {
+        BusKind::Uart => settings.channels.uart_signal = Some(index),
+        BusKind::Ddsss => settings.channels.ddsss_signal = Some(index),
+        BusKind::UsbPd | BusKind::Scp | BusKind::Ufcs => settings.channels.charging_signal = Some(index),
+        _ => {}
+    }
+}
+
+fn wave_label(waves: &[LoadedWave], index: Option<usize>) -> Option<String> {
+    index.and_then(|index| waves.get(index).map(|wave| wave.label.clone()))
+}
+
+fn role_channel(waves: &[LoadedWave], index: Option<usize>, role: &str, zh: bool) -> String {
+    match wave_label(waves, index) {
+        Some(label) => format!("{role} {label}"),
+        None => format!("{role} {}", if zh { "未选" } else { "unset" }),
+    }
+}
+
+fn protocol_channel_text(settings: &BusDecodeSettings, waves: &[LoadedWave], zh: bool) -> String {
+    let unset = if zh { "未选通道" } else { "No channel" };
+    match settings.kind {
+        BusKind::Off => if zh { "未选协议" } else { "No protocol" }.into(),
+        BusKind::Uart => wave_label(waves, settings.channels.uart_signal).unwrap_or_else(|| unset.into()),
+        BusKind::Ddsss => wave_label(waves, settings.channels.ddsss_signal).unwrap_or_else(|| unset.into()),
+        BusKind::UsbPd | BusKind::Scp | BusKind::Ufcs => wave_label(waves, settings.channels.charging_signal).unwrap_or_else(|| unset.into()),
+        BusKind::I2c => format!("{} + {}", role_channel(waves, settings.channels.i2c_scl, "SCL", zh), role_channel(waves, settings.channels.i2c_sda, "SDA", zh)),
+        BusKind::I2s => format!(
+            "{} + {} + {}",
+            role_channel(waves, settings.channels.i2s_bclk, "BCLK", zh),
+            role_channel(waves, settings.channels.i2s_ws, "WS", zh),
+            role_channel(waves, settings.channels.i2s_data, "DATA", zh)
+        ),
+        BusKind::Spi => {
+            let mut parts = vec![
+                role_channel(waves, settings.channels.spi_clk, "CLK", zh),
+                role_channel(waves, settings.channels.spi_mosi, if settings.spi.wire.is_packed() { "IO0" } else { "MOSI" }, zh),
+            ];
+            if settings.spi.wire != SpiWire::TwoWire {
+                parts.push(role_channel(waves, settings.channels.spi_miso, if settings.spi.wire.is_packed() { "IO1" } else { "MISO" }, zh));
+            }
+            if settings.spi.wire == SpiWire::Quad {
+                parts.push(role_channel(waves, settings.channels.spi_io2, "IO2", zh));
+                parts.push(role_channel(waves, settings.channels.spi_io3, "IO3", zh));
+            }
+            if settings.channels.spi_cs.is_some() {
+                parts.push(role_channel(waves, settings.channels.spi_cs, "CS", zh));
+            }
+            parts.join(" + ")
+        }
+    }
+}
+
+fn protocol_lane_chip(settings: &BusDecodeSettings, waves: &[LoadedWave], zh: bool) -> String {
+    if settings.kind == BusKind::Off {
+        return if zh { "未选协议".into() } else { "No protocol".into() };
+    }
+    format!("{} · {}", settings.kind.label(), protocol_channel_text(settings, waves, zh))
+}
+
+fn field_parts(line: &str, zh: bool) -> (String, String, bool) {
+    let raw = line.starts_with("原始字节") || line.starts_with("Raw");
+    if let Some((name, value)) = line.split_once("  ") {
+        let name = if raw { if zh { "原始字节" } else { "Raw" } } else { name.trim() };
+        return (name.to_string(), value.trim().to_string(), raw);
+    }
+    (if zh { "说明" } else { "Note" }.to_string(), line.trim().to_string(), false)
 }
 
 fn t(lang: Lang, zh: &str, en: &str) -> String {
@@ -5209,5 +5799,77 @@ mod tests {
         assert!((y_ch1 - 5.0).abs() < 1e-12);
         let (y_pref, _) = native_y_for_series(5.0, "", &maps, Some(1));
         assert!(y_pref.abs() < 1e-12, "preferred CH2 GND must read 0");
+    }
+
+    #[test]
+    fn settings_for_decode_prefers_typed_baud() {
+        let mut settings = BusDecodeSettings::default();
+        settings.kind = BusKind::Uart;
+        settings.uart.baud = Some(9600.0);
+        let typed = settings_for_decode(&settings, "115200", "", None, None);
+        assert_eq!(typed.uart.baud, Some(115200.0));
+        let kept = settings_for_decode(&settings, "nope", "", None, None);
+        assert_eq!(kept.uart.baud, Some(9600.0));
+    }
+
+    #[test]
+    fn report_includes_each_configured_lane() {
+        let mut panel = WaveformAnalysisPanel::new(&AppConfig::default());
+        panel.bus_settings.kind = BusKind::Uart;
+        panel.bus_settings.channels.uart_signal = Some(0);
+        panel.commit_active_lane();
+        panel.add_protocol_lane();
+        panel.bus_settings.kind = BusKind::Scp;
+        panel.bus_settings.channels.charging_signal = Some(1);
+        panel.commit_active_lane();
+        let lanes = panel.protocol_report_lanes(true);
+        assert_eq!(lanes.len(), 2);
+        assert!(lanes[0].title.starts_with("UART"));
+        assert!(lanes[1].title.starts_with("SCP"));
+        assert!(lanes[1].on_plot);
+        assert!(!lanes[0].on_plot);
+        assert!(channels_ready(&panel.bus_lanes[0].settings));
+        assert!(channels_ready(&panel.bus_lanes[1].settings));
+    }
+
+    #[test]
+    fn decimate_series_keeps_the_peak() {
+        let x: Vec<f64> = (0..100).map(|index| index as f64 * 1e-6).collect();
+        let y: Vec<f64> = (0..100).map(|index| if index == 40 { 5.0 } else { 0.0 }).collect();
+        let columns = decimate_series(&x, &y, 10);
+        assert!(columns.len() <= 10);
+        assert!(columns.iter().any(|column| column[3] >= 5.0));
+    }
+
+    #[test]
+    fn detail_columns_keep_a_narrow_pulse() {
+        let n = 20_000;
+        let x: Vec<f64> = (0..n).map(|index| index as f64 * 1e-6).collect();
+        let y: Vec<f64> = (0..n).map(|index| if (8_000..8_040).contains(&index) { 3.3 } else { 0.0 }).collect();
+        let detail = detail_columns(&x, &y, &[(0.0079, 0.0081)], 4_000);
+        assert!(detail.len() < n / 2, "{}", detail.len());
+        assert!(detail.iter().any(|column| column[3] >= 3.3));
+        assert!(detail.iter().all(|column| column[1] < 0.009 && column[0] > 0.007));
+    }
+
+    #[test]
+    fn detail_columns_keep_frame_edges_when_frames_span_the_record() {
+        let n = 50_000;
+        let x: Vec<f64> = (0..n).map(|index| index as f64 * 1e-8).collect();
+        let y = vec![0.0; n];
+        let detail = detail_columns(&x, &y, &[(0.0, 0.0004)], 4_000);
+        assert!(detail.len() >= 1_000, "{}", detail.len());
+        assert!(detail.iter().all(|column| column[0] >= 0.0 && column[1] <= 0.00041), "{detail:?}");
+        let width = detail[0][1] - detail[0][0];
+        assert!(width < 2e-7, "{width}");
+    }
+
+    #[test]
+    fn protocol_notes_explain_the_frame() {
+        assert!(protocol_brief(BusKind::Uart, true).contains("字符"));
+        assert!(protocol_brief(BusKind::UsbPd, true).contains("CRC-32"));
+        assert!(field_note("CRC-8", true).contains("校验"));
+        assert!(field_note("请求电压", true).contains("伏特"));
+        assert!(field_note("原始字节", true).contains("起始位"));
     }
 }

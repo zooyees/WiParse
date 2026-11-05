@@ -5,6 +5,7 @@ use std::ffi::{c_char, c_void, CStr, CString};
 use std::io::{self, Read, Write};
 use std::ptr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use thiserror::Error;
 
 pub type ViStatus = i32;
@@ -23,6 +24,8 @@ const VI_TMO_IMMEDIATE: u32 = 0;
 const VI_ERROR_RSRC_NFOUND: ViStatus = -1073807343;
 const VI_ERROR_INV_OBJECT: ViStatus = -1073807346;
 const VI_ERROR_TMO: ViStatus = -1073807339;
+const VI_ERROR_CONN_LOST: ViStatus = 0xBFFF00A6u32 as i32;
+const VI_ERROR_IO: ViStatus = 0xBFFF003Eu32 as i32;
 const VI_ERROR_NSUP_ATTR: ViStatus = -1073807331;
 const VI_ERROR_NSUP_ATTR_STATE: ViStatus = -1073807330;
 const VI_FIND_BUFLEN: usize = 256;
@@ -96,6 +99,8 @@ fn status_label(status: ViStatus) -> &'static str {
         VI_ERROR_RSRC_NFOUND => "VI_ERROR_RSRC_NFOUND",
         VI_ERROR_INV_OBJECT => "VI_ERROR_INV_OBJECT",
         VI_ERROR_TMO => "VI_ERROR_TMO",
+        VI_ERROR_CONN_LOST => "VI_ERROR_CONN_LOST",
+        VI_ERROR_IO => "VI_ERROR_IO",
         VI_ERROR_NSUP_ATTR => "VI_ERROR_NSUP_ATTR",
         VI_ERROR_NSUP_ATTR_STATE => "VI_ERROR_NSUP_ATTR_STATE",
         _ => "VI_ERROR",
@@ -349,6 +354,7 @@ impl ResourceManager {
         let inst = Instrument {
             api: Arc::clone(&self.api),
             session: instr,
+            connection_lost: AtomicBool::new(false),
         };
         // Timeout is optional on some USB/TekVISA sessions (0xBFFF001D NSUP_ATTR).
         // Python still communicates if attribute set fails; do not abort the open.
@@ -373,9 +379,29 @@ impl Drop for ResourceManager {
 pub struct Instrument {
     api: Arc<VisaApi>,
     session: ViSession,
+    connection_lost: AtomicBool,
 }
 
 impl Instrument {
+    pub fn connection_lost(&self) -> bool {
+        self.connection_lost.load(Ordering::Relaxed)
+    }
+
+    fn check_io(&self, status: ViStatus) -> Result<(), VisaError> {
+        if matches!(status, VI_ERROR_CONN_LOST | VI_ERROR_INV_OBJECT | VI_ERROR_RSRC_NFOUND | VI_ERROR_IO) {
+            // Latch the failure even when an optional driver query swallows its error.
+            self.connection_lost.store(true, Ordering::Relaxed);
+        }
+        self.api.check(self.session, status)
+    }
+
+    fn ensure_connected(&self) -> Result<(), VisaError> {
+        if self.connection_lost() {
+            return Err(VisaError::Status(VI_ERROR_CONN_LOST as u32, "Session invalidated; close and reconnect".into()));
+        }
+        Ok(())
+    }
+
     pub fn set_timeout(&self, timeout_ms: u32) -> Result<(), VisaError> {
         let st = unsafe {
             (self.api.set_attribute)(
@@ -406,11 +432,12 @@ impl Instrument {
 
     /// Device clear — flushes I/O buffers after aborted CURVe/HARDCopy transfers.
     pub fn clear(&self) -> Result<(), VisaError> {
+        self.ensure_connected()?;
         let Some(clear) = self.api.clear else {
             return Ok(());
         };
         let st = unsafe { clear(self.session) };
-        self.api.check(self.session, st)
+        self.check_io(st)
     }
 
     /// Drain leftover input with a short timeout (best-effort).
@@ -428,11 +455,12 @@ impl Instrument {
     }
 
     pub fn write_bytes(&self, data: &[u8]) -> Result<(), VisaError> {
+        self.ensure_connected()?;
         let mut written = 0;
         let st = unsafe {
             (self.api.write)(self.session, data.as_ptr(), data.len() as u32, &mut written)
         };
-        self.api.check(self.session, st)
+        self.check_io(st)
     }
 
     pub fn write_str(&self, cmd: &str) -> Result<(), VisaError> {
@@ -444,21 +472,17 @@ impl Instrument {
     }
 
     pub fn read_bytes(&self, max: usize) -> Result<Vec<u8>, VisaError> {
+        self.ensure_connected()?;
         let mut buf = vec![0u8; max];
         let mut ret = 0;
         let st = unsafe { (self.api.read)(self.session, buf.as_mut_ptr(), max as u32, &mut ret) };
         // PyVISA often returns VI_ERROR_TMO with retCount > 0 for terminated reads.
         if st < 0 {
-            if ret > 0 && (st == VI_ERROR_TMO || st == VI_ERROR_RSRC_NFOUND) {
+            if ret > 0 && st == VI_ERROR_TMO {
                 buf.truncate(ret as usize);
                 return Ok(buf);
             }
-            if ret > 0 && st != VI_ERROR_INV_OBJECT {
-                // Prefer bytes already transferred over a hard failure.
-                buf.truncate(ret as usize);
-                return Ok(buf);
-            }
-            return self.api.check(self.session, st).map(|_| unreachable!());
+            return self.check_io(st).map(|_| unreachable!());
         }
         buf.truncate(ret as usize);
         Ok(buf)
@@ -539,6 +563,11 @@ impl Instrument {
                     }
                 }
                 Err(e) => {
+                    // A detached USB session cannot finish the block. Do not retry
+                    // dozens of reads or return a truncated transfer as success.
+                    if self.connection_lost() {
+                        return Err(e);
+                    }
                     if done(&all) {
                         break;
                     }
@@ -589,3 +618,7 @@ impl Read for Instrument {
         Ok(n)
     }
 }
+
+#[cfg(all(test, windows))]
+#[path = "visa_hotplug_tests.rs"]
+mod hotplug_tests;

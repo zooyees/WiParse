@@ -1,0 +1,53 @@
+{
+  "schema_version": "wiparse.fpga-project/1",
+  "name": "MT58xx验证",
+  "description": "",
+  "dut": {
+    "model": "DEMO-FPGA-BOARD",
+    "serial_required": true,
+    "board_revision": "DEMO-REV-A",
+    "fpga_model": "DEMO-FPGA",
+    "fixture_id": "DEMO-FIXTURE-01",
+    "station_id": "DEMO-STATION-01"
+  },
+  "instruments": {
+    "programmer": {
+      "kind": "debug_probe",
+      "selector": {
+        "serial": "DEMO-DONGLE-001"
+      },
+      "required": true
+    },
+    "scope": {
+      "kind": "oscilloscope",
+      "selector": {
+        "serial": "DEMO-SCOPE-001"
+      },
+      "required": true
+    },
+    "log_dongle": {
+      "kind": "wiparse_dongle_uart",
+      "selector": {
+        "dongle_serial": "DEMO-DONGLE-001",
+        "uart_channel": 0,
+        "baud": 115200
+      },
+      "required": true
+    },
+    "log_com": {
+      "kind": "serial_port",
+      "selector": {
+        "port": "COM3",
+        "baud": 115200
+      },
+      "required": true
+    },
+    "power": {
+      "kind": "dc_source",
+      "selector": {
+        "serial": "DEMO-POWER-001"
+      },
+      "required": true
+    }
+  }
+}

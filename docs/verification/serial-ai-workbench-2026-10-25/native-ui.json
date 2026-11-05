@@ -1,0 +1,80 @@
+{
+  "simulated_devices": [
+    "oscilloscope",
+    "dc_source",
+    "electronic_load",
+    "multimeter",
+    "debug_probe",
+    "usb_bridge",
+    "wiparse_dongle",
+    "generic"
+  ],
+  "ok": true,
+  "root": "D:\\windlink\\windlink\\WiParse-R\\tmp\\ui-release-smoke-cca962956dfe4ccfa191fcae7f89854d",
+  "product_version": "1.2.2",
+  "overview": "passed",
+  "report_artifacts": [
+    "artifacts/reports/ScopeSerialDemo_summary_20261016_120000.md",
+    "artifacts/docs/capture-records.json",
+    "artifacts/docs/serial-monitor.log",
+    "artifacts/shots/ScopeSerialDemo_PING_START_20261016_120000.png",
+    "artifacts/waves/ScopeSerialDemo_PING_START_20261016_120000.isf"
+  ],
+  "ai_platform_jobs": [
+    {
+      "method": "instrument.command",
+      "job_id": 1,
+      "result": {
+        "detail": {
+          "response": null
+        },
+        "device_id": 1,
+        "job_id": 1,
+        "kind": "command",
+        "ok": true,
+        "state": "completed"
+      }
+    },
+    {
+      "method": "instrument.command",
+      "job_id": 2,
+      "result": {
+        "detail": {
+          "response": "CH1 Frequency: 1 kHz"
+        },
+        "device_id": 1,
+        "job_id": 2,
+        "kind": "command",
+        "ok": true,
+        "state": "completed"
+      }
+    },
+    {
+      "method": "instrument.capture",
+      "job_id": 3,
+      "result": {
+        "detail": {
+          "bytes": 69,
+          "height": 1,
+          "width": 1
+        },
+        "device_id": 1,
+        "job_id": 3,
+        "kind": "capture",
+        "ok": true,
+        "state": "completed"
+      }
+    }
+  ],
+  "exe": "D:\\windlink\\windlink\\WiParse-R\\dist\\wiparse-1.2.2-ai-workbench-20261025-preview\\bin\\WiParse.exe",
+  "pages": [
+    "serial",
+    "calculator",
+    "instruments",
+    "waveform",
+    "data_analysis",
+    "test_report",
+    "test_tool"
+  ],
+  "version": "1.2.2"
+}

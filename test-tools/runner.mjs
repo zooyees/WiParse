@@ -18,6 +18,7 @@ import {readJson,jail,fail as hubFail} from "./lib/hub/common.mjs";
 import path from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { createHttpClient, resolveCliPath, resolveApiUrl } from "./lib/wiparse-sdk.mjs";
+import { attachHostAdapter } from "./lib/host/fpga-host-adapter.mjs";
 import {
   LIFECYCLES,
   checkEngines,
@@ -139,7 +140,7 @@ function parsePassthrough(args) {
   return params;
 }
 
-function readManifest(dir, { validate = true } = {}) {
+export function readManifest(dir, { validate = true } = {}) {
   const manifestPath = path.join(dir, "plugin.json");
   if (!fs.existsSync(manifestPath)) return null;
   let raw;
@@ -168,7 +169,7 @@ function readManifest(dir, { validate = true } = {}) {
   }
   const id = String(raw.id || path.basename(dir)).trim();
   if (!id) return null;
-  return {
+  const plugin = {
     id,
     name: String(raw.name || id),
     name_zh: raw.name_zh ? String(raw.name_zh) : undefined,
@@ -190,6 +191,8 @@ function readManifest(dir, { validate = true } = {}) {
     dir,
     manifestPath,
   };
+  if (typeof raw.host_adapter === "string") plugin.host_adapter = raw.host_adapter;
+  return plugin;
 }
 
 export function discoverPlugins(root = PLUGINS_ROOT, { includeInvalid = false } = {}) {
@@ -535,6 +538,7 @@ async function main() {
     overlay: {params:args,test_matrix:hubFrozen?{config_manifest_sha256:hubFrozen.manifest_sha256,preflight_revision:hubBinding?.preflight_revision,selected_item_ids:hubFrozen.selected_item_ids}:undefined},
     configSnapshotDir: hubBinding?.snapshotDir,
   };
+  attachHostAdapter(ctx);
 
   console.log(
     `[runner] plugin=${plugin.id} lifecycle=${lifecycle} type=${plugin.type} source=${plugin.source || "bundled"} data_root=${dataRoot} project=${project} test_id=${testId}${stamp ? ` stamp=${stamp}` : ""}`

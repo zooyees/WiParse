@@ -1,0 +1,22 @@
+
+running 17 tests
+test serial_tool::ai_chat::platform_tests::ai_tool_loop_waits_for_completed_job_then_uses_actual_result ... ok
+test serial_tool::ai_chat::platform_tests::local_numeric_alerts_are_immediate_bounded_and_never_product_verdicts ... ok
+test serial_tool::ai_chat::platform_tests::platform_registry_rejects_raw_commands_arbitrary_files_and_extra_fields ... ok
+test serial_tool::ai_chat::platform_tests::queued_controls_are_fenced_and_cancelled_before_dispatch ... ok
+test serial_tool::ai_chat::tests::ai_start_waits_for_actual_tcp_open_and_watch_captures_new_data ... ok
+test serial_tool::ai_chat::tests::automation_permissions_test_lock_and_offline_sources_are_enforced ... ok
+test serial_tool::ai_chat::tests::project_switch_stops_monitoring_and_resets_permission ... ok
+test serial_tool::ai_chat::tests::protocol_rejects_unknown_arguments_and_conflicting_actions ... ok
+test serial_tool::ai_chat::tests::serial_ai_pane_renders_responsively_with_markdown_and_no_split_controls ... ok
+test serial_tool::ai_chat::tests::shared_ai_transport_decodes_reply_and_records_actual_stop_result ... ok
+test serial_tool::ai_chat::tests::snapshots_are_bounded_and_clear_changes_source_identity ... ok
+test serial_tool::ai_chat::tests::stale_requests_cancel_before_result_and_late_permission_cannot_upgrade_request ... ok
+test serial_tool::ai_chat::view_tests::analyse_and_monitor_views_keep_their_own_results_and_suggestions_only_fill_draft ... ok
+test serial_tool::ai_chat::view_tests::assistant_and_monitor_dashboard_export_aligned_source_frames ... ok
+test serial_tool::ai_chat::view_tests::data_scope_never_falls_back_to_recent_logs_for_empty_selection ... ok
+test serial_tool::ai_chat::view_tests::short_and_narrow_panes_keep_composer_visible_and_outside_conversation ... ok
+test serial_tool::ai_chat::view_tests::source_change_clears_old_context_and_control_authorization ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 194 filtered out; finished in 7.54s
+

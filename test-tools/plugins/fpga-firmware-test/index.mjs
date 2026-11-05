@@ -5,7 +5,7 @@ import { atomic, append, digest, fail, utc, bool, hash, jailed } from './lib/com
 import readline from 'node:readline';
 import { flattenRules } from './lib/rule-contract.mjs';
 import { guardedAdapter } from './lib/io-guard.mjs';
-import { beginReport, appendReport } from './lib/report.mjs';
+import { beginReport, appendReport, appendCoverage } from './lib/report.mjs';
 import { pauseBoundary } from './lib/run-control.mjs';
 import { evaluateBounded } from './lib/rule-executor.mjs';
 import { discover, unchanged, validateCase } from './lib/config-loader.mjs';
@@ -16,6 +16,7 @@ import {checkedProject,projectMetadata,resolveProjectCase} from './lib/project-c
 export {planProjectMigration} from './lib/project-migration.mjs';
 import { clock as defaultClock, resetDut, capture } from './lib/scheduler.mjs';
 import { validateAI, advise } from './lib/ai-adapter.mjs';
+import { diagnosis, coveragePlan, countAttempt } from './lib/diagnostics.mjs';
 const read = p => JSON.parse(fs.readFileSync(p,'utf8'));
 function paths(ctx) {
   const test=ctx.layout?.test_dir ?? ctx.testDir;
@@ -26,11 +27,16 @@ function paths(ctx) {
 export async function configure(ctx) {
   const value=ctx.overlay?.config;
   if(!value||typeof value!=='object')return {ok:false,lifecycle:'configure',errors:[{path:'/',message:'Configuration object required'}],warnings:[]};
-  let errors=[];try{errors=validateCase(resolveProjectCase(value,ctx.projectConfig??ctx.overlay?.project_config).value);}catch(e){errors=e.errors??[{path:'/project_config',code:e.code,message:e.message}];}
-  return {ok:!errors.length,lifecycle:'configure',errors,warnings:value.firmware?.download?[{path:'/firmware/download',message:'Firmware download is reserved and will block preflight'}]:[],normalized_value:null};
+  // Schema errors already block saving. A new draft is stored while firmware,
+  // rules, or project roles are still incomplete; preflight keeps those checks.
+  const warnings=[];
+  try{warnings.push(...validateCase(resolveProjectCase(value,ctx.projectConfig??ctx.overlay?.project_config).value));}
+  catch(e){warnings.push(...(e.errors??[{path:'/project_config',code:e.code,message:e.message}]));}
+  if(value.firmware?.download)warnings.push({path:'/firmware/download',message:'Firmware download is reserved and will block preflight'});
+  return {ok:true,lifecycle:'configure',errors:[],warnings,normalized_value:null};
 }
 export async function configureProject(ctx){try{checkedProject(ctx.overlay?.project_config??ctx.projectConfig);return {lifecycle:'configure',ok:true,errors:[],warnings:[]};}catch(e){return {lifecycle:'configure',ok:false,errors:e.errors??[{path:'/',code:e.code,message:e.message}],warnings:[]};}}
-function adapter(ctx){if(!ctx.fpgaAdapter){const simulated=simulationAdapter(ctx);if(simulated)ctx.fpgaAdapter=simulated;}return hostAdapter(ctx);}
+function adapter(ctx){if(ctx.args?.execution_mode==='simulation'||!ctx.fpgaAdapter){const simulated=simulationAdapter(ctx);if(simulated)ctx.fpgaAdapter=simulated;}return hostAdapter(ctx);}
 function assertInputs(frozen,ctx){
   const project=checkedProject(ctx.projectConfig,{projectId:ctx.project,testId:path.basename(paths(ctx).test)});
   if(project.sha256!==frozen.project_config?.sha256)throw fail('PROJECT.CHANGED','工程共享配置与本轮冻结值不同');
@@ -71,7 +77,7 @@ async function previousRun(ctx,args,p) {
   let value=ctx.previousFpgaRun, file,runRoot;
   if(!value) {
     if(!args.resume_from) throw fail('RUN.RESUME_SOURCE_REQUIRED','请选择历史 suite-result.json');
-    file=jailed(path.join(p.test,'runs'),path.resolve(args.resume_from));
+    file=jailed(path.join(p.test,'runs'),path.resolve(p.test,args.resume_from));
     if(fs.statSync(file).isDirectory())file=jailed(file,'artifacts/docs/configuration-manifest.json');
     if(fs.statSync(file).size>16*1048576) throw fail('RUN.RESUME_SOURCE_INVALID');
     value=read(file);
@@ -103,7 +109,7 @@ function publish(p,m) {
   for(const row of m.items){row.status=row.status.toLowerCase();delete row.firmware_sha256;}
   m.plugin_id='fpga-firmware-test';m.summary.selected=m.items.filter(i=>i.selected).length;
   const {cycle,elapsed_s,attempt_id,...snapshot}=m;
-  atomic(p.matrix,snapshot); atomic(path.join(p.test,'status.json'),{step:m.active_item_id??'suite',hint:'FPGA固件测试',cycle:m.cycle??0,elapsed_s:m.elapsed_s??0});
+  atomic(p.matrix,snapshot); atomic(path.join(p.test,'status.json'),{step:m.active_item_id??'suite',hint:'FPGA验证',cycle:m.cycle??0,elapsed_s:m.elapsed_s??0});
 }
 function identity(args) {
   const simulation=args.execution_mode==='simulation';
@@ -113,7 +119,7 @@ function identity(args) {
   } return result;
 }
 function selected(c,args) {
-  const ids=Array.isArray(args.selected_ids)?args.selected_ids:String(args.selected_ids??'').split(',').filter(Boolean);
+  const ids=Array.isArray(args.selected_ids)?args.selected_ids:String(args.selected_ids??'').split(',').map(id=>id.trim()).filter(Boolean);
   const tags=String(args.tag_filter??'').split(',').filter(Boolean);
   return c.enabled!==false && (!ids.length||ids.includes(c.id)) && (!args.name_filter||c.name.includes(args.name_filter)) && (!tags.length||tags.some(t=>c.tags?.includes(t)));
 }
@@ -131,18 +137,26 @@ export async function preflight(ctx) {
     const manifest=discover(path.resolve(args.config_dir),root,project);
     if(args.execution_mode==='simulation') for(const key of ['board_revision','fpga_model','fixture_id','station_id']) if(!args[key]?.trim()) {const expected=[...new Set(manifest.items.filter(i=>selected(i.config,args)).map(i=>i.config.dut?.[key]).filter(Boolean))];if(expected.length===1){id[key]=expected[0];id.field_sources[key]='project_config.simulation_constraint';}}
     checks.push(...manifest.errors.map(e=>({...e,ok:false})));
+    const requested=ctx.testMatrix?.selected_item_ids??(Array.isArray(args.selected_ids)?args.selected_ids:String(args.selected_ids??'').split(',').map(id=>id.trim()).filter(Boolean));
+    for(const id of requested) {
+      const item=manifest.items.find(i=>i.config.id===id);
+      if(!item)checks.push({ok:false,item_id:id,code:'RUN.UNKNOWN_SELECTION',message:`所选测试项不存在或配置无效：${id}`});
+      else if(item.config.enabled===false)checks.push({ok:false,item_id:id,code:'RUN.DISABLED_SELECTION',message:`所选测试项已禁用：${id}，请启用并保存后重新预检`});
+    }
     const devices=await a.devices();
     for(const i of manifest.items) {
-      i.selected=ctx.testMatrix?ctx.testMatrix.selected_item_ids.includes(i.config.id):selected(i.config,args);
+      i.selected=i.config.enabled!==false&&(ctx.testMatrix?ctx.testMatrix.selected_item_ids.includes(i.config.id):selected(i.config,args));
       if(!i.selected) continue;
       try {
         for(const key of ['board_revision','fpga_model','fixture_id','station_id']) if(i.config.dut?.[key] && i.config.dut[key]!==id[key]) throw fail('DUT.IDENTITY_MISMATCH',key);
         i.resources=resolveResources(i.config.instruments,devices);
+        if(flattenRules(i.config.verdict.rules).some(rule=>rule.type==='instrument_measure_range')&&typeof a.measure!=='function')throw fail('HOST.MEASUREMENT_REQUIRED','所选规则需要实测读取能力，请检查适配器 measure 接口');
         if(bool(args.ai_global_enable)||i.config.verdict.ai_assist?.required) validateAI(i.config.verdict.ai_assist,station);
         await a.preflight({config:i.config,resources:i.resources,identity:id,station});
       } catch(e) {checks.push({ok:false,item_id:i.config.id,code:e.code??e.message,message:e.message});}
     }
-    if(!manifest.items.some(i=>i.selected)) checks.push({ok:false,code:'RUN.EMPTY_SELECTION'});
+    // Preserve the requested plan. A failed preflight must never silently drop cases.
+    if(!manifest.items.some(i=>i.selected)) checks.push({ok:false,code:'RUN.EMPTY_SELECTION',message:'没有可运行的测试项。上面的报错是提醒，修正后再预检。'});
     const estimate={minimum_s:manifest.items.filter(i=>i.selected).reduce((n,i)=>n+Math.max(i.config.log_capture.enabled?i.config.log_capture.start_at_s+i.config.log_capture.duration_s:0,...i.config.waveform_captures.map(w=>w.at_s)),0)*loops,maximum_s:manifest.items.filter(i=>i.selected).reduce((n,i)=>n+i.config.timeout_s,0)*loops};
     await a.storage({minimum_free_bytes:station.minimum_free_bytes??1073741824,estimate,items:manifest.items,loops});
     const frozen={...manifest,project_config:projectMetadata(project),project_config_snapshot:project,host_manifest_sha256:ctx.testMatrix?.manifest_sha256,identity:id,options:structuredClone(args),station,estimate,created_at:utc()};
@@ -152,9 +166,9 @@ export async function preflight(ctx) {
     if(prior) for(const item of frozen.items) {const old=prior.latest.get(item.config.id);item.selected=item.selected&&(args.resume_mode==='failed'?old?.product_verdict==='FAIL':prior.value.archive_complete===false||old?.execution_status!=='completed');}
     if(!frozen.items.some(i=>i.selected)) checks.push({ok:false,code:'RUN.EMPTY_SELECTION',message:'历史记录没有需要重试的测试项'});
     frozen.sha256=digest(frozen);
-    const matrix={schema_version:'wiparse.test-matrix/1',revision:fs.existsSync(p.matrix)?read(p.matrix).revision:0,run_id:randomUUID(),preflight_revision:ctx.testMatrix?.manifest_sha256??frozen.sha256,active_item_id:null,items:manifest.items.map(i=>({id:i.config.id,name:i.config.name,order:i.config.order??0,tags:i.config.tags??[],selected:i.selected,status:i.selected?'pending':'SKIPPED',phase:'preflight',attempt:1,progress:0,elapsed_s:0,message:checks.filter(c=>c.item_id===i.config.id).map(c=>c.code).join(';').slice(0,256),config_sha256:i.config_sha256,firmware_sha256:i.firmware.sha256,result_ref:null}))};
+    const matrix={schema_version:'wiparse.test-matrix/1',revision:fs.existsSync(p.matrix)?read(p.matrix).revision:0,run_id:randomUUID(),preflight_revision:ctx.testMatrix?.manifest_sha256??frozen.sha256,active_item_id:null,items:manifest.items.map(i=>({id:i.config.id,name:i.config.name,order:i.config.order??0,tags:i.config.tags??[],selected:i.selected,status:checks.some(c=>c.item_id===i.config.id&&c.ok===false)?'ERROR':i.selected?'pending':'SKIPPED',phase:'preflight',attempt:1,progress:0,elapsed_s:0,message:checks.filter(c=>c.item_id===i.config.id).map(c=>c.code).join(';').slice(0,256),config_sha256:i.config_sha256,firmware_sha256:i.firmware.sha256,result_ref:null}))};
     matrix.project_config=projectMetadata(project);publish(p,matrix);
-    if(checks.length) return {ok:false,step:'preflight',checks};
+    if(checks.some(c=>c.ok===false)||!manifest.items.some(i=>i.selected)) return {ok:false,step:'preflight',checks};
     atomic(p.manifest,frozen); return {ok:true,step:'preflight',checks,manifest_sha256:frozen.sha256,test_matrix:ctx.testMatrix?{manifest_sha256:ctx.testMatrix.manifest_sha256,revision:ctx.testMatrix.manifest_sha256,item_count:ctx.testMatrix.selected_item_ids.length}:undefined,estimate,industrial_approved:false,simulation_only:args.execution_mode==='simulation'};
   } catch(e) {return {ok:false,step:'preflight',checks:[...checks,{ok:false,code:e.code??e.message,message:e.message}]};}
 }
@@ -188,6 +202,7 @@ export default async function run(ctx) {
   if(!lock&&!stopped()) throw fail('RUN.STATION_BUSY');
   let cancelled=false, executionError=false, archivalError=false, halt=false,completedCount=0,hasFail=false,allPass=true,pausedMs=0;
   const totalExpected=frozen.items.filter(i=>i.selected).length*Number(args.loop_count??1);
+  const coverage=coveragePlan(frozen);
   try {
     // Freeze recovery inputs before any report rendering can fail.
     atomic(path.join(docs,'configuration-manifest.json'),frozen);
@@ -208,7 +223,7 @@ export default async function run(ctx) {
         const old=previous?.latest.get(item.config.id);
         const attempt=randomUUID(), dir=path.join(runDir,'artifacts','items',item.config.id,attempt), c=item.config;
         const row=matrix.items.find(i=>i.id===c.id); Object.assign(row,{status:'running',phase:'reset',attempt:row.phase==='preflight'?1:(row.attempt??0)+1,attempt_id:attempt,loop_index:cycle,elapsed_s:0,progress:0,result_ref:null});matrix.active_item_id=c.id;publish(p,matrix);
-        let evidence={}, verdict={product_verdict:'INCONCLUSIVE',results:[]}, result={schema_version:'wiparse.fpga-result/1',run_id:runId,attempt_id:attempt,previous_attempt_id:old?.attempt_id,item_id:c.id,cycle,identity:frozen.identity,config_sha256:item.config_sha256,firmware_sha256:item.firmware.sha256,limits_sha256:digest(c.verdict.rules),resolved_instruments:item.resources,suite_t0:started,item_t0:clock.now(),started_at:utc(),industrial_approved:false,validation_verdict:'NOT_APPROVED',execution_status:'completed',errors:[]};
+        let evidence={}, verdict={product_verdict:'INCONCLUSIVE',results:[]}, result={schema_version:'wiparse.fpga-result/1',run_id:runId,attempt_id:attempt,previous_attempt_id:old?.attempt_id,item_id:c.id,cycle,identity:frozen.identity,config_sha256:item.config_sha256,firmware_sha256:item.firmware.sha256,limits_sha256:digest(c.verdict.rules),resolved_instruments:item.resources,suite_t0:started,item_t0:clock.now(),started_at:utc(),industrial_approved:false,validation_verdict:'INCONCLUSIVE',execution_status:'completed',errors:[]};
         const io=guardedAdapter(a,{stopped,clock,deadline:result.item_t0+c.timeout_s*1000,cleanupTimeoutMs:frozen.station.cleanup_timeout_ms??10000,onUnknown:()=>{stateUnknown=true;halt=true;}});
         Object.assign(result,{attempt:row.attempt,loop_index:cycle,project_config:frozen.project_config,scope:{project_id:frozen.project_config_snapshot.project_id,test_id:frozen.project_config_snapshot.test_id,plugin_id:frozen.project_config_snapshot.plugin_id},config_sources:item.sources,effective_config_sha256:item.effective_config_sha256});
         result.schema_version='wiparse.fpga-result/2';
@@ -243,13 +258,14 @@ export default async function run(ctx) {
         }
         if(stopped()) {cancelled=true;result.execution_status='cancelled';}
         if(result.execution_status!=='completed'&&verdict.product_verdict!=='FAIL')verdict.product_verdict='INCONCLUSIVE';
-        Object.assign(result,verdict,{evidence,completed_at:utc(),elapsed_s:(clock.now()-result.item_t0)/1000,first_error_id:result.errors[0]?.code??null});
+        Object.assign(result,verdict,{evidence,completed_at:utc(),elapsed_s:(clock.now()-result.item_t0)/1000,first_error_id:result.errors[0]?.code??null,validation_verdict:verdict.product_verdict});
+        result.diagnostics=diagnosis(result);
         hasFail||=verdict.product_verdict==='FAIL';
-        if(result.evidence.log) {result.evidence.log.line_count=result.evidence.log.lines?.length;delete result.evidence.log.lines;delete result.evidence.log.text;}
+        if(result.evidence.log) {const lines=Array.isArray(result.evidence.log.lines)?result.evidence.log.lines:[];result.evidence.log.line_count=lines.length;result.evidence.log.preview=lines.slice(-200);delete result.evidence.log.lines;delete result.evidence.log.text;}
         atomic(path.join(dir,'result.json'),result);append(path.join(docs,'attempt-events.jsonl'),{attempt_id:attempt,item_id:c.id,result_ref:path.relative(runDir,path.join(dir,'result.json')),execution_status:result.execution_status});
         const entry={item_id:c.id,name:c.name,attempt_id:attempt,previous_attempt_id:old?.attempt_id,cycle,started_at:result.started_at,completed_at:result.completed_at,execution_status:result.execution_status,product_verdict:result.product_verdict,result_ref:path.relative(reports,path.join(dir,'result.json')).split(path.sep).join('/')};
         entry.attempt=row.attempt;append(indexFile,entry);completedCount++;hasFail||=result.product_verdict==='FAIL';allPass&&=result.product_verdict==='PASS';
-        results.push(entry);if(results.length>1000)results.shift();appendReport(report,result,dir,c.name);
+        countAttempt(coverage,entry);results.push(entry);if(results.length>1000)results.shift();appendReport(report,result,dir,c.name);
         row.status=result.execution_status==='cancelled'?'ABORTED':result.execution_status==='error'?'ERROR':result.product_verdict;row.result_ref=path.relative(ctx.dataRoot&&ctx.project?path.join(ctx.dataRoot,'projects',ctx.project):p.test,path.join(dir,'result.json')).split(path.sep).join('/');row.elapsed_s=result.elapsed_s;row.phase='finished';row.progress=1;row.message=result.errors[0]?.code??'';matrix.active_item_id=null;publish(p,matrix);
         if(halt || cancelled || (bool(args.stop_on_fail)&&result.product_verdict==='FAIL')) {halt=true;break;}
       }
@@ -262,11 +278,14 @@ export default async function run(ctx) {
     try{atomic(path.join(docs,'run-state.json'),{run_id:runId,status:stateUnknown?'recovery_required':cancelled?'cancelled':executionError?'error':'finalizing',archive_complete:false,completed_at:utc(),lease_retained:stateUnknown});}catch{executionError=true;archivalError=true;}
   }
   const product=hasFail?'FAIL':!cancelled&&!executionError&&completedCount===totalExpected&&completedCount>0&&allPass?'PASS':'INCONCLUSIVE';
-  const suite={simulation_only:args.execution_mode==='simulation',ok:!cancelled&&!executionError,execution_status:cancelled?'cancelled':executionError?'error':'completed',product_verdict:product,validation_verdict:'NOT_APPROVED',industrial_approved:false,run_id:runId,parent_run_id:previous?.value.run_id,content_sha256:frozen.content_sha256,manifest_sha256:frozen.sha256,identity:frozen.identity,attempt_count:completedCount,results_truncated:completedCount>results.length,attempt_index_ref:'attempt-index.jsonl',recovery_required:stateUnknown,results};
+  const suite={simulation_only:args.execution_mode==='simulation',ok:!cancelled&&!executionError,execution_status:cancelled?'cancelled':executionError?'error':'completed',product_verdict:product,validation_verdict:product,industrial_approved:false,run_id:runId,parent_run_id:previous?.value.run_id,content_sha256:frozen.content_sha256,manifest_sha256:frozen.sha256,identity:frozen.identity,attempt_count:completedCount,results_truncated:completedCount>results.length,attempt_index_ref:'attempt-index.jsonl',recovery_required:stateUnknown,results};
   suite.project_config=frozen.project_config;
-  try{fs.appendFileSync(report,`\n## 套件结论\n\n产品结论：${product}；执行：${suite.execution_status}；完成 ${completedCount}/${totalExpected} 个attempt。\n`);}catch{executionError=true;archivalError=true;}
-  const archiveError=()=>{suite.ok=false;suite.execution_status=cancelled?'cancelled':'error';if(suite.product_verdict!=='FAIL')suite.product_verdict='INCONCLUSIVE';};
+  suite.coverage=coverage;
+  suite.stop_reason=stateUnknown?'recovery_required':cancelled?'operator_stop':executionError?'execution_error':completedCount===totalExpected?'plan_completed':bool(args.stop_on_fail)&&hasFail?'stop_on_fail':'duration_limit';
+  try{fs.appendFileSync(report,`\n## 套件结论\n\n产品结论：${product}；执行：${suite.execution_status}；完成 ${completedCount}/${totalExpected} 个attempt。\n`);appendCoverage(report,suite); }catch{executionError=true;archivalError=true;}
+  const archiveError=()=>{suite.ok=false;suite.execution_status=cancelled?'cancelled':'error';if(suite.product_verdict!=='FAIL')suite.product_verdict='INCONCLUSIVE';suite.validation_verdict=suite.product_verdict;};
   if(executionError)archiveError();
+  suite.validation_verdict=suite.product_verdict;
   suite.archive_complete=!archivalError;
   try{atomic(path.join(reports,'suite-result.json'),suite);}catch{executionError=true;archivalError=true;suite.archive_complete=false;archiveError();}
   try{atomic(path.join(docs,'run-state.json'),{run_id:runId,status:stateUnknown?'recovery_required':cancelled?'cancelled':executionError?'error':'completed',archive_complete:!archivalError,completed_at:utc(),lease_retained:stateUnknown});}catch{executionError=true;suite.archive_complete=false;archiveError();try{atomic(path.join(reports,'suite-result.json'),suite);}catch{}}

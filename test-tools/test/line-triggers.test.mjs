@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import { validatePluginManifest } from "../lib/plugin-contract.mjs";
 import {
   classifyLine,
   compileTriggers,
@@ -100,4 +102,36 @@ test("global exclude regex is reset before every line", () => {
   });
   assert.equal(trigger.match("ASK BAD"), false);
   assert.equal(trigger.match("ASK BAD"), false);
+});
+
+test("visual string rules preserve literal punctuation, case and exclusions", () => {
+  const [rule] = compileTriggers([{ id: "literal", type: "contains", pattern: "ERROR[2].*",
+    case_sensitive: true, unless: [{ type: "contains", pattern: "ignored", case_sensitive: false }] }]);
+  assert.equal(rule.match("ERROR[2].* detail"), true);
+  assert.equal(rule.match("error[2].* detail"), false);
+  assert.equal(rule.match("ERROR22 detail"), false);
+  assert.equal(rule.match("ERROR[2].* IGNORED"), false);
+});
+
+test("duplicate enabled IDs including sanitized collisions are rejected", () => {
+  for (const ids of [["T", "T"], ["a b", "a?b"]]) {
+    assert.throws(() => compileTriggers(ids.map(id => ({ id, type: "contains", pattern: "X" }))), /id 重复/);
+  }
+  assert.equal(compileTriggers([{ id: "T", pattern: "X" }, { id: "T", enabled: false }]).length, 1);
+});
+
+test("visual editor manifest retains JSON overlays and the factory recipe", () => {
+  const root = new URL("../plugins/scope-serial-monitor/", import.meta.url);
+  const plugin = JSON.parse(fs.readFileSync(new URL("plugin.json", root)));
+  assert.deepEqual(validatePluginManifest(plugin), { ok: true, errors: [] });
+  const station = JSON.parse(fs.readFileSync(new URL("station.json", root)));
+  const param = plugin.params.find(p => p.name === "triggers");
+  assert.equal(param.type, "json");
+  assert.equal(param.widget, "line_triggers");
+  assert.equal(param.path, "serial_triggers.items");
+  const rules = compileTriggers(station.serial_triggers);
+  assert.equal(rules.find(t => t.id === "ASK2").match("ASK 2 error"), true);
+  assert.equal(rules.find(t => t.id === "ASK2").match("ASK 2 C"), false);
+  assert.equal(rules.find(t => t.id === "timeout").match("TIMEOUT"), true);
+  assert(!rules.some(t => t.id === "ASK71"));
 });

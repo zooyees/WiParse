@@ -1,0 +1,33 @@
+{
+  "date": "2026-10-24",
+  "full_zip_created": false,
+  "source_sha256": {
+    "crates/wiparse-gui/src/instrument_control.rs": "19efca5fa2e35a995d4b67d09bf08484a19a9a9a9cd5846f19dc0418bb11a856",
+    "crates/wiparse-core/src/instrument/mod.rs": "73613e1f01af446f3ae5ed9d3968c798891e41d3c22a27fcfced2edd3c5ced71",
+    "crates/wiparse-core/src/scope/visa_hotplug_tests.rs": "e31bf9e911e66ef8360c0aad074ce78df16b538a27aa69ddf867ed847a24ccbf",
+    "scripts/verify-instrument-reconnect.ps1": "5c85ce4524b9e507a8c366383e4e57a221554bfe19e2d6d97c4a68d6f7651020",
+    "crates/wiparse-core/src/scope/visa.rs": "7d56e6f2839b44c3eb4c56de058bc3664ce6ede2accfca9d0a6ed7f19c22a569",
+    "crates/wiparse-core/src/instrument/drivers.rs": "86fb235fffd6c0fea93d47141fc9a5f11735a5109874b99e0b15a134565bc69a"
+  },
+  "version": "1.2.2",
+  "runtime": {
+    "passed": true,
+    "version": "1.2.2",
+    "cycles": 10,
+    "kind": "simulated_session_lifecycle",
+    "physical_usb_test": false,
+    "exe_sha256": "fb873c55aee3d282be824400b92c1fbe1ebd5591e26c560bc7eeca620568d2ec"
+  },
+  "gui_instrument_tests": {
+    "passed": 4,
+    "failed": 0
+  },
+  "hardware_usb_unplug_verified": false,
+  "kind": "usb_session_reconnect_hotfix_preview",
+  "core_tests": {
+    "ignored": 1,
+    "context": "outside sandbox: Windows DPAPI tests require user context",
+    "failed": 0,
+    "passed": 260
+  }
+}

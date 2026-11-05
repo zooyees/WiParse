@@ -1,0 +1,91 @@
+{
+  "plugin_version": "0.7.0",
+  "runtime_smoke": {
+    "exe_sha256": "383cacdd0e4fe746998649193c91ee59bba751225abcfff4618e011c17f81e39",
+    "version": "1.2.2",
+    "passed": true,
+    "hardware_test": false,
+    "runner_started": false,
+    "kind": "serial_trigger_exe_smoke",
+    "plugin_version": "0.7.0",
+    "invalid_draft_gates": [
+      {
+        "error": "Add and enable at least one trigger rule.",
+        "name": "empty",
+        "passed": true
+      },
+      {
+        "error": "T1 : enter match text and a valid match mode.",
+        "name": "blank_pattern",
+        "passed": true
+      },
+      {
+        "error": "Enabled rules have duplicate IDs. Change the ID in Advanced options.",
+        "name": "duplicate_slug",
+        "passed": true
+      },
+      {
+        "error": "Cannot read triggers. Open Configuration recovery to inspect the original value.",
+        "name": "malformed",
+        "passed": true
+      }
+    ]
+  },
+  "rust_trigger_checks": {
+    "failed": 0,
+    "passed": 7,
+    "log": "serial-trigger-gui-tests.log"
+  },
+  "zip_created": false,
+  "node_checks": {
+    "failed": 0,
+    "passed": 11,
+    "log": "serial-trigger-node-tests.log"
+  },
+  "host_version": "1.2.2",
+  "date": "2026-10-24",
+  "visual_checks": {
+    "source_frame_only": true,
+    "pointer_editing_verified": true,
+    "editor_frames": 12,
+    "themes": [
+      "dark",
+      "light"
+    ],
+    "languages": [
+      "zh",
+      "en"
+    ],
+    "host_form_combinations": 16
+  },
+  "broader_layout_check": {
+    "failure": "header collapsed",
+    "impact": "Full-plugin layout verification is not green at this extreme width. Serial trigger editor passes dedicated 180-680 width checks.",
+    "width": 180,
+    "case": "test_tool::layout_regressions::every_local_plugin_header_stays_above_case_and_parameters",
+    "log": "serial-trigger-layout-tests.log",
+    "attribution": "pending_before_change_baseline_comparison",
+    "passed": 1,
+    "failed": 1,
+    "plugin": "fpga-firmware-test"
+  },
+  "exe_sha256": "383cacdd0e4fe746998649193c91ee59bba751225abcfff4618e011c17f81e39",
+  "runtime_harness": {
+    "first_attempt": "Harness did not parse non-2xx JSON validation error envelopes; fixed and reran successfully.",
+    "attempts": 2
+  },
+  "kind": "serial_trigger_visual_editor_preview",
+  "exe_path": "D:\\windlink\\windlink\\WiParse-R\\dist\\wiparse-1.2.2-serial-trigger-20261024-preview\\bin\\WiParse.exe",
+  "source_sha256": {
+    "test-tools/plugins/scope-serial-monitor/README.md": "0309d531a510e482baf4fc8495ee0766e4741ed500f11229c2d4316cb6ba7891",
+    "test-tools/lib/line-triggers.mjs": "b9f3464caba907086f0043f8345fc28e083cbdeec527d4142e93f3025950ddc1",
+    "test-tools/plugins/scope-serial-monitor/plugin.json": "3390181d7c6e1286cb31e32de9f84a0fa89c2180985f09df5ef64adb3b58367f",
+    "test-tools/PLUGIN_SPEC.md": "82006e3ffcdff597fb49cba66fee12246b6048fd532f7c7f2ab153d5fbeee174",
+    "crates/wiparse-gui/src/test_tool/line_trigger_editor.rs": "4e0c76f5e3c92af2bc7626c169d8c996a4e4e3778306a6388eacc4050ccd88b6",
+    "crates/wiparse-gui/src/test_tool.rs": "18ce5c54d3a88f09571897e293d8a4e7e258131c131e10f6a065f394db2ff40b",
+    "scripts/verify-serial-trigger-ui.ps1": "1d27dbb4f86367629bd8ea0b6e9b59ec7a98a9d298ee7ee6fc28960862976b75",
+    "test-tools/test/line-triggers.test.mjs": "27e9ae52f5605a13e820d6b1e88e53ef2234434eca34221c7afffb89314c15f5",
+    "test-tools/schemas/plugin.schema.json": "a830aa9948d3c2b8a3ec5a6b34aa77592c61bfe0e9fa07e47535210795113061"
+  },
+  "physical_capture_test": false
+}

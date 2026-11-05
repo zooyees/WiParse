@@ -1,4 +1,5 @@
 use crate::theme::{self as ui_theme, Tokens};
+use serde_json::{json, Value};
 use egui::{Color32, CornerRadius, Frame, Margin, Stroke};
 use std::f64::consts::{E, PI};
 use wiparse_core::i18n::Lang;
@@ -496,6 +497,24 @@ pub struct ConverterPanel {
 }
 
 impl ConverterPanel {
+    pub(crate) fn ai_summary(&self) -> Value {
+        let clip = |text: &str, limit: usize| text.chars().take(limit).collect::<String>();
+        json!({
+            "tab": format!("{:?}", self.tab),
+            "byte_input": clip(&self.byte_input, 120),
+            "byte_result": clip(&self.byte_result, 120),
+            "byte_error": self.byte_error.as_ref().map(|error| clip(error, 120)),
+            "radix_input": clip(&self.radix_input, 80),
+            "source_base": self.source_base,
+            "target_base": self.target_base,
+            "radix_result": clip(&self.radix_result, 80),
+            "expression": clip(&self.expression, 160),
+            "angle": format!("{:?}", self.angle_mode),
+            "expression_result": clip(&self.expression_result, 80),
+            "expression_error": self.expression_error.as_ref().map(|error| clip(error, 120)),
+        })
+    }
+
     pub fn new() -> Self {
         Self {
             tab: ConverterTab::Ascii,

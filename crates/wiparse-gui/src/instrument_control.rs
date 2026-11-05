@@ -1,6 +1,8 @@
 //! Unified VISA instrument workbench.
 
 mod workbench;
+mod waveform_pipeline;
+use waveform_pipeline::{PipelineJob, SourceRequest};
 
 use crate::plot::paint_envelope_columns;
 use crate::test_tool::LiveDevice;
@@ -19,7 +21,7 @@ use wiparse_core::config::AppConfig;
 use wiparse_core::dongle::{self, DongleSession};
 use wiparse_core::i18n::Lang;
 use wiparse_core::instrument::{
-    discover_resources_with_library, export_csv, humanize_scope_reading_text,
+    discover_resources_with_known_sessions, export_csv, humanize_scope_reading_text,
     parse_control_command, AcquisitionBuffer, Capabilities, ControlCommand, Identity,
     InstrumentDevice, InstrumentKind, MeasureFunction, Reading, ResourceInfo, Sample,
     ScopeMeasType, WaveformTrace,
@@ -28,8 +30,8 @@ use wiparse_core::probe::ProbeSession;
 use wiparse_core::usb::{is_usb_session_address, parse_usb_resource, UsbIface};
 use wiparse_core::wave_display::{build_overview_envelope, envelope_bounds, ScopeEnvelopeColumn};
 use wiparse_core::waveform_file::{
-    join_tek_isf_channels, load_waveform_bytes, load_waveform_bytes_all, save_waveform_file,
-    sniff_waveform_ext, waveforms_to_spreadsheet_csv,
+    host_waveform_metrics, join_tek_isf_channels, load_waveform_bytes, load_waveform_bytes_all,
+    save_waveform_file, sniff_waveform_ext, waveforms_to_spreadsheet_csv,
 };
 
 enum Job {
@@ -117,6 +119,7 @@ enum Event {
     Waveform {
         id: u64,
         trace: WaveformTrace,
+        plot: CachedWavePlot,
     },
     /// Raw waveform source file bytes from the instrument (ready for Save As or auto-save).
     WaveformSource {
@@ -128,12 +131,22 @@ enum Event {
         bytes: Vec<u8>,
         suggested_name: String,
         /// Parsed on the worker thread so the UI does not freeze on multi‑Mpoint ISF.
-        trace: Option<WaveformTrace>,
+        plot: Option<CachedWavePlot>,
+        metrics: serde_json::Value,
+        channels: Vec<u8>,
         /// All displayed channels (for multi-file / multi-column save).
-        traces: Vec<WaveformTrace>,
+        traces: Arc<Vec<WaveformTrace>>,
         /// Per-channel native blobs `(CHx, bytes, ext)`.
         channel_files: Vec<(u8, Vec<u8>, String)>,
         parse_error: Option<String>,
+    },
+    WaveformSaved {
+        id: u64,
+        job_id: Option<u64>,
+        result: Result<Option<Vec<PathBuf>>, String>,
+        bytes: usize,
+        metrics: serde_json::Value,
+        update_save_dir: bool,
     },
     /// Long-running job progress (screenshot / waveform source transfer).
     Progress {
@@ -156,10 +169,11 @@ struct PendingWaveformSave {
     effective_ext: String,
     file_stem: String,
     vendor: String,
-    parsed_trace: Option<WaveformTrace>,
-    traces: Vec<WaveformTrace>,
+    traces: Arc<Vec<WaveformTrace>>,
     /// Per-channel native blobs `(channel, bytes, ext)`.
     channel_files: Vec<(u8, Vec<u8>, String)>,
+    /// Measured metrics from parsed traces. Empty object when parse failed.
+    metrics: serde_json::Value,
 }
 
 /// Completion of an API / test-plan instrument job (path recorded, not point arrays).
@@ -170,6 +184,61 @@ pub struct InstrumentJobResult {
     pub kind: String,
     pub device_id: Option<u64>,
     pub detail: serde_json::Value,
+}
+
+/// Query history must survive notification drains without cloning point arrays
+/// or serializing a potentially large reply on the GUI thread.
+fn job_detail_summary(value:&serde_json::Value,budget:&mut usize,depth:usize)->serde_json::Value {
+    use serde_json::Value;
+    if *budget==0 || depth>6 {return Value::String("[truncated]".into());}
+    match value {
+        Value::String(text)=>{
+            let mut end=text.len().min(*budget).min(4096);
+            while !text.is_char_boundary(end){end-=1;}
+            *budget=budget.saturating_sub(end);
+            if end<text.len(){Value::String(format!("{} [truncated]",&text[..end]))}else{Value::String(text.clone())}
+        }
+        Value::Array(items)=>{
+            let mut result=Vec::new();
+            for item in items.iter().take(64) {if *budget==0{break;}result.push(job_detail_summary(item,budget,depth+1));}
+            if result.len()<items.len(){result.push(serde_json::json!({"truncated":true,"original_items":items.len()}));}
+            Value::Array(result)
+        }
+        Value::Object(fields)=>{
+            let mut result=serde_json::Map::new();
+            for (key,item) in fields.iter().take(64){if *budget==0{break;}*budget=budget.saturating_sub(key.len());result.insert(key.clone(),job_detail_summary(item,budget,depth+1));}
+            if result.len()<fields.len(){result.insert("_truncated_fields".into(),serde_json::json!(fields.len()-result.len()));}
+            Value::Object(result)
+        }
+        _=>{*budget=budget.saturating_sub(16);value.clone()}
+    }
+}
+
+#[cfg(test)]
+mod ai_job_history_tests {
+    use super::*;
+    #[test]
+    fn demo_screenshot_passes_the_real_image_decoder(){
+        let mut device=InstrumentDevice::connect_demo(InstrumentKind::Oscilloscope).unwrap();
+        let bytes=device.capture_scope_png().unwrap();
+        let image=image::load_from_memory(&bytes).expect("demo PNG must pass CRC and pixel decoding");
+        assert_eq!((image.width(),image.height()),(1,1));
+    }
+    #[test]
+    fn completion_query_survives_test_notification_drain_and_stays_bounded(){
+        let mut panel=InstrumentControlPanel::new(&AppConfig::default());
+        panel.complete_job(Some(77),true,"command",Some(1),serde_json::json!({"value":100000,"unit":"Hz"}));
+        assert_eq!(panel.take_job_results().len(),1);
+        for _ in 0..2 {let reply=panel.api_job_get(&serde_json::json!({"job_id":77}));assert_eq!(reply.data["state"],"completed");assert_eq!(reply.data["detail"]["value"],100000);}
+        let huge="x".repeat(1_000_000);
+        panel.complete_job(Some(78),true,"command",Some(1),serde_json::json!({"payload":huge}));
+        assert_eq!(panel.take_job_results()[0].detail["payload"].as_str().unwrap().len(),1_000_000);
+        assert!(panel.api_job_get(&serde_json::json!({"job_id":78})).data.to_string().len()<20_000);
+        for id in 100..700 {panel.complete_job(Some(id),true,"command",Some(1),serde_json::json!({}));}
+        assert_eq!(panel.completed_jobs.len(),512);
+        assert_eq!(panel.api_job_get(&serde_json::json!({"job_id":77})).data["state"],"pending_or_unknown");
+        panel.on_exit();
+    }
 }
 
 /// Prebuilt plot series — rebuilt only when a new waveform arrives.
@@ -365,6 +434,8 @@ pub struct InstrumentControlPanel {
     samples: AcquisitionBuffer,
     latest: HashMap<(u64, String), Reading>,
     waveforms: HashMap<u64, WaveformTrace>,
+    waveform_pipeline: Sender<PipelineJob>,
+    waveform_source_job: Option<u64>,
     wave_plots: HashMap<u64, CachedWavePlot>,
     screenshots: HashMap<u64, egui::TextureHandle>,
     /// Full PNG bytes for Save As (populated by Screenshot capture).
@@ -390,6 +461,7 @@ pub struct InstrumentControlPanel {
     pending_save_delay_frames: u8,
     next_job_id: u64,
     job_results: Vec<InstrumentJobResult>,
+    completed_jobs: VecDeque<InstrumentJobResult>,
     last_rtt: Instant,
     rtt_pending: HashSet<u64>,
 }
@@ -405,7 +477,11 @@ impl InstrumentControlPanel {
     pub fn new(cfg: &AppConfig) -> Self {
         let (tx, jobs) = unbounded();
         let (events, rx) = unbounded();
-        thread::spawn(move || worker_loop(jobs, events));
+        let (waveform_pipeline, pipeline_jobs) = crossbeam_channel::bounded(2);
+        let pipeline_events = events.clone();
+        thread::spawn(move || waveform_pipeline::worker(pipeline_jobs, pipeline_events));
+        let worker_pipeline = waveform_pipeline.clone();
+        thread::spawn(move || worker_loop(jobs, events, worker_pipeline));
         let instrument_cfg = &cfg.apps.instruments;
         let mut resource_inputs: [String; 7] = std::array::from_fn(|_| String::new());
         if let Some(first) = instrument_cfg.known_tcpip_resources.first() {
@@ -443,6 +519,8 @@ impl InstrumentControlPanel {
             latest: HashMap::new(),
             waveforms: HashMap::new(),
             wave_plots: HashMap::new(),
+            waveform_pipeline,
+            waveform_source_job: None,
             screenshots: HashMap::new(),
             screenshot_png: HashMap::new(),
             scope_heavy_defer_frames: 0,
@@ -459,6 +537,7 @@ impl InstrumentControlPanel {
             pending_save_delay_frames: 0,
             next_job_id: 1,
             job_results: Vec::new(),
+            completed_jobs: VecDeque::new(),
             last_rtt: Instant::now(),
             rtt_pending: HashSet::new(),
         };
@@ -566,11 +645,19 @@ impl InstrumentControlPanel {
 
     pub fn pump_with_bus(&mut self, ctx: &egui::Context, bus: Option<&crate::backend::EventBus>) {
         let results_before = self.job_results.len();
-        while let Ok(event) = self.rx.try_recv() {
+        let frame_budget = Instant::now();
+        while frame_budget.elapsed() < Duration::from_millis(4) {
+            let Ok(event) = self.rx.try_recv() else { break; };
             if let Some(bus) = bus {
                 publish_instrument_event(bus, &event);
             }
             self.handle_event(ctx, event);
+        }
+        if !self.rx.is_empty() { ctx.request_repaint(); }
+        if self.waveform_source_job.is_some() {
+            // A different instrument's command may clear the generic busy label.
+            // Keep draining this operation independently until save/cancel/error.
+            ctx.request_repaint_after(Duration::from_millis(100));
         }
         if let Some(bus) = bus {
             for r in self.job_results.iter().skip(results_before) {
@@ -587,7 +674,7 @@ impl InstrumentControlPanel {
                 );
             }
         }
-        // Open Save As one frame after parse so the waveform preview is already painted.
+        // Schedule background Save As after the preview has had time to paint.
         if self.pending_save_delay_frames > 0 {
             self.pending_save_delay_frames -= 1;
             ctx.request_repaint();
@@ -657,147 +744,24 @@ impl InstrumentControlPanel {
     }
 
     fn run_pending_waveform_save(&mut self) {
-        let Some(pending) = self.pending_waveform_save.take() else {
-            return;
-        };
-        let default = self.save_dir.join(format!(
-            "{}_{}.{}",
-            pending.file_stem,
-            Local::now().format("%Y%m%d_%H%M%S"),
-            pending.effective_ext
-        ));
-        let dialog = scope_waveform_save_dialog(
-            &pending.vendor,
-            &self.save_dir,
-            default
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .as_ref(),
-            &pending.effective_ext,
-        );
-        if let Some(path) = dialog.save_file() {
-            match save_pending_waveform_source(&path, &pending) {
-                Ok(saved) => {
-                    self.status = if saved.len() == 1 {
-                        format!(
-                            "已保存波形源 / Waveform source saved: {}",
-                            saved[0].display()
-                        )
-                    } else {
-                        format!(
-                            "已保存 {} 个通道波形源 / Saved {} channel sources → {}",
-                            saved.len(),
-                            saved.len(),
-                            path.parent()
-                                .unwrap_or_else(|| std::path::Path::new("."))
-                                .display()
-                        )
-                    };
-                    if let Some(parent) = path.parent() {
-                        self.save_dir = parent.to_path_buf();
-                    }
-                    self.complete_job(
-                        pending.job_id,
-                        true,
-                        "waveform_source",
-                        Some(pending.id),
-                        serde_json::json!({
-                            "path": saved.first().map(|p| p.display().to_string()),
-                            "files": saved.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
-                            "bytes": pending.bytes.len(),
-                        }),
-                    );
-                }
-                Err(error) => {
-                    self.status = error.to_string();
-                    self.complete_job(
-                        pending.job_id,
-                        false,
-                        "waveform_source",
-                        Some(pending.id),
-                        serde_json::json!({ "error": error }),
-                    );
-                }
-            }
-        } else {
-            if let Some(trace) = self.waveforms.get(&pending.id) {
-                self.status = format!(
-                    "波形已显示（{} 点），另存为已取消 / Waveform shown ({} pts), Save As cancelled",
-                    trace.x.len(),
-                    trace.x.len()
-                );
-            } else if !pending.bytes.is_empty() {
-                self.status = format!(
-                    "另存为已取消（已收到 {} KB 原始数据）/ Save As cancelled ({} KB raw kept)",
-                    pending.bytes.len() / 1024,
-                    pending.bytes.len() / 1024
-                );
-            }
-            self.complete_job(
-                pending.job_id,
-                false,
-                "waveform_source",
-                Some(pending.id),
-                serde_json::json!({ "error": "save cancelled" }),
-            );
-        }
+        let Some(pending) = self.pending_waveform_save.take() else { return; };
+        self.queue_waveform_save(pending, waveform_pipeline::SaveSelection::Dialog { dir: self.save_dir.clone() });
     }
 
-    fn auto_save_waveform_source(
-        &mut self,
-        pending: PendingWaveformSave,
-        dir: &std::path::Path,
-        filename: Option<&str>,
-        overwrite: bool,
-    ) {
-        if let Err(e) = std::fs::create_dir_all(dir) {
-            self.status = format!("waveform_source dir: {e}");
-            self.complete_job(
-                pending.job_id,
-                false,
-                "waveform_source",
-                Some(pending.id),
-                serde_json::json!({ "error": e.to_string() }),
-            );
-            return;
-        }
-        let name = filename
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| format!("{}.{}", pending.file_stem, pending.effective_ext));
-        let path = wiparse_core::paths::unique_file_path(dir, &name, overwrite);
-        match save_pending_waveform_source(&path, &pending) {
-            Ok(saved) => {
-                self.status = format!(
-                    "已保存波形源 / Waveform source saved: {}",
-                    saved
-                        .first()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|| path.display().to_string())
-                );
-                self.log(format!("WaveformSource auto-save → {}", path.display()));
-                self.complete_job(
-                    pending.job_id,
-                    true,
-                    "waveform_source",
-                    Some(pending.id),
-                    serde_json::json!({
-                        "path": saved.first().map(|p| p.display().to_string()),
-                        "files": saved.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
-                        "bytes": pending.bytes.len(),
-                    }),
-                );
-            }
-            Err(error) => {
-                self.status = error.clone();
-                self.complete_job(
-                    pending.job_id,
-                    false,
-                    "waveform_source",
-                    Some(pending.id),
-                    serde_json::json!({ "error": error }),
-                );
-            }
+    fn auto_save_waveform_source(&mut self, pending: PendingWaveformSave, dir: &std::path::Path, filename: Option<&str>, overwrite: bool) {
+        self.queue_waveform_save(pending, waveform_pipeline::SaveSelection::Auto {
+            dir: dir.to_path_buf(), filename: filename.map(str::to_owned), overwrite,
+        });
+    }
+
+    fn queue_waveform_save(&mut self, pending: PendingWaveformSave, selection: waveform_pipeline::SaveSelection) {
+        let id = pending.id;
+        let job_id = pending.job_id;
+        self.begin_busy(id, "Saving waveform source / 正在保存波形源文件");
+        if self.waveform_pipeline.try_send(PipelineJob::Save { pending, selection }).is_err() {
+            self.clear_busy();
+            self.status = "Waveform save queue is busy".into();
+            self.complete_job(job_id, false, "waveform_source", Some(id), serde_json::json!({ "error": self.status }));
         }
     }
 
@@ -818,6 +782,18 @@ impl InstrumentControlPanel {
         let Some(job_id) = job_id else {
             return;
         };
+        if self.waveform_source_job == Some(job_id) {
+            self.waveform_source_job = None;
+            if self.busy_device == device_id {
+                self.clear_busy();
+            }
+        }
+        let mut detail_budget=16*1024;
+        self.completed_jobs.push_back(InstrumentJobResult {
+            job_id,ok,kind:kind.into(),device_id,
+            detail: job_detail_summary(&detail,&mut detail_budget,0),
+        });
+        while self.completed_jobs.len()>512 {self.completed_jobs.pop_front();}
         self.job_results.push(InstrumentJobResult {
             job_id,
             ok,
@@ -1120,6 +1096,12 @@ impl InstrumentControlPanel {
         }
     }
 
+    pub fn api_job_get(&self, params:&serde_json::Value)->crate::backend::InvokeReply {
+        let Some(id)=params["job_id"].as_u64() else {return crate::backend::invoke_err("instrument.job.get","missing job_id");};
+        let data=self.completed_jobs.iter().find(|r|r.job_id==id).map(|r|serde_json::json!({"state":"completed","job_id":r.job_id,"ok":r.ok,"kind":r.kind,"device_id":r.device_id,"detail":r.detail})).unwrap_or_else(||serde_json::json!({"state":"pending_or_unknown","job_id":id}));
+        crate::backend::invoke_ok("instrument.job.get",data)
+    }
+
     pub fn api_command(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let id = match params.get("device_id").and_then(|v| v.as_u64()) {
@@ -1209,6 +1191,9 @@ impl InstrumentControlPanel {
         params: &serde_json::Value,
     ) -> crate::backend::InvokeReply {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
+        if self.waveform_source_job.is_some() {
+            return err("instrument.waveform_source", "A waveform source read or save is already in progress");
+        }
         let id = match params
             .get("device_id")
             .or_else(|| params.get("id"))
@@ -1240,6 +1225,7 @@ impl InstrumentControlPanel {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         let job_id = Some(self.alloc_job_id());
+        self.waveform_source_job = job_id;
         self.begin_busy(id, "Reading waveform source");
         match self.tx.send(Job::WaveformSource {
             id,
@@ -1256,7 +1242,11 @@ impl InstrumentControlPanel {
                     "device_id": id,
                 }),
             ),
-            Err(e) => err("instrument.waveform_source", &e.to_string()),
+            Err(e) => {
+                self.waveform_source_job = None;
+                self.clear_busy();
+                err("instrument.waveform_source", &e.to_string())
+            }
         }
     }
 
@@ -1339,6 +1329,7 @@ impl InstrumentControlPanel {
                 self.device_photos.remove(&id);
                 self.device_photo_tried.remove(&id);
                 self.measurement_pending.remove(&id);
+                self.latest.retain(|(device_id, _), _| *device_id != id);
                 self.waveforms.remove(&id);
                 self.wave_plots.remove(&id);
                 self.screenshots.remove(&id);
@@ -1485,10 +1476,10 @@ impl InstrumentControlPanel {
                     );
                 }
             }
-            Event::Waveform { id, trace } => {
+            Event::Waveform { id, trace, plot } => {
                 self.clear_busy();
                 self.status = format!("{}: {} points", trace.channel, trace.x.len());
-                self.wave_plots.insert(id, build_cached_wave_plot(&trace));
+                self.wave_plots.insert(id, plot);
                 self.waveforms.insert(id, trace);
             }
             Event::WaveformSource {
@@ -1499,20 +1490,25 @@ impl InstrumentControlPanel {
                 overwrite,
                 bytes,
                 suggested_name,
-                trace,
-                mut traces,
+                plot,
+                metrics,
+                channels,
+                traces,
                 channel_files,
                 parse_error,
             } => {
                 self.clear_busy();
+                if !self.devices.iter().any(|device| device.id == id) {
+                    self.complete_job(job_id, false, "waveform_source", Some(id), serde_json::json!({ "error": "device disconnected during waveform processing" }));
+                    return;
+                }
                 let stem = PathBuf::from(&suggested_name);
                 let mut effective_ext = stem
                     .extension()
                     .and_then(|e| e.to_str())
                     .unwrap_or("isf")
                     .to_ascii_lowercase();
-                // Keep instrument-native format (Tek ISF / Rigol WFM). Multi-channel
-                // Save As writes sibling `stem_CHx.isf` files; CSV remains optional.
+                // Preserve native source bytes and every parsed channel for Save As.
                 if let Some(sniffed) = sniff_waveform_ext(&bytes) {
                     if sniffed != effective_ext {
                         effective_ext = sniffed.to_string();
@@ -1527,9 +1523,9 @@ impl InstrumentControlPanel {
                     .map(|d| d.identity.manufacturer.clone())
                     .unwrap_or_default();
 
-                let ch_labels: Vec<String> = channel_files
+                let ch_labels: Vec<String> = channels
                     .iter()
-                    .map(|(ch, _, _)| format!("CH{ch}"))
+                    .map(|ch| format!("CH{ch}"))
                     .collect();
                 let ch_summary = if ch_labels.is_empty() {
                     "?".into()
@@ -1546,10 +1542,11 @@ impl InstrumentControlPanel {
                         bytes.len() / 1024,
                         bytes.len() / 1024
                     );
-                    // Preview trace moves into waveforms; pending keeps rest for multi-ch Save As.
-                    let preview = traces.remove(0);
-                    self.wave_plots.insert(id, build_cached_wave_plot(&preview));
-                    self.waveforms.insert(id, preview);
+                    // WaveAxis is Arc-backed: share CH1 samples, retain all channels only until save finishes.
+                    if let Some(plot) = plot {
+                        self.wave_plots.insert(id, plot);
+                    }
+                    self.waveforms.insert(id, traces[0].clone());
                     self.log(format!(
                         "WaveformSource OK: {ch_summary}, {} points, {} bytes → {}",
                         raw_n,
@@ -1570,7 +1567,6 @@ impl InstrumentControlPanel {
                         bytes.len() / 1024
                     );
                 }
-                let _ = trace; // worker no longer sends a duplicate CH1 copy
 
                 let pending = PendingWaveformSave {
                     id,
@@ -1583,9 +1579,9 @@ impl InstrumentControlPanel {
                         .unwrap_or("waveform")
                         .to_string(),
                     vendor,
-                    parsed_trace: None,
-                    traces: if nch > 1 { traces } else { Vec::new() },
+                    traces,
                     channel_files,
+                    metrics,
                 };
                 if let Some(dir) = auto_dir.filter(|p| !p.as_os_str().is_empty()) {
                     self.auto_save_waveform_source(
@@ -1606,6 +1602,32 @@ impl InstrumentControlPanel {
                 self.status = message;
                 if self.busy_started.is_none() {
                     self.busy_started = Some(Instant::now());
+                }
+            }
+            Event::WaveformSaved { id, job_id, result, bytes, metrics, update_save_dir } => {
+                match result {
+                    Ok(Some(saved)) => {
+                        if let Some(path) = saved.first() {
+                            if update_save_dir {
+                                if let Some(parent) = path.parent() { self.save_dir = parent.to_path_buf(); }
+                            }
+                            self.status = format!("已保存波形源 / Waveform source saved: {}", path.display());
+                            self.log(self.status.clone());
+                        }
+                        self.complete_job(job_id, true, "waveform_source", Some(id), serde_json::json!({
+                            "path": saved.first().map(|p| p.display().to_string()),
+                            "files": saved.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+                            "bytes": bytes, "metrics": metrics,
+                        }));
+                    }
+                    Ok(None) => {
+                        self.status = "波形已显示，另存为已取消 / Waveform shown; Save As cancelled".into();
+                        self.complete_job(job_id, false, "waveform_source", Some(id), serde_json::json!({ "error": "save cancelled" }));
+                    }
+                    Err(error) => {
+                        self.status = error.clone();
+                        self.complete_job(job_id, false, "waveform_source", Some(id), serde_json::json!({ "error": error }));
+                    }
                 }
             }
             Event::Error {
@@ -1664,6 +1686,42 @@ impl InstrumentControlPanel {
         &self.status
     }
 
+    /// Session status only. Waveform samples, screenshots and library paths stay local.
+    pub(crate) fn ai_summary(&self) -> serde_json::Value {
+        let clip = |text: &str, limit: usize| text.chars().take(limit).collect::<String>();
+        let sessions: Vec<_> = self
+            .devices
+            .iter()
+            .take(8)
+            .map(|device| {
+                serde_json::json!({
+                    "kind": kind_wire(device.kind),
+                    "manufacturer": clip(&device.identity.manufacturer, 80),
+                    "model": clip(&device.identity.model, 80),
+                    "resource": clip(&device.resource, 80),
+                    "acquiring": device.acquiring,
+                    "paused": device.paused,
+                    "last_error": device.last_error.as_ref().map(|error| clip(error, 160)),
+                })
+            })
+            .collect();
+        let recent_log: Vec<String> = self
+            .logs
+            .iter()
+            .rev()
+            .take(8)
+            .map(|line| clip(line, 160))
+            .collect();
+        serde_json::json!({
+            "status": clip(&self.status, 240),
+            "selected_kind": kind_wire(self.selected_kind),
+            "session_count": self.devices.len(),
+            "scanning": self.scanning,
+            "sessions": sessions,
+            "recent_log": recent_log,
+        })
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
         // `pump` is called once from the app update loop while this tab is active.
         let (full, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
@@ -1675,8 +1733,8 @@ impl InstrumentControlPanel {
             ui,
             "instrument_control",
             full,
-            236.0,
-            200.0,
+            theme::SIDEBAR_W,
+            theme::SIDEBAR_MIN_W,
             320.0,
             gap,
             tokens,
@@ -1839,9 +1897,14 @@ impl InstrumentControlPanel {
         lang: Lang,
         select: bool,
     ) -> Option<u64> {
-        if self.devices.iter().any(|d| d.resource == resource) {
-            self.status = text(lang, "该地址已连接", "Already connected").into();
-            return None;
+        if let Some(device) = self.devices.iter().find(|d| d.resource == resource) {
+            if device.last_error.is_none() {
+                self.status = text(lang, "该地址已连接", "Already connected").into();
+                return None;
+            }
+            // Explicit reconnect after an error must close the old handle first.
+            // FIFO ordering prevents overlap between old and replacement sessions.
+            let _ = self.tx.send(Job::Disconnect(device.id));
         }
         let slot = instrument_kind_slot(kind);
         if slot < self.resource_inputs.len() {
@@ -2344,13 +2407,15 @@ impl InstrumentControlPanel {
             let wave_tip = scope_waveform_source_tip(lang, vendor);
             if ui
                 .add_enabled(
-                    can_wave_src && !busy,
+                    can_wave_src && !busy && self.waveform_source_job.is_none(),
                     egui::Button::new(text(lang, "读取波形源文件", "Read Wave Source"))
                         .min_size(egui::vec2(128.0, 28.0)),
                 )
                 .on_hover_text(wave_tip)
                 .clicked()
             {
+                let job_id = Some(self.alloc_job_id());
+                self.waveform_source_job = job_id;
                 self.begin_busy(
                     id,
                     text(lang, "正在读取波形源文件", "Reading waveform source").to_string(),
@@ -2361,13 +2426,15 @@ impl InstrumentControlPanel {
                     "Reading all channels displayed on the scope (ignores the channel selector below)…",
                 )
                 .into();
-                let _ = self.tx.send(Job::WaveformSource {
+                if let Err(error) = self.tx.send(Job::WaveformSource {
                     id,
-                    job_id: None,
+                    job_id,
                     auto_dir: None,
                     auto_filename: None,
                     overwrite: false,
-                });
+                }) {
+                    self.complete_job(job_id, false, "waveform_source", Some(id), serde_json::json!({ "error": error.to_string() }));
+                }
             }
             if ui
                 .add_enabled(
@@ -2881,47 +2948,59 @@ impl InstrumentControlPanel {
     }
 }
 
-fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
+fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>, pipeline: Sender<PipelineJob>) {
     let mut devices = HashMap::<u64, LiveSession>::new();
     while let Ok(job) = jobs.recv() {
+        retire_lost_sessions(&mut devices, &events);
         match job {
             Job::Scan {
                 library,
                 timeout_ms,
-            } => match discover_resources_with_library(
-                (!library.trim().is_empty()).then_some(library.as_str()),
-                timeout_ms,
-            ) {
-                Ok(resources) => {
-                    let _ = events.send(Event::Resources(resources));
+            } => {
+                let known = prepare_scan(&mut devices, &events);
+                match discover_resources_with_known_sessions(
+                    (!library.trim().is_empty()).then_some(library.as_str()),
+                    timeout_ms,
+                    &known,
+                ) {
+                    Ok(resources) => {
+                        let _ = events.send(Event::Resources(resources));
+                    }
+                    Err(error) => {
+                        let _ = events.send(Event::Error {
+                            id: None,
+                            job_id: None,
+                            message: error.to_string(),
+                        });
+                    }
                 }
-                Err(error) => {
-                    let _ = events.send(Event::Error {
-                        id: None,
-                        job_id: None,
-                        message: error.to_string(),
-                    });
-                }
-            },
+            }
             Job::Connect {
                 id,
                 resource,
                 kind,
                 timeout_ms,
                 library,
-            } => match open_live_session(
-                resource.clone(),
-                kind,
-                timeout_ms,
-                (!library.trim().is_empty()).then_some(library.as_str()),
-            ) {
-                Ok(session) => {
-                    let event = connected_event(id, &session);
-                    devices.insert(id, session);
-                    let _ = events.send(event);
+            } => {
+                if devices.values().any(|session| matches!(session,
+                    LiveSession::Scpi(device) if device.resource == resource)) {
+                    send_error(&events, Some(id), "Resource already connected; disconnect the existing session before reconnecting");
+                    continue;
                 }
-                Err(error) => send_error(&events, Some(id), error),
-            },
+                match open_live_session(
+                    resource.clone(),
+                    kind,
+                    timeout_ms,
+                    (!library.trim().is_empty()).then_some(library.as_str()),
+                ) {
+                    Ok(session) => {
+                        let event = connected_event(id, &session);
+                        devices.insert(id, session);
+                        let _ = events.send(event);
+                    }
+                    Err(error) => send_error(&events, Some(id), error),
+                }
+            }
             Job::ConnectDemo { id, kind } => match open_demo_session(kind) {
                 Ok(session) => {
                     let event = connected_event(id, &session);
@@ -3067,144 +3146,9 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                 if let Some(LiveSession::Scpi(device)) = devices.get_mut(&id) {
                     match device.capture_scope_waveform_sources_displayed() {
                         Ok(parts) => {
-                            let mut channel_files = Vec::new();
-                            let mut errors = Vec::new();
-                            let mut total_bytes = 0usize;
-                            for (ch, bytes, suggested_name) in parts {
-                                total_bytes += bytes.len();
-                                let _ = events.send(Event::Progress {
-                                    id: Some(id),
-                                    message: format!(
-                                        "已读 CH{ch}（{} KB），继续… / Got CH{ch} ({} KB), continuing…",
-                                        bytes.len() / 1024,
-                                        bytes.len() / 1024
-                                    ),
-                                });
-                                let stem = std::path::PathBuf::from(&suggested_name);
-                                let ext = stem
-                                    .extension()
-                                    .and_then(|e| e.to_str())
-                                    .unwrap_or("isf")
-                                    .to_ascii_lowercase();
-                                channel_files.push((ch, bytes, ext));
-                            }
-                            if channel_files.is_empty() {
-                                send_error_job(
-                                    &events,
-                                    Some(id),
-                                    job_id,
-                                    "no displayed channel waveform data",
-                                );
-                            } else {
-                                let ch_tag = channel_files
-                                    .iter()
-                                    .map(|(ch, _, _)| format!("CH{ch}"))
-                                    .collect::<Vec<_>>()
-                                    .join("_");
-                                let all_isf = channel_files.len() > 1
-                                    && channel_files.iter().all(|(_, _, e)| e == "isf");
-                                let (ch0, raw0, ext0) = &channel_files[0];
-                                let (bytes, suggested_name) = if channel_files.len() == 1 {
-                                    (raw0.clone(), format!("waveform_CH{ch0}.{ext0}"))
-                                } else if all_isf {
-                                    let parts: Vec<(u8, &[u8])> = channel_files
-                                        .iter()
-                                        .map(|(ch, b, _)| (*ch, b.as_slice()))
-                                        .collect();
-                                    (
-                                        join_tek_isf_channels(&parts),
-                                        format!("waveform_{ch_tag}.isf"),
-                                    )
-                                } else {
-                                    (Vec::new(), format!("waveform_{ch_tag}.csv"))
-                                };
-
-                                let traces = if channel_files.len() == 1 {
-                                    match load_waveform_bytes_all(raw0, ext0, &format!("CH{ch0}"))
-                                        .or_else(|first| match sniff_waveform_ext(raw0) {
-                                            Some(sniffed) if sniffed != *ext0 => {
-                                                load_waveform_bytes_all(
-                                                    raw0,
-                                                    sniffed,
-                                                    &format!("CH{ch0}"),
-                                                )
-                                            }
-                                            _ => Err(first),
-                                        }) {
-                                        Ok(t) => t,
-                                        Err(e) => {
-                                            errors.push(format!("CH{ch0}: {e}"));
-                                            Vec::new()
-                                        }
-                                    }
-                                } else if all_isf {
-                                    match load_waveform_bytes_all(&bytes, "isf", "CH1") {
-                                        Ok(t) => t,
-                                        Err(e) => {
-                                            errors.push(e.to_string());
-                                            Vec::new()
-                                        }
-                                    }
-                                } else {
-                                    let mut t = Vec::new();
-                                    for (ch, b, e) in &channel_files {
-                                        match load_waveform_bytes(b, e, &format!("CH{ch}")).or_else(
-                                            |first| match sniff_waveform_ext(b) {
-                                                Some(sniffed) if sniffed != *e => {
-                                                    load_waveform_bytes(
-                                                        b,
-                                                        sniffed,
-                                                        &format!("CH{ch}"),
-                                                    )
-                                                }
-                                                _ => Err(first),
-                                            },
-                                        ) {
-                                            Ok(tr) => t.push(tr),
-                                            Err(e) => errors.push(format!("CH{ch}: {e}")),
-                                        }
-                                    }
-                                    t
-                                };
-
-                                let (bytes, suggested_name) =
-                                    if channel_files.len() > 1 && !all_isf && !traces.is_empty() {
-                                        (
-                                            waveforms_to_spreadsheet_csv(&traces),
-                                            format!("waveform_{ch_tag}.csv"),
-                                        )
-                                    } else {
-                                        (bytes, suggested_name)
-                                    };
-                                let parse_error = if traces.is_empty() {
-                                    Some(errors.join("; "))
-                                } else if !errors.is_empty() {
-                                    Some(format!("partial: {}", errors.join("; ")))
-                                } else {
-                                    None
-                                };
-                                // Do not clone CH1 into `trace` — UI uses `traces[0]`.
-                                // Drop per-channel raw blobs when we already built a
-                                // single joined/CSV payload (keeps Save As working).
-                                let keep_parts = channel_files.len() <= 1;
-                                let _ = events.send(Event::WaveformSource {
-                                    id,
-                                    job_id,
-                                    auto_dir,
-                                    auto_filename,
-                                    overwrite,
-                                    bytes,
-                                    suggested_name,
-                                    trace: None,
-                                    traces,
-                                    channel_files: if keep_parts {
-                                        channel_files
-                                    } else {
-                                        Vec::new()
-                                    },
-                                    parse_error,
-                                });
-                                let _ = total_bytes;
+                            let request = SourceRequest { id, job_id, auto_dir, auto_filename, overwrite };
+                            if pipeline.try_send(PipelineJob::Source { request, parts }).is_err() {
+                                send_error_job(&events, Some(id), job_id, "Waveform processing queue is busy; retry after the current task completes");
                             }
                         }
                         Err(error) => send_error_job(&events, Some(id), job_id, error),
@@ -3221,7 +3165,9 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
                 if let Some(LiveSession::Scpi(device)) = devices.get_mut(&id) {
                     match device.read_scope_source_waveform(channel) {
                         Ok(trace) => {
-                            let _ = events.send(Event::Waveform { id, trace });
+                            if pipeline.try_send(PipelineJob::Preview { id, trace }).is_err() {
+                                send_error(&events, Some(id), "Waveform processing queue is busy");
+                            }
                         }
                         Err(error) => send_error(&events, Some(id), error),
                     }
@@ -3231,7 +3177,53 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>) {
             }
             Job::Shutdown => break,
         }
+        retire_lost_sessions(&mut devices, &events);
     }
+}
+
+fn retire_session(devices: &mut HashMap<u64, LiveSession>, events: &Sender<Event>, id: u64, reason: &str) {
+    // Drop VISA instrument + owning RM on this worker before reporting it free.
+    devices.remove(&id);
+    let _ = events.send(Event::Disconnected(id));
+    send_error(events, Some(id), format!("连接已释放，请插好 USB 后重新连接 / Session closed; reconnect after USB is ready: {reason}"));
+}
+
+fn retire_lost_sessions(devices: &mut HashMap<u64, LiveSession>, events: &Sender<Event>) {
+    let lost: Vec<_> = devices.iter().filter_map(|(id, session)| match session {
+        LiveSession::Scpi(device) if device.connection_lost() => Some(*id),
+        _ => None,
+    }).collect();
+    for id in lost {
+        retire_session(devices, events, id, "VISA connection lost");
+    }
+}
+
+fn prepare_scan(devices: &mut HashMap<u64, LiveSession>, events: &Sender<Event>) -> Vec<ResourceInfo> {
+    let mut failed = Vec::new();
+    let mut known = Vec::new();
+    for (id, session) in devices.iter_mut() {
+        if let LiveSession::Scpi(device) = session {
+            // A cable can be removed while idle, without producing an I/O error.
+            // Check the existing USB session, never a competing new session.
+            if device.resource.to_ascii_uppercase().starts_with("USB") {
+                if let Err(error) = device.check_connection() {
+                    failed.push((*id, error.to_string()));
+                    continue;
+                }
+            }
+            known.push(ResourceInfo {
+                address: device.resource.clone(),
+                transport: String::new(),
+                kind: Some(device.profile.kind),
+                identity: Some(device.identity.clone()),
+                probe_error: None,
+            });
+        }
+    }
+    for (id, reason) in failed {
+        retire_session(devices, events, id, &reason);
+    }
+    known
 }
 
 enum LiveSession {
@@ -3371,12 +3363,14 @@ fn save_pending_waveform_source(
         .unwrap_or(&pending.effective_ext)
         .to_ascii_lowercase();
 
-    let first_trace = pending
-        .parsed_trace
-        .as_ref()
-        .or_else(|| pending.traces.first());
+    let first_trace = pending.traces.first();
 
-    if pending.channel_files.len() <= 1 {
+    if ext == pending.effective_ext && !pending.bytes.is_empty() {
+        std::fs::write(path, &pending.bytes).map_err(|e| e.to_string())?;
+        return Ok(vec![path.to_path_buf()]);
+    }
+
+    if pending.traces.len() <= 1 && pending.channel_files.len() <= 1 {
         save_waveform_file(
             path,
             Some(&pending.bytes),
@@ -3397,29 +3391,22 @@ fn save_pending_waveform_source(
         return Ok(vec![path.to_path_buf()]);
     }
 
-    // Multi-channel: prefer already-joined `bytes` (ISF/CSV built on the worker).
-    let all_isf =
-        pending.effective_ext == "isf" || pending.channel_files.iter().all(|(_, _, e)| e == "isf");
-    if all_isf && (ext == "isf" || ext == "wfm") {
-        let out = if ext == "isf" {
-            path.to_path_buf()
-        } else {
-            // Multi-curve WFM packaging is not supported — keep one ISF file.
-            path.with_extension("isf")
-        };
-        if !pending.bytes.is_empty() {
+    if ext == "isf" || ext == "wfm" {
+        // A multi-curve WFM container is unsupported. Preserve the existing
+        // fallback to one multi-curve ISF, and never discard channels or relabel CSV.
+        let out = path.with_extension("isf");
+        if pending.effective_ext == "isf" && !pending.bytes.is_empty() {
             std::fs::write(&out, &pending.bytes).map_err(|e| e.to_string())?;
-        } else if !pending.channel_files.is_empty() {
-            let parts: Vec<(u8, &[u8])> = pending
-                .channel_files
-                .iter()
-                .map(|(ch, b, _)| (*ch, b.as_slice()))
-                .collect();
-            let joined = join_tek_isf_channels(&parts);
-            std::fs::write(&out, joined).map_err(|e| e.to_string())?;
-        } else {
-            return Err("no multi-channel ISF data to save".into());
+            return Ok(vec![out]);
         }
+        if pending.traces.is_empty() {
+            return Err("no parsed multi-channel waveform data to convert".into());
+        }
+        let encoded = pending.traces.iter()
+            .map(wiparse_core::waveform_file::waveform_isf_bytes)
+            .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        let parts: Vec<_> = encoded.iter().enumerate().map(|(index, bytes)| ((index + 1) as u8, bytes.as_slice())).collect();
+        std::fs::write(&out, join_tek_isf_channels(&parts)).map_err(|e| e.to_string())?;
         return Ok(vec![out]);
     }
 
@@ -6969,7 +6956,7 @@ fn publish_instrument_event(bus: &crate::backend::EventBus, event: &Event) {
                 None,
             );
         }
-        Event::Waveform { id, trace } => {
+        Event::Waveform { id, trace, .. } => {
             let mut data = serde_json::to_value(trace).unwrap_or_else(|_| serde_json::json!({}));
             if let Some(obj) = data.as_object_mut() {
                 obj.insert("device_id".into(), serde_json::json!(id));
@@ -6981,9 +6968,9 @@ fn publish_instrument_event(bus: &crate::backend::EventBus, event: &Event) {
             job_id,
             bytes,
             suggested_name,
-            trace,
             traces,
-            channel_files,
+            metrics,
+            channels,
             parse_error,
             ..
         } => {
@@ -6994,10 +6981,11 @@ fn publish_instrument_event(bus: &crate::backend::EventBus, event: &Event) {
                     "job_id": job_id,
                     "bytes": bytes.len(),
                     "suggested_name": suggested_name,
-                    "points": trace.as_ref().map(|t| t.x.len()),
-                    "channels": channel_files.iter().map(|(ch, _, _)| ch).collect::<Vec<_>>(),
+                    "points": traces.first().map(|t| t.x.len()),
+                    "channels": channels,
                     "trace_count": traces.len(),
                     "parse_error": parse_error,
+                    "metrics": metrics,
                 }),
                 None,
             );
@@ -7009,6 +6997,7 @@ fn publish_instrument_event(bus: &crate::backend::EventBus, event: &Event) {
                 None,
             );
         }
+        Event::WaveformSaved { .. } => {} // Published through instrument.job_done after UI bookkeeping.
         Event::Error {
             id,
             job_id,
@@ -7042,6 +7031,92 @@ fn local(zh: bool, zh_text: &'static str, en_text: &'static str) -> &'static str
 #[cfg(test)]
 mod layout_audit {
     use super::*;
+
+    struct HotplugTransport {
+        detached: Arc<std::sync::atomic::AtomicBool>,
+        dropped: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Drop for HotplugTransport {
+        fn drop(&mut self) {
+            self.dropped.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl wiparse_core::instrument::Transport for HotplugTransport {
+        fn connection_lost(&self) -> bool {
+            self.detached.load(std::sync::atomic::Ordering::SeqCst)
+        }
+        fn write(&mut self, _: &str) -> Result<(), wiparse_core::instrument::InstrumentError> {
+            Ok(())
+        }
+        fn query(&mut self, _: &str) -> Result<String, wiparse_core::instrument::InstrumentError> {
+            if self.connection_lost() {
+                Err(wiparse_core::instrument::InstrumentError::Io("USB detached".into()))
+            } else {
+                Ok("RIGOL,DS1054Z,SN1,1.0".into())
+            }
+        }
+        fn read_raw(&mut self) -> Result<Vec<u8>, wiparse_core::instrument::InstrumentError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn usb_hotplug_releases_old_session_and_scan_preserves_healthy_session() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let detached = Arc::new(AtomicBool::new(false));
+        let dropped = Arc::new(AtomicBool::new(false));
+        let device = InstrumentDevice::from_transport(
+            "USB0::test::INSTR",
+            Box::new(HotplugTransport { detached: detached.clone(), dropped: dropped.clone() }),
+            Some(InstrumentKind::Oscilloscope),
+        ).unwrap();
+        let mut devices = HashMap::from([(7, LiveSession::Scpi(device))]);
+        let (tx, rx) = unbounded();
+        let known = prepare_scan(&mut devices, &tx);
+        assert_eq!(known.len(), 1);
+        assert_eq!(devices.len(), 1);
+        assert!(!dropped.load(Ordering::SeqCst));
+        assert!(rx.is_empty());
+
+        detached.store(true, Ordering::SeqCst);
+        assert!(prepare_scan(&mut devices, &tx).is_empty());
+        assert!(devices.is_empty());
+        assert!(dropped.load(Ordering::SeqCst));
+        assert!(matches!(rx.recv().unwrap(), Event::Disconnected(7)));
+        assert!(matches!(rx.recv().unwrap(), Event::Error { id: Some(7), .. }));
+
+        // The same resource can now receive a fresh session; stale queued IDs
+        // cannot address that replacement session.
+        let replacement = InstrumentDevice::connect_demo(InstrumentKind::Oscilloscope).unwrap();
+        devices.insert(8, LiveSession::Scpi(replacement));
+        retire_lost_sessions(&mut devices, &tx);
+        assert!(devices.contains_key(&8));
+        assert!(!devices.contains_key(&7));
+        assert!(rx.is_empty());
+    }
+
+    #[test]
+    fn lost_session_cleanup_does_not_remove_other_instruments() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let detached = Arc::new(AtomicBool::new(false));
+        let dropped = Arc::new(AtomicBool::new(false));
+        let scope = InstrumentDevice::from_transport("USB0::test::INSTR", Box::new(HotplugTransport {
+            detached: detached.clone(), dropped: dropped.clone(),
+        }), Some(InstrumentKind::Oscilloscope)).unwrap();
+        let mut devices = HashMap::from([
+            (1, LiveSession::Scpi(scope)),
+            (2, open_demo_session(InstrumentKind::DcSource).unwrap()),
+        ]);
+        let (tx, rx) = unbounded();
+        detached.store(true, Ordering::SeqCst);
+        retire_lost_sessions(&mut devices, &tx);
+        assert!(dropped.load(Ordering::SeqCst));
+        assert!(!devices.contains_key(&1));
+        assert!(devices.contains_key(&2));
+        assert!(matches!(rx.recv().unwrap(), Event::Disconnected(1)));
+    }
 
     #[test]
     fn connected_demo_workspaces_and_overview_render_at_small_sizes() {

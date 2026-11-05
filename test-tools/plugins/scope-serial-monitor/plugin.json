@@ -5,11 +5,15 @@
   "report_name": "ScopeSerial",
   "report_name_zh": "示波器串口",
   "type": "capture_loop",
-  "version": "0.6.2",
+  "version": "0.7.1",
   "entry": "index.mjs",
   "config": "station.json",
-  "description": "Configurable line triggers (JSON) → scope stop → instrument.capture + waveform_source → PDF. Writes under projects/{project}/tests/{test_id}/runs/{stamp}/ where test_id is the sanitized report name (file_prefix).",
-  "capabilities": ["preflight", "run", "stop"],
+  "description": "Visual serial line triggers → scope stop → instrument.capture + waveform_source → PDF. Writes under projects/{project}/tests/{test_id}/runs/{stamp}/ where test_id is the sanitized report name (file_prefix).",
+  "capabilities": [
+    "preflight",
+    "run",
+    "stop"
+  ],
   "engines": {
     "node": ">=18",
     "wiparse": ">=1.1.16"
@@ -21,7 +25,11 @@
       "label_zh": "波形",
       "view": "wave",
       "dir": "{artifacts_dir}/waves",
-      "include": ["*.isf", "*.wfm", "*.csv"]
+      "include": [
+        "*.isf",
+        "*.wfm",
+        "*.csv"
+      ]
     },
     {
       "id": "reports",
@@ -29,7 +37,9 @@
       "label_zh": "报告",
       "view": "report",
       "dir": "{artifacts_dir}/reports",
-      "include": ["*.md"]
+      "include": [
+        "*.md"
+      ]
     },
     {
       "id": "shots",
@@ -37,7 +47,9 @@
       "label_zh": "截图",
       "view": "external",
       "dir": "{artifacts_dir}/shots",
-      "include": ["*.png"]
+      "include": [
+        "*.png"
+      ]
     },
     {
       "id": "docs",
@@ -45,7 +57,13 @@
       "label_zh": "文档",
       "view": "external",
       "dir": "{artifacts_dir}/docs",
-      "include": ["*.html", "*.pdf", "*.json", "*.jsonl", "*.log"]
+      "include": [
+        "*.html",
+        "*.pdf",
+        "*.json",
+        "*.jsonl",
+        "*.log"
+      ]
     }
   ],
   "params": [
@@ -61,10 +79,35 @@
       "help": "Report name. Default is plugin.json report_name. Sanitized value is tests/{test_id}/ and the prefix for ISF, PDF, PNG, and summary Markdown."
     },
     {
+      "name": "port",
+      "type": "serial_port",
+      "path": "serial.port",
+      "default": "COM7",
+      "group": "serial",
+      "group_zh": "连接串口",
+      "label": "Serial port",
+      "label_zh": "串口",
+      "help": "COM port for live monitor",
+      "help_zh": "选择接收设备日志的串口。"
+    },
+    {
+      "name": "baud",
+      "type": "number",
+      "path": "serial.baud",
+      "default": "2000000",
+      "group": "serial",
+      "group_zh": "连接串口",
+      "label": "Baud",
+      "label_zh": "波特率",
+      "help_zh": "与设备的串口速率保持一致。"
+    },
+    {
       "name": "prefer_device_id",
       "type": "device",
       "path": "scope.prefer_device_id",
-      "filter": { "kind": "oscilloscope" },
+      "filter": {
+        "kind": "oscilloscope"
+      },
       "filter_from": "scope_kind",
       "fills": {
         "scope_resource": "resource",
@@ -73,10 +116,23 @@
       },
       "default": "",
       "group": "instrument",
-      "group_zh": "仪器",
+      "group_zh": "选择示波器",
       "label": "Instrument",
-      "label_zh": "仪器",
-      "help": "Pick a connected instrument, or leave Auto and click Preflight to fill from the live list."
+      "label_zh": "示波器",
+      "help": "Pick a connected instrument, or leave Auto and click Preflight to fill from the live list.",
+      "help_zh": "选择已连接的示波器；只有一台时，可直接使用自动选择。"
+    },
+    {
+      "name": "triggers",
+      "type": "json",
+      "widget": "line_triggers",
+      "path": "serial_triggers.items",
+      "group": "triggers",
+      "group_zh": "抓取条件",
+      "label": "Line triggers",
+      "label_zh": "收到什么内容时抓取",
+      "help": "Add rules, choose Contains text or Regular expression, and enter match text. Advanced options contain names, exclusions and regex flags.",
+      "help_zh": "点击添加条件，填写关键词即可。多个条件任一命中即可抓取；同一行按顺序只触发一次。复杂匹配和忽略条件在更多设置中调整。"
     },
     {
       "name": "scope_kind",
@@ -84,17 +140,39 @@
       "path": "scope.kind",
       "default": "oscilloscope",
       "group": "instrument",
-      "group_zh": "仪器",
+      "group_zh": "选择示波器",
       "label": "Instrument kind",
       "label_zh": "仪器类型",
       "help": "Filters the instrument picker. Changing kind does not require Hub code changes.",
       "options": [
-        { "value": "oscilloscope", "label": "Oscilloscope", "label_zh": "示波器" },
-        { "value": "dc_source", "label": "DC source", "label_zh": "直流电源" },
-        { "value": "electronic_load", "label": "Electronic load", "label_zh": "电子负载" },
-        { "value": "multimeter", "label": "Multimeter", "label_zh": "万用表" },
-        { "value": "generic", "label": "Generic SCPI", "label_zh": "通用 SCPI" }
-      ]
+        {
+          "value": "oscilloscope",
+          "label": "Oscilloscope",
+          "label_zh": "示波器"
+        },
+        {
+          "value": "dc_source",
+          "label": "DC source",
+          "label_zh": "直流电源"
+        },
+        {
+          "value": "electronic_load",
+          "label": "Electronic load",
+          "label_zh": "电子负载"
+        },
+        {
+          "value": "multimeter",
+          "label": "Multimeter",
+          "label_zh": "万用表"
+        },
+        {
+          "value": "generic",
+          "label": "Generic SCPI",
+          "label_zh": "通用 SCPI"
+        }
+      ],
+      "advanced": true,
+      "help_zh": "通常保持示波器；特殊仪器请在此调整。"
     },
     {
       "name": "scope_model",
@@ -102,10 +180,12 @@
       "path": "scope.model",
       "default": "",
       "group": "instrument",
-      "group_zh": "仪器",
+      "group_zh": "选择示波器",
       "label": "Model",
       "label_zh": "型号",
-      "help": "Optional. Empty = accept any model of this kind. Preflight fills from *IDN?."
+      "help": "Optional. Empty = accept any model of this kind. Preflight fills from *IDN?.",
+      "advanced": true,
+      "help_zh": "选填。留空接受已选类型的任意型号，预检可自动识别。"
     },
     {
       "name": "scope_resource",
@@ -113,10 +193,12 @@
       "path": "scope.resource",
       "default": "",
       "group": "instrument",
-      "group_zh": "仪器",
+      "group_zh": "选择示波器",
       "label": "VISA resource",
       "label_zh": "VISA 资源",
-      "help": "Optional. Empty = use the connected device. Used to reconnect if the session dropped."
+      "help": "Optional. Empty = use the connected device. Used to reconnect if the session dropped.",
+      "advanced": true,
+      "help_zh": "选填。用于指定设备地址和掉线重连；通常保持自动。"
     },
     {
       "name": "isf_dir",
@@ -151,7 +233,9 @@
       "group_zh": "路径",
       "label": "Product",
       "label_zh": "产品名",
-      "help": "Shown in the report body only. Folder tree uses project / file_prefix / stamp, not {product}."
+      "help": "Shown in the report body only. Folder tree uses project / file_prefix / stamp, not {product}.",
+      "advanced": true,
+      "help_zh": "选填，仅显示在报告正文中。"
     },
     {
       "name": "rising_edge",
@@ -159,41 +243,12 @@
       "path": "serial_triggers.rising_edge",
       "default": "true",
       "group": "triggers",
-      "group_zh": "触发",
-      "label": "Rising edge",
-      "label_zh": "上升沿触发",
-      "help": "Fire once when a rule goes inactive→active. Off = every matching line captures."
-    },
-    {
-      "name": "triggers",
-      "type": "json",
-      "path": "serial_triggers.items",
-      "group": "triggers",
-      "group_zh": "触发",
-      "label": "Line triggers",
-      "label_zh": "串口触发条件",
-      "help": "JSON array of line rules. Hub does not hard-code ASK/timeout. Each item: id, enabled, type (regex|contains), pattern, flags, unless[], note. Disable a rule with enabled:false."
-    },
-    {
-      "name": "port",
-      "type": "serial_port",
-      "path": "serial.port",
-      "default": "COM7",
-      "group": "serial",
-      "group_zh": "串口",
-      "label": "Serial port",
-      "label_zh": "串口",
-      "help": "COM port for live monitor"
-    },
-    {
-      "name": "baud",
-      "type": "number",
-      "path": "serial.baud",
-      "default": "2000000",
-      "group": "serial",
-      "group_zh": "串口",
-      "label": "Baud",
-      "label_zh": "波特率"
+      "group_zh": "抓取条件",
+      "label": "Capture once for consecutive matches",
+      "label_zh": "连续相同消息只抓取一次",
+      "help": "Capture on the first matching line; a nonmatching line rearms this rule. Off = capture on every matching line.",
+      "help_zh": "避免同一段连续消息反复抓取；出现不匹配的消息后可再次抓取。",
+      "advanced": true
     },
     {
       "name": "api",

@@ -1,6 +1,7 @@
 //! Schema-driven, business-neutral workspace. All disk/plugin work is out of process.
 use super::*;
 mod form_layout;
+mod chrome;
 mod project_matrix;
 use form_layout::{caption, enum_caption, ui_spec};
 use serde_json::{json, Value};
@@ -69,11 +70,57 @@ pub(super) struct Workspace {
     project_document: Value,
     project_original: Value,
     project_migration: Value,
+    select_enabled_on_open: bool,
 }
 impl Workspace {
     pub(super) fn dirty(&self) -> bool {
         (!self.current.is_empty() && self.document != self.original)
             || self.project_document != self.project_original
+    }
+
+    pub(super) fn ai_brief(&self) -> Value {
+        let files = &self.snapshot["project_files"];
+        let active = files["active"].as_str().unwrap_or("");
+        let project_name = files["items"]
+            .as_array()
+            .and_then(|items| {
+                items
+                    .iter()
+                    .find(|item| item["id"].as_str() == Some(active))
+                    .and_then(|item| item["name"].as_str())
+            })
+            .unwrap_or("");
+        let cases: Vec<Value> = self
+            .snapshot["items"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .take(24)
+                    .map(|item| {
+                        json!({
+                            "id": item["id"].as_str().unwrap_or(""),
+                            "name": item["name"].as_str().or_else(|| item["title"].as_str()).unwrap_or(""),
+                            "enabled": item["enabled"].as_bool(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut selected: Vec<_> = self.selected.iter().cloned().take(40).collect();
+        selected.sort();
+        json!({
+            "project_name": project_name,
+            "project_id": active,
+            "case_count": self.snapshot["items"].as_array().map(|items| items.len()).unwrap_or(0),
+            "selected_count": self.selected.len(),
+            "selected_ids": selected,
+            "cases": cases,
+            "matrix_summary": self.snapshot["matrix"]["summary"].clone(),
+            "preflight_valid": self.snapshot["preflight"]["valid"].as_bool(),
+            "dirty": self.dirty(),
+            "workspace_error": self.error.chars().take(240).collect::<String>(),
+        })
     }
     pub(super) fn binding(&self) -> Value {
         if let Some(binding) = &self.api_binding {
@@ -314,6 +361,8 @@ impl TestToolPanel {
                     "ui.test_tool.config.batch",
                     "ui.test_tool.project.save",
                     "ui.test_tool.project.migration.commit",
+                    "ui.test_tool.project.file.activate",
+                    "ui.test_tool.project.file.import",
                 ]
                 .contains(&req.method.as_str())
                 && req.params["validate_only"] != true
@@ -433,7 +482,9 @@ impl TestToolPanel {
                     let data = v["data"].clone();
                     match method.as_str() {
                         "workspace.open" => {
-                            let initial = self.workspace.snapshot.is_null();
+                            let initial = self.workspace.snapshot.is_null()
+                                || self.workspace.select_enabled_on_open;
+                            self.workspace.select_enabled_on_open = false;
                             if initial {
                                 if let Some(rows) = data["items"].as_array() {
                                     self.workspace.selected = rows
@@ -445,10 +496,9 @@ impl TestToolPanel {
                             }
                             self.workspace.list_epoch = self.workspace.list_epoch.wrapping_add(1);
                             if self.workspace.project_document == self.workspace.project_original {
-                                self.workspace.project_document =
-                                    data["project_config"]["value"].clone();
-                                self.workspace.project_original =
-                                    self.workspace.project_document.clone();
+                                let value = data["project_config"]["value"].clone();
+                                self.workspace.project_document = value.clone();
+                                self.workspace.project_original = value;
                             }
                             self.workspace.snapshot = data;
                             self.workspace.merge_drafts();
@@ -486,10 +536,37 @@ impl TestToolPanel {
                             self.workspace.snapshot["preflight"]["valid"] = json!(false);
                             self.workspace.api_binding = None;
                             self.workspace.reload = true;
+                            if !self.workspace.current.is_empty()
+                                && self.workspace.document != self.workspace.original
+                            {
+                                self.workspace_send(
+                                    "config.save",
+                                    self.workspace_save_params(false),
+                                );
+                            }
                         }
                         "project.migration.preview" => {
                             self.workspace.project_migration = data;
                         }
+                        "project.file.activate" | "project.file.import" => {
+                            self.workspace.current.clear();
+                            self.workspace.document = Value::Null;
+                            self.workspace.original = Value::Null;
+                            self.workspace.original_sha.clear();
+                            self.workspace.drafts.clear();
+                            self.workspace.selected.clear();
+                            self.workspace.matrix_current.clear();
+                            self.workspace.result_details = Value::Null;
+                            self.workspace.result_key.clear();
+                            self.workspace.project_document = Value::Null;
+                            self.workspace.project_original = Value::Null;
+                            self.workspace.project_migration = Value::Null;
+                            self.workspace.select_enabled_on_open = true;
+                            self.workspace.snapshot["preflight"]["valid"] = json!(false);
+                            self.workspace.api_binding = None;
+                            self.workspace.reload = true;
+                        }
+                        "project.file.export" => {}
                         "project.migration.commit" => {
                             self.workspace.current.clear();
                             self.workspace.document = Value::Null;
@@ -641,31 +718,70 @@ impl TestToolPanel {
             ctx.request_repaint_after(Duration::from_millis(30));
         }
     }
+    fn workspace_save_outstanding(&mut self) {
+        if self.workspace.rx.is_some() {
+            return;
+        }
+        if self.workspace.project_document != self.workspace.project_original {
+            self.workspace_send("project.save", self.project_save_params());
+        } else if !self.workspace.current.is_empty()
+            && self.workspace.document != self.workspace.original
+        {
+            self.workspace_send("config.save", self.workspace_save_params(false));
+        }
+    }
     fn workspace_nav_dialog(&mut self, ctx: &egui::Context, lang: Lang) {
         let zh = matches!(lang, Lang::Zh);
         let text = |cn, en| if zh { cn } else { en };
         if self.workspace.pending.is_some() {
+            let busy = self.workspace.rx.is_some();
             egui::Window::new(text("保存当前修改？", "Save changes?"))
                 .collapsible(false)
                 .resizable(false)
+                .order(egui::Order::Foreground)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ctx, |ui| {
+                    ui.set_min_width(280.0);
+                    ui.set_max_width(420.0);
                     ui.label(text(
                         "切换前请保存或放弃修改。",
                         "Save or discard before navigating.",
                     ));
+                    if busy {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(text("正在保存…", "Saving…"));
+                        });
+                    }
+                    if !self.workspace.error.is_empty() {
+                        ui.colored_label(egui::Color32::LIGHT_RED, &self.workspace.error);
+                    }
+                    if let Some(errors) = self.workspace.errors.as_array() {
+                        for error in errors.iter().take(4) {
+                            let path = error["path"].as_str().unwrap_or("/");
+                            let message = error["message"].as_str().unwrap_or("");
+                            ui.colored_label(
+                                egui::Color32::LIGHT_RED,
+                                if message.is_empty() {
+                                    path.to_owned()
+                                } else {
+                                    format!("{path}  {message}")
+                                },
+                            );
+                        }
+                    }
                     ui.horizontal(|ui| {
-                        if ui.button(text("保存", "Save")).clicked() {
-                            if self.workspace.project_document != self.workspace.project_original {
-                                self.workspace_send("project.save", self.project_save_params());
-                            } else {
-                                self.workspace_send(
-                                    "config.save",
-                                    self.workspace_save_params(false),
-                                );
-                            }
+                        if ui
+                            .add_enabled(!busy, egui::Button::new(text("保存", "Save")))
+                            .clicked()
+                        {
+                            self.workspace_save_outstanding();
                         }
                         if ui
-                            .button(text("放弃并继续", "Discard and continue"))
+                            .add_enabled(
+                                !busy,
+                                egui::Button::new(text("放弃并继续", "Discard and continue")),
+                            )
                             .clicked()
                         {
                             self.workspace_discard();
@@ -673,7 +789,10 @@ impl TestToolPanel {
                                 self.workspace_navigate(&m, p);
                             }
                         }
-                        if ui.button(text("取消", "Cancel")).clicked() {
+                        if ui
+                            .add_enabled(!busy, egui::Button::new(text("取消", "Cancel")))
+                            .clicked()
+                        {
                             self.workspace.pending = None;
                         }
                     });
@@ -767,48 +886,9 @@ impl TestToolPanel {
         }
         let zh = matches!(lang, Lang::Zh);
         let text = |cn, en| if zh { cn } else { en };
-        Frame::NONE
-            .fill(tokens.surface_bg)
-            .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-            .inner_margin(Margin::symmetric(10, 6))
-            .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing.x = ui_theme::SPACE_MD;
-                    ui.selectable_value(&mut self.workspace.tab, 0, text("配置", "Configurations"));
-                    ui.selectable_value(
-                        &mut self.workspace.tab,
-                        1,
-                        text("测试矩阵", "Test matrix"),
-                    );
-                    ui.selectable_value(
-                        &mut self.workspace.tab,
-                        2,
-                        text("本轮参数", "Run parameters"),
-                    );
-                    ui.selectable_value(&mut self.workspace.tab, 3, text("运行日志", "Run log"));
-                    if self.workspace.snapshot["project_config"].is_object() {
-                        ui.selectable_value(
-                            &mut self.workspace.tab,
-                            4,
-                            text("工程设置", "Project settings"),
-                        );
-                    }
-                    ui.separator();
-                    if ui.button(text("刷新", "Refresh")).clicked() {
-                        self.workspace.reload = true;
-                    }
-                    if self.workspace.rx.is_some() {
-                        ui.spinner();
-                    }
-                    if self.workspace.dirty() {
-                        ui.label(
-                            egui::RichText::new(text("有未保存的修改", "Unsaved changes"))
-                                .color(tokens.accent),
-                        );
-                    }
-                });
-            });
-        self.paint_workspace_execution(ui, lang, tokens);
+        let selected = self.plugins.iter().position(|p| p.id == plugin.id);
+        self.paint_runner_header(ui, lang, tokens, selected);
+        self.paint_workspace_command_band(ui, lang, tokens);
         ui.add_space(ui_theme::SPACE_MD);
         if !self.workspace.error.is_empty() {
             ui.colored_label(egui::Color32::LIGHT_RED, &self.workspace.error);
@@ -923,12 +1003,9 @@ impl TestToolPanel {
         let mut launch = None;
         let mut action = None;
         let mut stop = false;
-        Frame::NONE
-            .fill(tokens.surface_bg)
-            .corner_radius(6)
-            .inner_margin(Margin::symmetric(10, 8))
-            .show(ui, |ui| {
+        ui.vertical(|ui| {
                 ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
                     ui.label(RichText::new(text("执行控制", "Execution")).strong());
                     let badge = &self.workspace.snapshot["ui"]["execution_badge"];
                     let parameter = badge["parameter"].as_str().unwrap_or("");
@@ -952,7 +1029,9 @@ impl TestToolPanel {
                     } else {
                         format!("{} selected", self.workspace.selected.len())
                     });
-                    ui.separator();
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
                     if ui
                         .add_enabled(
                             !running
@@ -983,7 +1062,7 @@ impl TestToolPanel {
                         launch = Some(false);
                     }
                     let paused = state == "paused" || state == "pause_requested";
-                    if ui
+                    if !paused && ui
                         .add_enabled(
                             running && !self.preflight_only && supported && !busy && !paused,
                             egui::Button::new(text("Ⅱ 暂停", "Ⅱ Pause")),
@@ -996,7 +1075,7 @@ impl TestToolPanel {
                     {
                         action = Some("pause");
                     }
-                    if ui
+                    if paused && ui
                         .add_enabled(
                             running && supported && !busy && paused,
                             egui::Button::new(text("▶ 继续", "▶ Continue")),
@@ -1110,8 +1189,6 @@ impl TestToolPanel {
             return;
         }
 
-        self.paint_config_toolbar(ui, lang, tokens, busy, total);
-        ui.add_space(ui_theme::SPACE_SM);
 
         let wide = ui.available_width().min(HUB_CONTENT_MAX_W) >= HUB_WIDE_MIN_W;
         if wide {
@@ -1129,7 +1206,7 @@ impl TestToolPanel {
                     egui::pos2(list.right() + HUB_PANEL_GAP, content.top()),
                     content.max,
                 );
-                workspace_card_in_rect(ui, list, tokens, |ui| self.config_list(ui, lang));
+                workspace_card_in_rect(ui, list, tokens, |ui| self.config_list(ui, lang, tokens));
                 workspace_card_in_rect(ui, form, tokens, |ui| self.config_form(ui, lang, tokens));
             } else {
                 let checks = egui::Rect::from_min_max(
@@ -1140,7 +1217,7 @@ impl TestToolPanel {
                     egui::pos2(list.right() + HUB_PANEL_GAP, content.top()),
                     egui::pos2(checks.left() - HUB_PANEL_GAP, content.bottom()),
                 );
-                workspace_card_in_rect(ui, list, tokens, |ui| self.config_list(ui, lang));
+                workspace_card_in_rect(ui, list, tokens, |ui| self.config_list(ui, lang, tokens));
                 workspace_card_in_rect(ui, form, tokens, |ui| self.config_form(ui, lang, tokens));
                 workspace_card_in_rect(ui, checks, tokens, |ui| {
                     self.config_checks(ui, lang, tokens)
@@ -1180,7 +1257,7 @@ impl TestToolPanel {
                     if self.workspace.checks_tab && !self.workspace.current.is_empty() {
                         self.config_checks(ui, lang, tokens);
                     } else if self.workspace.current.is_empty() {
-                        self.config_list(ui, lang);
+                        self.config_list(ui, lang, tokens);
                     } else {
                         self.config_form(ui, lang, tokens);
                     }
@@ -1223,8 +1300,8 @@ impl TestToolPanel {
                             ui.add_space(ui_theme::SPACE_SM);
                             ui.label(
                                 RichText::new(text(
-                                    "配置仪器、复位、日志、波形和判定规则，然后执行预检。",
-                                    "Configure instruments, reset, logs, waveforms and verdict rules, then run preflight.",
+                                    "按该插件的配置表填写，保存后执行预检。",
+                                    "Fill in this plugin's configuration, save, then run preflight.",
                                 ))
                                 .color(tokens.text_muted),
                             );
@@ -1235,7 +1312,7 @@ impl TestToolPanel {
                             ui.add_sized(
                                 [input_w, ui_theme::CTRL_H],
                                 egui::TextEdit::singleline(&mut self.workspace.new_id)
-                                    .hint_text(text("配置 ID，例如 fpga_smoke", "Configuration ID, e.g. fpga_smoke")),
+                                    .hint_text(text("配置 ID", "Configuration ID")),
                             );
                             let create = ui.add_enabled(
                                 !busy && !self.workspace.new_id.trim().is_empty(),
@@ -1264,123 +1341,30 @@ impl TestToolPanel {
     }
 
     fn paint_config_toolbar(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        tokens: &Tokens,
-        busy: bool,
-        total: u64,
+        &mut self, ui: &mut egui::Ui, lang: Lang, _tokens: &Tokens, busy: bool, total: u64,
     ) {
         let zh = matches!(lang, Lang::Zh);
-        let text = |cn, en| if zh { cn } else { en };
-        let card_w = ui.available_width().min(HUB_CONTENT_MAX_W);
-        ui.horizontal(|ui| {
-            ui.add_space(((ui.available_width() - card_w) * 0.5).max(0.0));
-            Frame::NONE
-                .fill(tokens.surface_bg)
-                .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-                .inner_margin(Margin::symmetric(12, 8))
-                .show(ui, |ui| {
-                    ui.vertical(|ui| {
-                        ui.set_width((card_w - 24.0).max(1.0));
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
-                    ui.label(
-                        RichText::new(text("配置库", "Configuration library"))
-                            .strong()
-                            .color(tokens.text_primary),
-                    );
-                    ui.label(
-                        RichText::new(if zh {
-                            format!("共 {total} 个")
-                        } else {
-                            format!("{total} total")
-                        })
-                        .color(tokens.text_muted),
-                    );
-                    ui.separator();
-                    ui.add_sized(
-                        [180.0, ui_theme::CTRL_H],
-                        egui::TextEdit::singleline(&mut self.workspace.new_id)
-                            .hint_text(text("新配置 ID", "New configuration ID")),
-                    );
-                    if ui
-                        .add_enabled(
-                            !busy && !self.workspace.new_id.trim().is_empty(),
-                            egui::Button::new(text("新建", "New")),
-                        )
-                        .clicked()
-                    {
-                        self.workspace_navigate(
-                            "config.create",
-                            json!({"config_id":self.workspace.new_id.trim()}),
-                        );
-                    }
-                    if !self.workspace.current.is_empty() {
-                        if ui
-                            .add_enabled(
-                                !busy && !self.workspace.new_id.trim().is_empty(),
-                                egui::Button::new(text("复制为", "Duplicate as")),
-                            )
-                            .clicked()
-                        {
-                            self.workspace_navigate(
-                                "config.duplicate",
-                                json!({"config_id":self.workspace.current,"new_id":self.workspace.new_id.trim()}),
-                            );
-                        }
-                        ui.separator();
-                        if ui
-                            .add_enabled(!busy, egui::Button::new(text("校验", "Validate")))
-                            .clicked()
-                        {
-                            self.workspace_send("config.save", self.workspace_save_params(true));
-                        }
-                        if self.workspace.dirty() {
-                            if ui
-                                .add_enabled(
-                                    !busy
-                                        && self
-                                            .workspace
-                                            .errors
-                                            .as_array()
-                                            .is_none_or(|errors| errors.is_empty()),
-                                    egui::Button::new(
-                                        RichText::new(text("保存", "Save"))
-                                            .color(tokens.accent_text)
-                                            .strong(),
-                                    )
-                                    .fill(tokens.accent)
-                                    .stroke(Stroke::NONE),
-                                )
-                                .clicked()
-                            {
-                                self.workspace_send(
-                                    "config.save",
-                                    self.workspace_save_params(false),
-                                );
-                            }
-                            if ui.button(text("放弃修改", "Discard")).clicked() {
-                                self.workspace_discard();
-                            }
-                        }
-                        if ui
-                            .add_enabled(
-                                !busy && !self.workspace.dirty(),
-                                egui::Button::new(text("归档", "Archive")),
-                            )
-                            .clicked()
-                        {
-                            self.workspace_send(
-                                "config.archive",
-                                self.workspace_save_params(false),
-                            );
-                        }
-                    }
-                });
-                self.paint_transfer_section(ui, lang, busy, true);
-                    });
-                });
+        ui.menu_button(if zh { "配置管理" } else { "Manage" }, |ui| {
+            ui.set_min_width(240.0);
+            ui.label(if zh { "新配置 ID" } else { "New configuration ID" });
+            ui.add(egui::TextEdit::singleline(&mut self.workspace.new_id).desired_width(240.0)
+                .hint_text(if zh { "用于新建或复制" } else { "For creating or duplicating" }));
+            let can_create = !busy && total < 500 && !self.workspace.new_id.trim().is_empty();
+            ui.horizontal_wrapped(|ui| {
+                if ui.add_enabled(can_create,egui::Button::new(if zh { "新建" } else { "New" })).clicked() {
+                    self.workspace_navigate("config.create",json!({"config_id":self.workspace.new_id.trim()})); ui.close_menu();
+                }
+                if ui.add_enabled(can_create && !self.workspace.current.is_empty(),egui::Button::new(if zh { "复制当前配置" } else { "Duplicate current" })).clicked() {
+                    self.workspace_navigate("config.duplicate",json!({"config_id":self.workspace.current,"new_id":self.workspace.new_id.trim()})); ui.close_menu();
+                }
+            });
+            if total >= 500 { ui.weak(if zh { "已达到 500 项上限" } else { "500-item limit reached" }); }
+            ui.separator();
+            if ui.add_enabled(!busy && !self.workspace.dirty() && !self.workspace.current.is_empty(),
+                egui::Button::new(if zh { "归档当前配置" } else { "Archive current" })).clicked() {
+                self.workspace_send("config.archive",self.workspace_save_params(false)); ui.close_menu();
+            }
+            self.paint_transfer_section(ui,lang,busy,true);
         });
     }
 
@@ -1394,14 +1378,31 @@ impl TestToolPanel {
         let zh = matches!(lang, Lang::Zh);
         let text = |cn, en| if zh { cn } else { en };
         ui.collapsing(text("导入、导出与归档", "Import, export and archive"), |ui| {
+            ui.set_max_width(ui.available_width());
             ui.spacing_mut().item_spacing = egui::vec2(ui_theme::SPACE_SM, ui_theme::SPACE_SM);
-            ui.horizontal_wrapped(|ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
+                let browse_w = 36.0;
+                let strategy_w = 132.0;
+                let import_w = 72.0;
+                let export_w = if allow_export { 96.0 } else { 0.0 };
+                let gaps = ui_theme::SPACE_SM * if allow_export { 4.0 } else { 3.0 };
+                let path_w = (ui.available_width()
+                    - browse_w
+                    - strategy_w
+                    - import_w
+                    - export_w
+                    - gaps)
+                    .max(120.0);
                 ui.add_sized(
-                    [ui.available_width().min(360.0), ui_theme::CTRL_H],
+                    [path_w, ui_theme::CTRL_H],
                     egui::TextEdit::singleline(&mut self.workspace.file)
                         .hint_text(text("配置包文件路径", "Configuration bundle path")),
                 );
-                if ui.button("…").clicked() {
+                if ui
+                    .add_sized([browse_w, ui_theme::CTRL_H], egui::Button::new("…"))
+                    .clicked()
+                {
                     if let Some(file) = rfd::FileDialog::new()
                         .add_filter("JSON", &["json"])
                         .pick_file()
@@ -1415,7 +1416,7 @@ impl TestToolPanel {
                     text("替换并检查版本", "Replace with revision check"),
                 ];
                 egui::ComboBox::from_id_salt("import_strategy")
-                    .width(160.0)
+                    .width(strategy_w)
                     .selected_text(strategies[self.workspace.import_strategy])
                     .show_ui(ui, |ui| {
                         for (i, strategy) in strategies.iter().enumerate() {
@@ -1423,11 +1424,13 @@ impl TestToolPanel {
                         }
                     });
                 if ui
-                    .add_enabled(
-                        !busy && !self.workspace.file.is_empty(),
+                    .add_sized(
+                        [import_w, ui_theme::CTRL_H],
                         egui::Button::new(text("导入", "Import")),
                     )
                     .clicked()
+                    && !busy
+                    && !self.workspace.file.is_empty()
                 {
                     let mut expected = json!({});
                     if let Some(rows) = self.workspace.snapshot["items"].as_array() {
@@ -1449,13 +1452,14 @@ impl TestToolPanel {
                 }
                 if allow_export
                     && ui
-                        .add_enabled(
-                            !busy
-                                && !self.workspace.file.is_empty()
-                                && !self.workspace.selected.is_empty(),
+                        .add_sized(
+                            [export_w, ui_theme::CTRL_H],
                             egui::Button::new(text("导出所选", "Export selected")),
                         )
                         .clicked()
+                    && !busy
+                    && !self.workspace.file.is_empty()
+                    && !self.workspace.selected.is_empty()
                 {
                     self.workspace_send(
                         "config.export",
@@ -1492,24 +1496,24 @@ impl TestToolPanel {
             }
         });
     }
-    fn config_list(&mut self, ui: &mut egui::Ui, lang: Lang) {
+    fn config_list(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
         let zh = matches!(lang, Lang::Zh);
-        ui.label(
-            RichText::new(if zh {
-                "测试配置"
-            } else {
-                "Test configurations"
-            })
-            .size(ui_theme::FONT_SECTION)
-            .strong(),
-        );
-        ui.add_space(ui_theme::SPACE_SM);
+        ui.spacing_mut().item_spacing.y = ui_theme::SPACE_SM;
+        let total = self.workspace.snapshot["total"].as_u64().unwrap_or_else(||
+            self.workspace.snapshot["items"].as_array().map_or(0,|items|items.len() as u64));
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(if zh { "测试配置" } else { "Test configurations" }).strong());
+            ui.weak(total.to_string());
+            self.paint_config_toolbar(ui,lang,tokens,self.workspace.rx.is_some(),total);
+        });
         ui.add(
-            egui::TextEdit::singleline(&mut self.workspace.query).hint_text(if zh {
-                "筛选名称、ID、标签"
-            } else {
-                "Filter name, ID, tags"
-            }),
+            egui::TextEdit::singleline(&mut self.workspace.query)
+                .desired_width(ui.available_width())
+                .hint_text(if zh {
+                    "筛选名称、ID、标签"
+                } else {
+                    "Filter name, ID, tags"
+                }),
         );
         let cache_key = format!(
             "{}:{}:{}:{}",
@@ -1551,241 +1555,77 @@ impl TestToolPanel {
             self.workspace.list_cache_key = cache_key;
         }
         let rows = self.workspace.list_cache.clone();
-        ui.add_enabled_ui(self.job.is_none(),|ui|{ui.horizontal_wrapped(|ui|{
-            if ui.button(if zh{"全选"}else{"All"}).clicked(){self.workspace.selected.extend(rows.iter().filter(|r|r["draft"]!=true).filter_map(|r|r["id"].as_str().map(str::to_owned)));}
-            if ui.button(if zh{"反选"}else{"Invert"}).clicked(){for row in rows.iter().filter(|r|r["draft"]!=true){let id=row["id"].as_str().unwrap_or("").to_owned();if !self.workspace.selected.remove(&id){self.workspace.selected.insert(id);}}}
-            for(enabled,cn,en)in[(true,"启用","Enable"),(false,"禁用","Disable")]{if ui.add_enabled(self.workspace.rx.is_none()&&!self.workspace.selected.is_empty(),egui::Button::new(if zh{cn}else{en})).clicked(){let mut expected=json!({});for row in self.workspace.snapshot["items"].as_array().into_iter().flatten(){expected[row["id"].as_str().unwrap_or("")]=json!({"expected_revision":row["revision"],"expected_sha256":row["sha256"]});}self.workspace_send("config.batch",json!({"ids":self.workspace.selected,"expected":expected,"enabled":enabled}));}}
-        });
-        });
-        ui.horizontal(|ui| {
-            let sort_labels = if zh {
-                ["默认顺序", "名称", "更新时间"]
-            } else {
-                ["Default order", "Name", "Updated"]
-            };
-            egui::ComboBox::from_id_salt("config_sort")
-                .width(118.0)
-                .selected_text(sort_labels[self.workspace.sort])
-                .show_ui(ui, |ui| {
-                    for (i, s) in sort_labels.iter().enumerate() {
-                        ui.selectable_value(&mut self.workspace.sort, i, *s);
+        let filters = |panel: &mut Self, ui: &mut egui::Ui, width: f32| {
+            egui::ComboBox::from_id_salt("config_status").width(width).truncate()
+                .selected_text(match panel.workspace.config_status.as_str() {
+                    "valid" => if zh { "有效" } else { "Valid" },
+                    "invalid" => if zh { "需修正" } else { "Invalid" },
+                    _ => if zh { "全部状态" } else { "All states" },
+                }).show_ui(ui, |ui| {
+                    for (value,cn,en) in [("","全部状态","All states"),("valid","有效","Valid"),("invalid","需修正","Invalid")] {
+                        ui.selectable_value(&mut panel.workspace.config_status,value.to_owned(),if zh {cn} else {en});
                     }
                 });
-            ui.label(format!(
-                "{} / {}",
-                rows.len(),
-                self.workspace.snapshot["total"]
-            ));
+        };
+        let sorting = |panel: &mut Self, ui: &mut egui::Ui, width: f32| {
+            let labels=if zh {["默认顺序","名称","更新时间"]}else{["Default order","Name","Updated"]};
+            egui::ComboBox::from_id_salt("config_sort").width(width).truncate()
+                .selected_text(labels[panel.workspace.sort]).show_ui(ui, |ui| {
+                    for (i,label) in labels.iter().enumerate() { ui.selectable_value(&mut panel.workspace.sort,i,*label); }
+                });
+        };
+        if ui.available_width() >= 260.0 {
+            let width=(ui.available_width()-ui_theme::SPACE_SM)*0.5;
+            ui.horizontal(|ui| { filters(self,ui,width); sorting(self,ui,width); });
+        } else {
+            filters(self,ui,ui.available_width()); sorting(self,ui,ui.available_width());
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.weak(format!("{} / {}",rows.len(),total));
+            self.paint_config_batch_menu(ui,lang,&rows);
         });
-        egui::ComboBox::from_id_salt("config_status")
-            .width(ui.available_width())
-            .selected_text(if self.workspace.config_status.is_empty() {
-                if zh {
-                    "全部状态"
-                } else {
-                    "All states"
-                }
-            } else if self.workspace.config_status == "valid" {
-                if zh {
-                    "有效"
-                } else {
-                    "Valid"
-                }
-            } else {
-                if zh {
-                    "无效"
-                } else {
-                    "Invalid"
-                }
-            })
-            .show_ui(ui, |ui| {
-                ui.selectable_value(
-                    &mut self.workspace.config_status,
-                    String::new(),
-                    if zh { "全部状态" } else { "All states" },
-                );
-                ui.selectable_value(
-                    &mut self.workspace.config_status,
-                    "valid".into(),
-                    if zh { "有效" } else { "Valid" },
-                );
-                ui.selectable_value(
-                    &mut self.workspace.config_status,
-                    "invalid".into(),
-                    if zh { "无效" } else { "Invalid" },
-                );
-            });
-        ui.horizontal(|ui|{ui.add(egui::TextEdit::singleline(&mut self.workspace.batch_tags).hint_text(if zh{"批量标签，逗号分隔"}else{"Batch tags, comma-separated"}));if ui.add_enabled(self.workspace.rx.is_none()&&!self.workspace.selected.is_empty(),egui::Button::new(if zh{"设置"}else{"Apply"})).clicked(){let mut expected=json!({});for row in self.workspace.snapshot["items"].as_array().into_iter().flatten(){expected[row["id"].as_str().unwrap_or("")]=json!({"expected_revision":row["revision"],"expected_sha256":row["sha256"]});}let tags:Vec<_>=self.workspace.batch_tags.split(',').map(str::trim).filter(|s|!s.is_empty()).collect();self.workspace_send("config.batch",json!({"ids":self.workspace.selected,"expected":expected,"tags":tags}));}});
-
+        ui.label(RichText::new(if zh { "勾选运行 · 点击卡片编辑" } else { "Check to run · Click a card to edit" })
+            .small().color(tokens.text_muted));
+        #[cfg(test)]
+        ui.ctx().data_mut(|data| data.insert_temp(egui::Id::new("config_card_audit"),Vec::<(egui::Rect,egui::Rect,egui::Rect)>::new()));
         let mut list_scroll = egui::ScrollArea::vertical().id_salt("config_list");
         if self.workspace.focus_new_row {
             if let Some(i) = rows.iter().position(|r| r["id"] == self.workspace.current) {
-                list_scroll = list_scroll.vertical_scroll_offset(i as f32 * 54.0);
+                list_scroll = list_scroll.vertical_scroll_offset(i as f32 * (chrome::CONFIG_ROW_H + ui.spacing().item_spacing.y));
             }
             self.workspace.focus_new_row = false;
         }
-        list_scroll.show_rows(ui, 54.0, rows.len(), |ui, range| {
+        list_scroll.show_rows(ui,chrome::CONFIG_ROW_H,rows.len(),|ui,range| {
             for i in range {
-                let row = &rows[i];
-                let id = row["id"].as_str().unwrap_or("");
-                ui.push_id(id, |ui| {
-                    ui.horizontal(|ui| {
-                        let mut selected = self.workspace.selected.contains(id);
-                        if ui
-                            .add_enabled(
-                                self.job.is_none() && row["draft"] != true,
-                                egui::Checkbox::without_text(&mut selected),
-                            )
-                            .changed()
-                        {
-                            if selected {
-                                self.workspace.selected.insert(id.into());
-                            } else {
-                                self.workspace.selected.remove(id);
-                            }
-                        }
-                        let available = ui.available_width().max(40.0);
-                        let name = row["name"].as_str().unwrap_or(id);
-                        let tags = row["tags"]
-                            .as_array()
-                            .map(|a| {
-                                a.iter()
-                                    .filter_map(Value::as_str)
-                                    .collect::<Vec<_>>()
-                                    .join(" · ")
-                            })
-                            .unwrap_or_default();
-                        let status = if row["draft"] == true {
-                            if zh {
-                                "未保存 · 不可执行"
-                            } else {
-                                "Unsaved · not executable"
-                            }
-                        } else if row["status"] == "invalid" {
-                            if zh {
-                                "需要修正"
-                            } else {
-                                "Needs attention"
-                            }
-                        } else if row["enabled"] == false {
-                            if zh {
-                                "已禁用"
-                            } else {
-                                "Disabled"
-                            }
-                        } else {
-                            if zh {
-                                "已启用"
-                            } else {
-                                "Enabled"
-                            }
-                        };
-                        let color = if row["status"] == "invalid" {
-                            egui::Color32::LIGHT_RED
-                        } else {
-                            ui.visuals().weak_text_color()
-                        };
-                        let current = self.workspace.current == id;
-                        let response = Frame::NONE
-                            .fill(if current {
-                                ui.visuals().selection.bg_fill.gamma_multiply(0.55)
-                            } else {
-                                ui.visuals().faint_bg_color
-                            })
-                            .stroke(Stroke::new(
-                                1.0_f32,
-                                if current {
-                                    ui.visuals().selection.stroke.color
-                                } else {
-                                    ui.visuals().widgets.noninteractive.bg_stroke.color
-                                },
-                            ))
-                            .corner_radius(6)
-                            .inner_margin(7)
-                            .show(ui, |ui| {
-                                ui.vertical(|ui| {
-                                    ui.set_width((available - 12.0).max(1.0));
-                                    ui.add(
-                                        egui::Label::new(RichText::new(name).strong()).truncate(),
-                                    );
-                                    let state = self.workspace.snapshot["matrix"]["items"]
-                                        .as_array()
-                                        .and_then(|items| {
-                                            items.iter().find(|item| item["id"] == id)
-                                        })
-                                        .and_then(|item| item["status"].as_str())
-                                        .unwrap_or("pending");
-                                    let tone = if row["status"] == "invalid" {
-                                        color
-                                    } else {
-                                        match state {
-                                            "pass" => egui::Color32::from_rgb(78, 180, 125),
-                                            "fail" | "error" => egui::Color32::LIGHT_RED,
-                                            "running" => ui.visuals().selection.stroke.color,
-                                            _ => color,
-                                        }
-                                    };
-                                    ui.label(
-                                        RichText::new(
-                                            if row["status"] == "invalid" || row["enabled"] == false
-                                            {
-                                                status.to_owned()
-                                            } else {
-                                                if matches!(
-                                                    state,
-                                                    "pass"
-                                                        | "fail"
-                                                        | "error"
-                                                        | "aborted"
-                                                        | "skipped"
-                                                        | "inconclusive"
-                                                ) {
-                                                    let historical = self.workspace.snapshot
-                                                        ["matrix"]["items"]
-                                                        .as_array()
-                                                        .and_then(|items| {
-                                                            items
-                                                                .iter()
-                                                                .find(|item| item["id"] == id)
-                                                        });
-                                                    let stale = historical.is_some_and(|item| {
-                                                        item["config_sha256"] != row["sha256"]
-                                                    }) || (self.workspace.current
-                                                        == id
-                                                        && self.workspace.dirty());
-                                                    format!(
-                                                        "{} {}{}",
-                                                        if zh { "上次" } else { "Last" },
-                                                        matrix_status_label(state, zh),
-                                                        if stale {
-                                                            if zh {
-                                                                " · 内容已变更，待测试"
-                                                            } else {
-                                                                " · Changed; untested"
-                                                            }
-                                                        } else {
-                                                            ""
-                                                        }
-                                                    )
-                                                } else {
-                                                    matrix_status_label(state, zh).to_owned()
-                                                }
-                                            },
-                                        )
-                                        .small()
-                                        .color(tone),
-                                    );
-                                });
-                            })
-                            .response;
-                        if ui
-                            .interact(response.rect, response.id, egui::Sense::click())
-                            .on_hover_text(format!("{name}\n{id}\n{tags}\n{status}"))
-                            .clicked()
-                        {
-                            self.workspace_navigate("config.get", json!({"config_id":id}));
-                        }
-                    });
+                let row=&rows[i]; let id=row["id"].as_str().unwrap_or("");
+                let name=row["name"].as_str().unwrap_or(id);
+                let historical=self.workspace.snapshot["matrix"]["items"].as_array()
+                    .and_then(|items|items.iter().find(|item|item["id"]==id));
+                let state=historical.and_then(|item|item["status"].as_str()).unwrap_or("pending");
+                let (status,tone)=if row["draft"]==true {
+                    ((if zh {"未保存"}else{"Unsaved"}).to_owned(),tokens.warning)
+                } else if row["status"]=="invalid" {
+                    ((if zh {"需要修正"}else{"Needs attention"}).to_owned(),tokens.warning)
+                } else if row["enabled"]==false {
+                    ((if zh {"已禁用"}else{"Disabled"}).to_owned(),tokens.text_muted)
+                } else {
+                    let tone=match state { "pass"=>tokens.success,"fail"|"error"=>tokens.warning,"running"=>tokens.accent,_=>tokens.text_muted };
+                    let status=if matches!(state,"pass"|"fail"|"error"|"aborted"|"skipped"|"inconclusive") {
+                        let stale=historical.is_some_and(|item|item["config_sha256"]!=row["sha256"])
+                            || (self.workspace.current==id && self.workspace.dirty());
+                        format!("{} {}{}",if zh {"上次"}else{"Last"},matrix_status_label(state,zh),
+                            if stale { if zh {" · 内容已变更，待测试"}else{" · Changed; untested"} }else{""})
+                    } else { matrix_status_label(state,zh).to_owned() };
+                    (status,tone)
+                };
+                let tags=row["tags"].as_array().into_iter().flatten().filter_map(Value::as_str).collect::<Vec<_>>().join(" · ");
+                let tooltip=format!("{}\n{name}\n{id}\n{tags}\n{status}",if zh {"查看并编辑配置"}else{"View and edit configuration"});
+                ui.push_id(id,|ui| {
+                    let mut selected=self.workspace.selected.contains(id);
+                    let (changed,edit)=chrome::config_card(ui,tokens,name,&status,&tooltip,zh,tone,
+                        self.workspace.current==id,self.job.is_none()&&row["draft"]!=true,&mut selected);
+                    if changed { if selected { self.workspace.selected.insert(id.into()); } else { self.workspace.selected.remove(id); } }
+                    if edit { self.workspace_navigate("config.get",json!({"config_id":id})); }
                 });
             }
         });
@@ -1864,28 +1704,15 @@ impl TestToolPanel {
             }
         }
         ui.horizontal(|ui| {
-            let name = self.workspace.document["name"]
-                .as_str()
-                .filter(|name| !name.is_empty())
-                .unwrap_or(&self.workspace.current);
-            ui.label(
-                RichText::new(name)
-                    .size(ui_theme::FONT_SECTION)
-                    .strong()
-                    .color(tokens.text_primary),
-            );
-            ui.label(RichText::new(&self.workspace.current).color(tokens.text_muted));
-            if self.workspace.dirty() {
-                ui.label(
-                    RichText::new(if matches!(lang, Lang::Zh) {
-                        "已修改"
-                    } else {
-                        "Modified"
-                    })
-                    .color(tokens.accent),
-                );
-            }
+            let name=self.workspace.document["name"].as_str().filter(|name|!name.is_empty()).unwrap_or(&self.workspace.current);
+            let dirty=self.workspace.document!=self.workspace.original;
+            let width=(ui.available_width()-if dirty {72.0}else{0.0}).max(1.0);
+            ui.add_sized([width,ui_theme::CTRL_H],egui::Label::new(RichText::new(name)
+                .size(ui_theme::FONT_SECTION).strong().color(tokens.text_primary)).truncate())
+                .on_hover_text(format!("{name}\n{}",self.workspace.current));
+            if dirty {ui.label(RichText::new(if matches!(lang,Lang::Zh){"已修改"}else{"Modified"}).small().color(tokens.accent));}
         });
+        self.paint_config_edit_actions(ui,lang,tokens,locked);
         if self.workspace.document["id"]
             .as_str()
             .is_some_and(|id| id != self.workspace.current)
@@ -1925,6 +1752,7 @@ impl TestToolPanel {
                     "Item properties"
                 },
                 |ui| {
+                    ui.set_max_width(520.0);
                     ui.add_enabled_ui(!locked, |ui| {
                         for key in properties.iter().filter_map(Value::as_str) {
                             if let Some(value) = self.workspace.document.get_mut(key) {
@@ -2129,9 +1957,9 @@ impl TestToolPanel {
             }
         } else if error_count > 0 {
             if zh {
-                "下一步：修正下列配置问题"
+                "下列问题是提醒，改完保存即可继续"
             } else {
-                "Next: resolve the configuration issues below"
+                "Issues below are reminders; save after fixing them"
             }
         } else if !preflight_valid {
             if zh {
@@ -2526,7 +2354,8 @@ fn form(
         let width = match field_spec["width"].as_str() {
             Some("short") => 220.0,
             Some("normal") => 320.0,
-            _ => ui.available_width(),
+            Some("long") => 480.0,
+            _ => ui.available_width().min(560.0),
         };
         if !schema["properties"].is_object()
             && !schema["oneOf"].is_array()
@@ -3168,8 +2997,8 @@ fn form(
                 _ => {
                     let mut string = value.as_str().unwrap_or("").to_owned();
                     ui.label(title);
-                    let mut edit =
-                        egui::TextEdit::singleline(&mut string).desired_width(ui.available_width());
+                    let mut edit = egui::TextEdit::singleline(&mut string)
+                        .desired_width(width.min(ui.available_width()).max(24.0));
                     if schema["writeOnly"] == true {
                         edit = edit.password(true);
                     }
@@ -3600,6 +3429,7 @@ mod tests {
             params: json!({"plugin":"hub-workspace-demo","limit":5}),
             reply: tx,
             deadline: Instant::now() + Duration::from_secs(20),
+            ai_guard: None,
         });
         assert!(
             panel.api_stop().ok,

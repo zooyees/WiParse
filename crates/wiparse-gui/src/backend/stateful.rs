@@ -21,6 +21,15 @@ pub fn drain_api_requests(bridge: &ApiBridge, mut host: UiHost<'_>) -> bool {
         let Some(req) = bridge.try_recv() else {
             break;
         };
+        if let Some(guard)=&req.ai_guard {
+            if guard.cancelled.load(std::sync::atomic::Ordering::Acquire)
+                || guard.project!=host.test_tool.current_project_id()
+                || !host.serial.ai_platform_guard_valid(guard)
+                || (guard.controls && host.test_tool.running_plugin_id().is_some()) {
+                let _=req.reply.try_send(err(&req.method,"AI.STALE_OR_LOCKED: target changed, cancelled or test running"));
+                continue;
+            }
+        }
         if Instant::now() > req.deadline {
             let _ = req
                 .reply
@@ -42,6 +51,7 @@ fn handle(bridge: &ApiBridge, host: &mut UiHost<'_>, req: PendingRequest) -> boo
         params,
         reply,
         deadline: _,
+        ai_guard: _,
     } = req;
     let lang = *host.lang;
     let (result, persist) = if let Some(pair) = ui::handle(host, &method, &params) {
@@ -73,12 +83,16 @@ fn handle(bridge: &ApiBridge, host: &mut UiHost<'_>, req: PendingRequest) -> boo
             }
             "serial.monitor.status" => {
                 let (port, baud) = host.serial.current_port_baud();
+                let sessions = host.serial.monitor_sessions();
+                let tab_id = port.as_deref().and_then(|p| host.serial.tab_for_port(p));
                 ok(
                     &method,
                     json!({
                         "monitoring": host.serial.is_monitoring(),
                         "port": port,
                         "baud": baud,
+                        "tab_id": tab_id,
+                        "sessions": sessions,
                         "status": host.serial.monitor_status_text(),
                     }),
                 )
@@ -135,6 +149,8 @@ fn handle(bridge: &ApiBridge, host: &mut UiHost<'_>, req: PendingRequest) -> boo
             "instrument.connect" => host.instruments.api_connect(&params, lang),
             "instrument.connect_all" => host.instruments.api_connect_all(lang),
             "instrument.disconnect" => host.instruments.api_disconnect(&params),
+            "parse.line"|"parse.metrics"|"convert.radix" => super::dispatch::invoke(bridge,&method,params.clone()),
+            "instrument.job.get" => host.instruments.api_job_get(&params),
             "instrument.command" => host.instruments.api_command(&params),
             "instrument.measure" => host.instruments.api_measure(&params),
             "instrument.capture" => host.instruments.api_capture(&params),
@@ -165,6 +181,10 @@ fn serial_start(
         .get("baud")
         .and_then(|v| v.as_u64())
         .map(|n| n as u32);
+    let already_open = port
+        .as_deref()
+        .and_then(|p| serial.tab_for_port(p))
+        .is_some();
     match serial.api_start_monitor(lang, port, baud) {
         Ok((port, baud)) => {
             if let Some(tx) = serial.take_write_sender() {
@@ -173,11 +193,18 @@ fn serial_start(
                     .lock()
                     .unwrap_or_else(|e| e.into_inner()) = Some(tx);
             }
+            let tab_id = serial.tab_for_port(&port).unwrap_or(0);
             bridge.set_monitoring(true, Some(port.clone()), Some(baud));
             bridge.publish_serial_status(&format!("open {port} @ {baud}"));
             ok(
                 "serial.monitor.start",
-                json!({ "port": port, "baud": baud, "monitoring": true }),
+                json!({
+                    "port": port,
+                    "baud": baud,
+                    "monitoring": true,
+                    "tab_id": tab_id,
+                    "already_open": already_open,
+                }),
             )
         }
         Err(e) => err("serial.monitor.start", &e),

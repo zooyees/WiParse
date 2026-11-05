@@ -26,6 +26,9 @@ use wiparse_core::serial::{
 };
 use wiparse_core::testrun::{decode_hex, RunVerdict, TestDriver, TestPlan, TickAction};
 
+mod ai_chat;
+mod sidebar;
+
 /// One subfolder under the log browser root that contains `.txt` files.
 struct LogBrowserFolder {
     name: String,
@@ -40,6 +43,7 @@ const DRAIN_TIME_PER_FRAME: Duration = Duration::from_millis(4);
 const LIVE_FLUSH_INTERVAL: Duration = Duration::from_secs(5);
 
 enum SerialEvent {
+    Opened { device: String, baud: u32 },
     Line(String),
     Status(String),
     Error(String),
@@ -112,6 +116,12 @@ pub struct SerialToolPanel {
     /// Additional open sessions. Each has its own live tab and TCP socket.
     extras: Vec<ExtraLink>,
     manual_tcp: String,
+    ai_chat: ai_chat::SerialAiChat,
+    ai_confirmed: HashMap<String, u32>,
+    ai_serial_error: HashMap<String, String>,
+    ai_epoch: u64,
+    ai_test_locked: bool,
+    ai_settings_requested: bool,
 }
 
 struct LiveTest {
@@ -207,6 +217,12 @@ impl SerialToolPanel {
             primary_device: None,
             extras: Vec::new(),
             manual_tcp: String::new(),
+            ai_chat: Default::default(),
+            ai_confirmed: HashMap::new(),
+            ai_serial_error: HashMap::new(),
+            ai_epoch: 0,
+            ai_test_locked: false,
+            ai_settings_requested: false,
         };
         panel.restore_open_log_files(&cfg.log_monitor.open_log_files);
         panel.refresh_log_browser();
@@ -723,6 +739,8 @@ impl SerialToolPanel {
         self.rx = Some(rx);
         self.write_tx = Some(write_tx);
         self.monitoring = true;
+        self.ai_epoch = self.ai_epoch.wrapping_add(1);
+        self.ai_serial_error.remove(&port);
         self.primary_device = Some(port.clone());
         let status_port = self
             .ports
@@ -801,6 +819,8 @@ impl SerialToolPanel {
         let Some(idx) = self.extras.iter().position(|link| link.device == device) else {
             return;
         };
+        self.ai_epoch = self.ai_epoch.wrapping_add(1);
+        self.ai_confirmed.remove(device);
         let link = self.extras.remove(idx);
         link.stop.store(true, Ordering::SeqCst);
         let tab = link.tab;
@@ -837,8 +857,9 @@ impl SerialToolPanel {
                 };
                 remaining -= 1;
                 match ev {
+                    SerialEvent::Opened { device, baud } => { self.ai_confirmed.insert(device, baud); }
                     SerialEvent::Line(line) => batch.push(line),
-                    SerialEvent::Error(e) => batch.push(format!("[ERR] {e}")),
+                    SerialEvent::Error(e) => { self.ai_serial_error.insert(self.extras[i].device.clone(), e.clone()); batch.push(format!("[ERR] {e}")); }
                     SerialEvent::Stopped => {
                         stopped = true;
                         break;
@@ -848,6 +869,7 @@ impl SerialToolPanel {
             }
             if !batch.is_empty() {
                 if let Some(page) = self.tabs.get_mut(tab) {
+                    self.ai_chat.observe(page.ai_view_id(), &batch);
                     page.append_lines(batch, update_live_filters);
                 }
             }
@@ -898,9 +920,61 @@ impl SerialToolPanel {
         serde_json::json!({ "tabs": tabs, "active_tab": self.active_tab })
     }
 
+    fn serial_ports_equal(left: &str, right: &str) -> bool {
+        left.eq_ignore_ascii_case(right)
+    }
+
+    /// Live monitor tab for an open COM / Dongle UART session.
+    pub fn tab_for_port(&self, port: &str) -> Option<usize> {
+        if self
+            .primary_device
+            .as_deref()
+            .is_some_and(|device| Self::serial_ports_equal(device, port))
+        {
+            return Some(0);
+        }
+        self.extras
+            .iter()
+            .find(|link| Self::serial_ports_equal(&link.device, port))
+            .map(|link| link.tab)
+    }
+
+    pub fn port_for_tab(&self, tab_id: usize) -> Option<&str> {
+        if tab_id == 0 {
+            return self.primary_device.as_deref();
+        }
+        self.extras
+            .iter()
+            .find(|link| link.tab == tab_id)
+            .map(|link| link.device.as_str())
+    }
+
+    pub fn monitor_sessions(&self) -> Vec<serde_json::Value> {
+        let mut sessions = Vec::new();
+        if let Some(port) = &self.primary_device {
+            sessions.push(serde_json::json!({ "port": port, "tab_id": 0 }));
+        }
+        for link in &self.extras {
+            sessions.push(serde_json::json!({ "port": link.device, "tab_id": link.tab }));
+        }
+        sessions
+    }
+
     pub fn api_lines_get(&self, params: &serde_json::Value) -> crate::backend::InvokeReply {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
-        let tab_id = params.get("tab_id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let port = params
+            .get("port")
+            .and_then(|v| v.as_str())
+            .or_else(|| params.get("device").and_then(|v| v.as_str()))
+            .filter(|s| !s.is_empty());
+        let tab_id = if let Some(port) = port {
+            match self.tab_for_port(port) {
+                Some(id) => id,
+                None => return err("log.lines.get", "port is not being monitored"),
+            }
+        } else {
+            params.get("tab_id").and_then(|v| v.as_u64()).unwrap_or(0) as usize
+        };
         let from = params.get("from_row").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
         // Cap page size to avoid accidental DoS / huge JSON payloads.
         let limit = params
@@ -919,6 +993,7 @@ impl SerialToolPanel {
             "log.lines.get",
             serde_json::json!({
                 "tab_id": tab_id,
+                "port": self.port_for_tab(tab_id),
                 "from_row": from,
                 "lines": lines,
                 "count": lines.len(),
@@ -1414,6 +1489,8 @@ impl SerialToolPanel {
     }
 
     fn stop_monitor(&mut self, lang: Lang) {
+        self.ai_epoch = self.ai_epoch.wrapping_add(1);
+        if let Some(port) = &self.primary_device { self.ai_confirmed.remove(port); }
         if let Some(flag) = self.stop_flag.take() {
             flag.store(true, Ordering::SeqCst);
         }
@@ -1670,6 +1747,11 @@ impl SerialToolPanel {
         }
         if idx < self.tabs.len() {
             self.tabs.remove(idx);
+            for extra in &mut self.extras {
+                if extra.tab > idx {
+                    extra.tab -= 1;
+                }
+            }
             self.pending_loads.retain_mut(|load| {
                 if load.tab_idx == idx {
                     return false;
@@ -1759,6 +1841,7 @@ impl SerialToolPanel {
                 };
                 budget -= 1;
                 match ev {
+                    SerialEvent::Opened { device, baud } => { self.ai_confirmed.insert(device, baud); }
                     SerialEvent::Line(line) => {
                         batch.push(line);
                     }
@@ -1772,6 +1855,7 @@ impl SerialToolPanel {
                         if let Some(api) = api {
                             api.publish_serial_status(&format!("error: {e}"));
                         }
+                        if let Some(port) = &self.primary_device { self.ai_serial_error.insert(port.clone(), e.clone()); }
                         self.status = e.clone();
                         batch.push(format!("[ERR] {e}"));
                     }
@@ -1784,6 +1868,8 @@ impl SerialToolPanel {
         }
 
         if stop_seen {
+            self.ai_epoch = self.ai_epoch.wrapping_add(1);
+            if let Some(port) = &self.primary_device { self.ai_confirmed.remove(port); }
             self.primary_device = None;
             self.monitoring = !self.extras.is_empty();
             self.stop_flag = None;
@@ -1831,6 +1917,7 @@ impl SerialToolPanel {
                 }
             }
             if let Some(live) = self.tabs.get_mut(0) {
+                self.ai_chat.observe(live.ai_view_id(), &batch);
                 live.append_lines(batch, update_live_filters);
             }
         }
@@ -1881,7 +1968,7 @@ impl SerialToolPanel {
     }
 
     pub fn set_live_view_visible(&self, visible: bool) {
-        self.repaint_visible.store(visible, Ordering::Relaxed);
+        self.repaint_visible.store(visible || self.ai_chat.monitoring_active(), Ordering::Relaxed);
     }
 
     pub fn has_pending_rx(&self) -> bool {
@@ -1968,14 +2055,15 @@ impl SerialToolPanel {
         // width into the parent and open a gap beside the card.
         const SIDE_MAIN_GAP: f32 = 16.0;
 
-        let full = ui.available_rect_before_wrap();
-        let _ = ui.allocate_exact_size(full.size(), egui::Sense::hover());
+        let overall = ui.available_rect_before_wrap();
+        let _ = ui.allocate_exact_size(overall.size(), egui::Sense::hover());
+        let (full, ai_rect) = self.ai_chat.split(ui, overall, t);
         let side_w = ui_theme::resizable_sidebar_width(
             ui,
             "serial_tool",
             full,
-            300.0,
-            250.0,
+            ui_theme::SIDEBAR_W,
+            ui_theme::SIDEBAR_MIN_W,
             160.0,
             SIDE_MAIN_GAP,
             t,
@@ -2036,7 +2124,7 @@ impl SerialToolPanel {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
                                 let refresh_w = ui_theme::CTRL_H;
-                                let port_w = (ctrl_w - refresh_w - ui_theme::SPACE_SM).max(80.0);
+                                let port_w = (ctrl_w - refresh_w - ui_theme::SPACE_SM).max(1.0);
                                 egui::ComboBox::from_id_salt("serial_port")
                                     .width(port_w)
                                     .truncate()
@@ -2154,17 +2242,11 @@ impl SerialToolPanel {
                                     self.baud,
                                     tr(lang, "status.live")
                                 );
-                                let (bar, _) = ui.allocate_exact_size(
-                                    egui::vec2(ctrl_w, ui_theme::CTRL_H),
-                                    egui::Sense::hover(),
-                                );
-                                ui.painter().text(
-                                    bar.left_center() + egui::vec2(2.0, 0.0),
-                                    egui::Align2::LEFT_CENTER,
-                                    live,
-                                    egui::FontId::proportional(ui_theme::FONT_CAPTION),
-                                    t.accent,
-                                );
+                                ui.add_sized(
+                                    [ctrl_w, ui_theme::CTRL_H],
+                                    egui::Label::new(egui::RichText::new(&live)
+                                        .size(ui_theme::FONT_CAPTION).color(t.accent)).truncate(),
+                                ).on_hover_text(live);
                             }
 
                             let start_resp = if selected_open {
@@ -2182,31 +2264,12 @@ impl SerialToolPanel {
                                 }
                             }
 
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
-                                let button_w = ui_theme::equal_widths(ctrl_w, 2)[0];
-                                if ui_theme::secondary_btn_sized(
-                                    ui,
-                                    t,
-                                    tr(lang, "btn.new"),
-                                    egui::vec2(button_w, ui_theme::CTRL_H),
-                                )
-                                .clicked()
-                                {
-                                    self.new_live_log(lang);
-                                }
-                                if ui_theme::secondary_btn_sized_enabled(
-                                    ui,
-                                    t,
-                                    tr(lang, "btn.clear"),
-                                    egui::vec2(button_w, ui_theme::CTRL_H),
-                                    self.tabs.first().is_some_and(|tab| tab.line_count() > 0),
-                                )
-                                .clicked()
-                                {
-                                    self.clear_live_display();
-                                }
-                            });
+                            let (new, clear) = sidebar::action_pair(
+                                ui, t, ctrl_w, &tr(lang, "btn.new"), &tr(lang, "btn.clear"),
+                                self.tabs.first().is_some_and(|tab| tab.line_count() > 0),
+                            );
+                            if new.clicked() { self.new_live_log(lang); }
+                            if clear.clicked() { self.clear_live_display(); }
 
                             let summary = format!(
                                 "{} · {}",
@@ -2291,30 +2354,11 @@ impl SerialToolPanel {
                                     ui_theme::singleline_sized(&mut self.live_dir, ctrl_w),
                                 );
 
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
-                                    let half = ui_theme::equal_widths(ctrl_w, 2)[0];
-                                    if ui_theme::secondary_btn_sized(
-                                        ui,
-                                        t,
-                                        tr(lang, "btn.browse_dir"),
-                                        egui::vec2(half, ui_theme::CTRL_H),
-                                    )
-                                    .clicked()
-                                    {
-                                        self.browse_dir();
-                                    }
-                                    if ui_theme::secondary_btn_sized(
-                                        ui,
-                                        t,
-                                        tr(lang, "btn.open_log"),
-                                        egui::vec2(half, ui_theme::CTRL_H),
-                                    )
-                                    .clicked()
-                                    {
-                                        self.open_files();
-                                    }
-                                });
+                                let (browse, open) = sidebar::action_pair(
+                                    ui, t, ctrl_w, &tr(lang, "btn.browse_dir"), &tr(lang, "btn.open_log"), true,
+                                );
+                                if browse.clicked() { self.browse_dir(); }
+                                if open.clicked() { self.open_files(); }
                             }
                         });
                     paint_sidebar_card_border(ui, g1.response.rect, card_w, t.border);
@@ -2379,30 +2423,11 @@ impl SerialToolPanel {
                                         self.persist_open_log_files();
                                     }
 
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
-                                        let half = ui_theme::equal_widths(ctrl_w, 2)[0];
-                                        if ui_theme::secondary_btn_sized(
-                                            ui,
-                                            t,
-                                            tr(lang, "btn.browse_dir"),
-                                            egui::vec2(half, ui_theme::CTRL_H),
-                                        )
-                                        .clicked()
-                                        {
-                                            self.browse_log_browser_dir();
-                                        }
-                                        if ui_theme::secondary_btn_sized(
-                                            ui,
-                                            t,
-                                            tr(lang, "btn.refresh_browser"),
-                                            egui::vec2(half, ui_theme::CTRL_H),
-                                        )
-                                        .clicked()
-                                        {
-                                            self.refresh_log_browser();
-                                        }
-                                    });
+                                    let (browse, refresh) = sidebar::action_pair(
+                                        ui, t, ctrl_w, &tr(lang, "btn.browse_dir"), &tr(lang, "btn.refresh_browser"), true,
+                                    );
+                                    if browse.clicked() { self.browse_log_browser_dir(); }
+                                    if refresh.clicked() { self.refresh_log_browser(); }
 
                                     self.ensure_log_browser_fresh();
 
@@ -2882,15 +2907,22 @@ impl SerialToolPanel {
                             let idx =
                                 self.active_tab.min(self.tabs.len().saturating_sub(1));
                             if let Some(page) = self.tabs.get_mut(idx) {
+                                page.set_ai_visible(self.ai_chat.open);
                                 page.ui(ui, lang, t);
+                                if page.take_ai_toggle() {
+                                    if self.ai_chat.open { self.ai_chat.close(); } else { self.ai_chat.open = true; }
+                                    ui.ctx().request_repaint();
+                                }
                             }
                         });
                 },
             );
         }
+        if let Some(rect) = ai_rect { self.paint_ai_sidebar(ui, rect, lang, t); }
     }
 
     pub fn on_exit(&mut self) {
+        self.ai_chat.close();
         self.stop_monitor(self.last_lang);
         self.persist_open_log_files();
     }
@@ -3244,6 +3276,7 @@ fn serial_worker(
             return;
         }
     };
+    let _ = tx.send(SerialEvent::Opened { device: session.device.clone(), baud });
     let _ = tx.send(SerialEvent::Status(format!("open {}", session.device)));
     if let Some(ctx) = &repaint {
         ctx.request_repaint();
@@ -3481,5 +3514,30 @@ mod tests {
     fn open_file_identity_accepts_equivalent_windows_paths() {
         assert!(same_log_path(r"D:\logs\capture.txt", "d:/logs/capture.txt"));
         assert!(!same_log_path(r"D:\logs\capture.txt", r"D:\logs\other.txt"));
+    }
+
+    #[test]
+    fn log_lines_get_resolves_leased_port_instead_of_tab_zero() {
+        let mut panel = SerialToolPanel::new(&AppConfig::default(), Lang::En);
+        panel.primary_device = Some("COM3".into());
+        panel.monitoring = true;
+        let (_tx, rx) = bounded(1);
+        let (write_tx, _write_rx) = unbounded();
+        panel.tabs.push(LogTabPage::live_tab(Lang::En));
+        let tab = panel.tabs.len() - 1;
+        panel.extras.push(ExtraLink {
+            device: "COM7".into(),
+            stop: Arc::new(AtomicBool::new(false)),
+            rx,
+            write_tx,
+            tab,
+        });
+        assert_eq!(panel.tab_for_port("com7"), Some(tab));
+        let reply = panel.api_lines_get(&json!({ "port": "COM7", "from_row": 0, "limit": 10 }));
+        assert!(reply.ok, "{:?}", reply.error);
+        assert_eq!(reply.data["tab_id"], json!(tab));
+        assert_eq!(reply.data["port"], json!("COM7"));
+        let missing = panel.api_lines_get(&json!({ "port": "COM9", "from_row": 0 }));
+        assert!(!missing.ok);
     }
 }

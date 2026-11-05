@@ -12,6 +12,7 @@ $temporary=$target+'.tmp-'+[Guid]::NewGuid().ToString('N')
 try {
     # Explicit UTF-8 is essential: Windows bsdtar can omit the ZIP language flag.
     [IO.Compression.ZipFile]::CreateFromDirectory($source,$temporary,[IO.Compression.CompressionLevel]::Optimal,$true,[Text.UTF8Encoding]::new($false))
-    if(Test-Path -LiteralPath $target){[IO.File]::Replace($temporary,$target,$null)}else{[IO.File]::Move($temporary,$target)}
+    if(Test-Path -LiteralPath $target){Remove-Item -LiteralPath $target -Force}
+    [IO.File]::Move($temporary,$target)
 }finally{if(Test-Path -LiteralPath $temporary){Remove-Item -LiteralPath $temporary -Force}}
 Get-Item -LiteralPath $target | Select-Object Name,Length,LastWriteTime

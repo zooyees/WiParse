@@ -1,6 +1,7 @@
 //! Testing Hub — discover Node.js plugins and run them via WiParse CLI / HTTP.
 
 mod workspace;
+mod line_trigger_editor;
 use workspace::Workspace;
 
 use crate::market_jobs::{
@@ -87,11 +88,14 @@ impl LiveDevice {
 struct PluginParam {
     name: String,
     type_name: String,
+    /// Optional presentation for an existing parameter data type.
+    widget: String,
     default: String,
     path: String,
     label: String,
     label_zh: String,
     help: String,
+    help_zh: String,
     /// Optional kind filter for `type: device` (`oscilloscope`, `dc_source`, …).
     filter_kind: String,
     /// If set, use this sibling param’s current value as the kind filter.
@@ -464,6 +468,32 @@ impl TestToolPanel {
         })
     }
 
+    /// Project, selection and matrix counts. Paths, parameters and secrets stay local.
+    pub(crate) fn ai_summary(&self) -> serde_json::Value {
+        let plugin = self.selected_plugin();
+        let mut brief = self.workspace.ai_brief();
+        if let Some(object) = brief.as_object_mut() {
+            let name = plugin.map(|plugin| {
+                if plugin.name_zh.is_empty() {
+                    plugin.name.clone()
+                } else {
+                    plugin.name_zh.clone()
+                }
+            });
+            object.insert("plugin".into(), serde_json::json!(name));
+            object.insert(
+                "plugin_version".into(),
+                serde_json::json!(plugin.map(|plugin| plugin.version.clone())),
+            );
+            object.insert("running".into(), serde_json::json!(self.job.is_some()));
+            object.insert(
+                "status".into(),
+                serde_json::json!(self.status.chars().take(240).collect::<String>()),
+            );
+        }
+        brief
+    }
+
     pub fn api_set_plugins_dir(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let dir = params
@@ -590,7 +620,7 @@ impl TestToolPanel {
         }
 
         let side_w = ui_theme::resizable_sidebar_width(ui, "test_tool", full,
-            SIDE_W, 200.0, 280.0, PANEL_GAP, tokens);
+            SIDE_W, ui_theme::SIDEBAR_MIN_W, 280.0, PANEL_GAP, tokens);
         let view_w = (full.width() - side_w - PANEL_GAP).max(1.0);
         let side_rect = egui::Rect::from_min_size(full.min, egui::vec2(side_w, full.height()));
         let view_rect = egui::Rect::from_min_size(
@@ -1025,9 +1055,8 @@ impl TestToolPanel {
                     .as_ref()
                     .and_then(|id| self.plugins.iter().position(|p| p.id == *id));
 
-                self.paint_runner_header(ui, lang, tokens, sel_idx);
-
                 if sel_idx.is_some_and(|i|self.plugins[i].configure) { self.paint_workspace(ui,lang,tokens);return; }
+                self.paint_runner_header(ui, lang, tokens, sel_idx);
                 let body_h = ui.available_height().max(1.0);
                 let body_w = ui.available_width().max(1.0);
                 let gap = RUNNER_SPLIT_GAP * 2.0 + 1.0;
@@ -1050,18 +1079,9 @@ impl TestToolPanel {
         tokens: &Tokens,
         sel_idx: Option<usize>,
     ) {
-        // Configurable plugins have one authoritative execution bar in their workspace.
+        // Configurable workspaces own their title, navigation and execution controls.
         if let Some(plugin) = sel_idx.map(|i| &self.plugins[i]).filter(|p| p.configure).cloned() {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(&plugin.name).size(ui_theme::FONT_SECTION).strong());
-                ui.weak(&plugin.version);
-                self.paint_status_chip(ui, lang, tokens);
-                if ui.small_button(tr(lang, "test_tool.clear_log")).clicked() { self.log.clear(); }
-                if plugin.source == "marketplace" && self.job.is_none() && !self.catalog_busy
-                    && ui.small_button(tr(lang, "test_tool.market_uninstall")).clicked() {
-                    self.uninstall_marketplace_plugin(&plugin.id, lang);
-                }
-            });
+            self.paint_workspace_heading(ui, lang, tokens, &plugin);
             return;
         }
         let running = self.job.is_some();
@@ -1332,8 +1352,8 @@ impl TestToolPanel {
             tokens.text_muted,
         );
 
-        let mut measure_idxs = param_idxs.clone();
-        measure_idxs.extend_from_slice(&advanced_idxs);
+        let mut measure_idxs: Vec<usize> = param_groups.iter().flat_map(|(_, indices)| indices.iter().copied()).collect();
+        if self.param_advanced_open { measure_idxs.extend_from_slice(&advanced_idxs); }
         let label_w = self.measure_param_label_col(ui, lang, sel_idx, &measure_idxs);
         let param_h = ui.available_height().max(72.0);
         let mut pending_param: Option<String> = None;
@@ -1512,12 +1532,12 @@ impl TestToolPanel {
         } else {
             p.name.clone()
         };
-        let hint = if p.help.is_empty() {
+        let help = if matches!(lang, Lang::Zh) && !p.help_zh.is_empty() { p.help_zh.clone() } else { p.help.clone() };
+        let hint = if help.is_empty() {
             p.default.clone()
         } else {
-            p.help.clone()
+            help.clone()
         };
-        let help = p.help.clone();
         let is_path = is_path_param(p);
         let is_bool = type_name == "boolean" || type_name == "bool";
         let is_device = type_name == "device";
@@ -1528,6 +1548,16 @@ impl TestToolPanel {
         let multiline = is_json || is_text;
         let filter_kind = self.device_filter_kind(p);
         let options = p.options.clone();
+
+        if is_json && p.widget == "line_triggers" {
+            ui.push_id(("line_triggers", sel_idx, &name), |ui| {
+                let raw = self.param_values.entry(name.clone()).or_default();
+                if line_trigger_editor::show(ui, lang, tokens, &label, raw) {
+                    self.param_touched.insert(name.clone());
+                }
+            });
+            return;
+        }
 
         if is_serial {
             self.refresh_serial_ports_if_needed();
@@ -2956,6 +2986,13 @@ impl TestToolPanel {
         }
 
         if plugin.configure { self.workspace_run_gate(self.preflight_only)?; }
+        for param in &plugin.params {
+            if param.widget == "line_triggers" {
+                line_trigger_editor::validate(
+                    self.param_values.get(&param.name).map(String::as_str).unwrap_or(""), lang,
+                )?;
+            }
+        }
         let runner = project_path("test-tools/runner.mjs");
         if !runner.is_file() {
             return Err(format!(
@@ -4066,6 +4103,7 @@ fn read_plugin_info(path: &Path) -> Option<PluginInfo> {
                             .and_then(|x| x.as_str())
                             .unwrap_or("string")
                             .to_owned(),
+                        widget: p.get("widget").and_then(|x| x.as_str()).unwrap_or("").to_owned(),
                         default: json_to_string(p.get("default")),
                         path: p
                             .get("path")
@@ -4087,6 +4125,7 @@ fn read_plugin_info(path: &Path) -> Option<PluginInfo> {
                             .and_then(|x| x.as_str())
                             .unwrap_or("")
                             .to_owned(),
+                        help_zh: p.get("help_zh").and_then(|x| x.as_str()).unwrap_or("").to_owned(),
                         filter_kind: parse_filter_kind(p),
                         filter_from: p
                             .get("filter_from")
@@ -4702,6 +4741,76 @@ mod layout_regressions {
 
 #[cfg(test)]
 mod visual_snapshot {
+    #[test]
+    fn serial_trigger_host_form_keeps_legacy_station_and_fits_narrow_widths() {
+        use super::*;
+        let mut cfg = AppConfig::default();
+        cfg.apps.test_tool.plugins_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-tools/plugins").display().to_string();
+        let mut panel = TestToolPanel::new(&cfg);
+        panel.select_plugin("scope-serial-monitor".into());
+        panel.merge_station_into_params();
+        panel.serial_ports_at = Some(Instant::now());
+        let selected = panel.plugins.iter().position(|p| p.id == "scope-serial-monitor").unwrap();
+        let param = panel.plugins[selected].params.iter().position(|p| p.name == "triggers").unwrap();
+        assert_eq!(panel.plugins[selected].params[param].widget, "line_triggers");
+        assert_eq!(panel.plugins[selected].params[param].type_name, "json");
+        let original = panel.param_values["triggers"].clone();
+        for lang in [Lang::Zh, Lang::En] {
+            for light in [true, false] {
+                for width in [180.0, 260.0, 400.0, 680.0] {
+                    let ctx = egui::Context::default();
+                    crate::fonts::install_cjk_fonts(&ctx);
+                    let tokens = ui_theme::apply_theme(&ctx, light);
+                    let _ = ctx.run(egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 720.0))),
+                        ..Default::default()
+                    }, |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            panel.paint_param_field(ui, lang, &tokens, selected, param, 132.0, &mut None);
+                            assert!(ui.min_rect().right() <= width + 1.0, "trigger overflow {width}");
+                        });
+                    });
+                }
+            }
+        }
+        assert_eq!(panel.param_values["triggers"], original);
+        assert!(!panel.param_touched.contains("triggers"));
+        assert!(line_trigger_editor::validate(&original, Lang::Zh).is_ok());
+    }
+
+    #[test]
+    fn serial_simple_complete_form_uses_compact_rows_in_host_layout() {
+        use super::*;
+        let mut cfg=AppConfig::default();
+        cfg.apps.test_tool.plugins_dir=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-tools/plugins").display().to_string();
+        let mut panel=TestToolPanel::new(&cfg);
+        panel.select_plugin("scope-serial-monitor".into());panel.merge_station_into_params();
+        panel.serial_ports_at=Some(Instant::now());
+        let selected=panel.plugins.iter().position(|p|p.id=="scope-serial-monitor").unwrap();
+        let original=panel.param_values["triggers"].clone();
+        for width in [400.0,900.0] {
+            let ctx=egui::Context::default();crate::fonts::install_cjk_fonts(&ctx);
+            let tokens=ui_theme::apply_theme(&ctx,false);let size=egui::vec2(width,850.0);
+            let mut result=None;
+            for _ in 0..1 {
+                result=Some(ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,size)),..Default::default()},|ctx|{
+                    egui::CentralPanel::default().show(ctx,|ui|{
+                        ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min),|ui|{
+                            panel.paint_runner_header(ui,Lang::Zh,&tokens,Some(selected));
+                            panel.paint_runner_config(ui,Lang::Zh,&tokens,Some(selected));
+                            assert!(ui.min_rect().right()<=width+1.0,"Host overflow {width}");
+                        });
+                    });
+                }));
+            }
+            if let Ok(dir)=std::env::var("WIPARSE_UI_AUDIT_OUTPUT") {
+                crate::ui_audit::export_frame(&ctx,result.unwrap(),std::path::Path::new(&dir),&format!("serial-complete-{width}"),size);
+            }
+        }
+        assert_eq!(panel.param_values["triggers"],original);
+    }
+
     #[test]
     fn cmsis_dap_runner_renders_without_header_case_collision() {
         let Ok(dir) = std::env::var("WIPARSE_UI_AUDIT_OUTPUT") else { return; };

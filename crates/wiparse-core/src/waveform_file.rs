@@ -296,6 +296,12 @@ pub fn export_waveform_isf(
     path: impl AsRef<Path>,
     trace: &WaveformTrace,
 ) -> Result<(), WaveformFileError> {
+    std::fs::write(path, waveform_isf_bytes(trace)?)?;
+    Ok(())
+}
+
+/// The same ISF encoder used by file export, reusable for multi-channel packaging.
+pub fn waveform_isf_bytes(trace: &WaveformTrace) -> Result<Vec<u8>, WaveformFileError> {
     let n = trace.x.len().min(trace.y.len());
     if n == 0 {
         return Err(WaveformFileError::Parse("empty waveform".into()));
@@ -331,8 +337,7 @@ pub fn export_waveform_isf(
     let mut out = preamble.into_bytes();
     out.extend_from_slice(format!(":CURVE #{}{len}", len.to_string().len()).as_bytes());
     out.extend_from_slice(&curve);
-    std::fs::write(path, out)?;
-    Ok(())
+    Ok(out)
 }
 
 /// Export trace as Tektronix WFM#001 (YT INT16, single frame).
@@ -551,6 +556,93 @@ fn measure_samples(x: &[f64], y: &[f64]) -> WaveformMeasurements {
         freq_hz,
         period,
     }
+}
+
+/// High-time ratio using the midpoint threshold. `None` when amplitude is unusable.
+pub fn estimate_duty_cycle(y: &[f64]) -> Option<f64> {
+    if y.len() < 2 {
+        return None;
+    }
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    for &v in y {
+        min = min.min(v);
+        max = max.max(v);
+    }
+    let pp = max - min;
+    if !pp.is_finite() || pp <= 0.0 {
+        return None;
+    }
+    let mid = min + pp * 0.5;
+    let high = y.iter().filter(|&&v| v >= mid).count();
+    Some(high as f64 / y.len() as f64)
+}
+
+fn is_volt_unit(unit: &str) -> bool {
+    let u = unit.trim();
+    u.is_empty() || u.eq_ignore_ascii_case("v") || u.eq_ignore_ascii_case("volts")
+}
+
+fn normalize_channel_key(channel: &str) -> String {
+    let trimmed = channel.trim();
+    let upper = trimmed.to_ascii_uppercase();
+    if upper.starts_with("CH") {
+        return upper;
+    }
+    if let Ok(n) = trimmed.parse::<u32>() {
+        return format!("CH{n}");
+    }
+    trimmed.to_string()
+}
+
+fn good_reading(value: f64, unit: &str) -> Option<serde_json::Value> {
+    if !value.is_finite() {
+        return None;
+    }
+    Some(serde_json::json!({ "value": value, "unit": unit, "quality": "good" }))
+}
+
+/// Channel metrics actually measured from samples. Missing keys are omitted, never invented.
+pub fn host_channel_metrics(trace: &WaveformTrace) -> serde_json::Map<String, serde_json::Value> {
+    let m = measure_waveform(trace);
+    let mut row = serde_json::Map::new();
+    if m.count > 0 && is_volt_unit(&trace.y_unit) {
+        if let Some(v) = good_reading(m.min, "V") {
+            row.insert("minimum_v".into(), v);
+        }
+        if let Some(v) = good_reading(m.max, "V") {
+            row.insert("maximum_v".into(), v);
+        }
+        if let Some(v) = good_reading(m.pp, "V") {
+            row.insert("peak_to_peak_v".into(), v);
+        }
+        if let Some(v) = good_reading(m.mean, "V") {
+            row.insert("mean_v".into(), v);
+        }
+    }
+    if let Some(f) = m.freq_hz.filter(|v| *v > 0.0).and_then(|v| good_reading(v, "Hz")) {
+        row.insert("frequency_hz".into(), f);
+    }
+    if let Some(p) = m.period.filter(|v| *v > 0.0).and_then(|v| good_reading(v, "s")) {
+        row.insert("period_s".into(), p);
+    }
+    let n = trace.x.len().min(trace.y.len());
+    if let Some(duty) = estimate_duty_cycle(&trace.y[..n]).and_then(|v| good_reading(v, "ratio")) {
+        row.insert("duty_cycle".into(), duty);
+    }
+    row
+}
+
+/// Per-channel host metrics for FPGA firmware runtime verification.
+pub fn host_waveform_metrics(traces: &[WaveformTrace]) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for trace in traces {
+        let row = host_channel_metrics(trace);
+        if !row.is_empty() {
+            map.insert(normalize_channel_key(&trace.channel), serde_json::Value::Object(row));
+        }
+    }
+    serde_json::Value::Object(map)
 }
 
 fn estimate_frequency(x: &[f64], y: &[f64], mean: f64) -> (Option<f64>, Option<f64>) {
@@ -2090,5 +2182,59 @@ mod tests {
         let loaded = load_waveform_bytes(&bytes, "wfm", "CH1").unwrap();
         assert_eq!(loaded.y.len(), 256);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn square_wave(period_s: f64, duty: f64, samples: usize) -> WaveformTrace {
+        let dt = period_s / 100.0;
+        let y: Vec<f64> = (0..samples)
+            .map(|i| {
+                let t = (i as f64 * dt) % period_s;
+                if t < period_s * duty {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        WaveformTrace {
+            channel: "CH1".into(),
+            x: (0..samples).map(|i| i as f64 * dt).collect::<Vec<_>>().into(),
+            y: y.into(),
+            x_unit: "s".into(),
+            y_unit: "V".into(),
+        }
+    }
+
+    #[test]
+    fn host_metrics_publish_measured_square_wave_and_omit_unmeasured() {
+        let trace = square_wave(1e-3, 0.5, 400);
+        let metrics = host_waveform_metrics(&[trace]);
+        let ch1 = &metrics["CH1"];
+        let freq = ch1["frequency_hz"]["value"].as_f64().unwrap();
+        let duty = ch1["duty_cycle"]["value"].as_f64().unwrap();
+        assert!((freq - 1000.0).abs() / 1000.0 < 0.05, "freq={freq}");
+        assert!((duty - 0.5).abs() < 0.03, "duty={duty}");
+        assert_eq!(ch1["frequency_hz"]["quality"], "good");
+        assert_eq!(ch1["duty_cycle"]["unit"], "ratio");
+        assert!(ch1.get("rise_time_s").is_none());
+        assert!(ch1.get("fall_time_s").is_none());
+    }
+
+    #[test]
+    fn host_metrics_omit_voltage_when_y_unit_is_not_volts() {
+        let mut trace = square_wave(1e-3, 0.25, 400);
+        trace.y_unit = "A".into();
+        let ch1 = host_waveform_metrics(&[trace]);
+        let ch1 = &ch1["CH1"];
+        assert!(ch1.get("minimum_v").is_none());
+        assert!(ch1.get("peak_to_peak_v").is_none());
+        assert!(ch1.get("frequency_hz").is_some());
+        assert!(ch1.get("duty_cycle").is_some());
+    }
+
+    #[test]
+    fn estimate_duty_cycle_rejects_flat_trace() {
+        assert_eq!(estimate_duty_cycle(&[1.0, 1.0, 1.0]), None);
+        assert!((estimate_duty_cycle(&[0.0, 1.0, 0.0, 1.0]).unwrap() - 0.5).abs() < 1e-12);
     }
 }

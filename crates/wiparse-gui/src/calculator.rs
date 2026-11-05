@@ -1,5 +1,6 @@
 use crate::converter::ConverterPanel;
 use crate::theme::{self as ui_theme, Tokens};
+use serde_json::{json, Value};
 use egui::{Color32, CornerRadius, Frame, Margin, Pos2, Rect, Sense, Stroke, Vec2};
 use std::f64::consts::PI;
 use wiparse_core::i18n::Lang;
@@ -1052,6 +1053,56 @@ impl CalculatorPanel {
             crc: CrcState::default(),
             converter: ConverterPanel::new(),
         }
+    }
+
+    /// On-screen inputs and scalar results. Resonance curves stay on this page.
+    pub(crate) fn ai_summary(&self) -> Value {
+        let clip = |text: &str, limit: usize| text.chars().take(limit).collect::<String>();
+        json!({
+            "lc": {
+                "inductance": format!("{} {}", self.lc.inductance, self.lc.inductance_unit.label()),
+                "inductor_esr": format!("{} {}", self.lc.inductor_esr, self.lc.inductor_esr_unit.label()),
+                "capacitance": format!("{} {}", self.lc.capacitance, self.lc.capacitance_unit.label()),
+                "capacitor_esr": format!("{} {}", self.lc.capacitor_esr, self.lc.capacitor_esr_unit.label()),
+                "frequency_hz": self.lc.result.as_ref().map(|result| result.frequency_hz),
+                "error": self.lc.error.map(|error| format!("{error:?}")),
+            },
+            "bandpass": {
+                "high_pass": format!("{} {} / {} {}", self.bandpass.r_hp, self.bandpass.r_hp_unit.label(), self.bandpass.c_hp, self.bandpass.c_hp_unit.label()),
+                "low_pass": format!("{} {} / {} {}", self.bandpass.r_lp, self.bandpass.r_lp_unit.label(), self.bandpass.c_lp, self.bandpass.c_lp_unit.label()),
+                "low_hz": self.bandpass.result.as_ref().map(|result| result.f_low_hz),
+                "high_hz": self.bandpass.result.as_ref().map(|result| result.f_high_hz),
+                "center_hz": self.bandpass.result.as_ref().map(|result| result.center_hz),
+                "q": self.bandpass.result.as_ref().map(|result| result.q),
+                "error": self.bandpass.error.map(|error| format!("{error:?}")),
+            },
+            "q_factor": {
+                "v1": self.q.v1.as_str(),
+                "v2": self.q.v2.as_str(),
+                "bias": self.q.bias.as_str(),
+                "intervals": self.q.intervals.as_str(),
+                "exact_q": self.q.result.as_ref().map(|result| result.exact_q),
+                "approx_q": self.q.result.as_ref().map(|result| result.approx_q),
+                "error": self.q.error.map(|error| format!("{error:?}")),
+            },
+            "rc": {
+                "resistance": format!("{} {}", self.rc.resistance, self.rc.resistance_unit.label()),
+                "capacitance": format!("{} {}", self.rc.capacitance, self.rc.capacitance_unit.label()),
+                "initial_voltage": self.rc.initial_voltage.as_str(),
+                "final_voltage": self.rc.final_voltage.as_str(),
+                "time": format!("{} {}", self.rc.time, self.rc.time_unit.label()),
+                "tau_s": self.rc.result.as_ref().map(|result| result.tau_s),
+                "capacitor_voltage_v": self.rc.result.as_ref().map(|result| result.capacitor_voltage_v),
+                "error": self.rc.error,
+            },
+            "crc": {
+                "preset": format!("{:?}", self.crc.preset),
+                "data": clip(&self.crc.data, 120),
+                "result": self.crc.result,
+                "error": self.crc.error.map(|error| format!("{error:?}")),
+            },
+            "converter": self.converter.ai_summary(),
+        })
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {

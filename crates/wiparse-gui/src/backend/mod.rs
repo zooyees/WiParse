@@ -57,6 +57,16 @@ pub struct PendingRequest {
     pub params: Value,
     pub reply: Sender<InvokeReply>,
     pub deadline: Instant,
+    pub ai_guard: Option<AiGuard>,
+}
+
+/// Internal AI calls are fenced again when the GUI consumes them.
+#[derive(Debug, Clone)]
+pub struct AiGuard {
+    pub binding: String,
+    pub project: String,
+    pub controls: bool,
+    pub cancelled: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone)]

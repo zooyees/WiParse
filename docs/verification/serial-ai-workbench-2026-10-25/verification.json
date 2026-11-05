@@ -1,0 +1,194 @@
+{
+  "date": "2026-10-25",
+  "version": "1.2.2",
+  "status": "exe_preview_verified",
+  "full_gui": {
+    "passed": 212,
+    "failed": 0,
+    "ignored": 3,
+    "log": "full-gui-tests.log"
+  },
+  "final_specialized": {
+    "count": 19,
+    "included_in_full_gui": true,
+    "fault_cases": [
+      "Three HTTP 503 responses pause AI only",
+      "Local alerts remain active after service config changes",
+      "Background watch wakes reception even when serial page is hidden"
+    ]
+  },
+  "layout": {
+    "short_narrow_language_theme_combinations": 36,
+    "full_panel_language_theme_combinations": 12,
+    "scenario_source_frames": 8,
+    "source_frame_directory": "tmp/serial-ai-r3-ui"
+  },
+  "source_sha256": {
+    "crates/wiparse-gui/src/app.rs": "d17ef2f1c1e33d1e30b060e30c431a58d1d5221cede7b503b18b462787876844",
+    "crates/wiparse-gui/src/instrument_control.rs": "ab1cee60a128431aa6700f46c9b6405c2b21324e2b0ccb255eac2f3c7deab332",
+    "crates/wiparse-gui/src/serial_tool/ai_chat.rs": "3206d50d4ed4b242a4ad3a6c6b8ff5da4261038c8063606d71dec00678003b5d",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/alerts.rs": "35876bc9dc74973465d76f28904ffd04f34d16c326fe2ff494363b49d5fb1b60",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/host.rs": "167409bb047f3e0a0513eb7c91ab436df5b4fd4f387eca46d8856d39ba0c6a5c",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/platform.rs": "380e06b9926ec5b024b0c56f4ee32a1a601813a3489055151f88446aaadf3991",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/platform_tests.rs": "639d888cd428a877a8b5cb1df0d0e23b378a8d2589a24dfc9e63ddfc225e140b",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/protocol.rs": "a9e99bfc56972caba55d90f217b27c09c9fc4d2418eab22a1ad6aae08c52f5e3",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/tests.rs": "9a228ebbd711fac1c93bc71854ab67fe746b59df1cb480513182d536cd268927",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/view.rs": "2e511e3db258787267bb216a55e09bff4bf9f6f7acd2462249ee7f1ee6dc77e7",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/view_tests.rs": "0b6d56f1e281221da997ecd7f6dd3987d830a8b8850af8be53406a07f59f3ff3",
+    "crates/wiparse-gui/src/backend/mod.rs": "aa605b17effcd37bd5311474912771eb97949e4dacb70183322f925afa5fef16",
+    "crates/wiparse-gui/src/backend/dispatch.rs": "16fee9b5be81830796b9a4bc879642c4f6d10f8ae6cca4ddf07df391e254a604",
+    "crates/wiparse-gui/src/backend/stateful.rs": "af7a918f9b3df7dfc2950f17a9852160d4f88b6fdc711153b70f9beda1c2b8dd",
+    "crates/wiparse-gui/src/backend/capabilities.rs": "a76ea6e530c9c89919baf282736d4952e47ced89613338803707e77eff7eb380",
+    "crates/wiparse-gui/src/serial_tool.rs": "8a7f20b18d2e719bdb4d59bab3753d5ab24d06fa28be4c71d03a81502372592e",
+    "crates/wiparse-gui/src/test_tool/workspace.rs": "5f3b39e34efc8a1a983cb8dc2d11026805878f96e91ece033f13082f11413081",
+    "crates/wiparse-core/src/instrument/mod.rs": "925e0cec9c7b21fde31989f86ea58ac9f98b4f8dbefbeb64ba48d53a8f301cf4"
+  },
+  "native_exe": {
+    "ui": {
+      "simulated_devices": [
+        "oscilloscope",
+        "dc_source",
+        "electronic_load",
+        "multimeter",
+        "debug_probe",
+        "usb_bridge",
+        "wiparse_dongle",
+        "generic"
+      ],
+      "ok": true,
+      "root": "D:\\windlink\\windlink\\WiParse-R\\tmp\\ui-release-smoke-cca962956dfe4ccfa191fcae7f89854d",
+      "product_version": "1.2.2",
+      "overview": "passed",
+      "report_artifacts": [
+        "artifacts/reports/ScopeSerialDemo_summary_20261016_120000.md",
+        "artifacts/docs/capture-records.json",
+        "artifacts/docs/serial-monitor.log",
+        "artifacts/shots/ScopeSerialDemo_PING_START_20261016_120000.png",
+        "artifacts/waves/ScopeSerialDemo_PING_START_20261016_120000.isf"
+      ],
+      "ai_platform_jobs": [
+        {
+          "method": "instrument.command",
+          "job_id": 1,
+          "result": {
+            "detail": {
+              "response": null
+            },
+            "device_id": 1,
+            "job_id": 1,
+            "kind": "command",
+            "ok": true,
+            "state": "completed"
+          }
+        },
+        {
+          "method": "instrument.command",
+          "job_id": 2,
+          "result": {
+            "detail": {
+              "response": "CH1 Frequency: 1 kHz"
+            },
+            "device_id": 1,
+            "job_id": 2,
+            "kind": "command",
+            "ok": true,
+            "state": "completed"
+          }
+        },
+        {
+          "method": "instrument.capture",
+          "job_id": 3,
+          "result": {
+            "detail": {
+              "bytes": 69,
+              "height": 1,
+              "width": 1
+            },
+            "device_id": 1,
+            "job_id": 3,
+            "kind": "capture",
+            "ok": true,
+            "state": "completed"
+          }
+        }
+      ],
+      "exe": "D:\\windlink\\windlink\\WiParse-R\\dist\\wiparse-1.2.2-ai-workbench-20261025-preview\\bin\\WiParse.exe",
+      "pages": [
+        "serial",
+        "calculator",
+        "instruments",
+        "waveform",
+        "data_analysis",
+        "test_report",
+        "test_tool"
+      ],
+      "version": "1.2.2"
+    },
+    "serial": {
+      "ok": true,
+      "exe": "D:\\windlink\\windlink\\WiParse-R\\dist\\wiparse-1.2.2-ai-workbench-20261025-preview\\bin\\WiParse.exe",
+      "sha256": "dc890c6bc76593ca27bcbeff6539a03ae51a653723347ae2b0f0796aae395062",
+      "health": {
+        "cmd": "health",
+        "data": {
+          "baud": null,
+          "instrument_devices": 0,
+          "listening": "127.0.0.1:50334",
+          "monitoring": false,
+          "port": null,
+          "version": "1.2.2"
+        },
+        "ok": true,
+        "ts": "2026-10-25T18:58:12.349+08:00"
+      },
+      "cycles": [
+        {
+          "cycle": 0,
+          "received": 80,
+          "stop_confirmed": true
+        },
+        {
+          "cycle": 1,
+          "received": 80,
+          "stop_confirmed": true
+        },
+        {
+          "cycle": 2,
+          "received": 80,
+          "stop_confirmed": true
+        }
+      ],
+      "scope": "native EXE serial API regression; AI dialog covered separately by egui/HTTP/TCP tests",
+      "physical_hardware_tested": false,
+      "audit": "D:\\windlink\\windlink\\WiParse-R\\tmp\\serial-ai-runtime-ea9d1e3747c2494fa87af018e126dabd"
+    }
+  },
+  "zip_created": false,
+  "limitations": [
+    "Cloud credentials and physical hardware not used",
+    "AI text service does not receive screenshot pixels",
+    "Local warnings and periodic AI are not hard-real-time protection or formal product verdicts",
+    "Platform tools are an allowlist; no arbitrary API, raw SCPI, serial bytes, erase or flash",
+    "Cancellation cannot undo a command already dispatched to hardware"
+  ],
+  "completion_history": {
+    "cache_entries": 512,
+    "per_entry_content_budget_bytes": 16384,
+    "notification_drain_compatibility_test": "passed",
+    "large_reply_summary_test": "passed"
+  },
+  "demo_png_integrity": "Real image decoder CRC and pixel test passed; production CRC checks retained.",
+  "preview": "dist/wiparse-1.2.2-ai-workbench-20261025-preview",
+  "binary_sha256": {
+    "WiParse-Service.exe": "25de406d7a9582a8518714ef74b62a45bbc4b5211591bc76e9552e0e3f29b5ed",
+    "WiParse.pdb": "8cbbd510ccec68638c834bb140d34f83549e86dfad8199dbac428bea1f99934f",
+    "WiParse-CLI.exe": "e55b220549ae0b9e4aa114b57c1411b28f2f4aaf2b11fbe07b0e95584e5abf42",
+    "WiParse.exe": "dc890c6bc76593ca27bcbeff6539a03ae51a653723347ae2b0f0796aae395062"
+  },
+  "release_profile": {
+    "lto": false,
+    "codegen_units": 16,
+    "debug_symbols": true,
+    "resumed_build": "3m 48s"
+  }
+}

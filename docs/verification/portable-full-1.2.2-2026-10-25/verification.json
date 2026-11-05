@@ -1,0 +1,39 @@
+{
+  "ok": true,
+  "archive": "D:\\windlink\\windlink\\WiParse-R\\dist\\WiParse-1.2.2-Windows-x64-20261025-Full.zip",
+  "sha256": "d3b37db66717710a7befc9f24cb8f5b323110cc05821c8742e0381d81a23161a",
+  "bytes": 135873960,
+  "file_count": 6252,
+  "plugins": 9,
+  "fpga_cases": 20,
+  "extracted_to": "D:\\windlink\\windlink\\WiParse-R\\tmp\\完整包验证 portable 20261025\\WiParse-1.2.2-Windows-x64-20261025-Full",
+  "crc_and_all_file_hashes_verified": true,
+  "runtime_checks": {
+    "service": "passed",
+    "ok": true,
+    "version": "1.2.2",
+    "plugin_discovery": "passed",
+    "audit": "D:\\windlink\\windlink\\WiParse-R\\tmp\\portable-runtime-check-c83d5eb60d414a46be53aef5648d00e0",
+    "gui": "passed",
+    "mcp_offline_setup": "passed",
+    "user_cursor_modified": false,
+    "system_node_available": false,
+    "root": "D:\\windlink\\windlink\\WiParse-R\\tmp\\完整包验证 portable 20261025\\WiParse-1.2.2-Windows-x64-20261025-Full",
+    "cli": "passed"
+  },
+  "mcp_checks": {
+    "ok": true,
+    "mcp_version": "1.2.2",
+    "tool_count": 6,
+    "report_dispatch_checks": 4,
+    "hub_dispatch_checks": 20,
+    "backend": "local mock; no hardware"
+  },
+  "packaged_plugin_checks": {
+    "passed": 13,
+    "failed": 0
+  },
+  "latest_binaries_and_compiled_mcp_match": true,
+  "zip_personal_credentials_included": false,
+  "physical_instruments_tested": false
+}

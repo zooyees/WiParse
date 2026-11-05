@@ -128,9 +128,14 @@ export function compileTrigger(raw, index) {
 export function compileTriggers(block) {
   const items = rawTriggerItems(block);
   const compiled = [];
+  const ids = new Set();
   for (let i = 0; i < items.length; i++) {
     const one = compileTrigger(items[i], i);
-    if (one) compiled.push(one);
+    if (one) {
+      if (ids.has(one.id)) throw new Error(`trigger id 重复: ${one.id}`);
+      ids.add(one.id);
+      compiled.push(one);
+    }
   }
   if (!compiled.length) {
     throw new Error("serial_triggers.items 没有已启用的条件");

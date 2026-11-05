@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "mcp_version": "1.2.2",
+  "tool_count": 6,
+  "report_dispatch_checks": 4,
+  "hub_dispatch_checks": 20,
+  "backend": "local mock; no hardware"
+}

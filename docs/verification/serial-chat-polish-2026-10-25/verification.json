@@ -1,0 +1,52 @@
+{
+  "date": "2026-10-25",
+  "status": "exe_preview_verified",
+  "version": "1.2.2",
+  "full_gui": {
+    "passed": 213,
+    "failed": 0,
+    "ignored": 3
+  },
+  "specialized": {
+    "passed": 20,
+    "included_in_full_gui": true
+  },
+  "exe": "D:\\windlink\\windlink\\WiParse-R\\dist\\wiparse-1.2.2-chat-ui-20261025-preview\\bin\\WiParse.exe",
+  "exe_sha256": "d26e047a2af2d1f994970cb7feaa1075aa5b4bf19bc1a7eb47b87e87c9d9adf7",
+  "source_sha256": {
+    "crates/wiparse-gui/src/app.rs": "dec0140fbbdef5861cd849d24279d65b14a2fc43d3c699ac2e527687d611f3f0",
+    "crates/wiparse-gui/src/serial_tool/ai_chat.rs": "4843bd223a58dc6e9f41e7160a7e8288ad85b0226333861d1ecbbec64aa459a7",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/view.rs": "1fd093d04dd236a385493e33136ffd39543939a20ca71b40cebd3d73659707b4",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/view_tests.rs": "5be6e698558dc93ffd2c84463fc5144793bf61a00dbfd825ea595bfe785e777e",
+    "crates/wiparse-gui/src/test_report.rs": "96c675c46e6a146e56c1f737a57758986e5c59179fad06605ac963a37e825dc5",
+    "crates/wiparse-gui/src/test_report/chat_text.rs": "4bbad03f3e37286d084e0019c7aca86d095d121fbb4d785737d1361a0d1462a5"
+  },
+  "native": {
+    "pages": 7,
+    "demo_device_kinds": 8,
+    "report_artifacts": 5,
+    "completed_ai_jobs": 3,
+    "serial_cycles": [
+      {
+        "cycle": 0,
+        "received": 80,
+        "stop_confirmed": true
+      },
+      {
+        "cycle": 1,
+        "received": 80,
+        "stop_confirmed": true
+      },
+      {
+        "cycle": 2,
+        "received": 80,
+        "stop_confirmed": true
+      }
+    ]
+  },
+  "layout": "Actual egui source-frame render; narrow 452px dark/light and full serial panel",
+  "toolbar": "Global AI is in Settings menu; dedicated serial AI entry retained",
+  "zip_created": false,
+  "physical_hardware_tested": false,
+  "cloud_provider_live_tested": false
+}

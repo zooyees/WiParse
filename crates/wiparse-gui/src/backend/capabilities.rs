@@ -92,6 +92,7 @@ fn method_catalog() -> Vec<Value> {
         json!({"method": "instrument.connect", "params": {"resource": "TCPIP0::...", "kind": "oscilloscope"}, "stateful": true}),
         json!({"method": "instrument.connect_all", "params": {}, "stateful": true}),
         json!({"method": "instrument.disconnect", "params": {"device_id": 1}, "stateful": true}),
+        json!({"method":"instrument.job.get","params":{"job_id":1},"stateful":true}),
         json!({"method": "instrument.command", "params": {"device_id": 1, "command": {"RawQuery": "*IDN?"}}, "stateful": true}),
         json!({"method": "instrument.command", "params": {"device_id": 1, "command": "ProbeStatus"}, "stateful": true}),
         json!({"method": "instrument.command", "params": {"device_id": 1, "command": "ProbeRegs"}, "stateful": true}),
@@ -120,7 +121,7 @@ fn method_catalog() -> Vec<Value> {
         json!({"method":"ui.test_tool.config.export","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
         json!({"method":"ui.test_tool.config.batch","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
         json!({"method":"ui.test_tool.config.archives","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
-        json!({"method":"ui.test_tool.run.control","params":{"plugin":"fpga-firmware-test","action":"pause","run_id":"current-run-id"},"stateful":true}),
+        json!({"method":"ui.test_tool.run.control","params":{"plugin":"hub-workspace-demo","action":"pause","run_id":"current-run-id"},"stateful":true}),
         json!({"method":"ui.test_tool.project.get","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
         json!({"method":"ui.test_tool.project.save","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
         json!({"method":"ui.test_tool.project.validate","params":{"plugin":"hub-workspace-demo"},"stateful":true}),
@@ -138,7 +139,7 @@ fn method_catalog() -> Vec<Value> {
         json!({"method": "instrument.waveform", "params": {"device_id": 1, "channel": 1, "points": 1000}, "stateful": true}),
         json!({"method": "instrument.waveform_source", "params": {"device_id": 1, "dir": "D:/isf", "filename": "wave.isf", "overwrite": false}, "stateful": true}),
         json!({"method": "log.tabs.list", "params": {}, "stateful": true}),
-        json!({"method": "log.lines.get", "params": {"tab_id": 0, "from_row": 0, "limit": 100}, "stateful": true}),
+        json!({"method": "log.lines.get", "params": {"port": "COM3", "from_row": 0, "limit": 100}, "stateful": true}),
         json!({"method": "log.brief", "params": {"since_row": 0}, "stateful": true}),
         json!({"method": "test.start", "params": {"plan": {"id": "qi_pt_smoke", "steps": [{"wait": {"phase": "pt", "timeout_s": 8}}]}}, "stateful": true}),
         json!({"method": "test.status", "params": {}, "stateful": true}),
@@ -196,6 +197,7 @@ pub fn is_stateful(method: &str) -> bool {
             | "instrument.connect"
             | "instrument.connect_all"
             | "instrument.disconnect"
+            | "instrument.job.get"
             | "instrument.command"
             | "instrument.measure"
             | "instrument.capture"

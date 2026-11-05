@@ -1,0 +1,65 @@
+{
+  "status": "exe_preview_verified",
+  "date": "2026-10-25",
+  "host_version": "1.2.2",
+  "plugin_version": "0.5.5",
+  "exe": "D:\\windlink\\windlink\\WiParse-R\\dist\\wiparse-1.2.2-ai-fpga-055-20261025-preview\\bin\\WiParse.exe",
+  "exe_sha256": "4459f5791fca88224ee6b3ad2ca5a8242912c20c97408365e46ed7382c59d7da",
+  "source_sha256": {
+    "crates/wiparse-gui/src/serial_tool/ai_chat/view.rs": "69f8e9a6de9d376fdae3a31fbc53345b3ce5d433fddc5925cd285f1fd4bc1068",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/view_tests.rs": "33ac9d6a31de91a5bcb4cf418bdade6e08496b434975dd93905f01a1eabcc8c3",
+    "crates/wiparse-gui/src/test_report/chat_text.rs": "d7edfea5cf1aaadff27779cafb1e4c5001af60e150925a6224ffca63a6df3b49",
+    "scripts/generate-fpga-hub-demo.mjs": "095e95d745d2c42ad5b40b2a9e8472e8e9b1da5214d1c878f91610847ba4e3f6",
+    "test-tools/plugins/fpga-firmware-test/plugin.json": "33db033deea054cb7a082385cb476b263d6a7508e5a585fd2a35df1237cc3313",
+    "test-tools/plugins/fpga-firmware-test/index.mjs": "2aaf2433d1b5ec73795baa45d7a0b0b480a584d4edb6c35035fd831813f99892",
+    "test-tools/plugins/fpga-firmware-test/generate-schemas.mjs": "0e1700bc0fbf3bbb89192e71bb0463ee5aaa237a663bdd4a8b81f81214102238",
+    "test-tools/plugins/fpga-firmware-test/lib/diagnostics.mjs": "c39fef8e64f393887cfe5722b30f62707db234b917cc5246ca2c911e6abe3ee8",
+    "test-tools/plugins/fpga-firmware-test/lib/log-capture.mjs": "ce70ad627335948eb25560da985b6c7255b1cb4ef3fb6a9a245a45efb1f8eb0e",
+    "test-tools/plugins/fpga-firmware-test/lib/report.mjs": "c4b7bf372616a31ecddbca40af23353872e34f3007d7721e1900804ea1dd9a23",
+    "test-tools/plugins/fpga-firmware-test/lib/rules.mjs": "a7e0dd4ca3942bcb4727500569d2b14c8f2156eb59e0a276e354878bf882cfe1",
+    "test-tools/plugins/fpga-firmware-test/test/review-055.test.mjs": "c1bc8dac3bedb77a40aadd9da9fe726c5924216131916cca9c31f5b942f03fe3",
+    "test-tools/plugins/fpga-firmware-test/test/recipe-seed.test.mjs": "e2f270d5da5d5d4c71e546086e3c4f05a7357b34a4b0d30ef4e6b6007c93a325",
+    "test-tools/plugins/fpga-firmware-test/README.md": "e4d505ab84da068e7a7eaecaa1db6cb6b85c4b76e8f2b78f36da0e43061472b6"
+  },
+  "full_gui": {
+    "passed": 215,
+    "failed": 0,
+    "ignored": 3
+  },
+  "full_plugin": {
+    "passed": 177,
+    "failed": 0
+  },
+  "staged_plugin_hub_and_review": {
+    "passed": 13,
+    "failed": 0
+  },
+  "native": {
+    "pages": 7,
+    "demo_kinds": 8,
+    "report_artifacts": 5,
+    "ai_jobs": 3,
+    "serial_cycles": [
+      {
+        "cycle": 0,
+        "received": 80,
+        "stop_confirmed": true
+      },
+      {
+        "cycle": 1,
+        "received": 80,
+        "stop_confirmed": true
+      },
+      {
+        "cycle": 2,
+        "received": 80,
+        "stop_confirmed": true
+      }
+    ]
+  },
+  "layout": "Actual egui source frames; 13px body/14px title/12px caption, aligned message content, visible composer status",
+  "zip_created": false,
+  "physical_hardware_tested": false,
+  "live_cloud_provider_tested": false,
+  "industrial_approved": false
+}

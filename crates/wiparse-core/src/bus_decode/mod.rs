@@ -1,6 +1,7 @@
 //! Software bus decode from analog scope traces (offline waveform analysis).
 
 mod ddsss;
+mod fields;
 mod digital;
 mod i2c;
 mod i2s;
@@ -12,7 +13,8 @@ mod ufcs;
 mod scp;
 pub use usb_pd::decode_usb_pd;
 pub use ufcs::{decode_ufcs, UfcsConfig};
-pub use scp::{decode_scp, ScpConfig};
+pub use fields::explain_frame;
+pub use scp::{decode_scp, explain_scp, ScpConfig};
 
 pub use ddsss::{
     decode_ddsss, qi_ask_frame, synthesize_ddsss, DdsssConfig, DdsssExtension, DdsssSequence,
@@ -184,9 +186,10 @@ impl BusByteSpan {
 }
 
 /// Hard cap on decoded payload bytes (all bus protocols). Further data is skipped.
-pub const MAX_DECODE_BYTES: usize = 512;
+pub const MAX_DECODE_BYTES: usize = 5000;
 /// Bound payload-free markers too (noise / repeated resets / empty STARTs).
-pub const MAX_DECODE_FRAMES: usize = 2048;
+/// Kept above the byte cap so one-byte frames can actually reach 5000 bytes.
+pub const MAX_DECODE_FRAMES: usize = 8192;
 
 thread_local! { static AUTOMATION_BUDGET: std::cell::Cell<Option<(usize,usize)>> = const { std::cell::Cell::new(None) }; }
 pub(crate) fn decode_byte_limit() -> usize { AUTOMATION_BUDGET.with(|b|b.get().map_or(MAX_DECODE_BYTES,|v|v.0)) }

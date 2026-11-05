@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 
-test('scope report nests captures under the session and opens evidence through portable links', () => {
+test('scope report embeds screenshots under each capture and keeps other portable evidence links', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wiparse-scope-report-'));
   try {
     const reports = path.join(root, 'reports'), docs = path.join(root, 'docs');
@@ -33,9 +33,11 @@ test('scope report nests captures under the session and opens evidence through p
     assert.match(md, /^## 会话 SESSION-/m);
     assert.equal([...md.matchAll(/^### 第 /gm)].length, 2);
     assert.equal([...md.matchAll(/^#### Log 上下文/gm)].length, 2);
-    assert(!md.includes('!['), 'screenshots open by link without filling the report body');
+    assert.equal([...md.matchAll(/^#### 波形截图/gm)].length, 2);
+    assert.equal([...md.matchAll(/^!\[/gm)].length, 2, 'each screenshot appears directly in its capture');
+    assert(!md.includes('| 截图 |'), 'screenshots are not file-link table rows');
     const urls = [...md.matchAll(/\]\(((?:[^()]|\([^()]*\))*)\)/g)].map(m => m[1]);
-    assert.equal(urls.length, 8, 'each capture links waveform, screenshot, record and index');
+    assert.equal(urls.length, 8, 'each capture embeds its screenshot and links waveform, record and index');
     for (const url of urls) assert(fs.existsSync(path.resolve(reports, decodeURIComponent(url))));
   } finally { fs.rmSync(root, {recursive: true, force: true}); }
 });

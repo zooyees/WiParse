@@ -1,0 +1,21 @@
+✔ delivered plugin runs through real Hub/runner with five simulated cases and navigable evidence (24552.6982ms)
+✔ simulated FAIL remains a product failure with two selected and three skipped rows (8378.0218ms)
+✔ generated field labels remain independent across reused primitive and role schemas (6.6457ms)
+✔ status replacement retries transient Windows sharing and preserves old data on persistent failure (28.6109ms)
+✔ selected preflight failure blocks entire plan without silently deselecting the bad case (267.0559ms)
+✔ invalid repository file cannot be silently ignored while valid cases pass (121.405ms)
+✔ unknown selection from host cannot be executed (297.9282ms)
+✔ disabled selection from host cannot be executed (256.1445ms)
+✔ failure stop exposes unexecuted coverage and evidence reasons in offline report (1155.0558ms)
+✔ relative recovery path is based on the test directory rather than process cwd (2923.4412ms)
+✔ malformed base64 is rejected and bad measurement quality/unit have specific reasons (57.4729ms)
+✔ schema generator retains published project and evidence capabilities (917.9233ms)
+✔ measurement capability is checked before acquiring devices or resetting DUT (103.9201ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 34947.9589

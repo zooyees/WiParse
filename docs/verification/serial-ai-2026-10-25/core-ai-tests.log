@@ -1,0 +1,17 @@
+
+running 12 tests
+test ai::tests::ai_cancel_and_deadline_release_worker_capacity ... ok
+test ai::tests::ai_connection_probe_is_short_nonstreaming_and_does_not_mutate_settings ... ok
+test ai::tests::ai_conversation_preserves_roles_in_both_protocols_and_bounds_input ... ok
+test ai::tests::ai_credentials_roundtrip_without_plaintext_config ... ok
+test ai::tests::ai_endpoint_normalization_and_config_migration ... ok
+test ai::tests::ai_errors_never_echo_server_secrets_and_redirects_are_not_followed ... ok
+test ai::tests::ai_opt_in_input_and_concurrency_limits_are_shared ... ok
+test ai::tests::ai_partial_stream_and_responses_preserve_generated_text ... ok
+test ai::tests::ai_provider_requests_match_deepseek_and_qwen_contracts ... ok
+test ai::tests::ai_qwen_stream_ignores_reasoning_and_preserves_unicode_usage ... ok
+test ai::tests::ai_rejects_incomplete_or_oversized_responses ... ok
+test ai::tests::ai_responses_transport_uses_separate_contract ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 249 filtered out; finished in 5.78s
+

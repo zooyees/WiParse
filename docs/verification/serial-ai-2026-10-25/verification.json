@@ -1,0 +1,130 @@
+{
+  "date": "2026-10-25",
+  "version": "1.2.2",
+  "status": "exe_preview_verified",
+  "tests": {
+    "gui": {
+      "passed": 199,
+      "failed": 0,
+      "ignored": 3,
+      "threads": 1,
+      "log": "gui-tests.log"
+    },
+    "core_ai": {
+      "passed": 12,
+      "failed": 0,
+      "log": "core-ai-tests.log"
+    },
+    "serial_ai_specialized": 8,
+    "serial_ai_render_combinations": 12,
+    "fpga_render_combinations": 48,
+    "fpga_record": "../fpga-workspace-chrome-2026-10-25/verification.json"
+  },
+  "source_sha256": {
+    "crates/wiparse-core/src/ai.rs": "35df25c159e071d390f77230eefd582b18e58a3eebc083135b7bca2d27991233",
+    "crates/wiparse-gui/src/app.rs": "cc57ce60a6dcc3dabd653c3c42c5500d09468602bc759a9f9a7d899aceb289e7",
+    "crates/wiparse-gui/src/log_tab.rs": "4c2456eb52647b92d4b1e1ef915310b587497ac8b8ef805df5089527327f1860",
+    "crates/wiparse-gui/src/serial_tool.rs": "3672d9f909ec33aa225331449b946670a8ac3b36bb14b9910a3d23a1a57e999c",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/host.rs": "8c8ad5392ef85555b629ac0a4b60c2193bf83dca7ae12050fa5b6a046dbfe791",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/protocol.rs": "b776d9936ee1c85fbb1c136c87700579d036f7292ebb9101e3ed8978ddfb9f8c",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/tests.rs": "53e369a73987811806b1c9fa6838a606c5ab47937956dfe71a2c287a54070ae2",
+    "crates/wiparse-gui/src/serial_tool/ai_chat.rs": "34324252896a4b30e7a9c28a707908d2360aa2b222a8e5828dd78cfae991b93c"
+  },
+  "limitations": [
+    "No real user cloud credentials used",
+    "No physical serial hardware tested",
+    "Periodic AI sampling is not exhaustive monitoring or a product verdict",
+    "Three existing ignored GUI tests were not run"
+  ],
+  "zip_created": false,
+  "preview": "dist/wiparse-1.2.2-serial-ai-fpga-20261025-preview",
+  "binary_sha256": {
+    "WiParse.pdb": "31890a56f85ea6c0d9763b968b126da2ef2849a1b3ac4ad80cbadab398991091",
+    "WiParse-Service.exe": "6031fd40fdfbd65990b437484bb532019733ef8bad8935a2c2c55149f1347bb5",
+    "WiParse.exe": "956128a3d715bb8d46ea59e4226b4edf829bafdf26856ebbfca1f53cabc5876d",
+    "WiParse-CLI.exe": "bddb5f27e5da5e519fcdf2a1c39883219b6d80ed977d31d257bd1ad68f518e82"
+  },
+  "native_serial": {
+    "ok": true,
+    "exe": "D:\\windlink\\windlink\\WiParse-R\\dist\\wiparse-1.2.2-serial-ai-fpga-20261025-preview\\bin\\WiParse.exe",
+    "sha256": "956128a3d715bb8d46ea59e4226b4edf829bafdf26856ebbfca1f53cabc5876d",
+    "health": {
+      "cmd": "health",
+      "data": {
+        "baud": null,
+        "instrument_devices": 0,
+        "listening": "127.0.0.1:60195",
+        "monitoring": false,
+        "port": null,
+        "version": "1.2.2"
+      },
+      "ok": true,
+      "ts": "2026-10-25T17:10:21.810+08:00"
+    },
+    "cycles": [
+      {
+        "cycle": 0,
+        "received": 80,
+        "stop_confirmed": true
+      },
+      {
+        "cycle": 1,
+        "received": 80,
+        "stop_confirmed": true
+      },
+      {
+        "cycle": 2,
+        "received": 80,
+        "stop_confirmed": true
+      }
+    ],
+    "scope": "native EXE serial API regression; AI dialog covered separately by egui/HTTP/TCP tests",
+    "physical_hardware_tested": false,
+    "audit": "D:\\windlink\\windlink\\WiParse-R\\tmp\\serial-ai-runtime-86978a0b04e14878bb05fa162b4aa512"
+  },
+  "native_ui": {
+    "exe": "D:\\windlink\\windlink\\WiParse-R\\dist\\wiparse-1.2.2-serial-ai-fpga-20261025-preview\\bin\\WiParse.exe",
+    "version": "1.2.2",
+    "pages": [
+      "serial",
+      "calculator",
+      "instruments",
+      "waveform",
+      "data_analysis",
+      "test_report",
+      "test_tool"
+    ],
+    "ok": true,
+    "product_version": "1.2.2",
+    "simulated_devices": [
+      "oscilloscope",
+      "dc_source",
+      "electronic_load",
+      "multimeter",
+      "debug_probe",
+      "usb_bridge",
+      "wiparse_dongle",
+      "generic"
+    ],
+    "root": "D:\\windlink\\windlink\\WiParse-R\\tmp\\ui-release-smoke-97bd817324d34c0da466255132979814",
+    "report_artifacts": [
+      "artifacts/reports/ScopeSerialDemo_summary_20261016_120000.md",
+      "artifacts/docs/capture-records.json",
+      "artifacts/docs/serial-monitor.log",
+      "artifacts/shots/ScopeSerialDemo_PING_START_20261016_120000.png",
+      "artifacts/waves/ScopeSerialDemo_PING_START_20261016_120000.isf"
+    ],
+    "overview": "passed"
+  },
+  "release_build": {
+    "profile": "optimized + debuginfo",
+    "lto": false,
+    "codegen_units": 16,
+    "elapsed": "5m 35s",
+    "packages": [
+      "wiparse-gui",
+      "wiparse-cli",
+      "wiparse-service"
+    ]
+  }
+}

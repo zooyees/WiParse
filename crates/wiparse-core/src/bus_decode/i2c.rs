@@ -5,7 +5,7 @@
 //! Data:  SDA sampled on SCL rising edge (MSB first, 8 bits + ACK).
 
 use super::digital::{EdgeKind, LogicWave};
-use super::{try_push_frame, BusDecodeResult, BusFrame, BusFrameError, MAX_DECODE_BYTES};
+use super::{try_push_frame, BusDecodeResult, BusFrame, BusFrameError};
 use crate::instrument::WaveformTrace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -714,13 +714,13 @@ mod tests {
 
     #[test]
     fn stops_at_512_payload_bytes() {
-        let payload: Vec<u8> = (0..600).map(|i| i as u8).collect();
+        let payload: Vec<u8> = (0..super::super::MAX_DECODE_BYTES + 80).map(|i| i as u8).collect();
         let (scl, sda) = synth_write(0x50, &payload);
         let r = decode_i2c(&scl, &sda, None, &I2cConfig { reg_addr_bits: 8 });
         let nbytes: usize = r.frames.iter().map(|f| f.bytes.len()).sum();
         assert!(r.truncated);
-        assert!(nbytes <= MAX_DECODE_BYTES, "decoded {nbytes} bytes");
-        assert!(nbytes >= MAX_DECODE_BYTES.saturating_sub(2));
+        assert!(nbytes <= super::super::MAX_DECODE_BYTES, "decoded {nbytes} bytes");
+        assert!(nbytes >= super::super::MAX_DECODE_BYTES.saturating_sub(2));
     }
 
     #[test]

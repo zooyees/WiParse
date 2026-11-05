@@ -15,18 +15,30 @@ export function projectRecord(store,value,revision) {
   const record={schema_version:'wiparse.project-config/1',project_id:store.s.project,test_id:path.basename(store.s.testDir),plugin_id:store.s.plugin.id,revision,schema_hash:store.projectDefinition.schema.fingerprint,value:structuredClone(value)};
   return {...record,sha256:sha(canonical(record))};
 }
+function seedDocument(store) {
+  const file=store.s.seedFile;
+  if(!file||!fs.existsSync(file))return null;
+  const parsed=readJson(jail(file,[store.s.dataRoot]),1048576);
+  if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))fail('PROJECT.SEED_INVALID','Seed must be a JSON object');
+  if(parsed.schema_version==='wiparse.project-config/1'&&parsed.value&&typeof parsed.value==='object'&&!Array.isArray(parsed.value))return structuredClone(parsed.value);
+  return structuredClone(parsed);
+}
 export function getProject(store,{required=false}={}) {
   const def=store.projectDefinition;if(!def)return null;
-  let record,saved=fs.existsSync(store.s.projectFile);
+  let record,seedDraft=false,saved=fs.existsSync(store.s.projectFile);
   if(saved){
     record=readJson(jail(store.s.projectFile,store.s.roots),1048576);
     const {sha256,...body}=record;
     if(record.schema_version!=='wiparse.project-config/1'||record.project_id!==store.s.project||record.test_id!==path.basename(store.s.testDir)||record.plugin_id!==store.s.plugin.id||!Number.isSafeInteger(record.revision)||record.revision<1||sha(canonical(body))!==sha256)fail('PROJECT.CONTENT_MISMATCH');
-  }else record={...projectRecord(store,defaults(def.schema.schema,def.schema.documents),0),sha256:''};
+  }else{
+    const seeded=seedDocument(store);
+    seedDraft=Boolean(seeded);
+    record={...projectRecord(store,seeded??defaults(def.schema.schema,def.schema.documents),0),sha256:''};
+  }
   const errors=def.schema.errors(record.value);
   if(record.schema_hash!==def.schema.fingerprint)errors.push({path:'/',message:'PROJECT.SCHEMA_CHANGED'});
   if(required&&(!saved||errors.length))fail(!saved?'PROJECT.REQUIRED':'PROJECT.INVALID','Save valid project settings before preflight',{errors});
-  return {...record,saved,errors};
+  return {...record,saved,errors,...(seedDraft?{seed_draft:true}:{})};
 }
 export function projectSnapshot(store){const record=getProject(store,{required:true});if(!record)return null;const {saved,errors,...snapshot}=record;return snapshot;}
 export function projectMetadata(record){return record?{revision:record.revision,sha256:record.sha256,schema_hash:record.schema_hash}:null;}

@@ -1,0 +1,70 @@
+{
+  "status": "exe_preview_verified",
+  "date": "2026-10-25",
+  "version": "1.2.2",
+  "exe": "D:\\windlink\\windlink\\WiParse-R\\dist\\wiparse-1.2.2-serial-ai-fast-control-20261025-preview\\bin\\WiParse.exe",
+  "exe_sha256": "1099bbfad8b33a2923c0537789ad76f5870df302e118ec3055f81ad7c71bcc45",
+  "source_sha256": {
+    "crates/wiparse-gui/src/serial_tool/ai_chat.rs": "c4554a68a42c831bdc27dd1afd6cdbd0125578a4218a1b1cfb8c648e94d918a0",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/host.rs": "492ebaebeedf3c4562895093adfa1d049387ef21fd21fd6d47c26b38ce0dda4d",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/protocol.rs": "4d6e6f39984c15ec719428390b1ab8f2c536d1c42f9057ac7e6b2baf37ed60d3",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/platform.rs": "bcfaf4bfbb5407dd04f26bb8d51ff3a38a8d3adbe8e4ca88f3fff04cda67fc79",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/alerts.rs": "05df78316d5c00533137ca276ffc6dadd1c6cfeb02b6b65c38d0a84b6e94991d",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/view.rs": "08c24640bd19feb47711b0c69db74906a4f65727fc64fbdc2cd9ad52b115bb61",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/tests.rs": "911a2f263eb961a715a31197e408c6a8c03df7a55aae96c1e993c17b9e658142",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/view_tests.rs": "821de68c8552afd5497177b1ceeb6b854111505c55d12a7d2e2fd8cec64b9644",
+    "crates/wiparse-gui/src/serial_tool/ai_chat/responsiveness_tests.rs": "0a53f10ddb94855707d583a566f037776e2493ec045f6e473f6e17602384fd34"
+  },
+  "full_gui": {
+    "passed": 220,
+    "failed": 0,
+    "ignored": 3
+  },
+  "new_specific": {
+    "passed": 5,
+    "included_in_full_gui": true
+  },
+  "changes": {
+    "monitor_interval_seconds": {
+      "minimum": 1,
+      "maximum": 300,
+      "default": 5
+    },
+    "cloud_policy": "one request or tool chain at a time; new data only; normal schedule from request start; no missed-tick backlog; error backoff preserved",
+    "permission": "visible Allow control checkbox; late grants do not upgrade old requests",
+    "serial_tools": [
+      "serial.monitor.status",
+      "serial.monitor.start",
+      "serial.monitor.stop"
+    ],
+    "serial_start": "wait for actual Opened event; extra-port tab transition bound to host action",
+    "serial_stop": "reception stopped; asynchronous OS port release reported",
+    "immediate_local_protective_stop_added": false
+  },
+  "native": {
+    "pages": 7,
+    "demo_kinds": 8,
+    "report_artifacts": 5,
+    "ai_jobs": 3,
+    "serial_cycles": [
+      {
+        "cycle": 0,
+        "received": 80,
+        "stop_confirmed": true
+      },
+      {
+        "cycle": 1,
+        "received": 80,
+        "stop_confirmed": true
+      },
+      {
+        "cycle": 2,
+        "received": 80,
+        "stop_confirmed": true
+      }
+    ]
+  },
+  "physical_hardware_tested": false,
+  "live_cloud_provider_tested": false,
+  "zip_created": false
+}

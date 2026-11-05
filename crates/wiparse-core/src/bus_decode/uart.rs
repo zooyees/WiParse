@@ -630,12 +630,14 @@ mod tests {
     #[test]
     fn offline_budget_exceeds_display_budget_and_is_restored() {
         use super::super::{decode_bus,decode_bus_offline,BusDecodeSettings,BusKind};
-        let trace=synth_uart_break_then_bytes(13,&vec![0x55;700],115200.0,8);
+        let trace=synth_uart_break_then_bytes(13,&vec![0x55;6_000],115200.0,8);
         let mut s=BusDecodeSettings::default();s.kind=BusKind::Uart;s.channels.uart_signal=Some(0);s.uart.baud=Some(115200.0);
-        let full=decode_bus_offline(&[trace.clone()],&s,1024,4096).unwrap();
-        assert_eq!(full.frames.iter().filter(|f|!f.bytes.is_empty()).count(),700);
+        let full=decode_bus_offline(&[trace.clone()],&s,8192,8192).unwrap();
+        assert_eq!(full.frames.iter().filter(|f|!f.bytes.is_empty()).count(),6_000);
         assert!(!full.truncated);
-        let display=decode_bus(&[trace.clone()],&s);assert!(display.truncated);assert!(display.frames.len()<=513);
+        let display=decode_bus(&[trace.clone()],&s);
+        assert!(display.truncated);
+        assert_eq!(display.frames.iter().filter(|f|!f.bytes.is_empty()).count(), super::super::MAX_DECODE_BYTES);
         assert!(decode_bus_offline(&[trace],&s,usize::MAX,4096).is_err());
     }
 

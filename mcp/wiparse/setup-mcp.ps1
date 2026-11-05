@@ -19,7 +19,7 @@ $McpDir = $PSScriptRoot
 $IndexJs = Join-Path $McpDir "dist\index.js"
 $Parent = Split-Path $McpDir -Parent
 $Root = Split-Path $Parent -Parent
-if (-not (Test-Path (Join-Path $Root "WiParse.exe"))) {
+if (-not (Test-Path (Join-Path $Root "WiParse.exe")) -and -not (Test-Path (Join-Path $Root "bin\WiParse.exe"))) {
     $Root = $McpDir
 }
 
@@ -33,6 +33,9 @@ function ToPosix([string]$Path) {
 }
 
 function Find-Node {
+    # Resolve only at setup time; the shipped package contains no machine paths.
+    $bundled = [IO.Path]::GetFullPath((Join-Path $McpDir '..\..\runtime\node\node.exe'))
+    if (Test-Path -LiteralPath $bundled) { return $bundled }
     $cmd = Get-Command node -ErrorAction SilentlyContinue
     if ($cmd -and $cmd.Source) {
         return $cmd.Source

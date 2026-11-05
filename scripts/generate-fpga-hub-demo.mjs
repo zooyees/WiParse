@@ -28,7 +28,10 @@ const values=Array.from({length:5},(_,index)=>({
 }));
 for(const value of values)fs.writeFileSync(path.join(cases,value.id+'.json'),JSON.stringify(value,null,2)+'\n');
 const migration=execute({context,internal:true,method:'project.migration.preview'});if(!migration.ok||migration.conflicts.length)throw Error('Simulation migration conflicts');execute({context,internal:true,method:'project.migration.commit',params:{plan_sha256:migration.plan_sha256}});
-const server=http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify({ok:true,data:{version:fs.readFileSync(path.join(repo,'Cargo.toml'),'utf8').match(/^version\s*=\s*"([^"]+)"/m)[1]}}));});
+const previewManifest=path.join(repo,fs.existsSync(path.join(repo,'release-manifest.json'))?'release-manifest.json':'preview-manifest.json');
+const hostVersion=fs.existsSync(previewManifest)?JSON.parse(fs.readFileSync(previewManifest,'utf8')).version:fs.readFileSync(path.join(repo,'Cargo.toml'),'utf8').match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+if(typeof hostVersion!=='string'||!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(hostVersion))throw Error('Missing or invalid host version in preview manifest or Cargo.toml');
+const server=http.createServer((req,res)=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify({ok:true,data:{version:hostVersion}}));});
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 function run(args){return new Promise((resolve,reject)=>{const child=spawn(process.execPath,[path.join(repo,'test-tools/runner.mjs'),'--plugin','fpga-firmware-test','--data-root',root,'--url',`http://127.0.0.1:${server.address().port}`,...args],{windowsHide:true});let output='';child.stdout.on('data',b=>output+=b);child.stderr.on('data',b=>output+=b);child.on('error',reject);child.on('close',code=>code===0?resolve(output):reject(Error(output)));});}
 const overlay=path.join(root,'simulation-overlay.json');

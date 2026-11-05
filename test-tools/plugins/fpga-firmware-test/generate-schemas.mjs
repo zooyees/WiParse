@@ -118,10 +118,18 @@ if(!fs.existsSync(dir+'station.json'))fs.writeFileSync(dir+'station.json',JSON.s
 
 
 const manifest=JSON.parse(fs.readFileSync(dir+'plugin.json','utf8'));
-manifest.version='0.5.0';manifest.engines.wiparse='>=1.2.2';
+manifest.version='0.5.5';manifest.engines.wiparse='>=1.2.2';
 manifest.ui.project_config={protocol:'wiparse.project-config/1',schema:'schemas/project.schema.json',ui_schema:'schemas/project.ui.json'};
 manifest.ui.result_details={protocol:'wiparse.result-details/1',schema_version:'wiparse.fpga-result/2'};
 const paramLabels={resume_from:'历史结果（suite-result.json）',execution_mode:'运行模式',simulation_scenario:'模拟结果',config_dir:'配置目录',dut_serial:'产品序列号',board_revision:'板卡版本',fpga_model:'FPGA型号',fixture_id:'治具编号',station_id:'工位编号',operator:'操作员',loop_count:'循环次数',duration_limit_s:'老化时长上限（秒）',stop_on_fail:'失败即停',resume_mode:'恢复模式',ai_global_enable:'启用 AI 辅助'};
 for(const p of manifest.params){if(p.name==='resume_mode')p.options=[{value:'fresh',label:'Fresh run',label_zh:'新建测试'},{value:'failed',label:'Retry failures',label_zh:'重试失败项'},{value:'unfinished',label:'Resume unfinished',label_zh:'继续未完成项'}];if(p.name==='simulation_scenario')p.options=[{value:'pass',label:'Pass fixture',label_zh:'成功场景'},{value:'fail',label:'Failure fixture',label_zh:'失败场景'}];p.label_zh=paramLabels[p.name]||p.name;if(p.name==='execution_mode')p.options=[{value:'hardware',label:'Hardware (adapter required)',label_zh:'真实硬件（需要适配器）'},{value:'simulation',label:'Simulation (no hardware)',label_zh:'模拟演示（不连接仪器）'}];}
+manifest.name='FPGA Verification';manifest.name_zh='FPGA验证';
+manifest.host_adapter='wiparse.fpga-host/1';
+manifest.ui.project_config.seed='{config_dir}/../project.json';
+manifest.ui.project_files={directory:'{config_dir}/../projects',max_cases:500};
+manifest.outputs=[
+ ...[['waves','波形','wave','waves'],['logs','日志','log','logs'],['shots','截图','external','shots']].map(([id,label_zh,view,folder])=>({id,label:id,label_zh,view,dir:'{artifacts_dir}/items',include:[`**/${folder}/**`]})),
+ ...['reports','docs','items'].map(id=>({id,label:id,view:id==='reports'?'report':'external',dir:`{artifacts_dir}/${id}`,include:['**/*']}))
+];
 fs.writeFileSync(dir+'plugin.json',JSON.stringify(manifest,null,2));
 

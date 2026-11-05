@@ -1,0 +1,79 @@
+{
+  "kind": "scope_source_pipeline_exe_preview",
+  "date": "2026-10-24",
+  "version": "1.2.2",
+  "exe_sha256": "6fb4a9aa8751daddf83bfa8bf004500a8346fd080469292990301ac1e9be6c9b",
+  "gui_regression": {
+    "passed": 182,
+    "ignored": 3,
+    "filtered": 1,
+    "failed": 0,
+    "context": "final full GUI regression outside sandbox; Windows DPAPI credentials need user context",
+    "excluded_test": "test_tool::layout_regressions::every_local_plugin_header_stays_above_case_and_parameters",
+    "excluded_issue": "FPGA 180px header collapse reported before this task; baseline attribution remains pending"
+  },
+  "waveform_file_tests": {
+    "passed": 18,
+    "failed": 0
+  },
+  "node_tests": {
+    "passed": 21,
+    "failed": 0
+  },
+  "pipeline_tests": {
+    "passed": 6,
+    "included_in_gui_count": true
+  },
+  "benchmarks": {
+    "profile": "debug; reconstructed old UI work versus prepared event handoff; single samples affected by machine load; not USB speed or release FPS",
+    "results": [
+      {
+        "channels": 4,
+        "points_per_channel": 1000000,
+        "old_ui_work_ms": 2132.743,
+        "new_ui_handoff_ms": 2.716,
+        "sample_buffers_shared": true
+      },
+      {
+        "channels": 4,
+        "points_per_channel": 4000000,
+        "old_ui_work_ms": 2777.898,
+        "new_ui_handoff_ms": 1.142,
+        "sample_buffers_shared": true
+      }
+    ]
+  },
+  "runtime": {
+    "kind": "simulated_source_pipeline_final_exe",
+    "passed": true,
+    "cycles": 10,
+    "version": "1.2.2",
+    "exe_sha256": "6fb4a9aa8751daddf83bfa8bf004500a8346fd080469292990301ac1e9be6c9b",
+    "physical_hardware_test": false,
+    "interactive_save_dialog_test": false,
+    "save_error_recovery": true,
+    "second_instrument_commands": true,
+    "unique_output_files": 10,
+    "ui_invoke_count": 38,
+    "ui_invoke_p95_ms": 46.999999998661224,
+    "ui_invoke_max_ms": 110.00000000058208
+  },
+  "reconnect_runtime": {
+    "passed": true,
+    "version": "1.2.2",
+    "cycles": 10,
+    "kind": "simulated_session_lifecycle",
+    "physical_usb_test": false,
+    "exe_sha256": "6fb4a9aa8751daddf83bfa8bf004500a8346fd080469292990301ac1e9be6c9b"
+  },
+  "physical_hardware_verified": false,
+  "interactive_native_dialog_verified": false,
+  "full_zip_created": false,
+  "source_sha256": {
+    "crates/wiparse-gui/src/instrument_control.rs": "dbc21c11289864f5561c7a828aad2962eba8f369692585935b0e408ac2601124",
+    "crates/wiparse-gui/src/instrument_control/waveform_pipeline.rs": "f5d12010bf1d185c0755cfe2f1cc644aa43f311c305375412fd56707636cc712",
+    "crates/wiparse-gui/src/instrument_control/waveform_pipeline/tests.rs": "ba3f8bb7cfb74fb6b72d07a35b0442e3b0f132696c53edbdec99ee41e36f9015",
+    "crates/wiparse-core/src/waveform_file.rs": "9bef1cccb5c9327850850701187af0fb86d534232dad91293feadc9d439c39ef",
+    "scripts/verify-waveform-source-pipeline.py": "1c390645f4143317ae01c4b8cb73682e562b486f2ff815280d302823b11c468e"
+  }
+}

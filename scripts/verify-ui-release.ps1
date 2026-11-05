@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$Exe, [string]$ExpectedVersion = '1.1.34', [switch]$InstrumentDemo)
+param([Parameter(Mandatory=$true)][string]$Exe, [string]$ExpectedVersion = '1.1.34', [switch]$InstrumentDemo, [switch]$CheckAiPlatformJobs)
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $exePath = (Resolve-Path -LiteralPath $Exe).Path
@@ -67,6 +67,38 @@ try {
         }
     }
 
+    $aiJobs = @()
+    if ($CheckAiPlatformJobs) {
+        if (-not $InstrumentDemo) { throw 'AI platform job verification requires simulated devices' }
+        $scope = @($inventory.data.devices | Where-Object { $_.kind -eq 'oscilloscope' })[0]
+        if (-not $scope) { throw 'Simulated oscilloscope unavailable' }
+        if ($scope.resource -notlike 'DEMO::*') { throw 'Refusing hardware commands outside a DEMO session' }
+        $requests = @(
+            @{method='instrument.command';params=@{device_id=$scope.device_id;command='ScopeRun'}},
+            @{method='instrument.command';params=@{device_id=$scope.device_id;command=@{ScopeMeasure=@{channel=1;meas_type='Frequency'}}}},
+            @{method='instrument.capture';params=@{device_id=$scope.device_id;wait=$true}}
+        )
+        foreach ($request in $requests) {
+            $body = $request | ConvertTo-Json -Depth 10
+            $accepted = Invoke-RestMethod "$base/v1/invoke" -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 10
+            if (-not $accepted.ok -or -not $accepted.data.job_id) { throw "Missing device job: $body" }
+            $jobBody = @{method='instrument.job.get';params=@{job_id=$accepted.data.job_id}} | ConvertTo-Json -Depth 5
+            $deadline = [DateTime]::UtcNow.AddSeconds(20)
+            do {
+                $result = Invoke-RestMethod "$base/v1/invoke" -Method Post -ContentType 'application/json' -Body $jobBody -TimeoutSec 10
+                if ($result.data.state -eq 'completed') { break }
+                Start-Sleep -Milliseconds 50
+            } while ([DateTime]::UtcNow -lt $deadline)
+            if (-not $result.ok -or $result.data.state -ne 'completed' -or -not $result.data.ok) { throw "Device job did not complete: $($result | ConvertTo-Json -Depth 8)" }
+            $again = Invoke-RestMethod "$base/v1/invoke" -Method Post -ContentType 'application/json' -Body $jobBody -TimeoutSec 10
+            if ($again.data.state -ne 'completed' -or $again.data.job_id -ne $result.data.job_id) { throw 'Completed device result was not queryable twice' }
+            $aiJobs += @{method=$request.method;job_id=$result.data.job_id;result=$result.data}
+        }
+        $body = @{method='instrument.job.get';params=@{job_id=9999999}} | ConvertTo-Json -Depth 4
+        $missing = Invoke-RestMethod "$base/v1/invoke" -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 10
+        if ($missing.data.state -eq 'completed') { throw 'Unknown job falsely reported completed' }
+    }
+
     $demoRelative = 'projects/default/tests/ScopeSerialDemo/runs/20261016_120000'
     $demoDestination = Join-Path $auditRoot $demoRelative
     New-Item -ItemType Directory -Force -Path (Split-Path $demoDestination) | Out-Null
@@ -87,7 +119,7 @@ try {
         $artifacts += $file
     }
     if ((Get-Content -LiteralPath (Join-Path $auditRoot 'stderr.log') -Raw -ErrorAction SilentlyContinue) -match 'Configuration load failed') { throw 'Startup configuration was rejected' }
-    @{ ok = $true; version = $health.data.version; product_version = (Get-Item -LiteralPath $exePath).VersionInfo.ProductVersion; pages = $pages; report_artifacts = $artifacts; simulated_devices = $demoDevices; overview = "passed"; exe = $exePath; root = $auditRoot } | ConvertTo-Json -Depth 4
+    @{ ok = $true; version = $health.data.version; product_version = (Get-Item -LiteralPath $exePath).VersionInfo.ProductVersion; pages = $pages; report_artifacts = $artifacts; simulated_devices = $demoDevices; overview = "passed"; ai_platform_jobs = $aiJobs; exe = $exePath; root = $auditRoot } | ConvertTo-Json -Depth 4
 } finally {
     if (-not $testProcess.HasExited) { Stop-Process -Id $testProcess.Id -Force }
 }

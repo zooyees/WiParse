@@ -116,6 +116,7 @@ fn invoke_stateful(bridge: &ApiBridge, method: &str, params: Value) -> InvokeRep
         params,
         reply: tx,
         deadline: Instant::now() + budget,
+        ai_guard: None,
     };
     if bridge.request_tx.try_send(pending).is_err() {
         return err(method, "GUI API bridge busy or closed");

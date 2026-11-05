@@ -1,0 +1,38 @@
+{
+  "ok": true,
+  "exe": "D:\\windlink\\windlink\\WiParse-R\\dist\\wiparse-1.2.2-ai-workbench-20261025-preview\\bin\\WiParse.exe",
+  "sha256": "dc890c6bc76593ca27bcbeff6539a03ae51a653723347ae2b0f0796aae395062",
+  "health": {
+    "cmd": "health",
+    "data": {
+      "baud": null,
+      "instrument_devices": 0,
+      "listening": "127.0.0.1:50334",
+      "monitoring": false,
+      "port": null,
+      "version": "1.2.2"
+    },
+    "ok": true,
+    "ts": "2026-10-25T18:58:12.349+08:00"
+  },
+  "cycles": [
+    {
+      "cycle": 0,
+      "received": 80,
+      "stop_confirmed": true
+    },
+    {
+      "cycle": 1,
+      "received": 80,
+      "stop_confirmed": true
+    },
+    {
+      "cycle": 2,
+      "received": 80,
+      "stop_confirmed": true
+    }
+  ],
+  "scope": "native EXE serial API regression; AI dialog covered separately by egui/HTTP/TCP tests",
+  "physical_hardware_tested": false,
+  "audit": "D:\\windlink\\windlink\\WiParse-R\\tmp\\serial-ai-runtime-ea9d1e3747c2494fa87af018e126dabd"
+}

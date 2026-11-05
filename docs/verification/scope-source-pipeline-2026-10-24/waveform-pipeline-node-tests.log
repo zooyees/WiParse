@@ -1,0 +1,29 @@
+✔ plugins without host_adapter do not receive fpgaAdapter (9.0453ms)
+✔ host_adapter wiparse.fpga-host/1 selects createFpgaHostAdapter (7.2987ms)
+✔ station lease is exclusive, stolen from a dead pid, and released only by the owner (52.8348ms)
+✔ preflight reports a missing resource instead of HOST.ADAPTER_REQUIRED (3.4806ms)
+✔ collectLog base64 matches the cursor span and stays incomplete when stopped (513.0844ms)
+✔ cancelAndConfirm stays unsettled until the instrument job finishes (73.4978ms)
+✔ handoff starts an extra COM while another session is already live (6.5471ms)
+✔ waveformSource forwards measured metrics and does not invent missing ones (16.4034ms)
+✔ storage reports a real free-space number for data_root (2.7385ms)
+✔ project seed is an unsaved draft in the config root and preflight still requires a save (332.3268ms)
+✔ compileTriggers skips disabled and honors unless (6.1405ms)
+✔ contains match and Hub JSON string overlay (0.5992ms)
+✔ rising-edge fires once per inactive→active (0.6414ms)
+✔ level match (rising_edge false) fires every line (0.3155ms)
+✔ first_match: earlier rule wins on the same line (0.4291ms)
+✔ global and sticky regexes do not leak lastIndex across lines (0.5733ms)
+✔ global exclude regex is reset before every line (0.3946ms)
+✔ visual string rules preserve literal punctuation, case and exclusions (0.3749ms)
+✔ duplicate enabled IDs including sanitized collisions are rejected (1.4393ms)
+✔ visual editor manifest retains JSON overlays and the factory recipe (3.3762ms)
+✔ scope report nests captures under the session and opens evidence through portable links (37.8752ms)
+ℹ tests 21
+ℹ suites 0
+ℹ pass 21
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3895.1572

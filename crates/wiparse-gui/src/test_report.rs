@@ -3,6 +3,9 @@
 //! HTML/PDF are intentionally unsupported: proper in-app rendering needs a
 //! browser/PDF engine, which is out of scope for this egui shell.
 
+mod inline_images;
+use inline_images::{local_image, parse_report_md};
+
 use crate::theme::{self as ui_theme, Tokens};
 use crate::waveform_analysis::WaveformAnalysisPanel;
 use egui::text::{LayoutJob, TextFormat};
@@ -98,8 +101,54 @@ enum MdBlock {
     Rule,
 }
 
+fn append_excerpt(out: &mut String, text: &str) {
+    if out.len() >= 2400 {
+        return;
+    }
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out.extend(text.chars().take(2400 - out.len()));
+}
+
+fn preview_excerpt(preview: &PreviewKind) -> String {
+    let mut out = String::new();
+    match preview {
+        PreviewKind::Text(text) => append_excerpt(&mut out, text),
+        PreviewKind::Markdown(doc) => {
+            for block in &doc.blocks {
+                if out.len() >= 2400 {
+                    break;
+                }
+                match block {
+                    MdBlock::Heading { text, .. }
+                    | MdBlock::Paragraph { text }
+                    | MdBlock::Bullet { text, .. }
+                    | MdBlock::Ordered { text, .. }
+                    | MdBlock::Task { text, .. }
+                    | MdBlock::Quote { text } => append_excerpt(&mut out, text),
+                    MdBlock::Code { body, .. } => {
+                        let sample: String = body.chars().take(160).collect();
+                        append_excerpt(&mut out, &sample);
+                    }
+                    MdBlock::Table { rows } => {
+                        for row in rows.iter().take(4) {
+                            let line = row.iter().take(6).cloned().collect::<Vec<_>>().join(" | ");
+                            append_excerpt(&mut out, &line);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
 /// Cached Markdown for untrusted AI text. It never resolves local files or fetches images.
 pub(crate) struct TextMarkdown(MdDoc);
+mod chat_text;
 impl TextMarkdown {
     pub(crate) fn new(source: &str) -> Self {
         Self(parse_md(source))
@@ -324,6 +373,42 @@ impl TestReportPanel {
         tree
     }
 
+    /// Index, verdicts and a short excerpt of the open report. File paths stay local.
+    pub(crate) fn ai_summary(&self) -> serde_json::Value {
+        let tests: Vec<_> = self
+            .index
+            .tests
+            .iter()
+            .take(30)
+            .map(|test| {
+                let latest = test.results.last();
+                serde_json::json!({
+                    "name": if test.name_zh.is_empty() { test.name.as_str() } else { test.name_zh.as_str() },
+                    "id": test.id,
+                    "runs": test.results.len(),
+                    "latest_ok": latest.and_then(|result| result.ok),
+                    "latest_stamp": latest.map(|result| result.stamp.as_str()).unwrap_or(""),
+                })
+            })
+            .collect();
+        let open_file = self
+            .selected
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        serde_json::json!({
+            "project": self.index.name,
+            "project_id": self.project_id,
+            "status": self.status.chars().take(240).collect::<String>(),
+            "test_count": self.index.tests.len(),
+            "tests": tests,
+            "open_file": open_file,
+            "open_title": self.preview_title.chars().take(160).collect::<String>(),
+            "open_excerpt": self.preview.as_ref().map(preview_excerpt).unwrap_or_default(),
+        })
+    }
+
     pub fn api_set_browser_dir(
         &mut self,
         params: &serde_json::Value,
@@ -372,7 +457,7 @@ impl TestReportPanel {
             "test_report",
             full,
             SIDE_W,
-            220.0,
+            ui_theme::SIDEBAR_MIN_W,
             220.0,
             PANEL_GAP,
             tokens,
@@ -1313,7 +1398,7 @@ impl TestReportPanel {
 
         match read_text_capped(&path) {
             Ok(text) => {
-                let doc = std::sync::Arc::new(parse_md(&text));
+                let doc = std::sync::Arc::new(parse_report_md(&text));
                 self.preview = Some(PreviewKind::Markdown(doc));
                 self.status = format!(
                     "{} · {}",
@@ -1954,13 +2039,25 @@ fn read_text_capped(path: &Path) -> Result<String, String> {
     Ok(text)
 }
 
+#[cfg(target_os = "windows")]
+#[link(name = "shell32")]
+extern "system" {
+    fn ShellExecuteW(
+        hwnd: *mut std::ffi::c_void,
+        operation: *const u16,
+        file: *const u16,
+        parameters: *const u16,
+        directory: *const u16,
+        show: i32,
+    ) -> isize;
+}
+
 pub(crate) fn open_path_external(path: &Path) -> bool {
     // Prefer argv-separated launchers (no shell string interpolation).
     #[cfg(target_os = "windows")]
     {
-        // `cmd /C start "" <path>` is vulnerable when path contains shell metacharacters.
-        // Use ShellExecute via `explorer` for dirs, and `cmd /C start` with separate args
-        // only after rejecting control chars.
+        // ShellExecute opens the file with its registered program and does not
+        // create a console. `cmd /C start` flashes a command window.
         let s = path.to_string_lossy();
         if s.contains('\n') || s.contains('\r') || s.contains('\0') {
             return false;
@@ -1968,11 +2065,20 @@ pub(crate) fn open_path_external(path: &Path) -> bool {
         if path.is_dir() {
             Command::new("explorer").arg(path).spawn().is_ok()
         } else {
-            Command::new("cmd")
-                .args(["/C", "start", "", "/B"])
-                .arg(path)
-                .spawn()
-                .is_ok()
+            use std::os::windows::ffi::OsStrExt;
+            let mut wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+            let operation: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+            let code = unsafe {
+                ShellExecuteW(
+                    std::ptr::null_mut(),
+                    operation.as_ptr(),
+                    wide.as_mut_ptr(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    1,
+                )
+            };
+            code > 32
         }
     }
     #[cfg(target_os = "macos")]
@@ -2159,6 +2265,7 @@ fn paint_md_doc(
     ctrl_hint: &str,
 ) {
     ui.spacing_mut().item_spacing.y = 2.0;
+    let mut visible_images = std::collections::HashSet::new();
     let mut table_id = 0u32;
     for (block_id, block) in doc.blocks.iter().enumerate() {
         match block {
@@ -2337,7 +2444,9 @@ fn paint_md_doc(
             }
             MdBlock::Image { alt, src } => {
                 ui.add_space(6.0);
-                paint_md_image(ui, tokens, base_dir, textures, alt, src, open, ctrl_hint);
+                if let Some(path) = paint_md_image(ui, tokens, base_dir, textures, alt, src) {
+                    visible_images.insert(path);
+                }
                 ui.add_space(4.0);
             }
             MdBlock::Table { rows } => {
@@ -2353,6 +2462,10 @@ fn paint_md_doc(
             }
         }
     }
+    // Keep currently visible images; evict older off-screen textures in long runs.
+    let evict: Vec<_> = textures.keys().filter(|path| !visible_images.contains(*path))
+        .take(textures.len().saturating_sub(16)).cloned().collect();
+    for path in evict { textures.remove(&path); }
 }
 
 fn rule_line(ui: &mut egui::Ui, tokens: &Tokens, thickness: f32) {
@@ -2633,6 +2746,7 @@ fn paint_preview_image(
 }
 
 fn load_md_texture(ctx: &egui::Context, path: &Path) -> Option<egui::TextureHandle> {
+    if fs::metadata(path).ok()?.len() > 12 * 1024 * 1024 { return None; }
     let bytes = fs::read(path).ok()?;
     if bytes.len() > 12 * 1024 * 1024 {
         return None;
@@ -2668,25 +2782,36 @@ fn paint_md_image(
     textures: &mut HashMap<PathBuf, Option<egui::TextureHandle>>,
     alt: &str,
     src: &str,
-    open: &mut Option<(PathBuf, ArtifactView, bool)>,
-    ctrl_hint: &str,
-) {
+) -> Option<PathBuf> {
     let Some(path) = resolve_md_asset(base_dir, src) else {
         ui.label(
             RichText::new(format!("[img blocked] {alt}"))
                 .size(ui_theme::FONT_CAPTION)
                 .color(tokens.text_muted),
         );
-        return;
+        return None;
     };
+    let avail_w = ui.available_width().max(40.0);
+    let layout_id = egui::Id::new(("report-image-size", &path));
+    let native_size = textures.get(&path).and_then(|tex| tex.as_ref()).map(|tex| tex.size_vec2())
+        .or_else(|| ui.ctx().data_mut(|data| data.get_temp::<egui::Vec2>(layout_id)))
+        .unwrap_or(egui::vec2(800.0, 500.0));
+    let ratio = ((avail_w - 8.0).max(1.0) / native_size.x).min(1.0);
+    let reserve_h = if matches!(textures.get(&path), Some(None)) { ui_theme::FONT_CAPTION + 4.0 }
+        else { native_size.y * ratio + 8.0 + if alt.is_empty() { 0.0 } else { ui_theme::FONT_CAPTION + 5.0 } };
+    let reserve = egui::vec2(avail_w, reserve_h);
+    if !ui.is_rect_visible(egui::Rect::from_min_size(ui.next_widget_position(), reserve)) {
+        ui.allocate_space(reserve);
+        return None;
+    }
     if !textures.contains_key(&path) {
         let tex = load_md_texture(ui.ctx(), &path);
         textures.insert(path.clone(), tex);
     }
 
-    let avail_w = ui.available_width().max(40.0);
     if let Some(Some(tex)) = textures.get(&path) {
         let size = tex.size_vec2();
+        ui.ctx().data_mut(|data| data.insert_temp(layout_id, size));
         let scale = ((avail_w - 8.0).max(1.0) / size.x).min(1.0);
         let show = egui::vec2(size.x * scale, size.y * scale);
         Frame::NONE
@@ -2694,36 +2819,34 @@ fn paint_md_image(
             .corner_radius(CornerRadius::same(4))
             .inner_margin(Margin::same(4))
             .show(ui, |ui| {
-                let resp = ui.add(
+                ui.add(
                     egui::Image::new(tex)
                         .fit_to_exact_size(show)
-                        .sense(egui::Sense::click()),
+                        .sense(egui::Sense::hover()),
                 );
-                try_follow_md_ref(&resp, &path, open, ctrl_hint);
                 if !alt.is_empty() {
                     ui.add_space(2.0);
-                    let cap = ui.add(
+                    ui.add(
                         egui::Label::new(
                             RichText::new(alt)
                                 .size(ui_theme::FONT_CAPTION)
                                 .color(tokens.text_muted),
                         )
-                        .sense(egui::Sense::click()),
+                        .sense(egui::Sense::hover()),
                     );
-                    try_follow_md_ref(&cap, &path, open, ctrl_hint);
                 }
             });
     } else {
-        let resp = ui.add(
+        ui.add(
             egui::Label::new(
                 RichText::new(format!("[img missing] {alt}"))
                     .size(ui_theme::FONT_CAPTION)
                     .color(tokens.text_muted),
             )
-            .sense(egui::Sense::click()),
+            .sense(egui::Sense::hover()),
         );
-        try_follow_md_ref(&resp, &path, open, ctrl_hint);
     }
+    Some(path)
 }
 
 fn paint_md_table(
@@ -2773,7 +2896,7 @@ fn paint_md_table(
                             ui.vertical(|ui| {
                                 ui.set_width(col_w[ci]);
                                 if let Some(src) =
-                                    file_ref_from_text(cell).filter(|_| !cell.contains("]("))
+                                    file_ref_from_text(cell).filter(|src| !cell.contains("](") && !local_image(src))
                                 {
                                     let resp = ui.add(
                                         egui::Label::new(
@@ -2950,6 +3073,7 @@ fn paint_md_inline(
     let galley = ui.fonts(|f| f.layout_job(job));
     let resp = ui.add(egui::Label::new(galley.clone()).selectable(true));
     for (li, (section, src)) in links.iter().enumerate() {
+        if local_image(src) { continue; }
         for (ri, row) in galley.rows.iter().enumerate() {
             let rect = row
                 .glyphs

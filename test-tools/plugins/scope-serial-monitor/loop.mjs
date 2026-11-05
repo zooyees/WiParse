@@ -592,6 +592,13 @@ function mdFileLink(target) {
   return `[${mdCell(path.basename(String(target)))}](${url})`;
 }
 
+function mdScreenshot(target) {
+  if (!target) return "未生成波形截图";
+  const rel = mdRelPath(summaryMd, String(target));
+  const url = rel.split("/").map(encodeURIComponent).join("/");
+  return `![波形截图](${url})`;
+}
+
 function materializeScreenshot(src, trigger, recStamp) {
   if (!src) return null;
   fs.mkdirSync(shotDir || reportDir, { recursive: true });
@@ -628,9 +635,12 @@ function appendSummaryRecord(rec) {
 | 处理时串口 | monitoring=${mdCell(rec.serialMonitoring)} |
 | 示波器 | ${mdCell(rec.scopeModel)} id=${mdCell(rec.scopeId)} |
 | ISF | ${mdFileLink(rec.isfPath)} |
-| 截图 | ${mdFileLink(rec.screenshot)} |
 | PDF | ${mdFileLink(rec.pdfPath)} |
 ${dataLinks}
+
+#### 波形截图
+
+${mdScreenshot(rec.screenshot)}
 
 #### Log 上下文
 

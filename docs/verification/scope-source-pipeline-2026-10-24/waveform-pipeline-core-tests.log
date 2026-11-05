@@ -1,0 +1,76 @@
+   Compiling wiparse-core v1.2.2 (<workspace>\crates\wiparse-core)
+warning: variable does not need to be mutable
+   --> crates\wiparse-core\src\protocol\decode.rs:891:17
+    |
+891 |             let mut fields = vec![field("pattern", name, "", Some(format!("0x{header:02X}")))];
+    |                 ----^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `scope_screen_point_count`, `tek_screen_point_count`, `keysight_screen_point_count`, `prepare_keysight_screen_waveform`, and `apply_tek_visible_data_window` are never used
+    --> crates\wiparse-core\src\instrument\drivers.rs:1361:8
+     |
+ 882 | impl InstrumentDevice {
+     | --------------------- methods in this implementation
+...
+1361 |     fn scope_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1399 |     fn tek_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^
+...
+1406 |     fn keysight_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1449 |     fn prepare_keysight_screen_waveform(&mut self, channel: u8) -> Result<(), InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2018 |     fn apply_tek_visible_data_window(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `parse_keysight_preamble_points` is never used
+    --> crates\wiparse-core\src\instrument\drivers.rs:3167:4
+     |
+3167 | fn parse_keysight_preamble_points(pre: &str) -> Option<usize> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `open_tcp_uart_from_info` is never used
+   --> crates\wiparse-core\src\serial.rs:624:4
+    |
+624 | fn open_tcp_uart_from_info(info: &PortInfo, baud: u32) -> Result<SerialSession, SerialError> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: linker stdout: 正在创建库 <workspace>\target\debug\deps\wiparse_core-753eb4cf0269426a.lib 和对象 <workspace>\target\debug\deps\wiparse_core-753eb4cf0269426a.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `wiparse-core` (lib test) generated 5 warnings (run `cargo fix --lib -p wiparse-core --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 32.45s
+     Running unittests src\lib.rs (target\debug\deps\wiparse_core-753eb4cf0269426a.exe)
+
+running 18 tests
+test waveform_file::tests::estimate_duty_cycle_rejects_flat_trace ... ok
+test waveform_file::tests::host_metrics_omit_voltage_when_y_unit_is_not_volts ... ok
+test waveform_file::tests::host_metrics_publish_measured_square_wave_and_omit_unmeasured ... ok
+test waveform_file::tests::join_and_load_multi_channel_isf ... ok
+test waveform_file::tests::load_csv_current_channel_unit ... ok
+test waveform_file::tests::instrument_source_path_accepts_wfm001_and_wfm003 ... ok
+test waveform_file::tests::load_downloaded_tek_wfm_samples ... ok
+test waveform_file::tests::load_rigol_style_csv ... ok
+test waveform_file::tests::load_generated_tek_4ch_wfm ... ok
+test waveform_file::tests::load_simple_xy_csv ... ok
+test waveform_file::tests::load_tek_isf_applies_pt_off ... ok
+test waveform_file::tests::load_tek_isf_current_probe_yunit_a ... ok
+test waveform_file::tests::load_tek_isf_ri_bytes ... ok
+test waveform_file::tests::load_wiparse_csv_roundtrip ... ok
+test waveform_file::tests::save_converts_csv_trace_to_isf ... ok
+test waveform_file::tests::spreadsheet_csv_roundtrip ... ok
+test waveform_file::tests::wfm_export_load_roundtrip ... ok
+test waveform_file::tests::load_rigol_wfm_4ch_folder ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 243 filtered out; finished in 1.02s
+

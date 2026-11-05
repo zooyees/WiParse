@@ -501,7 +501,7 @@ impl DataAnalysisPanel {
         let body_h = (full.max.y - body_top).max(1.0);
         let body = egui::Rect::from_min_max(egui::pos2(full.left(), body_top), full.max);
         let side_w = ui_theme::resizable_sidebar_width(ui, "data_analysis", body,
-            SIDE_W, 220.0, 200.0, PANEL_GAP, tokens);
+            SIDE_W, ui_theme::SIDEBAR_MIN_W, 200.0, PANEL_GAP, tokens);
         let plot_w = (full.width() - side_w - PANEL_GAP).max(0.0);
         let side_rect =
             egui::Rect::from_min_size(egui::pos2(full.min.x, body_top), egui::vec2(side_w, body_h));
@@ -2547,6 +2547,20 @@ impl DataAnalysisPanel {
             })).collect::<Vec<_>>(),
             "last_open": self.last_open_path.as_ref().map(|p| p.display().to_string()),
         })
+    }
+
+    /// Series, scales and thresholds. Local paths and raw samples stay on this machine.
+    pub(crate) fn ai_summary(&self) -> Value {
+        let mut summary = self.api_snapshot();
+        if let Some(object) = summary.as_object_mut() {
+            object.remove("browser_dir");
+            object.remove("last_open");
+            object.insert(
+                "status".into(),
+                json!(self.status.chars().take(240).collect::<String>()),
+            );
+        }
+        summary
     }
 }
 

@@ -1,0 +1,24 @@
+✔ hub outputs expose wave log and shot views under item evidence (4.0986ms)
+✔ published editor metadata loads and retains all twenty business configurations (419.5831ms)
+✔ F13 rejects noncanonical waveform units and incompatible reset roles (9.1471ms)
+✔ F15 nested report retains child limits and escapes text without inventing log links (10.907ms)
+✔ report embeds waveform screenshots and retains source file links (8.505ms)
+✔ compileTriggers skips disabled and honors unless (9.3759ms)
+✔ contains match and Hub JSON string overlay (0.6429ms)
+✔ rising-edge fires once per inactive→active (0.6826ms)
+✔ level match (rising_edge false) fires every line (0.3152ms)
+✔ first_match: earlier rule wins on the same line (0.4534ms)
+✔ global and sticky regexes do not leak lastIndex across lines (0.7154ms)
+✔ global exclude regex is reset before every line (0.5597ms)
+✔ visual string rules preserve literal punctuation, case and exclusions (0.5023ms)
+✔ duplicate enabled IDs including sanitized collisions are rejected (1.7867ms)
+✔ visual editor manifest retains JSON overlays and the factory recipe (6.2857ms)
+✔ scope report embeds screenshots under each capture and keeps other portable evidence links (57.2571ms)
+ℹ tests 16
+ℹ suites 0
+ℹ pass 16
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 997.5288

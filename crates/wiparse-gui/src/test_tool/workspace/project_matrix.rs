@@ -264,13 +264,67 @@ impl TestToolPanel {
             self.workspace.api_binding = None;
         }
     }
+    fn send_user_file(&mut self, method: &str, file: std::path::PathBuf) {
+        let extra = file.parent().map(|dir| dir.display().to_string());
+        let added = extra.as_ref().is_some_and(|root| {
+            if self.approved_config_roots.iter().any(|have| have == root) {
+                false
+            } else {
+                self.approved_config_roots.push(root.clone());
+                true
+            }
+        });
+        self.workspace_send(method, json!({"file": file.display().to_string()}));
+        if added {
+            self.approved_config_roots.pop();
+        }
+    }
+    pub(super) fn paint_project_file_bar(&mut self, ui: &mut egui::Ui, lang: Lang) {
+        let files = self.workspace.snapshot["project_files"].clone();
+        if !files.is_object() {
+            return;
+        }
+        let zh = matches!(lang, Lang::Zh);
+        let items = files["items"].as_array().cloned().unwrap_or_default();
+        let active = files["active"].as_str().unwrap_or("").to_owned();
+        let busy = self.workspace.rx.is_some() || self.job.is_some();
+        let dirty = self.workspace.dirty();
+        ui.label(egui::RichText::new(if zh {"测试项目"}else{"Test project"}).small().color(ui.visuals().weak_text_color()));
+        let selected=items.iter().find(|item|item["id"].as_str()==Some(active.as_str()));
+        let label=selected.and_then(|item|item["name"].as_str()).unwrap_or(if active.is_empty(){if zh {"未选择"}else{"None"}}else{&active}).to_owned();
+        ui.horizontal_wrapped(|ui| {
+            let width=(ui.available_width()-76.0).clamp(32.0,220.0);
+            ui.add_enabled_ui(!busy&&!dirty,|ui| {
+                egui::ComboBox::from_id_salt("project_file").width(width).truncate().selected_text(label)
+                    .show_ui(ui,|ui| {
+                        for item in &items {
+                            let id=item["id"].as_str().unwrap_or(""); let name=item["name"].as_str().unwrap_or(id);
+                            if ui.selectable_label(id==active,name).clicked() && id!=active {
+                                self.workspace_send("project.file.activate",json!({"id":id}));
+                            }
+                        }
+                    });
+            });
+            ui.menu_button(if zh {"项目文件"}else{"Files"},|ui| {
+                if ui.add_enabled(!busy&&!dirty,egui::Button::new(if zh {"导入项目配置…"}else{"Import project…"})).clicked() {
+                    ui.close_menu();
+                    if let Some(file)=rfd::FileDialog::new().add_filter("JSON",&["json"]).pick_file() {self.send_user_file("project.file.import",file);}
+                }
+                if ui.add_enabled(!busy&&!dirty&&!active.is_empty(),egui::Button::new(if zh {"导出项目配置…"}else{"Export project…"})).clicked() {
+                    ui.close_menu();
+                    if let Some(file)=rfd::FileDialog::new().add_filter("JSON",&["json"]).save_file() {self.send_user_file("project.file.export",file);}
+                }
+            });
+        });
+    }
     pub(super) fn paint_project_matrix(&mut self, ui: &mut egui::Ui, lang: Lang) {
         let zh = matches!(lang, Lang::Zh);
-        ui.heading(if zh { "测试矩阵" } else { "Test matrix" });
         ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
+            let filter_w = (ui.available_width() * 0.34).clamp(160.0, 280.0);
             ui.add(
                 egui::TextEdit::singleline(&mut self.workspace.query)
-                    .desired_width(220.0)
+                    .desired_width(filter_w)
                     .hint_text(if zh {
                         "筛选名称、ID、标签"
                     } else {
@@ -398,17 +452,8 @@ impl TestToolPanel {
         if stale > 0 {
             ui.colored_label(egui::Color32::YELLOW,if zh{format!("{stale} 项旧结论不代表当前配置；当前待测试，历史保留。")}else{format!("{stale} results do not certify current content. Current items are pending; history is retained.")});
         }
-        ui.collapsing(if zh { "运行来源" } else { "Run provenance" }, |ui| {
-            for key in [
-                "run_id",
-                "updated_at",
-                "preflight_revision",
-                "project_config",
-            ] {
-                ui.add(egui::Label::new(format!("{key}: {}", m[key])).wrap());
-            }
-        });
         ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
             for (mode, cn, en) in [
                 ("all", "选择可见项", "Select visible"),
                 ("clear", "清除选择", "Clear selection"),
@@ -438,14 +483,16 @@ impl TestToolPanel {
                 }
             }
         });
-        let wide = ui.available_width() >= 980.0;
+        let wide = ui.available_width() >= 860.0;
         if wide {
             let h = ui.available_height().max(180.0);
-            let w = (ui.available_width() * 0.58).clamp(560.0, 780.0);
-            let left = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(w - 10.0, h));
+            let gap = 12.0;
+            let table_w = matrix_table_width().min((ui.available_width() - gap - 280.0).max(420.0));
+            let detail_w = (ui.available_width() - gap - table_w).max(280.0);
+            let left = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(table_w, h));
             let right = egui::Rect::from_min_max(
-                egui::pos2(left.right() + 14.0, left.top()),
-                ui.max_rect().max,
+                egui::pos2(left.right() + gap, left.top()),
+                egui::pos2(left.right() + gap + detail_w, left.bottom()),
             );
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(left), |ui| {
                 self.matrix_rows_ui(ui, lang, &rows)
@@ -464,44 +511,83 @@ impl TestToolPanel {
     }
     fn matrix_rows_ui(&mut self, ui: &mut egui::Ui, lang: Lang, rows: &[Value]) {
         let zh = matches!(lang, Lang::Zh);
-        let name_width = (ui.available_width() - 340.0).clamp(200.0, 380.0);
-        ui.horizontal(|ui| {
-            for (label, width) in [
-                (if zh { "选" } else { "✓" }, 18.0),
-                ("#", 25.0),
-                (if zh { "测试名称" } else { "Test name" }, name_width),
-                (if zh { "状态" } else { "Status" }, 85.0),
-                (if zh { "阶段" } else { "Phase" }, 85.0),
-                (if zh { "耗时" } else { "Elapsed" }, 60.0),
-            ] {
-                ui.add_sized([width, 24.0], egui::Label::new(label));
-            }
-        });
+        ui.style_mut().spacing.scroll.floating = false;
+        let scroll_style = ui.spacing().scroll;
+        let bar_w = scroll_style.bar_width
+            + scroll_style.bar_inner_margin
+            + scroll_style.bar_outer_margin
+            + scroll_style.floating_width
+            + 4.0;
+        let height = ui.available_height().max(120.0);
+        let (area, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::hover());
+        let content_w = (area.width() - bar_w).max(1.0);
+        let widths = matrix_column_widths(content_w);
+        let labels = [
+            if zh { "选" } else { "✓" },
+            "#",
+            if zh { "测试名称" } else { "Test name" },
+            if zh { "状态" } else { "Status" },
+            if zh { "阶段" } else { "Phase" },
+            if zh { "耗时" } else { "Elapsed" },
+        ];
+        let header = matrix_cell_rects(area.min.x, area.min.y, 22.0, widths);
+        let weak = ui.visuals().weak_text_color();
+        for (rect, label) in header.iter().zip(labels) {
+            ui.painter().text(
+                egui::pos2(rect.left() + 4.0, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                label,
+                egui::FontId::proportional(ui_theme::FONT_CAPTION),
+                weak,
+            );
+        }
+        let body = egui::Rect::from_min_max(
+            egui::pos2(area.min.x, area.min.y + 22.0),
+            area.max,
+        );
         let active = self.workspace.snapshot["matrix"]["active_item_id"]
             .as_str()
             .and_then(|id| rows.iter().position(|r| r["id"] == id));
-        let mut scroll = egui::ScrollArea::both().id_salt("test_matrix");
-        if ui.input(|i| i.raw_scroll_delta.y != 0.0) && ui.rect_contains_pointer(ui.max_rect()) {
-            self.workspace.follow = false;
-        }
-        if self.workspace.follow {
-            if let Some(i) = active {
-                scroll = scroll.vertical_scroll_offset(i as f32 * 36.0);
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(body), |ui| {
+            ui.set_clip_rect(body);
+            ui.style_mut().spacing.scroll.floating = false;
+            let mut scroll = egui::ScrollArea::vertical()
+                .id_salt("test_matrix")
+                .auto_shrink([false, false]);
+            if ui.input(|i| i.raw_scroll_delta.y != 0.0) && ui.rect_contains_pointer(body) {
+                self.workspace.follow = false;
             }
-        }
-        scroll.show_rows(ui, 36.0, rows.len(), |ui, range| {
-            for i in range {
-                let r = &rows[i];
-                let id = r["id"].as_str().unwrap_or("");
-                ui.push_id(id, |ui| {
-                    ui.horizontal(|ui| {
+            if self.workspace.follow {
+                if let Some(i) = active {
+                    scroll = scroll.vertical_scroll_offset(i as f32 * 30.0);
+                }
+            }
+            scroll.show_rows(ui, 30.0, rows.len(), |ui, range| {
+                ui.set_width(content_w);
+                ui.set_clip_rect(egui::Rect::from_min_max(
+                    body.min,
+                    egui::pos2(body.min.x + content_w, body.max.y),
+                ));
+                for i in range {
+                    let r = &rows[i];
+                    let id = r["id"].as_str().unwrap_or("");
+                    let (row_rect, _) = ui.allocate_exact_size(
+                        egui::vec2(content_w, 30.0),
+                        egui::Sense::hover(),
+                    );
+                    let cells = matrix_cell_rects(row_rect.min.x, row_rect.min.y + 1.0, 28.0, widths);
+                    ui.push_id(id, |ui| {
                         let mut checked = self.workspace.selected.contains(id);
+                        let enabled =
+                            self.job.is_none() && r["draft"] != true && r["enabled"] != false;
                         if ui
-                            .add_enabled(
-                                self.job.is_none() && r["draft"] != true && r["enabled"] != false,
+                            .put(
+                                cells[0],
                                 egui::Checkbox::without_text(&mut checked),
                             )
                             .changed()
+                            && enabled
                         {
                             if checked {
                                 self.workspace.selected.insert(id.into());
@@ -509,49 +595,43 @@ impl TestToolPanel {
                                 self.workspace.selected.remove(id);
                             }
                         }
-                        ui.add_sized([25.0, 28.0], egui::Label::new(format!("{}", i + 1)));
-                        if ui
-                            .add_sized(
-                                [name_width, 28.0],
-                                egui::Button::new(r["name"].as_str().unwrap_or(id))
-                                    .selected(self.workspace.matrix_current == id)
-                                    .truncate(),
-                            )
-                            .clicked()
+                        ui.put(cells[1], egui::Label::new(format!("{}", i + 1)));
+                        if matrix_name_cell(
+                            ui,
+                            cells[2],
+                            r["name"].as_str().unwrap_or(id),
+                            self.workspace.matrix_current == id,
+                        )
+                        .clicked()
                         {
                             self.workspace.matrix_current = id.into();
                             self.workspace.result_details = Value::Null;
                             self.workspace.result_key.clear();
                         }
                         let state = if r["draft"] == true {
-                            if zh {
-                                "未保存"
-                            } else {
-                                "Draft"
-                            }
+                            if zh { "未保存" } else { "Draft" }
                         } else if r["enabled"] == false {
-                            if zh {
-                                "已禁用"
-                            } else {
-                                "Disabled"
-                            }
+                            if zh { "已禁用" } else { "Disabled" }
                         } else {
                             matrix_status_label(r["status"].as_str().unwrap_or("pending"), zh)
                         };
-                        ui.add_sized([85.0, 28.0], egui::Label::new(state));
-                        ui.add_sized(
-                            [85.0, 28.0],
+                        ui.put(cells[3], egui::Label::new(state));
+                        ui.put(
+                            cells[4],
                             egui::Label::new(r["phase"].as_str().unwrap_or("—")),
                         );
-                        ui.label(
-                            r["elapsed_s"]
-                                .as_f64()
-                                .map(|n| format!("{n:.1}s"))
-                                .unwrap_or_else(|| "—".into()),
+                        ui.put(
+                            cells[5],
+                            egui::Label::new(
+                                r["elapsed_s"]
+                                    .as_f64()
+                                    .map(|n| format!("{n:.1}s"))
+                                    .unwrap_or_else(|| "—".into()),
+                            ),
                         );
                     });
-                });
-            }
+                }
+            });
         });
     }
     fn matrix_details_ui(&mut self, ui: &mut egui::Ui, lang: Lang, rows: &[Value]) {
@@ -605,8 +685,83 @@ impl TestToolPanel {
                 for entry in details["evidence"].as_array().into_iter().flatten(){let label=entry["label"].as_str().unwrap_or("");if entry["available"]==true{if ui.link(label).clicked(){if let Some(reference)=entry["reference"].as_str(){self.workspace.result_ref=Some(reference.into());}}}else{ui.colored_label(egui::Color32::YELLOW,format!("{label} · {}",if zh{"证据缺失或路径无效"}else{"Missing evidence or invalid path"}));}}
                 ui.collapsing(if zh{"完整结果"}else{"Full result"},|ui|{ui.add(egui::Label::new(serde_json::to_string_pretty(value).unwrap_or_default()).wrap());});
             }
+            let m = self.workspace.snapshot["matrix"].clone();
+            ui.collapsing(if zh { "运行来源" } else { "Run provenance" }, |ui| {
+                for key in ["run_id", "updated_at", "preflight_revision", "project_config"] {
+                    ui.add(egui::Label::new(format!("{key}: {}", m[key])).wrap());
+                }
+            });
         });
     }
+}
+
+fn matrix_cell_rects(x: f32, y: f32, h: f32, widths: [f32; 6]) -> [egui::Rect; 6] {
+    let gap = 8.0;
+    let mut cursor = x;
+    let mut rects = [egui::Rect::NOTHING; 6];
+    for (i, width) in widths.into_iter().enumerate() {
+        rects[i] = egui::Rect::from_min_size(egui::pos2(cursor, y), egui::vec2(width, h));
+        cursor += width + gap;
+    }
+    rects
+}
+
+fn matrix_name_cell(ui: &mut egui::Ui, rect: egui::Rect, name: &str, selected: bool) -> egui::Response {
+    let resp = ui.interact(rect, ui.id().with("matrix_name"), egui::Sense::click());
+    let visuals = ui.visuals();
+    let fill = if selected {
+        Some(visuals.selection.bg_fill)
+    } else if resp.hovered() {
+        Some(visuals.widgets.hovered.weak_bg_fill)
+    } else {
+        None
+    };
+    if let Some(fill) = fill {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(4), fill);
+    }
+    let color = if selected {
+        visuals.selection.stroke.color
+    } else {
+        visuals.text_color()
+    };
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        name,
+        0.0,
+        egui::text::TextFormat {
+            font_id: egui::FontId::proportional(ui_theme::FONT_BODY),
+            color,
+            ..Default::default()
+        },
+    );
+    job.wrap.max_width = (rect.width() - 10.0).max(8.0);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    job.wrap.overflow_character = Some('…');
+    let galley = ui.fonts(|fonts| fonts.layout_job(job));
+    let pos = egui::pos2(rect.left() + 6.0, rect.center().y - galley.size().y * 0.5);
+    ui.painter().galley(pos, galley, color);
+    resp
+}
+
+fn matrix_table_width() -> f32 {
+    let widths = matrix_column_widths(10_000.0);
+    widths.iter().sum::<f32>() + 8.0 * 5.0 + 22.0
+}
+
+fn matrix_column_widths(available: f32) -> [f32; 6] {
+    let gaps = 8.0 * 5.0;
+    let mut widths = [28.0, 36.0, 280.0, 84.0, 96.0, 64.0];
+    let room = (available - gaps).max(0.0);
+    let sum = widths.iter().sum::<f32>();
+    if sum > room && sum > 0.0 {
+        let scale = room / sum;
+        for width in &mut widths {
+            *width *= scale;
+        }
+    }
+    widths
 }
 
 #[test]

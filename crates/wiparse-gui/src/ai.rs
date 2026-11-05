@@ -30,6 +30,34 @@ struct AiTurn {
     source: String,
     summary: String,
 }
+/// What the open page is for, and the questions that fit it. The snapshot stays
+/// behind the context callback so merely drawing the assistant does not collect it.
+#[derive(Clone)]
+pub(crate) struct PageGuide {
+    pub title: String,
+    pub role: String,
+    pub purpose: String,
+    pub prompts: Vec<String>,
+}
+
+impl PageGuide {
+    pub fn generic(lang: Lang) -> Self {
+        Self {
+            title: text(lang, "WiParse", "WiParse").into(),
+            role: text(
+                lang,
+                "回答工程问题。只依据你附上的摘要，不操作仪器，也不改写测试结论。",
+                "Answer engineering questions from the summary you attach. It does not operate instruments or rewrite verdicts.",
+            )
+            .into(),
+            purpose: "Answer from the attached WiParse page summary. Do not claim a device action or a test verdict.".into(),
+            prompts: vec![
+                text(lang, "根据我附上的页面摘要，指出最值得先核对的一项。", "From the attached page summary, name the first item worth checking.").into(),
+            ],
+        }
+    }
+}
+
 pub(crate) struct AiPanel {
     pub open: bool,
     pub service: AiService,
@@ -39,6 +67,7 @@ pub(crate) struct AiPanel {
     settings: bool,
     prompt: String,
     context: String,
+    purpose: String,
     reply: String,
     status: String,
     pending: Option<AiTask>,
@@ -61,9 +90,10 @@ impl AiPanel {
             draft: config.clone(),
             key_input: String::new(),
             clear_key: false,
-            settings: true,
+            settings: false,
             prompt: String::new(),
             context: String::new(),
+            purpose: "engineering analysis".into(),
             reply: String::new(),
             status: String::new(),
             pending: None,
@@ -180,18 +210,37 @@ impl AiPanel {
             }
         }
     }
+    pub fn open_assistant(&mut self) {
+        self.open = true;
+        self.settings = false;
+    }
+
+    pub fn open_settings(&mut self) {
+        self.open = true;
+        self.settings = true;
+    }
+
     pub fn ui(
         &mut self,
         ctx: &Context,
         lang: Lang,
         cfg: &mut AppConfig,
+        guide: &PageGuide,
         page_context: impl Fn() -> String,
     ) {
         self.poll(ctx);
         let mut open = self.open;
         if open {
             let tokens = ui_theme::tokens_for_preference(cfg.ui.theme == "light");
-            egui::Window::new(text(lang, "AI 设置与助手", "AI settings & assistant"))
+            egui::Window::new(if self.settings {
+                text(lang, "AI 连接设置", "AI connection").to_owned()
+            } else {
+                format!(
+                    "{} · {}",
+                    text(lang, "AI 助手", "AI assistant"),
+                    guide.title
+                )
+            })
                 .id(egui::Id::new("global-ai-window"))
                 .open(&mut open)
                 .default_width(980.0)
@@ -240,7 +289,7 @@ impl AiPanel {
                                 self.result_ui(ui, ctx, lang, &tokens);
                             } else {
                                 self.result_ui(ui, ctx, lang, &tokens);
-                                self.assistant_ui(ui, ctx, lang, &tokens, page_context);
+                                self.assistant_ui(ui, ctx, lang, &tokens, guide, page_context);
                             }
                         });
                 });
@@ -523,20 +572,48 @@ impl AiPanel {
     fn assistant_ui(
         &mut self,
         ui: &mut egui::Ui,
-        ctx: &Context,
+        _ctx: &Context,
         lang: Lang,
         t: &Tokens,
+        guide: &PageGuide,
         page_context: impl Fn() -> String,
     ) {
         ai_card(ui, t, 12, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(text(lang, "当前页面", "Current page"))
+                        .color(t.text_muted),
+                );
+                ui.label(RichText::new(&guide.title).strong());
+            });
+            ui.label(RichText::new(&guide.role).color(t.text_muted));
+            if !guide.prompts.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
+                    for prompt in &guide.prompts {
+                        if ui
+                            .add_enabled(self.pending.is_none(), egui::Button::new(prompt))
+                            .on_hover_text(text(
+                                lang,
+                                "填入这个问题，并附上当前页面摘要。仍需你确认后发送。",
+                                "Fills this question and attaches the current page summary. You still confirm before sending.",
+                            ))
+                            .clicked()
+                        {
+                            self.prompt = prompt.clone();
+                            self.context = page_context().chars().take(32000).collect();
+                        }
+                    }
+                });
+            }
             ai_section_title(
                 ui,
                 t,
-                if self.turns.is_empty(){text(lang, "工程分析助手", "Engineering assistant")}else{text(lang,"继续提问","Continue the conversation")},
+                if self.turns.is_empty(){text(lang, "针对本页提问", "Ask about this page")}else{text(lang,"继续提问","Continue the conversation")},
                 text(
                     lang,
-                    "支持连续追问与 Markdown 回复。由你选择发送页面数据；AI 不直接操作仪器。",
-                    "Follow-up conversations and Markdown replies. Only explicitly selected page data is sent.",
+                    "建议问题会带上本页摘要。AI 只给分析，不操作仪器，也不改测试结论。",
+                    "Suggested questions include this page's summary. The assistant analyzes only; it does not operate instruments or change verdicts.",
                 ),
             );
             let unsaved = self.unsaved();
@@ -640,7 +717,11 @@ impl AiPanel {
                 )
                 .clicked();
             if can_send && (send_clicked || shortcut) {
-                self.send_prompt(self.prompt.clone(), self.context.clone());
+                self.send_prompt(
+                    self.prompt.clone(),
+                    self.context.clone(),
+                    guide.purpose.clone(),
+                );
             }
         });
     }
@@ -708,7 +789,8 @@ impl AiPanel {
                     .clicked()
                 {
                     if let Some((question, context)) = self.failed_prompt.clone() {
-                        self.send_prompt(question, context);
+                        let purpose = self.purpose.clone();
+                        self.send_prompt(question, context, purpose);
                     }
                 }
             }
@@ -830,10 +912,16 @@ impl AiPanel {
     fn unsaved(&self) -> bool {
         self.draft != self.applied || !self.key_input.is_empty() || self.clear_key
     }
-    fn send_prompt(&mut self, question: String, context: String) {
+    fn send_prompt(&mut self, question: String, context: String, purpose: String) {
         if self.pending.is_some() {
             return;
         }
+        let purpose = if purpose.trim().is_empty() {
+            "engineering analysis".to_owned()
+        } else {
+            purpose
+        };
+        self.purpose = purpose.clone();
         let mut history = Vec::new();
         let mut bytes = 0;
         for turn in self.turns.iter().rev().take(10) {
@@ -852,7 +940,7 @@ impl AiPanel {
             .collect();
         let task = self.service.submit_conversation(
             AiRequest {
-                purpose: "engineering analysis".into(),
+                purpose,
                 text: prompt_with_context(&question, &context),
             },
             history,
@@ -1069,7 +1157,8 @@ mod tests {
                                 ..Default::default()
                             },
                             |ctx| {
-                                panel.ui(ctx, Lang::Zh, &mut cfg, || {
+                                let guide = PageGuide::generic(Lang::Zh);
+                                panel.ui(ctx, Lang::Zh, &mut cfg, &guide, || {
                                     panic!("context must not be collected until clicked")
                                 });
                             },
@@ -1223,7 +1312,13 @@ mod tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        panel.assistant_ui(ui, ctx, Lang::Zh, &tokens, String::new)
+                        let guide = PageGuide {
+                            title: "波形".into(),
+                            role: String::new(),
+                            purpose: "engineering analysis".into(),
+                            prompts: Vec::new(),
+                        };
+                        panel.assistant_ui(ui, ctx, Lang::Zh, &tokens, &guide, String::new)
                     });
                 },
             )
@@ -1274,10 +1369,18 @@ mod tests {
         assert_eq!(panel.turns.len(), 1);
         assert!(panel.context.is_empty());
         assert!(!panel.status.contains("prompt_tokens"));
-        panel.send_prompt("这个频率正常吗？".into(), String::new());
+        panel.send_prompt(
+            "这个频率正常吗？".into(),
+            String::new(),
+            "engineering analysis".into(),
+        );
         wait(&mut panel);
         assert_eq!(panel.turns.len(), 2);
-        panel.send_prompt("错误请求".into(), String::new());
+        panel.send_prompt(
+            "错误请求".into(),
+            String::new(),
+            "engineering analysis".into(),
+        );
         wait(&mut panel);
         assert!(panel.status.contains("认证失败"));
         assert_eq!(panel.turns.len(), 2);

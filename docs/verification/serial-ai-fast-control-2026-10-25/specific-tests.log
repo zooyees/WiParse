@@ -1,0 +1,10 @@
+
+running 5 tests
+test serial_tool::ai_chat::responsiveness_tests::one_second_interval_is_valid_and_an_active_watch_can_be_reconfigured ... ok
+test serial_tool::ai_chat::responsiveness_tests::serial_start_tool_waits_for_actual_connection_before_returning_success ... ok
+test serial_tool::ai_chat::responsiveness_tests::serial_stop_result_drives_the_next_instrument_tool_without_a_stale_binding ... ok
+test serial_tool::ai_chat::responsiveness_tests::serial_tools_require_permission_and_reject_other_ports_and_payloads ... ok
+test serial_tool::ai_chat::responsiveness_tests::slow_ai_requests_do_not_overlap_or_queue_missed_ticks ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 218 filtered out; finished in 0.15s
+

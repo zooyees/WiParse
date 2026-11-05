@@ -61,6 +61,116 @@ impl MainTab {
     }
 }
 
+fn page_guide(lang: Lang, tab: MainTab) -> crate::ai::PageGuide {
+    let zh = matches!(lang, Lang::Zh);
+    let (key, role, purpose, prompts): (&str, &str, &str, [&str; 3]) = match tab {
+        MainTab::Serial => (
+            "tool.serial_tool.name",
+            if zh {
+                "根据最近日志解释异常、超时和校验问题。不会打开串口或发送数据。"
+            } else {
+                "Explain exceptions, timeouts and checksum issues in the recent log. It will not open a port or send data."
+            },
+            "Explain the attached serial-tool log. Cite line evidence. Do not claim a port was opened or bytes were sent.",
+            [
+                if zh { "最近日志里有哪些异常，各自可能是什么原因？" } else { "Which exceptions are in the recent log, and what could cause each?" },
+                if zh { "这些内容更像超时、校验错误，还是对端没有应答？" } else { "Does this look like a timeout, a checksum error, or no reply?" },
+                if zh { "下一步应在串口页核对哪些设置？" } else { "Which serial-page settings should be checked next?" },
+            ],
+        ),
+        MainTab::Waveform => (
+            "tool.waveform_analysis.name",
+            if zh {
+                "依据已计算的测量值和最多 20 帧解码摘要判断波形。不会上传原始采样。"
+            } else {
+                "Judge the waveform from cached measurements and at most 20 decoded frames. Raw samples are not uploaded."
+            },
+            "Interpret the attached waveform measurements and decoded-frame summaries. Do not invent raw samples that were not included.",
+            [
+                if zh { "根据测量值，这路波形有什么异常？" } else { "From the measurements, what looks abnormal on this waveform?" },
+                if zh { "已解码的帧里，哪些字段值得怀疑？" } else { "Which fields in the decoded frames look suspicious?" },
+                if zh { "两支光标之间应重点看哪些指标？" } else { "Which measurements matter between the two cursors?" },
+            ],
+        ),
+        MainTab::TestReport => (
+            "tool.test_report.name",
+            if zh {
+                "汇总当前项目的运行结果，并阅读正在打开的报告摘录。不会改写结论。"
+            } else {
+                "Summarize this project's runs and the excerpt of the open report. It will not rewrite a verdict."
+            },
+            "Summarize the attached test-report index and open excerpt. Do not invent verdicts for runs that are not listed.",
+            [
+                if zh { "当前项目里，最近哪些测试没有通过？" } else { "Which recent tests in this project did not pass?" },
+                if zh { "这些失败有没有共同的线索？" } else { "Do these failures share a clue?" },
+                if zh { "打开的这份报告里，哪些结论还需要重测？" } else { "Which conclusions in the open report still need a retest?" },
+            ],
+        ),
+        MainTab::Instruments => (
+            "tool.instrument_control.name",
+            if zh {
+                "根据已连接会话的状态和最近日志说明下一步。不会下发仪器命令。"
+            } else {
+                "Explain the next step from connected-session status and the recent log. It will not send an instrument command."
+            },
+            "Explain the attached instrument-session status. Do not claim a command was sent or a measurement was taken.",
+            [
+                if zh { "按当前会话状态，下一步应该先确认什么？" } else { "Given the current sessions, what should be confirmed first?" },
+                if zh { "这个报错通常对应连接问题还是设置问题？" } else { "Does this error usually mean a connection problem or a setup problem?" },
+                if zh { "开始采集前还应核对哪些条件？" } else { "What should be checked before acquisition starts?" },
+            ],
+        ),
+        MainTab::DataAnalysis => (
+            "tool.data_analysis.name",
+            if zh {
+                "看曲线的点数、单位、比例和阈值是否合理。不会上传原始采样或文件路径。"
+            } else {
+                "Check whether series length, units, scale and thresholds make sense. Raw samples and file paths stay local."
+            },
+            "Interpret the attached data-analysis series, scales and thresholds. Do not invent sample values.",
+            [
+                if zh { "这些曲线的尺度和点数是否合理？" } else { "Do the scale and point counts of these series look reasonable?" },
+                if zh { "当前阈值会不会漏报或误报？" } else { "Could the current thresholds miss events or raise false alarms?" },
+                if zh { "应如何核对单位和数据来源？" } else { "How should the units and data source be checked?" },
+            ],
+        ),
+        MainTab::TestTool => (
+            "tool.test_tool.name",
+            if zh {
+                "结合当前插件、测试项目、选择和矩阵统计说明优先检查什么。不会启动测试或改结论。"
+            } else {
+                "Use the current plugin, project, selection and matrix counts to say what to check first. It will not start a test or change a verdict."
+            },
+            "Explain the attached test-project status, selection and matrix counts. Do not start a run or change a verdict.",
+            [
+                if zh { "按当前项目和矩阵统计，应优先检查什么？" } else { "From this project and the matrix counts, what should be checked first?" },
+                if zh { "失败项可能和哪些配置或仪器状态有关？" } else { "Which configuration or instrument state could relate to the failures?" },
+                if zh { "预检之前还应确认哪些条件？" } else { "What else should be confirmed before preflight?" },
+            ],
+        ),
+        MainTab::Calculator => (
+            "tool.calculator.name",
+            if zh {
+                "核对页面上的输入、单位和已算出的结果。不会把计算当成实测。"
+            } else {
+                "Check the inputs, units and results already on the page. A calculation is not a measurement."
+            },
+            "Check the attached calculator inputs and results against the named formulas. State units and assumptions. Do not claim a measurement was taken.",
+            [
+                if zh { "这些输入和结果的单位、适用条件对吗？" } else { "Are the units and assumptions of these inputs and results correct?" },
+                if zh { "帮我核对谐振、滤波或 RC 的公式是否用对了。" } else { "Check whether the resonance, filter or RC formula was applied correctly." },
+                if zh { "这个 CRC 或进制换算结果有没有可疑之处？" } else { "Does this CRC or radix conversion look suspicious?" },
+            ],
+        ),
+    };
+    crate::ai::PageGuide {
+        title: tr(lang, key),
+        role: role.into(),
+        purpose: purpose.into(),
+        prompts: prompts.into_iter().map(str::to_owned).collect(),
+    }
+}
+
 fn initial_tab(
     show_serial: bool,
     show_instruments: bool,
@@ -382,7 +492,7 @@ impl WiParseApp {
         menu_separator(ui, t, ROOT_W);
 
         if menu_action_row(ui, t, "AI", ROOT_W).clicked() {
-            self.ai.open = true;
+            self.ai.open_assistant();
             self.close_settings();
         }
         let about_l = tr(self.lang, "menu.about");
@@ -1014,6 +1124,11 @@ impl eframe::App for WiParseApp {
         self.serial.set_live_view_visible(serial_visible);
         self.serial
             .drain_events_with_bus(live_filters, Some(&self.api));
+        ctx.data_mut(|data| {
+            data.insert_temp(egui::Id::new("wiparse-ai-platform-bridge"),self.api.clone());
+            data.insert_temp(egui::Id::new("wiparse-ai-project-root"),self.test_tool.data_root_path());
+        });
+        self.serial.tick_ai(ctx, self.lang, self.test_tool.current_project_id(), &self.cfg.ai, self.test_tool.running_plugin_id().is_some());
         // Data Analysis serial-live: pull new live lines after serial drain.
         if self.data_analysis.wants_live_serial() {
             let dropped = self.serial.live_dropped();
@@ -1161,6 +1276,11 @@ impl eframe::App for WiParseApp {
                                         self.show_test_report,
                                         tr(self.lang, "tool.test_report.name"),
                                     ),
+                                    (
+                                        MainTab::Calculator,
+                                        self.show_calculator,
+                                        tr(self.lang, "tool.calculator.name"),
+                                    ),
                             ] {
                                     if visible
                                         && ui.selectable_label(self.active == tab, label).clicked()
@@ -1196,26 +1316,13 @@ impl eframe::App for WiParseApp {
                             self.show_test_report,
                             &tr(self.lang, "tool.test_report.name"),
                         );
-                    }
-                    if self.show_calculator {
-                        ui.menu_button(
-                            if self.lang == Lang::Zh {
-                                "工具"
-                            } else {
-                                "Tools"
-                            },
-                            |ui| {
-                                if ui
-                                    .selectable_label(
-                                        self.active == MainTab::Calculator,
-                                        tr(self.lang, "tool.calculator.name"),
-                                    )
-                                    .clicked()
-                                {
-                                self.active = MainTab::Calculator;
-                                ui.close_menu();
-                            }
-                            },
+                        main_tab(
+                            ui,
+                            &t,
+                            &mut self.active,
+                            MainTab::Calculator,
+                            self.show_calculator,
+                            &tr(self.lang, "tool.calculator.name"),
                         );
                     }
 
@@ -1278,13 +1385,23 @@ impl eframe::App for WiParseApp {
         let ai_active = self.active;
         let ai_waveform = &self.waveform;
         let ai_report = &self.test_report;
+        if self.serial.ai_alert_ui(ctx,self.lang) {self.active=MainTab::Serial; self.show_serial=true;}
+        if self.serial.take_ai_settings_request() { self.ai.open_settings(); }
         let ai_serial = &self.serial;
-        self.ai.ui(ctx, self.lang, &mut self.cfg, || {
+        let ai_instruments = &self.instruments;
+        let ai_data = &self.data_analysis;
+        let ai_tool = &self.test_tool;
+        let ai_calculator = &self.calculator;
+        let guide = page_guide(self.lang, ai_active);
+        self.ai.ui(ctx, self.lang, &mut self.cfg, &guide, || {
             let data = match ai_active {
                 MainTab::Waveform => ai_waveform.ai_summary(),
-                MainTab::TestReport => ai_report.api_snapshot(),
+                MainTab::TestReport => ai_report.ai_summary(),
                 MainTab::Serial => ai_serial.ai_summary(),
-                _ => serde_json::json!({"page": ai_active.as_id()}),
+                MainTab::Instruments => ai_instruments.ai_summary(),
+                MainTab::DataAnalysis => ai_data.ai_summary(),
+                MainTab::TestTool => ai_tool.ai_summary(),
+                MainTab::Calculator => ai_calculator.ai_summary(),
             };
             format!(
                 "WiParse {} · {}\n{}",
@@ -1416,7 +1533,7 @@ impl eframe::App for WiParseApp {
             }
         }
         if ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::new("hub.open_ai_settings"))).unwrap_or(false) {
-            self.ai.open = true;
+            self.ai.open_settings();
         }
     }
 

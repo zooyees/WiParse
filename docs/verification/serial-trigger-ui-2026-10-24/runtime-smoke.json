@@ -1,0 +1,31 @@
+﻿{
+    "exe_sha256":  "383cacdd0e4fe746998649193c91ee59bba751225abcfff4618e011c17f81e39",
+    "version":  "1.2.2",
+    "passed":  true,
+    "hardware_test":  false,
+    "runner_started":  false,
+    "kind":  "serial_trigger_exe_smoke",
+    "plugin_version":  "0.7.0",
+    "invalid_draft_gates":  [
+                                {
+                                    "error":  "Add and enable at least one trigger rule.",
+                                    "name":  "empty",
+                                    "passed":  true
+                                },
+                                {
+                                    "error":  "T1 : enter match text and a valid match mode.",
+                                    "name":  "blank_pattern",
+                                    "passed":  true
+                                },
+                                {
+                                    "error":  "Enabled rules have duplicate IDs. Change the ID in Advanced options.",
+                                    "name":  "duplicate_slug",
+                                    "passed":  true
+                                },
+                                {
+                                    "error":  "Cannot read triggers. Open Configuration recovery to inspect the original value.",
+                                    "name":  "malformed",
+                                    "passed":  true
+                                }
+                            ]
+}

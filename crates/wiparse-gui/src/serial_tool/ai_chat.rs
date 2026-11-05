@@ -1,0 +1,404 @@
+//! Serial-specific conversation and bounded monitoring over the shared AI service.
+mod alerts;
+mod host;
+mod platform;
+mod protocol;
+mod view;
+const MIN_INTERVAL_SECONDS: u64 = 1;
+const MAX_INTERVAL_SECONDS: u64 = 300;
+use super::*;
+use protocol::Action;
+use serde::Serialize;
+use wiparse_core::ai::{AiConfig, AiMessage, AiRequest, AiTask};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct Binding {
+    project: String,
+    source_id: u64,
+    device: Option<String>,
+    selected_device: Option<String>,
+    baud: u32,
+    capture_epoch: u64,
+    live: bool,
+}
+
+#[derive(Clone, Serialize)]
+struct Snapshot {
+    #[serde(flatten)]
+    binding: Binding,
+    source_title: String,
+    status: String,
+    reception_requested: bool,
+    connection_confirmed: bool,
+    absolute_lines: usize,
+    selected_bytes: usize,
+    automation_locked: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Analyse,
+    Monitor,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DataScope {
+    Recent,
+    Selection,
+    None,
+}
+
+struct Entry {
+    automatic: bool,
+    error: bool,
+    time: String,
+    role: &'static str,
+    text: String,
+    markdown: crate::test_report::TextMarkdown,
+}
+
+struct Pending {
+    task: AiTask,
+    binding: Binding,
+    question: String,
+    automatic: bool,
+    history_before: usize,
+    automation_granted: bool,
+}
+
+#[derive(Default, Clone, Serialize)]
+struct WindowStats {
+    received_lines: usize,
+    error_keyword_lines: usize,
+    warning_keyword_lines: usize,
+    alert_examples: std::collections::VecDeque<String>,
+}
+
+struct Watch {
+    binding: Binding,
+    goal: String,
+    interval: Duration,
+    next: Instant,
+    cursor: usize,
+    failures: u8,
+    ai_paused: bool,
+    stats: WindowStats,
+    last_request: Instant,
+    alert_waiting: bool,
+}
+
+pub(super) struct SerialAiChat {
+    pub open: bool,
+    panel_width: f32,
+    project: String,
+    config: Option<AiConfig>,
+    prompt: String,
+    scope: DataScope,
+    mode: Mode,
+    watch_goal: String,
+    reports: usize,
+    rules: alerts::Rules,
+    alert_count: usize,
+    alert_last: HashMap<String, Instant>,
+    notice: Option<(String, Instant)>,
+    conversation_source: Option<(u64, Option<String>)>,
+    allow_automation: bool,
+    interval_seconds: u64,
+    entries: Vec<Entry>,
+    history: Vec<AiMessage>,
+    pending: Option<Pending>,
+    watch: Option<Watch>,
+    tool: Option<platform::ToolPending>,
+    tool_round: usize,
+    tool_results: Vec<serde_json::Value>,
+    status: String,
+    status_error: bool,
+    retry: Option<String>,
+    awaiting_connection: Option<(String, Instant)>,
+}
+
+impl Default for SerialAiChat {
+    fn default() -> Self {
+        Self {
+            open: false,
+            panel_width: 420.0,
+            project: String::new(),
+            config: None,
+            prompt: String::new(),
+            scope: DataScope::Recent,
+            mode: Mode::Analyse,
+            watch_goal: String::new(),
+            reports: 0,
+            rules: Default::default(),
+            alert_count: 0,
+            alert_last: HashMap::new(),
+            notice: None,
+            conversation_source: None,
+            allow_automation: false,
+            interval_seconds: 5,
+            entries: Vec::new(),
+            history: Vec::new(),
+            pending: None,
+            watch: None,
+            tool: None,
+            tool_round: 0,
+            tool_results: Vec::new(),
+            status: String::new(),
+            status_error: false,
+            retry: None,
+            awaiting_connection: None,
+        }
+    }
+}
+
+enum UiAction {
+    Send(String),
+    ToggleWatch,
+    ResumeAi,
+    Cancel,
+    Clear,
+    Settings,
+    Close,
+}
+
+fn label(lang: Lang, zh: &'static str, en: &'static str) -> &'static str {
+    if lang == Lang::Zh {
+        zh
+    } else {
+        en
+    }
+}
+
+fn bounded(text: &str, max_bytes: usize) -> String {
+    let mut end = text.len().min(max_bytes);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_owned()
+}
+
+impl SerialAiChat {
+    pub(super) fn monitoring_active(&self) -> bool {
+        self.watch.is_some()
+    }
+
+    fn entry(&mut self, role: &'static str, text: impl Into<String>) {
+        let text = bounded(&text.into(), 24 * 1024);
+        let markdown = crate::test_report::TextMarkdown::new(&text);
+        self.entries.push(Entry {
+            automatic: false,
+            error: false,
+            time: Local::now().format("%H:%M:%S").to_string(),
+            role,
+            text,
+            markdown,
+        });
+        if self.entries.len() > 40 {
+            self.entries.drain(..self.entries.len() - 40);
+        }
+    }
+
+    fn note(&mut self, text: impl Into<String>, error: bool) {
+        self.status = text.into();
+        self.status_error = error;
+        if self.entries.last().is_some_and(|entry| {
+            entry.role == "host" && entry.text == self.status && entry.error == error
+        }) {
+            return;
+        }
+        self.entry("host", self.status.clone());
+        if let Some(entry) = self.entries.last_mut() {
+            entry.error = error;
+        }
+        if self.pending.is_none() {
+            self.history.push(AiMessage::User(format!(
+                "Verified host result: {}",
+                self.status
+            )));
+        }
+        if self.history.len() > 12 {
+            self.history.drain(..self.history.len() - 12);
+        }
+    }
+
+    fn cancel(&mut self) {
+        if platform::cancel(&mut self.tool) {
+            self.allow_automation = false;
+        }
+        if let Some(pending) = self.pending.take() {
+            pending.task.cancel();
+            if !pending.automatic {
+                self.history.truncate(pending.history_before);
+            }
+        }
+    }
+
+    pub(super) fn close(&mut self) {
+        self.cancel();
+        self.watch = None;
+        self.awaiting_connection = None;
+        self.allow_automation = false;
+        self.open = false;
+    }
+
+    fn set_context(&mut self, project: String, config: &AiConfig) {
+        let project_changed = !self.project.is_empty() && self.project != project;
+        let config_changed = self.config.as_ref().is_some_and(|old| old != config);
+        if project_changed || config_changed {
+            self.cancel();
+            if project_changed {
+                self.watch = None;
+            } else if let Some(watch) = &mut self.watch {
+                watch.ai_paused = true;
+            }
+            self.awaiting_connection = None;
+            if project_changed {
+                self.entries.clear();
+                self.history.clear();
+                self.allow_automation = false;
+                self.conversation_source = None;
+            }
+            self.note(
+                if project_changed {
+                    "工程已切换，AI监控已停止 / Project changed; AI monitoring stopped"
+                } else {
+                    "AI配置已更改，AI分析已暂停，本地监控继续 / AI settings changed; AI analysis paused; local monitoring continues"
+                },
+                false,
+            );
+        }
+        self.project = project;
+        self.config = Some(config.clone());
+    }
+
+    fn submit(
+        &mut self,
+        ctx: &egui::Context,
+        state: &Snapshot,
+        data: serde_json::Value,
+        question: String,
+        automatic: bool,
+    ) -> Result<(), String> {
+        if self.pending.is_some() || self.tool.is_some() {
+            return Err("AI.BUSY: 请等待当前回复 / Wait for the current reply".into());
+        }
+        if question.trim().is_empty() || question.len() > 16 * 1024 {
+            return Err("请输入问题（最多16 KiB）/ Enter a question (maximum 16 KiB)".into());
+        }
+        let service =
+            crate::ai::service(ctx).ok_or("请先配置全局AI / Configure global AI first")?;
+        if self.history.len() > 10 {
+            self.history.drain(..self.history.len() - 10);
+        }
+        let task = service.submit_conversation(AiRequest {
+            purpose: format!("{}\n{}",protocol::contract(self.allow_automation && !state.automation_locked),platform::catalog()),
+            text: serde_json::to_string(&json!({"user_request":question,"source":state,"ai_monitoring":self.watch.is_some(),"observation":data})).map_err(|e|e.to_string())?,
+        }, if automatic {Vec::new()} else {self.history.clone()}).map_err(|error| error.to_string())?;
+        let history_before = self.history.len();
+        if !automatic {
+            self.history.push(AiMessage::User(bounded(&question, 8000)));
+        }
+        if !automatic {
+            self.entry("user", question.clone());
+        }
+        self.pending = Some(Pending {
+            task,
+            binding: state.binding.clone(),
+            question,
+            automatic,
+            history_before,
+            automation_granted: self.allow_automation && !state.automation_locked,
+        });
+        self.status = "正在分析 / Analysing…".into();
+        self.status_error = false;
+        self.retry = None;
+        ctx.request_repaint_after(Duration::from_millis(100));
+        Ok(())
+    }
+
+    pub(super) fn observe(&mut self, source: u64, lines: &[String]) {
+        self.observe_rules(source, lines);
+        let Some(watch) = self
+            .watch
+            .as_mut()
+            .filter(|watch| watch.binding.source_id == source)
+        else {
+            return;
+        };
+        watch.stats.received_lines = watch.stats.received_lines.saturating_add(lines.len());
+        for line in lines {
+            let sample = bounded(line, 600);
+            let lower = sample.to_ascii_lowercase();
+            let error = [
+                "error",
+                "fail",
+                "fault",
+                "panic",
+                "exception",
+                "timeout",
+                "错误",
+                "异常",
+                "故障",
+            ]
+            .iter()
+            .any(|word| lower.contains(word));
+            if error {
+                watch.stats.error_keyword_lines += 1;
+                if watch.stats.alert_examples.len() == 12 {
+                    watch.stats.alert_examples.pop_front();
+                }
+                watch.stats.alert_examples.push_back(sample);
+            } else if lower.contains("warn") || lower.contains("警告") {
+                watch.stats.warning_keyword_lines += 1;
+            }
+        }
+    }
+
+    pub(super) fn split(
+        &mut self,
+        ui: &mut egui::Ui,
+        full: egui::Rect,
+        t: &Tokens,
+    ) -> (egui::Rect, Option<egui::Rect>) {
+        if !self.open {
+            return (full, None);
+        }
+        let gap = 12.0;
+        let max = (full.width() - 300.0 - gap)
+            .max(160.0)
+            .min(full.width() * 0.55);
+        let width = self.panel_width.clamp(280.0, 720.0).min(max).max(1.0);
+        let right =
+            egui::Rect::from_min_max(egui::pos2(full.right() - width, full.top()), full.max);
+        let main = egui::Rect::from_min_max(
+            full.min,
+            egui::pos2((right.left() - gap).max(full.left()), full.bottom()),
+        );
+        let drag = egui::Rect::from_min_max(
+            egui::pos2(main.right() + 2.0, full.top()),
+            egui::pos2(right.left() - 2.0, full.bottom()),
+        );
+        let response = ui
+            .interact(drag, ui.id().with("serial-ai-resize"), egui::Sense::drag())
+            .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+        if response.dragged() {
+            self.panel_width = (width - ui.input(|i| i.pointer.delta().x)).clamp(280.0, 720.0);
+            ui.ctx().request_repaint();
+        }
+        if response.hovered() || response.dragged() {
+            ui.painter()
+                .vline(drag.center().x, drag.y_range(), Stroke::new(1.0, t.accent));
+        }
+        (main, Some(right))
+    }
+}
+
+#[cfg(test)]
+mod platform_tests;
+#[cfg(test)]
+mod tests;
+#[cfg(test)]
+mod view_tests;
+
+#[cfg(test)]
+mod responsiveness_tests;

@@ -387,9 +387,8 @@ pub struct LogTabPage {
     /// Lines indexed so far (file tab index build progress).
     pub index_progress: usize,
     backend: TabBackend,
-    split_enabled: bool,
-    pane_count: usize,
-    same_page: bool,
+    ai_visible: bool,
+    ai_toggle_requested: bool,
     case_sensitive: bool,
     panes: Vec<PaneState>,
     selected_pane: usize,
@@ -440,9 +439,8 @@ impl LogTabPage {
             loading: false,
             index_progress: 0,
             backend: TabBackend::Live(LiveLogStore::new()),
-            split_enabled: false,
-            pane_count: 2,
-            same_page: false,
+            ai_visible: false,
+            ai_toggle_requested: false,
             case_sensitive: false,
             panes: Vec::new(),
             selected_pane: 0,
@@ -667,6 +665,7 @@ impl LogTabPage {
     }
 
     pub fn clear_display(&mut self) {
+        self.view_id = NEXT_LOG_VIEW_ID.fetch_add(1, Ordering::Relaxed);
         if let TabBackend::Live(s) = &mut self.backend {
             s.clear();
         }
@@ -730,7 +729,7 @@ impl LogTabPage {
             return;
         }
         let case_sensitive = self.case_sensitive;
-        let split = self.split_enabled;
+        let split = false;
         let TabBackend::Live(live) = &self.backend else {
             return;
         };
@@ -846,6 +845,16 @@ impl LogTabPage {
         (start..end)
             .filter_map(|i| self.backend.line_at(i).map(|s| s.to_string()))
             .collect()
+    }
+
+    pub(crate) fn ai_view_id(&self) -> u64 { self.view_id }
+    pub(crate) fn set_ai_visible(&mut self, visible: bool) { self.ai_visible = visible; }
+    pub(crate) fn take_ai_toggle(&mut self) -> bool { std::mem::take(&mut self.ai_toggle_requested) }
+    pub(crate) fn ai_selection(&self) -> String {
+        self.panes.first().map(|pane| {
+            let text = if pane.search_selection.last_selected_text.is_empty() { &pane.last_selected_text } else { &pane.search_selection.last_selected_text };
+            text.chars().take(8000).collect()
+        }).unwrap_or_default()
     }
 
     pub fn recent_lines(&self, limit: usize) -> Vec<String> {
@@ -1003,7 +1012,7 @@ impl LogTabPage {
 
     fn rebuild_pane_matches(&mut self, pane_idx: usize) {
         let case_sensitive = self.case_sensitive;
-        let split = self.split_enabled;
+        let split = false;
         let filter = self
             .panes
             .get(pane_idx)
@@ -1378,39 +1387,9 @@ impl LogTabPage {
             ui.separator();
         }
 
-        let was_split = self.split_enabled;
-        ui.checkbox(
-            &mut self.split_enabled,
-            RichText::new(tr(lang, "log.split_enable")).size(12.5),
-        );
-        if self.split_enabled != was_split {
-            if self.split_enabled {
-                self.ensure_panes(self.pane_count.max(2));
-            } else {
-                self.same_page = false;
-                self.ensure_panes(1);
-            }
+        if ui.selectable_label(self.ai_visible, if lang == Lang::Zh { "AI 窗口" } else { "AI window" }).clicked() {
+            self.ai_toggle_requested = true;
         }
-
-        ui.add_enabled_ui(self.split_enabled, |ui| {
-            ui.label(
-                RichText::new(format!("{}:", tr(lang, "log.split_count")))
-                    .size(12.5)
-                    .color(t.text_muted),
-            );
-            let mut count = self.pane_count as i32;
-            if ui
-                .add_sized([34.0, 24.0], egui::DragValue::new(&mut count).range(1..=16))
-                .changed()
-            {
-                self.pane_count = count as usize;
-                self.ensure_panes(self.pane_count);
-            }
-            ui.checkbox(
-                &mut self.same_page,
-                RichText::new(tr(lang, "log.same_page")).size(12.5),
-            );
-        });
 
         ui.separator();
         if ui
@@ -1475,11 +1454,7 @@ impl LogTabPage {
     }
 
     fn toolbar_row_find(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
-        let n_filters = if self.split_enabled {
-            self.pane_count
-        } else {
-            1
-        };
+        let n_filters = 1;
         self.ensure_panes(n_filters);
 
         let mut apply_idx = None;
@@ -1492,22 +1467,10 @@ impl LogTabPage {
         let focus_target = self.selected_pane.min(n_filters.saturating_sub(1));
 
         for i in 0..n_filters {
-            if self.split_enabled {
-                ui.label(
-                    RichText::new(tr_fmt(lang, "log.pane_filter", i + 1))
-                        .size(12.5)
-                        .color(t.text_muted),
-                );
-            } else {
-                ui.label(
-                    RichText::new(tr(lang, "log.find"))
-                        .size(12.5)
-                        .color(t.text_muted),
-                );
-            }
+            ui.label(RichText::new(tr(lang, "log.find")).size(12.5).color(t.text_muted));
             {
                 let pane = &mut self.panes[i];
-                let filter_width = if self.split_enabled { 140.0 } else { 200.0 };
+                let filter_width = 200.0;
                 let edit = ui.add_sized(
                     [filter_width, 24.0],
                     egui::TextEdit::singleline(&mut pane.filter_draft)
@@ -1971,37 +1934,7 @@ impl LogTabPage {
                 self.edit_body(ui, lang, t);
                 return;
             }
-            if self.split_enabled && self.same_page {
-                let n = self.pane_count;
-                ui.columns(n, |cols| {
-                    for (i, col) in cols.iter_mut().enumerate() {
-                        col.label(
-                            RichText::new(tr_fmt(lang, "log.pane_tab", i + 1))
-                                .size(12.0)
-                                .color(t.text_muted),
-                        );
-                        self.show_pane(col, i, lang, t);
-                    }
-                });
-            } else if self.split_enabled {
-                ui.horizontal(|ui| {
-                    for i in 0..self.pane_count {
-                        if ui
-                            .selectable_label(
-                                self.selected_pane == i,
-                                tr_fmt(lang, "log.pane_tab", i + 1),
-                            )
-                            .clicked()
-                        {
-                            self.selected_pane = i;
-                        }
-                    }
-                });
-                let idx = self.selected_pane.min(self.pane_count.saturating_sub(1));
-                self.show_pane(ui, idx, lang, t);
-            } else {
-                self.show_pane(ui, 0, lang, t);
-            }
+            self.show_pane(ui, 0, lang, t);
         });
     }
 

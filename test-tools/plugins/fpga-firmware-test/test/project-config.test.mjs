@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import {hash} from '../lib/common.mjs';
 import {canonical,checkedProject,validateProjectValue,resolveProjectCase} from '../lib/project-config.mjs';
 function fixture(){
- const legacy=JSON.parse(fs.readFileSync(new URL('../../../../recipes/fpga-firmware-test/cases/fpga_01_pll_clock.json',import.meta.url)));
+ const legacy=JSON.parse(fs.readFileSync(new URL('fixtures/legacy-demo-cases.json',import.meta.url)))[0];
  const project={schema_version:'wiparse.project-config/1',project_id:'project-a',test_id:'FpgaFirmwareTest',plugin_id:'fpga-firmware-test',revision:1,schema_hash:'a'.repeat(64),value:{schema_version:'wiparse.fpga-project/1',name:'工程A',description:'',dut:legacy.dut,instruments:legacy.instruments}};
  const item=structuredClone(legacy);delete item.dut;delete item.instruments;item.schema_version='wiparse.fpga-test-case/2';item.log_capture.resource_role='log';
  return {item,project:seal(project)};

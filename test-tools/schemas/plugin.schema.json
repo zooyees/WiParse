@@ -16,6 +16,9 @@
       "minLength": 1,
       "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
     },
+    "host_adapter": {
+      "type": "string"
+    },
     "name": {
       "type": "string",
       "minLength": 1
@@ -116,6 +119,13 @@
           },
           "help": {
             "type": "string"
+          },
+          "help_zh": {
+            "type": "string"
+          },
+          "widget": {
+            "type": "string",
+            "description": "Optional presentation hint. json + line_triggers uses the visual text-rule editor; the serialized parameter type is unchanged."
           },
           "hidden": {
             "type": "boolean"
@@ -304,6 +314,23 @@
                 "hidden",
                 "read_only"
               ]
+            }
+          }
+        },
+        "project_config": {
+          "type": "object",
+          "properties": {
+            "protocol": {
+              "type": "string"
+            },
+            "schema": {
+              "type": "string"
+            },
+            "ui_schema": {
+              "type": "string"
+            },
+            "seed": {
+              "type": "string"
             }
           }
         },

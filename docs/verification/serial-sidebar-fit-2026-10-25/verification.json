@@ -1,0 +1,58 @@
+{
+  "status": "exe_preview_verified",
+  "date": "2026-10-25",
+  "exe": "D:\\windlink\\windlink\\WiParse-R\\dist\\wiparse-1.2.2-serial-sidebar-20261025-preview\\bin\\WiParse.exe",
+  "sha256": "2a6b468340642852946a01dfaf00652c6c170f7f2adbf4890e874ab2d49e3e83",
+  "serial_regression": {
+    "passed": 31,
+    "failed": 0
+  },
+  "layout_scenarios": {
+    "full_sidebar_widths": [
+      200,
+      240,
+      320
+    ],
+    "languages": [
+      "zh",
+      "en"
+    ],
+    "themes": [
+      "dark",
+      "light"
+    ],
+    "total": 12,
+    "action_pair_widths": [
+      120,
+      150,
+      174,
+      220,
+      320
+    ]
+  },
+  "native_pages": 7,
+  "native_serial_cycles": [
+    {
+      "cycle": 0,
+      "received": 80,
+      "stop_confirmed": true
+    },
+    {
+      "cycle": 1,
+      "received": 80,
+      "stop_confirmed": true
+    },
+    {
+      "cycle": 2,
+      "received": 80,
+      "stop_confirmed": true
+    }
+  ],
+  "source_sha256": {
+    "crates/wiparse-gui/src/serial_tool.rs": "c71cead258fbb525ecc0f3f1767a2165e7927a8458f6447f379082a05cb41972",
+    "crates/wiparse-gui/src/serial_tool/sidebar.rs": "ce0c0eb535a0e080dd788fd14da449a8f43661c416a8c580f4d3e249a5cd08ee",
+    "crates/wiparse-gui/src/serial_tool/sidebar/tests.rs": "6d6a9114307d517525eac1b0702203a79c80419820b43c8bec6c4e4e230db713"
+  },
+  "zip_created": false,
+  "physical_hardware_tested": false
+}

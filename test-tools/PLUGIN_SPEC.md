@@ -39,7 +39,7 @@ Testing Hub **不知道** ASK、示波器、ISF、某条正则。它只做：
 4. 读 `paths.status_file` 的 JSON：只用 `step` / `hint` / `cycle` / `elapsed_s`
 5. 把插件回写的 `suggested_params` 填进未改过的表单字段
 
-VISA、串口、波形格式全部在 **插件**（`plugin.json` / `station.json` / 插件 JS）。不要给 Hub 加 `plugin.id` 分支或 `SerialTriggerEditor`。
+VISA、串口、波形格式全部在 **插件**（`plugin.json` / `station.json` / 插件 JS）。不要给 Hub 加 `plugin.id` 分支或只服务某一插件的专用编辑器。通用文本规则控件由 `params[].widget` 显式声明，不识别插件 ID、ASK、仪器型号或抓取动作。
 
 宿主路径（数据根 / Node / CLI）在 Hub **左侧文件夹区**，不进插件 `params[]`。
 
@@ -191,6 +191,10 @@ export default async function run(ctx) { /* use ctx.stamp / ctx.layout */ }
 | `text` | 高度封顶的多行文本 | 字符串 |
 
 本轮 **没有** `type:list`。复杂列表用 `json`。
+
+`json` 参数可选声明 `widget: "line_triggers"`，显示通用文本规则列表及所选规则详情：包含字符串/正则、启用、顺序、大小写、排除和高级选项。数据仍使用原 JSON 数组（也可为带 `items` 的对象），CLI/API/overlay 格式不变；旧宿主忽略该提示时仍可用 JSON 编辑。该控件不执行抓取，也不在宿主用另一种正则引擎模拟执行；正则编译仍由插件预检负责。绘制不改写值，编辑保留未知扩展字段。新增规则默认 `contains`、忽略大小写；现有缺省 `type` 仍按执行端的 `regex` 处理。规则 ID 必须在清洗后唯一，避免共用触发锁存状态。
+
+`help_zh` 可选，用于中文界面的参数提示；缺省回退 `help`。
 
 `device` 的 `fills` 字段：`device_id`、`resource`、`kind`、`model`、`manufacturer`、`serial`（可用 `identity.model`）。
 

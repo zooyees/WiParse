@@ -1,0 +1,91 @@
+{
+  "scope": [
+    "test_tool.rs",
+    "workspace.rs",
+    "workspace/project_matrix.rs",
+    "workspace/chrome.rs",
+    "workspace/chrome/tests.rs"
+  ],
+  "source_sha256": {
+    "crates/wiparse-gui/src/test_tool/workspace/chrome/tests.rs": "6889a26651eab06f2e028ed8283b63020e2130f63666afd05046e76d872a83ae",
+    "crates/wiparse-gui/src/test_tool/workspace/chrome.rs": "612fd026abc0a6ab3ab4b63dff340800ca117256c0e98f77ebce7b0f19512b4b",
+    "crates/wiparse-gui/src/test_tool/workspace/project_matrix.rs": "97c8f42071c21115972f7b99480ed4d7cebcf99d7f6fec07fa16d992bda35df5",
+    "crates/wiparse-gui/src/test_tool.rs": "4b5c42f9b36f3db1c33faa7bfa04448824a8adc7789fc2b96553ef7121d31def",
+    "crates/wiparse-gui/src/test_tool/workspace.rs": "4134a179dbdd58e37768a4743a36ff07f517104ad2cdbf47281b5cdf1100a5e0"
+  },
+  "packaging_owner": "软件工程",
+  "limitations": [
+    "Two pre-existing ignored tests were not executed",
+    "Final integrated EXE and native pointer acceptance belong to the coordinated release step"
+  ],
+  "performance": {
+    "note": "Host source-frame benchmark, not release UI FPS or hardware throughput",
+    "profile": "debug",
+    "cached_500_p50_ms": 6.19,
+    "cached_500_p95_ms": 8.24
+  },
+  "release_build_performed": false,
+  "source_frame_directory": "tmp/fpga-chrome-ui-audit",
+  "header_180_regression": {
+    "test": "test_tool::layout_regressions::every_local_plugin_header_stays_above_case_and_parameters",
+    "previously_failed": true,
+    "passed": true
+  },
+  "visual_pngs": [
+    "fpga-chrome-20-zh-dark-1440",
+    "fpga-chrome-20-zh-light-1440",
+    "fpga-chrome-20-en-light-1100",
+    "fpga-chrome-20-zh-dark-1920",
+    "fpga-chrome-20-zh-dark-640",
+    "fpga-chrome-500-zh-dark-1440"
+  ],
+  "hardware_test_performed": false,
+  "fpga_matrix": {
+    "widths": [
+      640,
+      1100,
+      1440,
+      1920
+    ],
+    "themes": [
+      "dark",
+      "light"
+    ],
+    "combinations": 48,
+    "schema": "actual fpga-test-case.schema.json and UI schema",
+    "unchanged_paint_preserves_configuration": true,
+    "counts": [
+      5,
+      20,
+      500
+    ],
+    "languages": [
+      "zh",
+      "en"
+    ],
+    "repository_files_modified": false,
+    "independent_pointer_targets": true,
+    "row_pitch_matches_virtual_scroll": true,
+    "cases": "actual 20 factory configurations; repeat unique IDs for 500-item fixture",
+    "source_frames": 24
+  },
+  "regression": {
+    "excluded": 0,
+    "ignored": 2,
+    "log": "test-tool-regression.log",
+    "temp_directory": "tmp/fpga-chrome-test-temp",
+    "passed": 26,
+    "failed": 0,
+    "command": "cargo test -p wiparse-gui test_tool:: -- --nocapture"
+  },
+  "date": "2026-10-25",
+  "changes": [
+    "Unified plugin heading and navigation; refresh/log clearing in More menu",
+    "Responsive project and execution groups; project name shown once; file import/export in project menu",
+    "Configuration lifecycle actions in sidebar menu; current configuration Save/Validate/Discard next to editor title",
+    "Aligned search/status/order controls; selection and batch operations in menu",
+    "Full-width fixed-height two-line cards; independent execution checkbox and editing target; tooltip keeps full details",
+    "Preserved configuration APIs, revision checks, run/preflight/pause/resume/stop and virtualized repository count"
+  ],
+  "kind": "fpga_workspace_chrome_source_validation"
+}

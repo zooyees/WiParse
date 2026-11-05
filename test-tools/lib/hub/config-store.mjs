@@ -8,6 +8,16 @@ import {atomicWrite,appendSync,flushDir,jail,id,sha,canonical,readJson,fail,page
 import {loadSchema,loadUi,defaults} from './schema.mjs';
 
 const alive = pid => { try { process.kill(pid,0); return true; } catch (e) { return e.code !== 'ESRCH'; } };
+function fpgaDraftGap(error) {
+  const path = typeof error?.path === 'string' ? error.path : '/';
+  const keyword = error?.keyword;
+  // Empty firmware hash and an unfinished first rule. AJV also reports every
+  // other oneOf branch; those messages are not a reason to refuse the save.
+  if (keyword === 'oneOf' || keyword === 'anyOf') return true;
+  if (path === '/firmware/sha256' && (keyword === 'pattern' || keyword === 'minLength')) return true;
+  if (path === '/verdict/rules' || path.startsWith('/verdict/rules/')) return true;
+  return false;
+}
 export class ConfigStore {
   constructor(space, {fault = null} = {}) {
     this.s=space; this.fault=fault;
@@ -79,7 +89,7 @@ export class ConfigStore {
     value=structuredClone(value || defaults(this.schema.schema,this.schema.documents));
     Object.assign(value,{id:configId,editor_revision:0,updated_at:new Date().toISOString()});
     if (!value.name) value.name=configId;
-    return {config_id:configId,value,revision:0,sha256:'',errors:this.schema.errors(value),draft:true};
+    return {config_id:configId,value,revision:0,sha256:'',errors:this.blockingErrors(value),draft:true};
   }
   checkPathFields(value,schema=this.schema.schema) {
     if (!schema || !value) return;
@@ -94,9 +104,19 @@ export class ConfigStore {
     for(const key of ['allOf','oneOf','anyOf'])for(const branch of schema[key]||[])this.checkPathFields(value,branch);
     for(const key of ['then','else'])if(schema[key])this.checkPathFields(value,schema[key]);
   }
+  blockingErrors(value) {
+    const errors=this.schema.errors(value);
+    if (this.s.plugin.id!=='fpga-firmware-test') return errors;
+    return errors.filter(error=>!fpgaDraftGap(error));
+  }
   validate(values,projectConfig=undefined) {
+    const draftGaps=[];
     for (const value of values) {
-      const errors=this.schema.errors(value); if (errors.length) fail('SCHEMA.VALIDATION_FAILED','Configuration is invalid',{errors});
+      const errors=this.schema.errors(value);
+      const blocking=this.s.plugin.id==='fpga-firmware-test'?errors.filter(error=>!fpgaDraftGap(error)):errors;
+      if (blocking.length) fail('SCHEMA.VALIDATION_FAILED','Configuration is invalid',{errors:blocking});
+      // Empty firmware hash and an unfinished rule can be stored. Preflight still rejects them.
+      if (errors.length!==blocking.length) draftGaps.push(...errors.filter(fpgaDraftGap));
       this.checkPathFields(value);
     }
     if (!values.length) return [];
@@ -106,7 +126,7 @@ export class ConfigStore {
     let result; try { result=JSON.parse(child.stdout); } catch { fail('SCHEMA.VALIDATION_FAILED','Plugin configure crashed, timed out or returned invalid data'); }
     if (child.error || child.status !== 0 || result.ok !== true) fail('SCHEMA.VALIDATION_FAILED','Plugin configure rejected configuration',{errors:result.errors || []});
     this.normalized=result.normalized_values||[];
-    return result.warnings || [];
+    return [...draftGaps, ...(result.warnings || [])];
   }
   runLocks() {
     const lock=path.join(this.s.editorRoot,'run-binding.json'); if (!fs.existsSync(lock)) return null;
