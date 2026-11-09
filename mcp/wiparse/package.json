@@ -10,7 +10,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js",
-    "test": "node test/smoke.mjs"
+    "test": "node --test test/*.test.mjs && node test/smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

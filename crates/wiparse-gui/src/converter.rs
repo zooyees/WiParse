@@ -546,10 +546,25 @@ impl ConverterPanel {
             "expression_result": self.expression_result,
             "byte_input": self.byte_input,
             "byte_result": self.byte_result,
+            "byte_direction": match self.byte_direction { ByteDirection::TextToBytes => "text_to_bytes", ByteDirection::BytesToText => "bytes_to_text" },
+            "byte_base": match self.byte_base { ByteBase::Decimal => "decimal", ByteBase::Hex => "hex" },
+            "angle_mode": match self.angle_mode { AngleMode::Radians => "radians", AngleMode::Degrees => "degrees" },
+            "byte_error": self.byte_error,
+            "radix_error": self.radix_error,
+            "expression_error": self.expression_error,
         })
     }
 
     pub(crate) fn api_set(&mut self, fields: &serde_json::Value) {
+        if let Some(v) = fields.get("byte_direction").and_then(|x| x.as_str()) {
+            match v { "text_to_bytes" => self.byte_direction=ByteDirection::TextToBytes, "bytes_to_text" => self.byte_direction=ByteDirection::BytesToText, _ => {} }
+        }
+        if let Some(v) = fields.get("byte_base").and_then(|x| x.as_str()) {
+            match v { "decimal" => self.byte_base=ByteBase::Decimal, "hex" => self.byte_base=ByteBase::Hex, _ => {} }
+        }
+        if let Some(v) = fields.get("angle_mode").and_then(|x| x.as_str()) {
+            match v { "radians" => self.angle_mode=AngleMode::Radians, "degrees" => self.angle_mode=AngleMode::Degrees, _ => {} }
+        }
         if let Some(v) = fields.get("radix_input").and_then(|x| x.as_str()) {
             self.radix_input = v.to_string();
         }
@@ -896,6 +911,19 @@ fn text<'a>(lang: Lang, zh: &'a str, en: &'a str) -> &'a str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn api_conversion_exposes_modes_results_and_errors() {
+        let mut panel=super::ConverterPanel::new();
+        panel.api_set(&serde_json::json!({"tab":"radix","radix_input":"255","source_base":10,"target_base":16}));
+        assert_eq!(panel.api_get()["radix_result"],"FF");
+        panel.api_set(&serde_json::json!({"tab":"scientific","expression":"sin(90)","angle_mode":"degrees"}));
+        assert_eq!(panel.api_get()["expression_result"],"1");
+        panel.api_set(&serde_json::json!({"tab":"ascii","byte_input":"你好","byte_direction":"text_to_bytes","byte_base":"hex"}));
+        assert_eq!(panel.api_get()["byte_result"],"E4 BD A0 E5 A5 BD");
+        panel.api_set(&serde_json::json!({"tab":"ascii","byte_input":"FF","byte_direction":"bytes_to_text","byte_base":"hex"}));
+        assert!(panel.api_get()["byte_error"].as_str().is_some());
+        assert_eq!(panel.api_get()["byte_result"],"");
+    }
     use super::*;
 
     fn close(left: f64, right: f64) {

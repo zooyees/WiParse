@@ -1,0 +1,21 @@
+{
+  "kind": "wiparse_desktop_diagnostic_observations",
+  "date": "2026-11-08",
+  "application": "tmp/hidden-wakeup-preview-20261108/bin/WiParse.exe",
+  "frontend": "r6 diagnostic (not final candidate)",
+  "host": "debug with hidden-window wakeup fix",
+  "window_pixels": [1443, 931],
+  "source": "Native Windows Computer Use screenshots and accessibility observations",
+  "checks": [
+    {"check":"Protected host read queue remains responsive after window is hidden", "result":"passed", "reference":"../next-candidate-20261108-r6/hidden-wakeup-runtime.json"},
+    {"check":"Dark serial controls and empty AI pane", "result":"observed; no model invoked"},
+    {"check":"Report headings, table and embedded simulation PNG", "result":"passed"},
+    {"check":"Report local chapter anchor", "result":"passed"},
+    {"check":"CSV evidence opens waveform page", "result":"passed"},
+    {"check":"Raw log evidence opens as text and returns to report", "result":"passed with scroll-position defect recorded for next frontend correction"},
+    {"check":"LC default 10 uH and 100 nF", "result":"159154.94 Hz and 10 A peak rendered; dark axis contrast needs correction"},
+    {"check":"Scope and DC demo panels", "result":"observed; field stretch and button alignment defects corrected in r8 source, final build recheck pending"},
+    {"check":"Close diagnostic frontend and owned idle host", "result":"host PID 43616 no longer exists after normal Alt+F4; no force termination"}
+  ],
+  "limitations": ["Not final candidate desktop acceptance", "No physical instrument or DUT", "No serial reception or test started", "No real AI request", "DPI matrix and formal five rounds not completed"]
+}

@@ -6,6 +6,7 @@
  * Do not call test.start in the capture window: it reopens the serial monitor.
  */
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -23,6 +24,55 @@ import {
 } from "../../lib/line-triggers.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+
+export function probeWritableDirectory(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+  const probe = path.join(dir, `.wiparse-write-probe-${randomUUID()}`);
+  const fd = fs.openSync(probe, "wx");
+  try { fs.writeFileSync(fd, "ok"); } finally { try { fs.closeSync(fd); } finally { fs.unlinkSync(probe); } }
+}
+
+export async function ensureNoActiveTest(invokeFn) {
+  const response = await invokeFn("test.status", {}, 15_000, {allowFail: true});
+  if (response?.ok !== true || typeof response.data?.running !== "boolean") throw new Error("无法确认其他测试状态");
+  if (response.data.running) throw new Error("其他测试正在运行，请先停止后再启动监控");
+}
+
+export function targetSerialSession(status, target) {
+  if (status?.ok !== true || !Array.isArray(status.data?.sessions)) throw new Error("无法确认目标串口状态");
+  return status.data.sessions.find(s => String(s?.port || "").toLowerCase() === String(target).toLowerCase()) || null;
+}
+
+export async function awaitInstrumentJob(invokeFn,deviceId,accepted,timeoutMs=30_000) {
+  const job=accepted?.data?.job_id;
+  if(accepted?.ok!==true || !Number.isSafeInteger(job) || Number(accepted.data.device_id)!==Number(deviceId)) {
+    const error=new Error("仪器任务未确认提交");error.code="INSTRUMENT.UNKNOWN";throw error;
+  }
+  const deadline=performance.now()+timeoutMs;
+  while(performance.now()<deadline) {
+    let response;
+    try {response=await invokeFn("instrument.job.get",{job_id:job},Math.min(5000,Math.max(1,deadline-performance.now())),{allowFail:true});}
+    catch {const error=new Error("无法确认仪器任务状态");error.code="INSTRUMENT.UNKNOWN";throw error;}
+    if(response?.ok!==true || !response.data || response.data.job_id!==job){const error=new Error("仪器任务状态无效");error.code="INSTRUMENT.UNKNOWN";throw error;}
+    if(response.data.state==="completed") {
+      if(Number(response.data.device_id)!==Number(deviceId)){const error=new Error("仪器任务对应设备已变化");error.code="INSTRUMENT.UNKNOWN";throw error;}
+      if(response.data.ok!==true){const error=new Error(`仪器任务失败：${response.data.detail?.error || response.data.detail?.message || '未知错误'}`);error.code="INSTRUMENT.FAILED";throw error;}
+      return response.data;
+    }
+    if(response.data.state!=="pending_or_unknown"){const error=new Error("仪器任务状态无效");error.code="INSTRUMENT.UNKNOWN";throw error;}
+    await sleep(Math.min(200,Math.max(1,deadline-performance.now())));
+  }
+  const error=new Error("仪器任务超时，设备状态待确认");error.code="INSTRUMENT.UNKNOWN";throw error;
+}
+
+export function selectSourceFile(dir,files) {
+  const root=fs.realpathSync(dir);
+  return (Array.isArray(files)?files:[]).map(file=>{try{return fs.realpathSync(String(file));}catch{return null;}}).find(file=>{
+    if(!file)return false;const rel=path.relative(root,file);
+    if(!rel||rel.startsWith(`..${path.sep}`)||rel==='..'||path.isAbsolute(rel))return false;
+    try{const stat=fs.statSync(file);return stat.isFile()&&stat.size>0;}catch{return false;}
+  }) || null;
+}
 
 /** @type {any} */
 let cfg;
@@ -172,16 +222,6 @@ function cmpVer(a, b) {
   return 0;
 }
 
-function pidAlive(pid) {
-  if (!pid) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function invoke(method, params = {}, ms = 120_000, opts = {}) {
   if (!http) {
     http = createHttpClient({ url: api, log: externalLog });
@@ -207,38 +247,47 @@ function setHint(step, hint, extra = {}) {
   log("info", `[${step}${n}] ${hint}`);
 }
 
+async function serialSession() {
+  const st = await invoke("serial.monitor.status", {}, 30_000, { allowFail: true });
+  return targetSerialSession(st,port);
+}
 async function serialStatus() {
-  const st = await invoke("serial.status", {}, 30_000, { allowFail: true });
-  return Boolean(st.data?.monitoring);
+  const session = await serialSession();
+  return Boolean(session?.confirmed && Number(session.baud) === Number(baud));
 }
 
 async function serialStop() {
-  let r = await invoke("serial.monitor.stop", {}, 30_000, { allowFail: true });
-  if (r.ok === false) r = await invoke("serial.stop", {}, 30_000, { allowFail: true });
-  return r;
+  const result = await invoke("serial.monitor.stop", {port}, 30_000, { allowFail: true });
+  if (result.ok !== true) throw new Error("无法停止目标串口");
+  return result;
 }
 
 async function serialStopUntilOff(ms = cfg.timing.serial_stop_timeout_ms) {
   const t0 = Date.now();
   let last = true;
-  while (Date.now() - t0 < ms) {
-    await serialStop();
-    last = await serialStatus();
-    if (!last) return false;
-    await sleep(120);
-  }
+  try {
+    while (Date.now() - t0 < ms) {
+      await serialStop();
+      last = Boolean(await serialSession());
+      if (!last) return false;
+      await sleep(120);
+    }
+  } catch(error) {retainLock=true;throw error;}
+  if(last)retainLock=true;
   return last;
 }
 
 async function serialStart() {
-  let r = await invoke("serial.monitor.start", { port, baud }, 30_000, { allowFail: true });
-  if (r.ok === false) r = await invoke("serial.start", { port, baud }, 30_000, { allowFail: true });
-  const t0 = Date.now();
-  while (Date.now() - t0 < 4000) {
-    if (await serialStatus()) return r;
-    await sleep(120);
-  }
-  return r;
+  try {
+    let r = await invoke("serial.monitor.start", { port, baud }, 30_000, { allowFail: true });
+    if (r.ok === false) r = await invoke("serial.start", { port, baud }, 30_000, { allowFail: true });
+    const t0 = Date.now();
+    while (Date.now() - t0 < 4000) {
+      if (await serialStatus()) return r;
+      await sleep(120);
+    }
+    throw new Error(`目标串口未确认启动 (${port}@${baud})`);
+  } catch(error) {retainLock=true;throw error;}
 }
 
 function holdSerialOff() {
@@ -252,51 +301,22 @@ function holdSerialOff() {
   }, 2000);
   return async () => {
     clearInterval(keeper);
-    await serialStopUntilOff();
+    if (await serialStopUntilOff()) throw new Error("目标串口未能停止，设备状态待确认");
   };
 }
 
 async function scopeCommand(deviceId, command) {
-  return invoke("instrument.command", { device_id: deviceId, command, timeout_s: 20 });
+  return confirmedInstrument("instrument.command", { device_id: deviceId, command, timeout_s: 20 }, 30_000);
 }
 
-function newestIsf(dir, stem, sinceMs) {
-  if (!fs.existsSync(dir)) return null;
-  let best = null;
-  for (const name of fs.readdirSync(dir)) {
-    if (!name.startsWith(stem) || !/\.isf$/i.test(name)) continue;
-    const p = path.join(dir, name);
-    try {
-      const st = fs.statSync(p);
-      if (st.mtimeMs < sinceMs - 2000 || st.size < 1024) continue;
-      if (!best || st.mtimeMs > best.mtimeMs) best = { path: p, size: st.size, mtimeMs: st.mtimeMs };
-    } catch {}
+async function confirmedInstrument(method,params,timeoutMs) {
+  try {
+    const accepted=await invoke(method,params,30_000,{allowFail:true});
+    return await awaitInstrumentJob(invoke,params.device_id,accepted,timeoutMs);
+  } catch(error) {
+    if(error?.code!=="INSTRUMENT.FAILED") retainLock=true;
+    throw error;
   }
-  return best;
-}
-
-async function waitNewIsf(dir, filename, sinceMs, timeoutMs) {
-  const stem = filename.replace(/\.isf$/i, "");
-  const t0 = Date.now();
-  let lastSize = -1;
-  let stable = 0;
-  // Serial already stopped by caller; one extra stop, then FS-only poll.
-  await serialStop().catch(() => {});
-  while (Date.now() - t0 < timeoutMs) {
-    if (fs.existsSync(stopFile)) return null;
-    const hit = newestIsf(dir, stem, sinceMs);
-    if (hit) {
-      if (hit.size === lastSize) {
-        stable += 1;
-        if (stable >= 3) return hit.path;
-      } else {
-        lastSize = hit.size;
-        stable = 0;
-      }
-    }
-    await sleep(pollMs);
-  }
-  return newestIsf(dir, stem, sinceMs)?.path ?? null;
 }
 
 /** Wait until `instrument.capture` finishes writing PNG (HTTP returns accepted immediately). */
@@ -311,11 +331,6 @@ async function waitFile(file, timeoutMs, sinceMs = 0) {
       /* not yet */
     }
     await sleep(pollMs);
-  }
-  try {
-    if (fs.existsSync(file) && fs.statSync(file).size > 32) return file;
-  } catch {
-    /* ignore */
   }
   return null;
 }
@@ -360,16 +375,22 @@ function scopeSpec() {
  *  WiParse still pages by that seq (`total` / `next_row` keep growing; `dropped`
  *  is how many lines left the window).
  */
-async function liveLinesSince(fromRow, limit = 200) {
-  const chunk = await invoke("log.lines.get", {
-    tab_id: 0,
+export async function readTargetLines(invokeFn,target,fromRow,limit = 200) {
+  const chunk = await invokeFn("log.lines.get", {
+    port:target,
     from_row: fromRow,
     limit,
   });
-  const lines = (chunk.data?.lines || []).map(String);
+  if (chunk?.ok !== true || !Array.isArray(chunk.data?.lines)) throw new Error("无法读取目标串口日志");
+  const lines = chunk.data.lines.map(String);
   const total = Number(chunk.data?.total ?? fromRow + lines.length);
   const next = Number(chunk.data?.next_row ?? fromRow + lines.length);
-  return { lines, total, next };
+  const dropped = Number(chunk.data?.dropped ?? 0);
+  if (![total,next,dropped].every(Number.isSafeInteger) || total<0 || next<0 || dropped<0 || next>total) throw new Error("串口日志游标无效");
+  return { lines, total, next, dropped };
+}
+async function liveLinesSince(fromRow, limit = 200) {
+  return readTargetLines(invoke,port,fromRow,limit);
 }
 
 async function waitTrigger(cycle, scopeId) {
@@ -391,12 +412,8 @@ async function waitTrigger(cycle, scopeId) {
         triggers: compiledTriggers.map((t) => t.label),
       });
     }
-    const { lines, total, next } = await liveLinesSince(fromRow, 200);
-    if (total < fromRow) {
-      // Log buffer reset — keep recent ring for continuity, reset cursor.
-      fromRow = total;
-      continue;
-    }
+    const { lines, total, next, dropped } = await liveLinesSince(fromRow, 200);
+    if (total < fromRow || dropped > fromRow || next < fromRow || (next === fromRow && total > fromRow)) throw new Error("串口日志发生清空、丢失或游标异常，监控已停止，请检查数据后重试");
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       ring.push(line);
@@ -428,7 +445,7 @@ async function stopScopeAndSerial(deviceId) {
       return cmd;
     })(),
   ]);
-  await serialStopUntilOff();
+  if (serial || await serialStopUntilOff()) throw new Error("目标串口未能停止，取消波形抓取");
   return { scope, serial_result: serial, monitoring: await serialStatus() };
 }
 
@@ -444,32 +461,31 @@ async function startScopeAndSerial(deviceId) {
   return { scope, serial, monitoring: await serialStatus() };
 }
 
-async function captureShotAndIsf(deviceId, shotPath, filename) {
+async function captureShotAndIsf(deviceId, shotPath) {
   fs.mkdirSync(path.dirname(shotPath), { recursive: true });
+  if (fs.existsSync(shotPath)) throw new Error("截图目标已存在，取消抓取以避免覆盖");
   const sinceMs = Date.now();
   // Prefer instrument.capture (HARDCopy PNG). scope.shot is deprecated local-VISA.
-  const shot = await invoke(
+  const shot = await confirmedInstrument(
     "instrument.capture",
     { device_id: deviceId, path: shotPath, wait: true },
-    30_000,
+    cfg.timing.shot_timeout_ms,
   );
-  if (shot.ok === false) {
-    throw new Error(shot.error || "instrument.capture failed");
-  }
   const shotFile = await waitFile(shotPath, cfg.timing.shot_timeout_ms, sinceMs);
-  const src = await invoke("instrument.waveform_source", {
+  if (!shotFile) throw new Error("截图任务结束但未找到本次截图");
+  const src = await confirmedInstrument("instrument.waveform_source", {
     device_id: deviceId,
     dir: outDir,
-    filename,
     overwrite: false,
     timeout_s: Math.round(cfg.timing.isf_timeout_ms / 1000),
-  });
-  const isfPath = await waitNewIsf(outDir, filename, sinceMs, cfg.timing.isf_timeout_ms);
+  }, cfg.timing.isf_timeout_ms);
+  const isfPath=selectSourceFile(outDir,src.detail?.files);
+  if (!isfPath) throw new Error("波形源任务结束但未找到本次波形文件");
   return {
     shot,
     shotFile: shotFile ? String(shotFile).replace(/^\\\\\?\\/, "") : null,
     waveform: src,
-    isfPath: isfPath || path.join(outDir, filename),
+    isfPath,
   };
 }
 
@@ -634,7 +650,7 @@ function appendSummaryRecord(rec) {
 | 命中行 | ${mdCell(rec.line)} |
 | 处理时串口 | monitoring=${mdCell(rec.serialMonitoring)} |
 | 示波器 | ${mdCell(rec.scopeModel)} id=${mdCell(rec.scopeId)} |
-| ISF | ${mdFileLink(rec.isfPath)} |
+| 波形源 | ${mdFileLink(rec.isfPath)} |
 | PDF | ${mdFileLink(rec.pdfPath)} |
 ${dataLinks}
 
@@ -730,31 +746,28 @@ ${shotUri ? `<img src="${shotUri}" alt="scope">` : "<p>无截图</p>"}
   return { htmlPath, pdfPath, jsonPath, screenshot: shotDest };
 }
 
+let lockToken = null;
+let retainLock = false;
+export function acquireMonitorLock(file, details) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const token=randomUUID();
+  let fd;
+  try {fd=fs.openSync(file,"wx");}
+  catch(error) {if(error.code==="EEXIST")throw new Error("监控锁已存在，请确认任务已结束并检查锁文件后再恢复");throw error;}
+  try {fs.writeFileSync(fd,JSON.stringify({...details,token},null,2),"utf8");fs.fsyncSync(fd);}
+  finally {fs.closeSync(fd);}
+  return token;
+}
 function acquireLock() {
-  fs.mkdirSync(path.dirname(lockFile), { recursive: true });
-  if (fs.existsSync(lockFile)) {
-    try {
-      const prev = JSON.parse(fs.readFileSync(lockFile, "utf8"));
-      if (prev.pid && prev.pid !== process.pid && pidAlive(prev.pid)) {
-        throw new Error(`已有循环在运行 pid=${prev.pid}，请先在 Testing Hub 点 Stop 或执行 stop.ps1`);
-      }
-    } catch (e) {
-      if (String(e.message || e).includes("已有循环")) throw e;
-    }
-  }
-  fs.writeFileSync(lockFile, JSON.stringify({
-    pid: process.pid,
-    started: new Date().toISOString(),
-    config: cfgPath,
-    sop: cfg.sop,
-  }, null, 2), "utf8");
+  lockToken=acquireMonitorLock(lockFile,{pid:process.pid,started:new Date().toISOString(),config:cfgPath,sop:cfg.sop});
 }
 
 function releaseLock() {
+  if(retainLock) return;
   try {
     if (!fs.existsSync(lockFile)) return;
     const prev = JSON.parse(fs.readFileSync(lockFile, "utf8"));
-    if (prev.pid === process.pid) fs.unlinkSync(lockFile);
+    if (lockToken && prev.pid === process.pid && prev.token === lockToken) fs.unlinkSync(lockFile);
   } catch {}
 }
 
@@ -778,10 +791,7 @@ async function preflight() {
         push(id, true, "deferred until run (no stamp)");
         return;
       }
-      fs.mkdirSync(dir, { recursive: true });
-      const probe = path.join(dir, ".write_probe");
-      fs.writeFileSync(probe, "ok");
-      fs.unlinkSync(probe);
+      probeWritableDirectory(dir);
       push(id, true, dir);
     };
     canWrite(cfg.paths?.test_dir, "test_dir");
@@ -797,16 +807,7 @@ async function preflight() {
   // Single-instance lock
   if (cfg.interlocks?.single_instance !== false) {
     if (fs.existsSync(lockFile)) {
-      try {
-        const prev = JSON.parse(fs.readFileSync(lockFile, "utf8"));
-        if (prev.pid && prev.pid !== process.pid && pidAlive(prev.pid)) {
-          push("single_instance", false, `lock held by pid=${prev.pid}`);
-        } else {
-          push("single_instance", true, "stale lock (will reclaim)");
-        }
-      } catch {
-        push("single_instance", true, "lock unreadable (will reclaim)");
-      }
+      push("single_instance", false, "监控锁已存在；请确认任务已结束并检查锁文件");
     } else {
       push("single_instance", true, "free");
     }
@@ -814,16 +815,21 @@ async function preflight() {
 
   // Serial API reachability (does not require monitoring already on)
   try {
-    const st = await invoke("serial.status", {}, 15_000, { allowFail: true });
-    if (st && st.ok === false) {
-      push("serial_api", false, st.error || "serial.status failed");
-    } else {
-      const mon = Boolean(st?.data?.monitoring);
-      push("serial_api", true, mon ? `monitoring on (${st?.data?.port || port})` : `ready (${port}@${baud})`);
-    }
+    const st = await invoke("serial.monitor.status", {}, 15_000, { allowFail: true });
+    const session=targetSerialSession(st,port);
+    if(session && (!session.confirmed || Number(session.baud)!==Number(baud))) push("serial_api",false,`目标串口已打开但尚未确认或波特率不一致 (${port}@${baud})`);
+    else push("serial_api",true,session?`目标串口已就绪 (${port}@${baud})`:`待启动目标串口 (${port}@${baud})`);
   } catch (e) {
     push("serial_api", false, String(e.message || e));
   }
+
+  try { await ensureNoActiveTest(invoke); push("test_idle", true, "没有其他活动测试"); }
+  catch (e) { push("test_idle", false, String(e.message || e)); }
+  try {
+    const result=await invoke("instrument.job.get",{job_id:0},5000,{allowFail:true});
+    const supported=result?.ok===true && result.data?.state==="pending_or_unknown" && result.data?.job_id===0;
+    push("instrument_job_api",supported,supported?"支持任务完成确认":"请更新 WiParse：缺少仪器任务确认接口");
+  } catch(e) {push("instrument_job_api",false,`无法确认仪器任务接口：${e.message || e}`);}
 
   const list = await invoke("instrument.list", {}, 30_000, { allowFail: true });
   const devices = list.data?.devices || [];
@@ -871,6 +877,7 @@ async function preflight() {
 
 function bindConfig(cfgInput, opts = {}) {
   cfg = cfgInput;
+  retainLock=false;lockToken=null;
   if (opts.configPath) cfgPath = opts.configPath;
   colocateStatusWithIsf(cfg);
   colocateSummaryWithReport(cfg);
@@ -954,6 +961,7 @@ export async function runLoop(cfgInput, opts = {}) {
 
   let cycle = 0;
   let scope = null;
+  const reportErrors = [];
   try {
     if (fs.existsSync(stopFile)) fs.unlinkSync(stopFile);
     fs.mkdirSync(outDir, { recursive: true });
@@ -962,12 +970,7 @@ export async function runLoop(cfgInput, opts = {}) {
     if (docsDir) fs.mkdirSync(docsDir, { recursive: true });
 
     if (cfg.interlocks?.never_test_start_during_capture !== false) {
-      await invoke(
-        "test.abort",
-        { reason: `${cfg.sop.id} start: do not leave a test plan holding serial` },
-        30_000,
-        { allowFail: true },
-      );
+      await ensureNoActiveTest(invoke);
     }
     scope = await resolveScope();
     const guiVersion = pf.health?.data?.version;
@@ -1021,12 +1024,11 @@ export async function runLoop(cfgInput, opts = {}) {
 
       const at = hit.at;
       const trigger = hit.trigger;
-      const ts = stamp(at);
-      const filename = `${prefix}_${trigger}_${ts}.isf`;
+      const ts = `${stamp(at)}_${randomUUID().slice(0,8)}`;
       setHint(
         "processing",
         `已触发 ${trigger}：数据处理中（延时 ${delayS * 1000}ms / 同时停示波器与串口 / 截图 / 存源文件 / 出报告）`,
-        { cycle, trigger, filename },
+        { cycle, trigger },
       );
 
       await sleep(delayS * 1000);
@@ -1034,10 +1036,9 @@ export async function runLoop(cfgInput, opts = {}) {
       setHint("processing", `已触发 ${trigger}：数据处理中（同时暂停示波器与串口）`, {
         cycle,
         trigger,
-        filename,
       });
       const releaseSerial = holdSerialOff();
-      let saved = path.join(outDir, filename);
+      let saved = null;
       let shot = null;
       let monitoring = true;
       try {
@@ -1046,18 +1047,17 @@ export async function runLoop(cfgInput, opts = {}) {
         setHint("processing", `已触发 ${trigger}：串口已停 monitoring=${monitoring}，截图并读源文件`, {
           cycle,
           trigger,
-          filename,
           serial_monitoring: monitoring,
         });
         const shotPath = path.join(shotDir || reportDir, `${prefix}_${trigger}_${ts}.png`);
-        const cap = await captureShotAndIsf(live.device_id, shotPath, filename);
+        const cap = await captureShotAndIsf(live.device_id, shotPath);
         saved = cap.isfPath;
         shot = cap.shotFile;
         monitoring = await serialStatus();
         setHint(
           "processing",
           `已触发 ${trigger}：数据处理中（生成 PDF 报告；串口 monitoring=${monitoring}）`,
-          { cycle, trigger, filename, serial_monitoring: monitoring },
+          { cycle, trigger, serial_monitoring: monitoring },
         );
       } finally {
         await releaseSerial();
@@ -1103,6 +1103,7 @@ export async function runLoop(cfgInput, opts = {}) {
           serialMonitoring: monitoring,
         });
       } catch (e) {
+        reportErrors.push(String(e?.message || e));
         log("err", `[pdf] ${e?.message || e}`);
         try {
           mdPath = appendSummaryRecord({
@@ -1129,7 +1130,6 @@ export async function runLoop(cfgInput, opts = {}) {
       setHint("processing", `已触发 ${trigger}：数据处理中（同时启动示波器与串口）`, {
         cycle,
         trigger,
-        filename,
       });
       await startScopeAndSerial(live.device_id);
 
@@ -1148,7 +1148,7 @@ export async function runLoop(cfgInput, opts = {}) {
     }
 
     setHint("stopped", "监控已停止", { cycle });
-    return { ok: true, summary_md: summaryMd, session: sessionStamp };
+    return { ok: reportErrors.length===0, summary_md: summaryMd, session: sessionStamp, ...(reportErrors.length?{error:`报告生成失败：${reportErrors.join('; ')}`}:{}) };
   } catch (e) {
     const msg = String(e?.message || e);
     log("err", `[fatal] ${msg}`);
@@ -1159,14 +1159,16 @@ export async function runLoop(cfgInput, opts = {}) {
     }
     return { ok: false, step: "fatal", error: msg, summary_md: summaryMd, session: sessionStamp };
   } finally {
-    releaseLock();
-    if (scope?.device_id != null) {
+    if (scope?.device_id != null && !retainLock) {
       try {
         await startScopeAndSerial(scope.device_id);
-      } catch {
-        /* best-effort restore */
+      } catch (error) {
+        retainLock=true;
+        log("err",`恢复设备失败，保留监控锁供检查：${error?.message || error}`);
+        throw error;
       }
     }
+    releaseLock();
   }
 }
 

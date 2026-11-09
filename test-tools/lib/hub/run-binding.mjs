@@ -17,6 +17,8 @@ export function manifest(store,selectedIds) {
   return {...document,manifest_sha256:sha(canonical(document)),values:rows.map(row=>row.value),...(shared?{project_config_snapshot:shared}:{})};
 }
 export function assertStationIdle(store){
+  const recovery=jail(path.join(store.s.dataRoot,'.station-recovery.json'),[store.s.dataRoot]);
+  if(fs.existsSync(recovery))fail('RUN.RECOVERY_REQUIRED','工位状态未知，需先人工确认');
   const file=jail(path.join(store.s.dataRoot,'.station-run.lock'),[store.s.dataRoot]);
   if(!fs.existsSync(file))return;
   const lock=readJson(file);if(!Number.isInteger(lock.pid)||lock.pid<=0)fail('RUN.STATION_BUSY');
@@ -38,6 +40,7 @@ export function completePreflight(store,frozen,result) {
 }
 export function beginRun(store,selectedIds,runDir,expected=null) {
   return store.withLock(()=>{
+    if(fs.existsSync(jail(path.join(store.s.dataRoot,'.station-recovery.json'),[store.s.dataRoot])))fail('RUN.RECOVERY_REQUIRED','工位状态未知，需先人工确认');
     if (store.runLocks()) fail('RUN.STATION_BUSY');
     const state=preflightState(store); if (!state.valid) fail(state.error);
     const frozen=manifest(store,selectedIds); if (frozen.manifest_sha256!==state.manifest_sha256) fail('PREFLIGHT.STALE','Selection changed since preflight');

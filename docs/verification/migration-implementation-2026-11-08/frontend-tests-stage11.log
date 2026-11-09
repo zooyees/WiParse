@@ -1,0 +1,50 @@
+
+> wiparse-next@0.1.0 test
+> node --test tests/*.test.mjs
+
+✔ bandpass schematic nodes stay inside the drawing and run left to right (1.2121ms)
+✔ crc parameter table matches the old presets and hides an invalid custom polynomial (1.5161ms)
+✔ display mapping keeps the old full-scale spans and kind bands (1.4734ms)
+✔ the shared axis fits mapped extrema and zooms around the center (0.3563ms)
+✔ dragging a handle follows the old offset and scale formulas (0.9625ms)
+✔ serial live starts at the recent tail and skips rows the log has already dropped (1.9936ms)
+✔ pending operation survives reopening and blocks another command until verified (2.8618ms)
+✔ a late completion cannot remove a newer recovery marker (0.3059ms)
+✔ storage errors prevent starting an untracked operation (0.2355ms)
+✔ manual console and power controls share the same resource recovery marker (0.5991ms)
+✔ legacy recovery markers remain blocking until the operator acknowledges them (0.4551ms)
+✔ scientific keypad appends the old tokens and edits one character at a time (4.1489ms)
+✔ resonance points stay in frequency order and drop invented samples (3.008ms)
+✔ configured items use matching results, with no fabricated pass (2.0401ms)
+✔ validation and historical phase use readable labels (0.7232ms)
+✔ status filters never count stale results as passed (0.3003ms)
+✔ 500 test items render a bounded window and retain the correct scroll geometry (1.2275ms)
+✔ stale and missing results are not shown as current pass (0.7132ms)
+✔ radix conversion matches the old signed i128 cases (1.1895ms)
+✔ rc settling matches the old one, three and five tau percentages (0.8925ms)
+✔ report links route portable evidence and legacy local paths to the correct viewer (2.833ms)
+✔ report links never treat executable schemes or shares as evidence (0.3431ms)
+✔ report artifacts follow the old extension and group view (2.1166ms)
+✔ latest markdown ignores newer logs and keeps the last equal mtime after path order (0.7442ms)
+✔ a test report follows run order when modification times match (0.4879ms)
+✔ referenced configuration forms preserve required fields and choose the actual rule variant (4.0184ms)
+✔ readOnly constants and defaults keep their actual JSON types (0.409ms)
+✔ history search can distinguish case or ignore it (2.5518ms)
+✔ tracks the chosen log through reordered tabs and refuses an absent view (0.2586ms)
+✔ finds a match beyond the current page and resumes after it (2.015ms)
+✔ continues correctly when the byte limit makes a page shorter (1.4101ms)
+✔ detects evicted rows and refuses a mixed snapshot (1.6119ms)
+✔ rejects a replaced log even when its row count is unchanged (0.592ms)
+✔ reports previously evicted rows and honors cancellation (0.2624ms)
+✔ a third cursor replaces the pair and vertical clicks use the plot scale (1.5989ms)
+✔ rail keeps 200px minimum and reserves room for content at supported window sizes (0.8123ms)
+✔ narrow containers keep the rail readable and require overflow instead of hiding controls (0.3939ms)
+✔ corrupt or obsolete persisted widths recover to the user-required default (0.2578ms)
+ℹ tests 38
+ℹ suites 0
+ℹ pass 38
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1178.8741

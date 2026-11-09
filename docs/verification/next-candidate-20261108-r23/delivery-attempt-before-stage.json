@@ -1,0 +1,6 @@
+{
+  "file_hashes_passed": false,
+  "kind": "r23_preview_delivery",
+  "status": "pending_staging_completion",
+  "reason": "Verification attempted before files-sha256.json existed; no file inventory was verified."
+}

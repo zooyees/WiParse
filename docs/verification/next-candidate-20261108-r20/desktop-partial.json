@@ -1,0 +1,7 @@
+{
+ "kind":"wiparse_next_partial_desktop_validation","candidate":"r20","date":"2026-11-08","pixels":[1443,931],"theme":"dark",
+ "observations":[{"check":"cold startup","result":"passed"},{"check":"default Pan selected state","result":"passed: blue filled button"},{"check":"switch Cursor selected state","result":"passed: blue filled Cursor button, Pan cleared"}],
+ "prior_partial_evidence":["../next-candidate-20261108-r16/desktop-partial.json","../next-candidate-20261108-r17/desktop-partial.json","../next-candidate-20261108-r18/desktop-partial.json","../next-candidate-20261108-r19/desktop-partial.json"],
+ "not_executed":["all original feature equivalence","physical devices and USB hotplug","real AI providers","full DPI/resolution matrix","actual Ctrl+wheel, middle-button and right-button drag input","multi-hour stability and throughput","five formal acceptance rounds"],
+ "hardware_commands_sent":false,"real_ai_called":false,"formal_rounds_passed":0,"industrial_approved":false
+}

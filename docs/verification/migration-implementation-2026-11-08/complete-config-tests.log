@@ -1,0 +1,11 @@
+✔ full form edits preserve redacted file references by item identity when reordered (1.5051ms)
+✔ new placeholders and reserved object properties cannot become actual configuration (0.413ms)
+✔ complete configuration edits retain revision and schema fences and validation does not write (1056.8662ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1225.1324

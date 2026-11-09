@@ -1,0 +1,139 @@
+Window: "WiParse", App: WiParse.exe.
+	0 window WiParse Secondary Actions: Raise
+		1 pane
+			8 pane WiParse
+				9 pane (disabled)
+				10 region WiParse - Web content
+					11 region
+						12 region
+						13 region
+							14 region
+								15 document WiParse Value: http://tauri.localhost/ ID: RootWebArea
+									16 group ID: root
+										17 header
+											18 text W
+											19 text WiParse
+											20 navigation 工具
+												21 button 集成测试
+												22 button 仪器控制
+												23 button 串口工具
+												24 button 波形分析
+												25 button 数据分析
+												26 button 测试报告
+												27 button 计算器
+											104 text 09:47:37
+											28 text 本地文件
+											29 button 刷新 Description: 刷新
+											30 button 设置
+										124 text 文件目录
+										125 button 刷新
+										126 button 选择目录
+										127 heading 波形文件
+										128 button 打开文件
+										129 button 添加文件
+										152 button 全部关闭
+										153 text 打开会保留现有文件；兼容通道默认叠加，移除仅关闭内存波形。
+										163 section header
+											165 text ddsss-analysis.csv
+											166 button 移除文件 ddsss-analysis.csv
+										199 button ∿ CH1 73,904点
+										130 thumb 调整左侧栏宽度 Description: 拖动调整宽度；双击恢复200；方向键微调 Value: 200
+										131 heading CH1
+										132 text 578 个采样点 · 横轴 s · 纵轴 V
+										133 toggle button 通道
+										134 toggle button 测量与光标
+										135 toggle button 协议分析
+										136 group 波形交互模式
+											137 toggle button 平移
+											138 toggle button 光标
+										139 button 导出波形
+										140 combo box (settable, string) 波形导出格式 Value: CSV
+										141 button X+
+										142 button X−
+										143 button Y+ Description: 纵向放大
+										144 button Y− Description: 纵向缩小
+										145 button 适应
+										146 button 纵轴游标 Description: 空格键切换横轴和纵轴游标
+										147 button (disabled) 缩放到光标
+										148 button (disabled) 清除游标
+										200 image CH1 波形，横轴 s，纵轴 V Description: Ctrl+滚轮缩放X；Ctrl+Shift+滚轮缩放Y；左键二维平移；右键框选；双击适应
+										201 button CH1 地线显示手柄 Description: CH1 地线：拖动平移，Ctrl 拖动调幅，双击复位
+										262 region 协议时间轴
+											263 image 协议事务、字节、位与码片标注
+											264 text 单击事务查看说明，双击定位波形。
+										202 text 主通道最小值
+										203 text 
+										204 text -1
+										205 text 
+										206 text V
+										207 text 主通道最大值
+										208 text 
+										209 text 1
+										210 text 
+										211 text V
+										212 text 显示范围
+										213 text 0.03580353
+										214 text –
+										215 text 0.03636737
+										216 text 
+										217 text s
+										218 text 拖动平移，右键框选缩放；切换光标模式进行测量
+										219 heading 协议分析
+										220 button 收起分析设置
+										221 region 协议分析
+											222 tab 协议通道
+												223 tab item (selectable) 1 · DDSSS · 3 帧
+											224 button 添加协议通道
+											225 button (disabled) 移除当前
+											226 button 其余通道同时解析
+											227 button 解析全部通道
+											228 button 协议分析报告…
+											229 text 协议
+											230 combo box (settable, string) 协议 Value: DDSSS
+											245 text 信号
+											246 combo box (settable, string) 信号 Value: CH1
+											247 text 序列
+											248 combo box (settable, string) DDSSS 序列 Value: SEQA
+											249 text 扩展码
+											250 combo box (settable, string) DDSSS 扩展码 Value: 关
+											251 text FOP Hz
+											252 edit (settable, string) FOP Hz Description: 自动 Value: 128000
+											253 check box (settable, string) 解码门控 X1–X2（无双游标时全波形）
+											254 text 解码门控
+											255 combo box (settable, string) Value: X1–X2（无双游标时全波形）
+											231 button 解码
+											265 edit (settable, string) 搜索协议事务 Description: 搜索事务、十六进制字节…
+											266 check box (settable, string) 仅异常
+											267 text 1
+											268 text /
+											269 text 3
+											270 button 上一事务
+											271 button 下一事务
+											292 button 2 CE · 校验错误 03 10 12 0.02857813
+												293 strong Description: CE 03 10 12
+											278 text FOP=128.0 kHz fchip=64.0 kHz 2.1 kbps SEQA Nseq=31 ext=off phase=even invert=false depth=34.2% known=100% frames=3 chips=3069 peak=31.0 DQM=992,992 cs_err=1 P_err=0 F_err=0 chip_err=0
+											294 text 前导 码 1…1 → 至少 11 个 1，供接收端同步；本帧从包头字节开始
+											295 text 包头 码 0x03 → CE
+											296 text CE Control Error
+											297 text 字节编码 码 起始0 + LSB + 偶校验 + 停止1 → 每个字节 11 位。前导是至少 11 个 1。校验是包头与消息逐字节异或
+											298 text Qi字节0 码 LSB 11000000 偶校验 0 → 0x03
+											299 text Qi字节1 码 LSB 00001000 偶校验 1 → 0x10
+											300 text Qi字节2 码 LSB 01001000 偶校验 0 → 0x12
+											301 text control_error 码 0x10 → 16
+											302 text 校验 码 0x12 → 不一致
+											303 text 原始字节 03 10 12
+											289 button 定位到波形
+										42 footer
+											43 text 本地文件。这一页不检查设备服务是否在运行。
+											44 text WiParse Next
+								45 region
+		2 title bar (settable, string) Value: WiParse
+			3 menu bar System ID: MenuBar
+				4 menu item System
+			5 button Minimize
+			6 button Maximize
+			7 button Close
+
+Document text: ```
+搜索协议事务
+```

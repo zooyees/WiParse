@@ -185,12 +185,13 @@ pub fn invoke(shared: &Arc<Mutex<State>>, v: &Value) -> Result<Value, String> {
         "device.lease.acquire" => {
             let mut s = shared.lock().map_err(|_| "SERVICE.LOCK")?;
             let resource = string(&p, "resource")?.to_string();
+            let key = lease_key(&resource)?;
             if s.leases
-                .get(&resource)
+                .get(&key)
                 .is_some_and(|l| l.expires > Instant::now())
                 || s.jobs.values().any(|j| {
                     matches!(j.state.as_str(), "queued" | "running" | "cancelling")
-                        && j.params["resource"] == resource
+                        && j.params["resource"].as_str().is_some_and(|value| same_resource(value, &resource))
                 })
             {
                 return Err("DEVICE.BUSY".into());
@@ -202,7 +203,7 @@ pub fn invoke(shared: &Arc<Mutex<State>>, v: &Value) -> Result<Value, String> {
             let token = uuid::Uuid::new_v4().to_string();
             let epoch = s.epoch.clone();
             s.leases.insert(
-                resource.clone(),
+                key,
                 Lease {
                     token: token.clone(),
                     epoch: epoch.clone(),
@@ -219,11 +220,11 @@ pub fn invoke(shared: &Arc<Mutex<State>>, v: &Value) -> Result<Value, String> {
             verify_lease(&s, resource, &p)?;
             if s.jobs.values().any(|j| {
                 matches!(j.state.as_str(), "queued" | "running" | "cancelling")
-                    && j.params["resource"] == resource
+                    && j.params["resource"].as_str().is_some_and(|value| same_resource(value, resource))
             }) {
                 return Err("DEVICE.CAPTURE_ACTIVE".into());
             }
-            s.leases.remove(resource);
+            s.leases.remove(&lease_key(resource)?);
             return Ok(json!({"released":true}));
         }
         "wave.analyze" | "protocol.decode" | "stream.validate" | "uart.capture" => {}
@@ -345,8 +346,8 @@ pub fn invoke(shared: &Arc<Mutex<State>>, v: &Value) -> Result<Value, String> {
     if method == "uart.capture" {
         verify_lease(&s, string(&p, "resource")?, &p)?;
         if s.jobs.values().any(|j| {
-            matches!(j.state.as_str(), "queued" | "running")
-                && j.params["resource"] == p["resource"]
+            matches!(j.state.as_str(), "queued" | "running" | "cancelling")
+                && j.params["resource"].as_str().zip(p["resource"].as_str()).is_some_and(|(a,b)|same_resource(a,b))
         }) {
             return Err("DEVICE.CAPTURE_ACTIVE".into());
         }
@@ -423,8 +424,13 @@ pub fn invoke(shared: &Arc<Mutex<State>>, v: &Value) -> Result<Value, String> {
     });
     Ok(json!({"accepted":true,"job_id":id}))
 }
+fn lease_key(resource:&str)->Result<String,String> {
+    let canonical=wiparse_core::resource_lock::canonical_resource(resource).map_err(|_|"DEVICE.INVALID_RESOURCE")?;
+    if canonical.strip_prefix("COM").is_some_and(|number|!number.is_empty()&&number.bytes().all(|byte|byte.is_ascii_digit())) {Ok(canonical)} else {Ok(resource.to_owned())}
+}
+fn same_resource(a:&str,b:&str)->bool {lease_key(a).ok().zip(lease_key(b).ok()).is_some_and(|(a,b)|a==b)}
 fn verify_lease(s: &State, resource: &str, p: &Value) -> Result<(), String> {
-    let l = s.leases.get(resource).ok_or("LEASE.REQUIRED")?;
+    let l = s.leases.get(&lease_key(resource)?).ok_or("LEASE.REQUIRED")?;
     if l.expires <= Instant::now() || p["lease_token"] != l.token || p["session_epoch"] != l.epoch {
         return Err("LEASE.EXPIRED_OR_FENCED".into());
     }
@@ -584,6 +590,10 @@ fn execute(
             if duration == 0 || duration > 3_600_000 {
                 return Err("UART.INVALID_DURATION".into());
             }
+            // Shared with the GUI's SerialSession for ordinary Windows COM
+            // ports. This does not cover USB/VISA aliases or other transports.
+            #[cfg(windows)]
+            let _resource_lease=wiparse_core::resource_lock::acquire_com_resource(resource).map_err(|e|format!("UART.RESOURCE_LOCK: {e}"))?;
             let mut port = serialport::new(resource, baud as u32)
                 .timeout(Duration::from_millis(50))
                 .open()
@@ -827,6 +837,19 @@ mod tests {
             .unwrap()
             .expires = Instant::now();
         assert!(api(&s, "device.lease.release", fresh).is_err());
+    }
+    #[test]
+    fn com_aliases_share_service_leases_and_active_job_fences() {
+        let dir=Sandbox::new();let s=Arc::new(Mutex::new(State::open(dir.0.clone()).unwrap()));
+        let lease=api(&s,"device.lease.acquire",json!({"resource":"COM003"})).unwrap();
+        assert_eq!(api(&s,"device.lease.acquire",json!({"resource":"ASRL3::INSTR"})).unwrap_err(),"DEVICE.BUSY");
+        let alias=json!({"resource":"ASRL3::INSTR","lease_token":lease["lease_token"],"session_epoch":lease["session_epoch"]});
+        assert!(verify_lease(&s.lock().unwrap(),"ASRL3::INSTR",&alias).is_ok());
+        s.lock().unwrap().jobs.insert("active".into(),Job{id:"active".into(),command_id:"active".into(),method:"uart.capture".into(),params:json!({"resource":"COM3"}),state:"cancelling".into(),result:Value::Null,error:None,cancel_requested:true});
+        assert_eq!(api(&s,"device.lease.release",alias.clone()).unwrap_err(),"DEVICE.CAPTURE_ACTIVE");
+        assert_eq!(api(&s,"uart.capture",json!({"command_id":"new","resource":"ASRL3::INSTR","lease_token":lease["lease_token"],"session_epoch":lease["session_epoch"]})).unwrap_err(),"DEVICE.CAPTURE_ACTIVE");
+        s.lock().unwrap().jobs.remove("active");assert!(api(&s,"device.lease.release",alias).is_ok());
+        assert_ne!(lease_key("/dev/ttyUSB0").unwrap(),lease_key("/dev/ttyusb0").unwrap());
     }
     #[test]
     fn replay_hash_and_idempotent_job() {

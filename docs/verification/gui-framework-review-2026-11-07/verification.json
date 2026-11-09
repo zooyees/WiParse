@@ -1,0 +1,30 @@
+{
+  "date": "2026-11-07",
+  "baseline_commit": "fa62efe",
+  "scope": "Current working tree; Next is untracked and host/core modified",
+  "frontend_tests": {
+    "passed": 15,
+    "failed": 0
+  },
+  "frontend_build": "passed",
+  "tauri_rust_tests": {
+    "passed": 31,
+    "failed": 0
+  },
+  "tauri_registered_commands": 84,
+  "physical_hardware_tested": false,
+  "desktop_visual_tested": false,
+  "comparative_performance_tested": false,
+  "deployment_performed": false,
+  "source_sha256": {
+    "apps/wiparse-next/package.json": "337a4074154b1cf9955d77beab4ff1c497274816deddec68dabd382f9bc8b214",
+    "apps/wiparse-next/MIGRATION-STATUS.md": "df2fddb165b1f3f42ffbd8d0254ceea04c1002ece05f3204b35acf371b795327",
+    "apps/wiparse-next/src-tauri/src/main.rs": "7019f88c73536eb41a2a3942faf73afb108db995d72ac30762a0380cf63fe8b8",
+    "apps/wiparse-next/src-tauri/tauri.conf.json": "d1a6a61081fb326fde205fec6fd2236d75de46dc133688d6e4461e8e425d7463",
+    "apps/wiparse-next/src/bridge.ts": "d302e22bd85267a2fab46feccc9a94b4c2c3baa3b23d7de2bb1a23f73ece9332",
+    "apps/wiparse-next/src/App.tsx": "8e76ffb93380340dfb6f23ba7b5200b6d36a102ba5eaf04cd75b84d0c09cd181",
+    "apps/wiparse-next/src/deviceInterlock.ts": "541f1ac10a1b7dfe94a2d306267c741a114c194dce84afdf44e1d30f732c7e4f",
+    "crates/wiparse-gui/src/backend/mod.rs": "fc8354878df4254d1de543ee75c2fb603576ac250ddbd641745dcc58fcc15745",
+    "crates/wiparse-core/src/resource_lock.rs": "d38ff76387f7a6ddfee534f4e0bbafcdf60ca8aaa52bb4a87392f046518fd8e3"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "passed": true,
+  "candidate": "R46",
+  "qa_runtime": "dist/WiParse-Next-20261109-QA-R42",
+  "gui_and_host_hashes_matched_candidate_before_launch": true,
+  "serial_fixture": "local synthetic TCP UART; nominal 200 lines/s; not a throughput benchmark",
+  "serial_observations": {
+    "live_rows_advanced_without_refresh_button": true,
+    "upward_wheel_paused_at_total": 3570,
+    "pause_preserved_content_while_server_continued": true,
+    "bottom_triangle_resumed_at_total": 8780,
+    "dropped_at_resume": 3780,
+    "window_maximize_kept_following": true,
+    "final_displayed_total_after_stop": 14690,
+    "final_displayed_page": "14191–14690",
+    "final_dropped": 9690,
+    "save_to_disk_in_desktop_fixture": false
+  },
+  "wave_observations": [
+    "Opened uart-two-channels.csv: one file, two channels, 6216 points per channel",
+    "Opened replacement.csv: previous document replaced; one file, one channel, 3 points",
+    "Added uart-two-channels.csv: retained replacement.csv; two files, three channels shown with overlays"
+  ],
+  "budget_failure_tests": "native unit test uses small explicit budgets for exact-full, over-limit, replacement failure and session preservation; real SCP 30 million points separately rerun",
+  "evidence": [
+    "serial-paused.jpg",
+    "serial-resumed.jpg",
+    "serial-stopped.jpg",
+    "wave-replaced.jpg",
+    "wave-appended.jpg"
+  ],
+  "qa_closed_normally": true,
+  "hardware_tested": false,
+  "real_ai_tested": false,
+  "cpu_memory_latency_benchmark": false
+}

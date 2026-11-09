@@ -1,0 +1,23 @@
+{
+  "user_test_package": "WiParse-Next-20261108-R20-Test.zip (unchanged)",
+  "source_and_binary_hashes_unchanged": true,
+  "passed": true,
+  "full_gui_latency_measured": false,
+  "checks": [
+    {
+      "name": "release-source-view",
+      "passed": true,
+      "exit_code": 0,
+      "duration_sec": 13.2367965
+    },
+    {
+      "name": "release-viewport-stress",
+      "passed": true,
+      "exit_code": 0,
+      "duration_sec": 1.9579136
+    }
+  ],
+  "candidate_sha256": "6cc0f8860382edc91ba89e2f465870187e0b9a1565970a3b1151d72e14352a5e",
+  "hardware_executed": false,
+  "kind": "release_viewport_index_benchmark"
+}

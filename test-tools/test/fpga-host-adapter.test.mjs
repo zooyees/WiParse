@@ -40,6 +40,129 @@ function eventsBus() {
   };
 }
 
+test('hardware discovery excludes simulated instruments',async t=>{
+  const root=tempDir(t);
+  const invoke=async method=>method==='instrument.list'?{data:{devices:[{kind:'oscilloscope',resource:'DEMO::Oscilloscope',device_id:1},{kind:'usb_bridge',resource:'bridge://ft4222/serial=DEMO',device_id:2,identity:{firmware:'demo'}},{kind:'oscilloscope',resource:'USB::SCOPE',device_id:3,identity:{model:'MDO'}}]}}:method==='serial.ports'?{data:[]}:Promise.reject(Error('unexpected method'));
+  const adapter=createFpgaHostAdapter({dataRoot:root,layout:{test_dir:path.join(root,'test')},invoke,events:eventsBus()});
+  const devices=await adapter.devices();assert.deepEqual(devices.map(d=>d.resource),['USB::SCOPE']);
+});
+
+test('Dongle UART discovery requires an explicit WinUSB serial and exposes the real port',async t=>{
+  const {resolveResources}=await import('../plugins/fpga-firmware-test/lib/resource-resolver.mjs');const root=tempDir(t);
+  const invoke=async method=>method==='instrument.list'?{data:{devices:[]}}:method==='serial.ports'?{data:[{device:'winusb://wiparse/uart?serial=ABC123'},{device:'winusb://wiparse/uart'},{device:'COM4'}]}:Promise.reject(Error('unexpected method'));
+  const adapter=createFpgaHostAdapter({dataRoot:root,layout:{test_dir:path.join(root,'test')},invoke,events:eventsBus()});
+  const devices=await adapter.devices(),dongles=devices.filter(device=>device.kind==='wiparse_dongle_uart');assert.equal(dongles.length,1);
+  assert.deepEqual(dongles[0],{kind:'wiparse_dongle_uart',port:'winusb://wiparse/uart?serial=ABC123',resource:'winusb://wiparse/uart?serial=ABC123',dongle_serial:'ABC123',uart_channel:0});
+  const resolved=resolveResources({log:{kind:'wiparse_dongle_uart',selector:{dongle_serial:'ABC123',uart_channel:0,baud:115200},required:true}},devices);
+  assert.equal(resolved.log.port,'winusb://wiparse/uart?serial=ABC123');
+  assert.throws(()=>resolveResources({log:{kind:'wiparse_dongle_uart',selector:{dongle_serial:'ABC123',uart_channel:1},required:true}},devices),/RESOURCE.MISSING/);
+});
+test('resolved Dongle UART reuses an existing monitor and does not stop it on release',async t=>{
+  const {resolveResources}=await import('../plugins/fpga-firmware-test/lib/resource-resolver.mjs');const root=tempDir(t),port='winusb://wiparse/uart?serial=ABC123',calls=[];
+  const invoke=async(method,params)=>{calls.push(method);if(method==='instrument.list')return {data:{devices:[]}};if(method==='serial.ports')return {data:[{device:port}]};if(method==='serial.monitor.status')return {data:{sessions:[{port,tab_id:3}]}};if(method==='log.lines.get')return {data:{lines:[],next_row:0,dropped:0}};throw Error(`unexpected ${method}`);};
+  const adapter=createFpgaHostAdapter({dataRoot:root,layout:{test_dir:path.join(root,'test')},invoke,events:eventsBus()});
+  const resources=resolveResources({log:{kind:'wiparse_dongle_uart',selector:{dongle_serial:'ABC123',uart_channel:0,baud:115200},required:true}},await adapter.devices());
+  const lease=await adapter.acquire({station_id:'one',run_id:'run',resources});assert.equal(lease.handoffs[0].port,port);assert.equal(lease.handoffs[0].started,false);
+  await adapter.release(lease);assert(!calls.includes('serial.monitor.start'));assert(!calls.includes('serial.monitor.stop'));
+});
+
+test('I2C commands require the leased Dongle and confirmed matching job',async t=>{
+  const root=tempDir(t),events=eventsBus();let calls=0;
+  const invoke=async (method,params)=>{
+    assert.equal(method,'instrument.command');calls++;
+    events.emit({type:'instrument.job_done',data:{job_id:calls,ok:true,detail:{response:'OK READ 88 57'}}});
+    return {data:{job_id:calls}};
+  };
+  const adapter=createFpgaHostAdapter({dataRoot:root,layout:{test_dir:path.join(root,'test')},invoke,events});
+  const device={kind:'wiparse_dongle',serial:'ABC',device_id:42,purpose:'i2c'};
+  const command={DongleI2cRead:{addr:'2B',len:2}};
+  await assert.rejects(adapter.i2cCommand({resource:device,command}),/LEASE.REQUIRED/);
+  const lease=await adapter.acquire({station_id:'S',run_id:'R',resources:{dongle:device}});
+  await assert.rejects(adapter.i2cCommand({resource:{...device,device_id:43},command}),/LEASE.REQUIRED/);
+  await assert.rejects(adapter.i2cCommand({resource:device,command:{ProbeReset:{}}}),/I2C.COMMAND_UNSUPPORTED/);
+  const reply=await adapter.i2cCommand({resource:device,command});assert.equal(reply.data.detail.response,'OK READ 88 57');assert.equal(calls,1);
+  await adapter.release(lease);await assert.rejects(adapter.assertI2cLease(device),/LEASE.REQUIRED/);
+});
+
+test('leased FT4222 routes MT5788 register reads through confirmed instrument jobs',async t=>{
+  const {createFT4222Bus}=await import('../plugins/wireless-whitebox/ft4222-i2c-bus.mjs');
+  const {createMT5788}=await import('../plugins/wireless-whitebox/mt5788.mjs');
+  const root=tempDir(t),events=eventsBus();let job=0,reg=0;
+  const invoke=async(method,params)=>{
+    assert.equal(method,'instrument.command');const c=params.command.BridgeI2c;assert(c);job++;
+    if(c.write_hex)reg=Number.parseInt(c.write_hex,16);
+    const w=c.write_hex?c.write_hex.match(/../g).join(' ').toUpperCase():'—';
+    const r=c.read_len?(reg===0?'88 57':'88 00'):'—';
+    events.emit({type:'instrument.job_done',data:{job_id:job,ok:true,detail:{response:`I2C 0x2B @100000Hz write ${w} read ${r}`}}});
+    return {data:{job_id:job}};
+  };
+  const adapter=createFpgaHostAdapter({dataRoot:root,layout:{test_dir:path.join(root,'test')},invoke,events});
+  const resource={kind:'usb_bridge',resource:'bridge://ft4222/serial=ABC',device_id:12};
+  const lease=await adapter.acquire({station_id:'S',run_id:'R',resources:{rx:resource}});
+  const bus=createFT4222Bus({checkLease:()=>adapter.assertI2cLease(resource),executeConfirmed:command=>adapter.i2cCommand({resource,command})});
+  const chip=createMT5788(bus);assert.equal((await chip.identify()).variant,'HW');assert.equal(job,4);
+  await adapter.release(lease);await assert.rejects(chip.readRxTelemetry(),/LEASE.REQUIRED/);
+});
+
+test('load commands require the exact leased load and allow only confirmed CC operations',async t=>{
+  const root=tempDir(t),events=eventsBus();let calls=0;
+  const invoke=async(method,params)=>{
+    assert.equal(method,'instrument.command');calls++;
+    events.emit({type:'instrument.job_done',data:{job_id:calls,ok:true}});
+    return {data:{job_id:calls}};
+  };
+  const host=createFpgaHostAdapter({dataRoot:root,layout:{test_dir:path.join(root,'test')},invoke,events});
+  const load={kind:'electronic_load',resource:'USB::LOAD',device_id:5};
+  await assert.rejects(host.loadCommand({resource:load,command:{LoadInput:false}}),/LEASE.REQUIRED/);
+  const lease=await host.acquire({station_id:'S',run_id:'R',resources:{load}});
+  await assert.rejects(host.loadCommand({resource:{...load,device_id:6},command:{LoadInput:false}}),/LEASE.REQUIRED/);
+  await assert.rejects(host.loadCommand({resource:load,command:{LoadLevel:{mode:'CC',value:-1}}}),/LOAD.COMMAND_INVALID/);
+  await assert.rejects(host.loadCommand({resource:load,command:{LoadMode:'CV'}}),/LOAD.COMMAND_INVALID/);
+  for(const command of [{LoadInput:false},{LoadMode:'CC'},{LoadLevel:{mode:'CC',value:0.5}},{LoadInput:true}])await host.loadCommand({resource:load,command});
+  assert.equal(calls,4);await host.release(lease);
+});
+
+test('unknown device state retains a recovery lock even if the owner is gone',async t=>{
+  const root=tempDir(t),ctx={dataRoot:root,layout:{test_dir:path.join(root,'test')},invoke:async()=>{throw new Error('unexpected');}};
+  const host=createFpgaHostAdapter(ctx),resource={kind:'usb_bridge',resource:'bridge://ft4222/serial=ABC',device_id:12};
+  const lease=await host.acquire({station_id:'S',run_id:'R',resources:{rx:resource}});
+  await host.markLeaseUncertain(lease);await assert.rejects(host.release(lease),/RECOVERY_REQUIRED/);
+  const saved=JSON.parse(fs.readFileSync(lease.lock_path));saved.pid=99999999;fs.writeFileSync(lease.lock_path,JSON.stringify(saved));
+  await assert.rejects(createFpgaHostAdapter(ctx).acquire({station_id:'S',run_id:'other',resources:{rx:resource}}),/RECOVERY_REQUIRED/);
+  const other={...ctx,layout:{test_dir:path.join(root,'different-project')}};
+  await assert.rejects(createFpgaHostAdapter(other).acquire({station_id:'different',run_id:'another',resources:{rx:resource}}),/RECOVERY_REQUIRED/);
+});
+
+test('power voltage selects the exact channel and V unit, not current or another channel',async t=>{
+  const root=tempDir(t),events=eventsBus();let readings=[{channel:'CH1 Current',value:1.4,unit:'A'},{channel:'CH10 Voltage',value:50,unit:'V'},{channel:'CH1 Voltage',value:5.1,unit:'V'}];
+  const invoke=async(method)=>{assert.equal(method,'instrument.measure');events.emit({type:'instrument.measurements',data:{device_id:2,readings}});return {ok:true};};
+  const adapter=createFpgaHostAdapter({dataRoot:root,invoke,events}),resource={kind:'dc_source',device_id:2};
+  assert.equal(await adapter.voltage(resource,1),5.1);
+  readings=[{channel:'CH1 Current',value:1.4,unit:'A'},{channel:'CH10 Voltage',value:50,unit:'V'}];
+  await assert.rejects(adapter.voltage(resource,1),/MEASURE.EMPTY/);
+  readings=[{channel:'CH1 Voltage',value:5.1,unit:'V'},{channel:'CH1 Voltage',value:5.2,unit:'V'}];
+  await assert.rejects(adapter.voltage(resource,1),/MEASURE.EMPTY/);
+});
+
+test('a new active RX message permits readiness without reusing old serial rows',async t=>{
+  const root=tempDir(t);let page=0;
+  const invoke=async(method,params)=>{
+    if(method==='serial.monitor.status')return {data:{sessions:[]}};
+    if(method==='serial.monitor.start')return {data:{tab_id:0,port:'COM7'}};
+    if(method==='serial.monitor.stop')return {data:{}};
+    if(method==='log.lines.get'){
+      page++;if(page===1)return {data:{lines:['ASK 31 old'],next_row:1,dropped:0}};
+      if(page===2){assert.equal(params.from_row,1);return {data:{lines:['ASK 310','ASK 31A'],next_row:3,dropped:0}};}
+      assert.equal(params.from_row,3);return {data:{lines:['ASK 31 new'],next_row:4,dropped:0}};
+    }
+    throw new Error(method);
+  };
+  const host=createFpgaHostAdapter({dataRoot:root,layout:{test_dir:path.join(root,'test')},invoke});
+  const log={kind:'serial_port',port:'COM7'},lease=await host.acquire({station_id:'S',run_id:'R',resources:{log}});
+  const ready=await host.waitSerialSequence({resource:log,markers:['Start CHG','ASK 71'],active_marker:'ASK 31',timeout_ms:1000});
+  assert.equal(ready.events.length,1);assert.equal(ready.events[0].line,'ASK 31 new');await host.release(lease);
+});
+
 test('plugins without host_adapter do not receive fpgaAdapter', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wiparse-no-adapter-'));
   try {
@@ -163,7 +286,15 @@ test('collectLog base64 matches the cursor span and stays incomplete when stoppe
   const raw = Buffer.from(partial.raw_base64, 'base64');
   assert.equal(raw.toString('utf8'), 'BOOT\n');
   assert.equal(partial.end_cursor - partial.start_cursor, raw.length);
-  assert.equal(partial.complete, true);
+  assert.equal(partial.complete, false);
+  assert.equal(partial.provenance, 'reconstructed_text');
+  assert.equal(partial.timestamp_source, 'host_poll');
+  assert(partial.quality_issues.includes('LOG.RAW_BYTES_UNAVAILABLE'));
+  const {preserveLog} = await import('../plugins/fpga-firmware-test/lib/log-capture.mjs');
+  const saved = preserveLog(partial, path.join(root, 'evidence'), {max_lines:1000});
+  assert.equal(saved.complete, false);
+  assert(fs.existsSync(path.join(root, 'evidence', 'logs', 'serial.reconstructed.txt')));
+  assert.equal(fs.existsSync(path.join(root, 'evidence', 'logs', 'serial.raw')), false);
   assert.equal(stoppedLog.complete, false);
   assert.equal(stoppedLog.end_cursor, stoppedLog.start_cursor + Buffer.from(stoppedLog.raw_base64, 'base64').length);
   await adapter.release(handed);

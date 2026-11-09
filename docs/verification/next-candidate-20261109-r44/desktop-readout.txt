@@ -1,0 +1,207 @@
+Window: "WiParse", App: WiParse.exe.
+	0 window WiParse Secondary Actions: Raise
+		1 pane
+			2 pane WiParse
+				3 pane (disabled)
+				4 region WiParse - Web content
+					5 region
+						6 region
+						7 region
+							8 region
+								9 document WiParse Value: http://tauri.localhost/ ID: RootWebArea
+									10 group ID: root
+										11 header
+											12 text W
+											13 text WiParse
+											14 navigation 工具
+												15 button 集成测试
+												16 button 仪器控制
+												17 button 串口工具
+												18 button 波形分析
+												19 button 数据分析
+												20 button 测试报告
+												21 button 计算器
+											22 text 11:28:48
+											23 text 本地文件
+											24 button 刷新 Description: 刷新
+											25 button 设置
+										230 text 文件目录
+										231 button 刷新
+										232 button 选择目录
+										233 heading 波形文件
+										234 button 打开文件
+										235 button 添加文件
+										236 button 全部关闭
+										237 text 打开会保留现有文件；兼容通道默认叠加，移除仅关闭内存波形。
+										238 section header
+											239 text uart-two-channels.csv
+											240 button 移除文件 uart-two-channels.csv
+										241 button ∿ CH1 6,216点
+										242 group 叠加到当前通道 Description: 叠加到当前通道
+											243 check box (settable, string) 叠加 uart-two-channels.csv · CH1
+											244 text 叠加
+										245 button ∿ CH2 6,216点
+										246 thumb 调整左侧栏宽度 Description: 拖动调整宽度；双击恢复200；方向键微调 Value: 200
+										247 heading CH2
+										248 text 6,216 个采样点 · 横轴 s · 纵轴 V
+										249 toggle button 通道
+										250 toggle button 测量与光标
+										251 toggle button 协议分析
+										252 group 波形交互模式
+											253 toggle button 平移
+											254 toggle button 光标
+										255 button 导出波形
+										256 combo box (settable, string) 波形导出格式 Value: CSV
+										257 button X+
+										258 button X−
+										259 button Y+ Description: 纵向放大
+										260 button Y− Description: 纵向缩小
+										261 button 适应
+										262 button 纵轴游标 Description: 空格键切换横轴和纵轴游标
+										263 button (disabled) 缩放到光标
+										264 button (disabled) 清除游标
+										265 text CH2
+										266 text CH1
+										267 image CH2 波形，横轴 s，纵轴 V Description: Ctrl+滚轮缩放X；Ctrl+Shift+滚轮缩放Y；左键二维平移；右键框选；双击适应
+										268 button CH2 地线显示手柄 Description: CH2 地线：拖动平移，Ctrl 拖动调幅，双击复位
+										269 button CH1 地线显示手柄 Description: CH1 地线：拖动平移，Ctrl 拖动调幅，双击复位
+										270 text 主通道最小值
+										271 text 
+										272 text 1.2
+										273 text 
+										274 text V
+										275 text 主通道最大值
+										276 text 
+										277 text 1.7
+										278 text 
+										279 text V
+										280 text 显示范围
+										281 text 0
+										282 text –
+										283 text 0.003371853
+										284 text 
+										285 text s
+										286 text 拖动平移，右键框选缩放；切换光标模式进行测量
+										287 heading 协议分析
+										288 button 收起分析设置
+										289 region 协议分析
+											290 tab 协议通道
+												291 tab item (selectable) 1 · DDSSS
+											292 button 添加协议通道
+											293 button (disabled) 移除当前
+											294 button 其余通道同时解析
+											295 button 解析全部通道
+											296 button (disabled) 协议分析报告…
+											297 text 协议
+											298 combo box (settable, string) 协议 Value: DDSSS
+											299 text 信号
+											300 combo box (settable, string) 信号 Value: CH1
+											301 text 序列
+											302 combo box (settable, string) DDSSS 序列 Value: SEQA
+											303 text 扩展码
+											304 combo box (settable, string) DDSSS 扩展码 Value: 关
+											305 text FOP Hz
+											306 edit (settable, string) FOP Hz Description: 自动
+											307 check box (settable, string) 解码门控 全波形（光标仅测量）
+											308 text 解码门控
+											309 combo box (settable, string) Value: 全波形（光标仅测量）
+											310 text DDSSS 保留完整信号用于相关锁定；需要截取解码时请选择当前视口。
+											311 button 解码
+											312 text 指定通道后解码。
+										62 footer
+											63 text 本地文件。这一页不检查设备服务是否在运行。
+											64 text WiParse Next
+								65 region
+		66 title bar (settable, string) Value: WiParse
+			67 menu bar System ID: MenuBar
+				68 menu item System
+			69 button Minimize
+			70 button Maximize
+			71 button Close
+
+Document text: ```
+W
+WiParse
+集成测试
+仪器控制
+串口工具
+波形分析
+数据分析
+测试报告
+计算器
+11:28:48
+本地文件
+↻
+设置
+文件目录
+刷新
+选择目录
+波形文件
+打开文件
+添加文件
+全部关闭
+打开会保留现有文件；兼容通道默认叠加，移除仅关闭内存波形。
+uart-two-channels.csv
+×
+∿
+CH1
+6,216点
+叠加 uart-two-channels.csv · CH1
+叠加
+∿
+CH2
+6,216点
+调整左侧栏宽度
+CH2
+6,216 个采样点 · 横轴 s · 纵轴 V
+通道
+测量与光标
+协议分析
+平移
+光标
+导出波形
+波形导出格式
+X+
+X−
+Y+
+Y−
+适应
+纵轴游标
+缩放到光标
+清除游标
+CH2
+CH1
+￼
+▸
+▸
+主通道最小值 1.2 V
+主通道最大值 1.7 V
+显示范围0 – 0.003371853 s
+拖动平移，右键框选缩放；切换光标模式进行测量
+协议分析
+×
+1 · DDSSS
+添加协议通道
+移除当前
+其余通道同时解析
+解析全部通道
+协议分析报告…
+协议
+协议
+信号
+信号
+序列
+DDSSS 序列
+扩展码
+DDSSS 扩展码
+FOP Hz
+FOP Hz
+￼
+解码门控
+￼
+DDSSS 保留完整信号用于相关锁定；需要截取解码时请选择当前视口。
+解码
+指定通道后解码。
+本地文件。这一页不检查设备服务是否在运行。
+WiParse Next
+```

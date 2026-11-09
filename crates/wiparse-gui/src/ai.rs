@@ -22,6 +22,42 @@ fn text(lang: Lang, zh: &'static str, en: &'static str) -> &'static str {
     }
 }
 
+fn ai_config_revision(config:&AiConfig)->String {
+    use std::hash::{Hash,Hasher};let mut hash=std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(config).unwrap_or_default().hash(&mut hash);format!("{:016x}",hash.finish())
+}
+
+fn ai_settings_candidate(current:&AiConfig,params:&serde_json::Value)->Result<AiConfig,String>{
+    let fields=params.get("fields").and_then(|v|v.as_object()).ok_or("AI.INVALID_SETTINGS")?;
+    let keys=["enabled","provider","base_url","model","protocol","stream","thinking","timeout_sec","max_output_tokens","api_key_env"];
+    if fields.len()!=keys.len()||fields.keys().any(|key|!keys.contains(&key.as_str())){return Err("AI.INVALID_SETTINGS".into());}
+    let mut next=current.clone();
+    next.enabled=fields.get("enabled").and_then(|v|v.as_bool()).ok_or("AI.INVALID_SETTINGS")?;
+    next.provider=serde_json::from_value(fields["provider"].clone()).map_err(|_|"AI.INVALID_SETTINGS")?;
+    next.protocol=serde_json::from_value(fields["protocol"].clone()).map_err(|_|"AI.INVALID_SETTINGS")?;
+    next.stream=fields.get("stream").and_then(|v|v.as_bool()).ok_or("AI.INVALID_SETTINGS")?;
+    next.thinking=if fields["thinking"].is_null(){None}else{Some(fields["thinking"].as_bool().ok_or("AI.INVALID_SETTINGS")?)};
+    for (key,target) in [("base_url",&mut next.base_url),("model",&mut next.model),("api_key_env",&mut next.api_key_env)] {
+        let text=fields.get(key).and_then(|v|v.as_str()).ok_or("AI.INVALID_SETTINGS")?.trim();
+        if text.len()>2048||text.chars().any(char::is_control){return Err("AI.INVALID_SETTINGS".into());}*target=text.to_owned();
+    }
+    next.timeout_sec=fields.get("timeout_sec").and_then(|v|v.as_u64()).filter(|v|(5..=300).contains(v)).ok_or("AI.INVALID_SETTINGS")?;
+    next.max_output_tokens=fields.get("max_output_tokens").and_then(|v|v.as_u64()).filter(|v|(64..=32768).contains(v)).ok_or("AI.INVALID_SETTINGS")? as u32;
+    if next.model.len()>256||next.api_key_env.len()>128{return Err("AI.INVALID_SETTINGS".into());}
+    let env=next.api_key_env.as_bytes();if !env.is_empty()&&(!env[0].is_ascii_alphabetic()&&env[0]!=b'_'||!env.iter().all(|b|b.is_ascii_alphanumeric()||*b==b'_')){return Err("AI.INVALID_ENV_NAME".into());}
+    // Disabling must remain possible even if an old, hidden URL is invalid.
+    if !next.enabled && next.base_url.is_empty() {next.base_url=current.base_url.clone();}
+    if next.enabled || next.base_url!=current.base_url {next.endpoint().map_err(|error|error.to_string())?;}
+    let clear=params.get("clear_key").and_then(|v|v.as_bool()).unwrap_or(false);
+    if let Some(key)=params.get("protected_key").and_then(|v|v.as_str()) {
+        if clear||key.is_empty()||key.len()>65536||key.len()%2!=0||!key.bytes().all(|b|b.is_ascii_hexdigit()){return Err("AI.INVALID_CREDENTIAL".into());}
+        wiparse_core::ai::validate_protected_key(key).map_err(|_|"AI.INVALID_CREDENTIAL")?;
+        next.protected_api_key=key.to_owned();
+    }else if clear{next.protected_api_key.clear();}
+    if next.enabled {next.validate().map_err(|error|error.to_string())?;}
+    Ok(next)
+}
+
 struct AiTurn {
     question: String,
     context: String,
@@ -79,10 +115,14 @@ pub(crate) struct AiPanel {
     status_error: bool,
     details: String,
     connection_target: String,
+    api_test: Option<(String,String,Option<bool>)>,
+    api_chat: Option<(String,String,Option<Result<String,String>>)>,
     started: Option<std::time::Instant>,
     raw_view: bool,
 }
 impl AiPanel {
+    pub(crate) fn runtime_busy(&self)->bool{self.pending.is_some()||self.unsaved()}
+
     pub fn new(config: &AiConfig) -> Self {
         Self {
             open: false,
@@ -105,6 +145,8 @@ impl AiPanel {
             status_error: false,
             details: String::new(),
             connection_target: String::new(),
+            api_test: None,
+            api_chat: None,
             started: None,
             raw_view: false,
         }
@@ -113,6 +155,56 @@ impl AiPanel {
         ctx.data_mut(|data| {
             data.insert_temp(egui::Id::new("wiparse-global-ai"), self.service.clone())
         });
+    }
+    pub(crate) fn api_settings_get(&self,cfg:&AppConfig)->crate::backend::InvokeReply {
+        use crate::backend::invoke_ok;
+        let ai=&cfg.ai;
+        let base_url=if ai.endpoint().is_ok(){ai.base_url.as_str()}else{""};
+        invoke_ok("ui.ai.settings.get_safe",serde_json::json!({
+            "revision":ai_config_revision(ai),"enabled":ai.enabled,"provider":ai.provider,"base_url":base_url,"base_url_invalid":base_url.is_empty(),"model":ai.model,"protocol":ai.protocol,
+            "stream":ai.stream,"thinking":ai.thinking,"timeout_sec":ai.timeout_sec,"max_output_tokens":ai.max_output_tokens,"api_key_env":ai.api_key_env,
+            "credential_saved":!ai.protected_api_key.is_empty(),"editing_elsewhere":self.unsaved(),"busy":self.pending.is_some()
+            ,"test":self.api_test.as_ref().map(|(token,revision,result)|serde_json::json!({"token":token,"revision":revision,"state":match result {Some(true)=>"passed",Some(false)=>"failed",None=>"running"},"message":if result.is_some(){self.status.chars().take(500).collect::<String>()}else{String::new()}}))
+        }))
+    }
+    pub(crate) fn api_settings_set(&mut self,cfg:&mut AppConfig,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.ai.settings.set_safe";
+        if self.unsaved(){return err(method,"AI.UNSAVED_CHANGES");}
+        if self.pending.is_some(){return err(method,"AI.BUSY");}
+        if cfg.ai!=self.applied||params.get("revision").and_then(|v|v.as_str())!=Some(ai_config_revision(&cfg.ai).as_str()){return err(method,"AI.CONFIG_STALE");}
+        let candidate=match ai_settings_candidate(&cfg.ai,params){Ok(value)=>value,Err(error)=>return err(method,&error)};
+        let mut updated=cfg.clone();updated.ai=candidate.clone();
+        if let Err(error)=save_config(&updated){return err(method,&format!("AI.SAVE_FAILED: {error}"));}
+        cfg.ai=candidate.clone();self.applied=candidate.clone();self.draft=candidate.clone();self.service.configure(candidate);
+        self.api_test=None;
+        self.api_chat=None;
+        self.turns.clear();self.reply.clear();self.failed_prompt=None;self.context.clear();self.details.clear();self.key_input.clear();self.clear_key=false;
+        ok(method,self.api_settings_get(cfg).data)
+    }
+    pub(crate) fn api_connection_test(&mut self,cfg:&AppConfig,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.ai.test_safe";
+        if self.unsaved(){return err(method,"AI.UNSAVED_CHANGES");}if self.pending.is_some(){return err(method,"AI.BUSY");}
+        let revision=ai_config_revision(&cfg.ai);
+        if cfg.ai!=self.applied||params.get("revision").and_then(|v|v.as_str())!=Some(revision.as_str()){return err(method,"AI.CONFIG_STALE");}
+        let task=match self.service.test_connection(cfg.ai.clone()){Ok(task)=>task,Err(error)=>return err(method,&error.to_string())};
+        let token=uuid::Uuid::new_v4().to_string();self.api_test=Some((token.clone(),revision,None));self.testing=true;self.active_prompt=None;
+        self.connection_target=cfg.ai.endpoint().unwrap_or_default();self.begin(Ok(task));ok(method,serde_json::json!({"accepted":true,"token":token}))
+    }
+    pub(crate) fn api_chat_submit(&mut self,cfg:&AppConfig,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.ai.chat.submit_safe";
+        if self.pending.is_some(){return err(method,"AI.BUSY");}
+        if params.get("consent").and_then(|value|value.as_bool())!=Some(true){return err(method,"AI.CONSENT_REQUIRED");}
+        let revision=ai_config_revision(&cfg.ai);if cfg.ai!=self.applied||params.get("revision").and_then(|v|v.as_str())!=Some(revision.as_str()){return err(method,"AI.CONFIG_STALE");}
+        let Some(prompt)=params.get("text").and_then(|value|value.as_str()).filter(|value|!value.trim().is_empty()&&value.len()<=65536&&!value.contains('\0')) else{return err(method,"AI.INVALID_INPUT")};
+        let task=match self.service.submit(AiRequest{purpose:"user-requested engineering assistance".into(),text:prompt.to_owned()}){Ok(task)=>task,Err(error)=>return err(method,&error.to_string())};
+        let token=uuid::Uuid::new_v4().to_string();self.api_test=None;self.api_chat=Some((token.clone(),revision,None));self.testing=false;self.active_prompt=None;self.begin(Ok(task));
+        ok(method,serde_json::json!({"accepted":true,"token":token}))
+    }
+    pub(crate) fn api_chat_state(&self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.ai.chat.state_safe";
+        let token=params.get("token").and_then(|v|v.as_str()).unwrap_or("");
+        let Some((_,revision,result))=self.api_chat.as_ref().filter(|(current,_,_)|current==token) else{return err(method,"AI.CHAT_NOT_FOUND")};
+        match result {None=>ok(method,serde_json::json!({"state":"running","revision":revision})),Some(Ok(text))=>ok(method,serde_json::json!({"state":"completed","revision":revision,"text":text})),Some(Err(message))=>ok(method,serde_json::json!({"state":"failed","revision":revision,"message":message}))}
     }
     fn candidate(&self) -> Result<AiConfig, AiError> {
         let mut config = self.draft.clone();
@@ -139,6 +231,11 @@ impl AiPanel {
             };
             if let Some(result) = result {
                 self.pending = None;
+                if self.testing {if let Some((_,_,outcome))=self.api_test.as_mut(){*outcome=Some(result.is_ok());}}
+                if !self.testing {if let Some((_,_,outcome))=self.api_chat.as_mut(){*outcome=Some(match &result {
+                    Ok(reply)=>{let mut text:String=reply.text.chars().take(65536).collect();if reply.text.chars().count()>65536{text.push_str("\n[界面仅显示前 65536 个字符]");}Ok(text)},
+                    Err(error)=>Err(error_message(error).to_owned()),
+                });}}
                 match result {
                     Ok(reply) => {
                         let elapsed = self
@@ -754,6 +851,8 @@ impl AiPanel {
                         if let Some(task) = self.pending.take() {
                             task.cancel();
                         }
+                        self.api_test=None;
+                        self.api_chat=None;
                         if let Some((question, context)) = self.active_prompt.take() {
                             if self.prompt.is_empty() {
                                 self.prompt = question;
@@ -898,6 +997,8 @@ impl AiPanel {
         });
     }
     fn start_connection_test(&mut self) {
+        self.api_test=None;
+        self.api_chat=None;
         let candidate = self.candidate();
         self.connection_target = candidate
             .as_ref()
@@ -916,6 +1017,8 @@ impl AiPanel {
         if self.pending.is_some() {
             return;
         }
+        self.api_test=None;
+        self.api_chat=None;
         let purpose = if purpose.trim().is_empty() {
             "engineering analysis".to_owned()
         } else {
@@ -993,6 +1096,8 @@ impl AiPanel {
                         if let Some(task) = self.pending.take() {
                             task.cancel();
                         }
+                        self.api_test=None;
+                        self.api_chat=None;
                         self.active_prompt = None;
                         if self.applied.base_url != config.base_url
                             || self.applied.model != config.model
@@ -1132,6 +1237,47 @@ fn ai_field_label(ui: &mut egui::Ui, t: &Tokens, label: &str) {
 mod tests {
     use super::*;
     #[test]
+    fn api_settings_preserve_credential_and_never_return_it() {
+        let mut cfg=AppConfig::default();cfg.ai.protected_api_key="opaque-secret".into();
+        let panel=AiPanel::new(&cfg.ai);let visible=panel.api_settings_get(&cfg).data;
+        assert_eq!(visible["credential_saved"],true);assert!(!visible.to_string().contains("opaque-secret"));
+        let fields=serde_json::json!({"enabled":false,"provider":"custom","base_url":"https://example.invalid/v1","model":"model","protocol":"chat_completions","stream":false,"thinking":null,"timeout_sec":60,"max_output_tokens":1024,"api_key_env":""});
+        let result=ai_settings_candidate(&cfg.ai,&serde_json::json!({"fields":fields})).unwrap();assert_eq!(result.protected_api_key,"opaque-secret");
+        assert!(ai_settings_candidate(&cfg.ai,&serde_json::json!({"fields":fields,"protected_key":"AA"})).is_err());
+        let cleared=ai_settings_candidate(&cfg.ai,&serde_json::json!({"fields":fields,"clear_key":true})).unwrap();assert!(cleared.protected_api_key.is_empty());
+        let mut invalid=cfg.clone();invalid.ai.base_url="https://user:secret@example.invalid/v1".into();invalid.ai.enabled=true;
+        let visible=AiPanel::new(&invalid.ai).api_settings_get(&invalid).data;assert_eq!(visible["base_url"],"");assert!(!visible.to_string().contains("secret"));
+        let mut disable=fields.clone();disable["base_url"]=serde_json::json!("");
+        assert_eq!(ai_settings_candidate(&invalid.ai,&serde_json::json!({"fields":disable})).unwrap().base_url,invalid.ai.base_url);
+    }
+    #[test]
+    fn api_connection_test_sends_only_a_fixed_probe_and_reports_completion() {
+        use std::io::{Read,Write};use std::time::{Duration,Instant};
+        let listener=std::net::TcpListener::bind("127.0.0.1:0").unwrap();listener.set_nonblocking(true).unwrap();
+        let mut cfg=AppConfig::default();cfg.ai.base_url=format!("http://{}",listener.local_addr().unwrap());cfg.ai.model="fixture-model".into();cfg.ai.enabled=true;
+        let (tx,rx)=std::sync::mpsc::channel();let server=std::thread::spawn(move||{
+            for _ in 0..2 {
+            let deadline=Instant::now()+Duration::from_secs(20);let mut socket=loop{match listener.accept(){Ok((socket,_))=>break socket,Err(e) if e.kind()==std::io::ErrorKind::WouldBlock&&Instant::now()<deadline=>std::thread::sleep(Duration::from_millis(10)),Err(_)=>return}};
+            socket.set_read_timeout(Some(Duration::from_secs(10))).unwrap();let mut header=Vec::new();let mut byte=[0u8;1];while !header.ends_with(b"\r\n\r\n"){if socket.read_exact(&mut byte).is_err(){return;}header.push(byte[0]);if header.len()>32768{return;}}
+            let text=String::from_utf8(header).unwrap();let length=text.lines().find_map(|line|line.to_ascii_lowercase().strip_prefix("content-length:").and_then(|value|value.trim().parse::<usize>().ok())).unwrap();
+            let mut body=vec![0;length];socket.read_exact(&mut body).unwrap();tx.send(String::from_utf8(body).unwrap()).unwrap();
+            let body=serde_json::json!({"model":"fixture-model","choices":[{"message":{"content":"OK"},"finish_reason":"stop"}]}).to_string();
+            let reply=format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body);let _=socket.write_all(reply.as_bytes());
+            }
+        });
+        let mut panel=AiPanel::new(&cfg.ai);let revision=ai_config_revision(&cfg.ai);
+        let reply=panel.api_connection_test(&cfg,&serde_json::json!({"revision":revision}));assert!(reply.ok);let token=reply.data["token"].as_str().unwrap().to_string();
+        let ctx=Context::default();let deadline=Instant::now()+Duration::from_secs(20);while panel.pending.is_some()&&Instant::now()<deadline{panel.poll(&ctx);std::thread::sleep(Duration::from_millis(10));}
+        let state=panel.api_settings_get(&cfg).data;assert_eq!(state["test"]["token"],token);assert_eq!(state["test"]["state"],"passed");
+        let body=rx.recv_timeout(Duration::from_secs(1)).unwrap();assert!(body.contains("Reply with OK only."));assert!(!body.contains("DUT"));
+        let missing=panel.api_chat_submit(&cfg,&serde_json::json!({"revision":revision,"text":"manual test"}));assert_eq!(missing.error.as_deref(),Some("AI.CONSENT_REQUIRED"));
+        let submitted=panel.api_chat_submit(&cfg,&serde_json::json!({"revision":revision,"text":"manual test","consent":true}));assert!(submitted.ok);let chat_token=submitted.data["token"].as_str().unwrap().to_string();
+        let deadline=Instant::now()+Duration::from_secs(20);while panel.pending.is_some()&&Instant::now()<deadline{panel.poll(&ctx);std::thread::sleep(Duration::from_millis(10));}
+        let chat=panel.api_chat_state(&serde_json::json!({"token":chat_token}));assert_eq!(chat.data["state"],"completed","{:?}",chat.data);assert_eq!(chat.data["text"],"OK");
+        let chat_body=rx.recv_timeout(Duration::from_secs(1)).unwrap();assert!(chat_body.contains("manual test"));assert!(!chat_body.contains("Reply with OK only."));server.join().unwrap();
+        assert_eq!(panel.api_connection_test(&cfg,&serde_json::json!({"revision":"stale"})).error.as_deref(),Some("AI.CONFIG_STALE"));
+    }
+    #[test]
     fn ai_window_layout_and_provider_switch_never_send_requests() {
         for light in [false, true] {
             for (width, height) in [(640.0, 480.0), (1100.0, 900.0)] {
@@ -1213,16 +1359,19 @@ mod tests {
         );
         panel.clear_key = true;
         assert!(panel.candidate().unwrap().protected_api_key.is_empty());
-        #[cfg(windows)]
-        {
-            panel.key_input = "new-test-key".into();
-            let config = panel.candidate().unwrap();
-            assert!(!config.protected_api_key.is_empty());
-            assert!(!serde_json::to_string(&config)
-                .unwrap()
-                .contains("new-test-key"));
-        }
     }
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires the interactive Windows user profile for DPAPI; must be verified before release"]
+    fn ai_key_editor_encrypts_new_key_in_interactive_user_profile() {
+        let mut panel = AiPanel::new(&AiConfig::default());
+        panel.key_input = "new-test-key".into();
+        let config = panel.candidate().unwrap();
+        assert!(!config.protected_api_key.is_empty());
+        assert!(!serde_json::to_string(&config).unwrap().contains("new-test-key"));
+        assert_eq!(wiparse_core::ai::unprotect_bridge_token(&config.protected_api_key).unwrap(),"new-test-key");
+    }
+
     #[test]
     fn ai_conversation_transport_errors_and_connection_probe_keep_history_separate() {
         use std::io::{Read, Write};

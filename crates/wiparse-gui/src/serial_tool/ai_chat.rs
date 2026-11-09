@@ -1,5 +1,6 @@
 //! Serial-specific conversation and bounded monitoring over the shared AI service.
 mod alerts;
+mod api;
 mod host;
 mod platform;
 mod protocol;
@@ -89,6 +90,7 @@ struct Watch {
 
 pub(super) struct SerialAiChat {
     pub open: bool,
+    web_preview: Option<api::Preview>,
     panel_width: f32,
     project: String,
     config: Option<AiConfig>,
@@ -121,6 +123,7 @@ impl Default for SerialAiChat {
     fn default() -> Self {
         Self {
             open: false,
+            web_preview: None,
             panel_width: 420.0,
             project: String::new(),
             config: None,

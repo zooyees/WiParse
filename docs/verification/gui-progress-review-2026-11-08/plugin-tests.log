@@ -1,0 +1,653 @@
+
+> wiparse-test-tools@0.1.0 test
+> node --test test/*.test.mjs lib/*.test.mjs plugins/fpga-firmware-test/test/*.test.mjs
+
+✔ pickInstrument prefers resource then kind (8.116ms)
+✔ suggestedParamsFromInstrument maps binds (0.7443ms)
+✖ scope-serial-monitor plugin.json validates (4.6874ms)
+✔ all bundled plugins declare report_name and their supported minimum engines (27.0505ms)
+✔ discoverPlugins keeps report_name and outputs (1192.1656ms)
+✔ applyParamPaths parses json overlay onto station (4.5426ms)
+✔ station without isf_dir validates (1.2604ms)
+✔ expandTemplates second pass substitutes {isf_dir} (1.4891ms)
+✔ colocateStatusWithIsf does not overwrite explicit status_file (32.3706ms)
+✔ colocateStatusWithIsf fills empty status_file next to isf when no test_dir (2.2683ms)
+✔ colocateStatusWithIsf prefers test_dir over isf_dir (4.0534ms)
+✔ loadOverlayFile + applyParamPaths is run-scoped (80.9216ms)
+✔ plugin.json group/advanced/hidden are accepted (0.6801ms)
+✔ report_name is required on plugin.json (2.5889ms)
+✔ resolveProjectLayout run vs preflight (2.1478ms)
+✔ expandTemplates injects project layout and stamp on run (1.0668ms)
+✔ normalizeArtifacts drops paths outside run_dir and skip keys (11.848ms)
+✔ writeRunJson lands under runs/stamp (57.388ms)
+✔ ensureTestInProject appends only the running plugin (275.4775ms)
+✔ ensureTestInProject uses report-name test_id with plugin_id (90.4837ms)
+✔ loadStationConfig derives test_id from file_prefix when layout is omitted (122.9623ms)
+✔ Markdown evidence index contains portable, encoded links without linking the report itself (70.2601ms)
+✔ report evidence is grouped by purpose while every file remains reachable (275.6347ms)
+✔ ICD defaults match WIPARSE-IF-001 (1.9915ms)
+✔ channel overlays are generic (MI/EP/host not locked to the dongle) (3.0472ms)
+✔ UART first-packet baud follows ICD §7.3 (0.9048ms)
+✔ CDC line coding roundtrip (0.4713ms)
+✔ I2C RPC formatter and parser (1.8067ms)
+✔ NETCFG EP0 chunks, STATUS parse, PSK redact, apply recipe (2.097ms)
+✔ USB/IP DEVLIST header and DAP_Info packet (0.9793ms)
+✔ wiparse-dap plugin.json + station.json validate (3.1823ms)
+✔ wiparse-uart-bridge plugin.json + station.json validate (1.1868ms)
+✔ wiparse-i2c-rpc plugin.json + station.json validate (2.0639ms)
+✔ wiparse-netcfg plugin.json + station.json validate (1.0778ms)
+✔ a new FPGA case can be saved before firmware, rules, and project roles are complete (4935.2134ms)
+✔ startup Stop at before-start survives initialization without reset/capture or lease leak (239.564ms)
+✔ startup Stop at launcher-lock-wait survives initialization without reset/capture or lease leak (157.2169ms)
+✔ startup Stop at acquire-wait survives initialization without reset/capture or lease leak (167.7565ms)
+✔ startup Stop at before-first-reset survives initialization without reset/capture or lease leak (116.2295ms)
+✔ startup Stop at null-acquire-stop survives initialization without reset/capture or lease leak (116.2627ms)
+✔ residual Stop conservatively cancels; explicit launcher preparation permits a new run (703.3795ms)
+✔ Stop written after explicit new-start preparation is never treated as residual (160.8994ms)
+✔ F02 probeReset direct reject, cancellation quiescent=true (1.9551ms)
+✔ F02 probeReset delayed reject, cancellation quiescent=true (3.0217ms)
+✔ F02 probeReset direct reject, cancellation quiescent=false (0.7565ms)
+✔ F02 probeReset delayed reject, cancellation quiescent=false (14.4153ms)
+✔ F02 collectLog direct reject, cancellation quiescent=true (0.9083ms)
+✔ F02 collectLog delayed reject, cancellation quiescent=true (13.1965ms)
+✔ F02 collectLog direct reject, cancellation quiescent=false (1.2303ms)
+✔ F02 collectLog delayed reject, cancellation quiescent=false (14.8953ms)
+✔ F02 capture direct reject, cancellation quiescent=true (1.2151ms)
+✔ F02 capture delayed reject, cancellation quiescent=true (12.9273ms)
+✔ F02 capture direct reject, cancellation quiescent=false (1.2123ms)
+✔ F02 capture delayed reject, cancellation quiescent=false (13.4536ms)
+✔ F02 waveformSource direct reject, cancellation quiescent=true (0.931ms)
+✔ F02 waveformSource delayed reject, cancellation quiescent=true (8.3392ms)
+✔ F02 waveformSource direct reject, cancellation quiescent=false (0.4917ms)
+✔ F02 waveformSource delayed reject, cancellation quiescent=false (2.7856ms)
+✔ F02 cleanup direct reject, cancellation quiescent=true (0.4209ms)
+✔ F02 cleanup delayed reject, cancellation quiescent=true (73.1381ms)
+✔ F02 cleanup direct reject, cancellation quiescent=false (0.8026ms)
+✔ F02 cleanup delayed reject, cancellation quiescent=false (5.8497ms)
+✔ F02 explicitly quiescent business rejection permits ordinary cleanup without cancellation (1.8157ms)
+✔ F02 rejection confirmation blocks new actions while pending, quiescent=true (1.0785ms)
+✔ F02 rejection confirmation blocks new actions while pending, quiescent=false (0.3305ms)
+✔ F02 cancellation rejection leaves unknown state and forbids cleanup (0.9098ms)
+✔ F02/F05 real run collectLog reject, quiescent=true: cancel siblings before release (513.0428ms)
+✔ F02/F05 real run collectLog reject, quiescent=false: cancel siblings before release (358.7595ms)
+✔ F02/F05 real run capture reject, quiescent=true: cancel siblings before release (461.5691ms)
+✔ F02/F05 real run capture reject, quiescent=false: cancel siblings before release (392.1452ms)
+✔ F02/F05 real run cleanup reject, quiescent=true: cancel siblings before release (319.9591ms)
+✔ F02/F05 real run cleanup reject, quiescent=false: cancel siblings before release (304.4892ms)
+✔ F02 scheduler cancels pending sibling after quiescent business error, sibling quiescent=true (268.6471ms)
+✔ F02 scheduler cancels pending sibling after quiescent business error, sibling quiescent=false (216.1866ms)
+✔ F02 probeReset: deadline cannot become a late success (17.125ms)
+✔ F02 probeReset: stop cannot become a late success (16.176ms)
+✔ F02 probeReset: late cannot become a late success (30.2816ms)
+✔ F02 probeReset: unknown cannot become a late success (17.0655ms)
+✔ F02 collectLog: deadline cannot become a late success (12.9521ms)
+✔ F02 collectLog: stop cannot become a late success (16.3817ms)
+✔ F02 collectLog: late cannot become a late success (31.1136ms)
+✔ F02 collectLog: unknown cannot become a late success (15.1845ms)
+✔ F02 waveformSource: deadline cannot become a late success (14.7415ms)
+✔ F02 waveformSource: stop cannot become a late success (16.3244ms)
+✔ F02 waveformSource: late cannot become a late success (30.6855ms)
+✔ F02 waveformSource: unknown cannot become a late success (19.679ms)
+✔ F02 cleanup: deadline cannot become a late success (18.5395ms)
+✔ F02 cleanup: stop cannot become a late success (48.8009ms)
+✔ F02 cleanup: late cannot become a late success (60.6132ms)
+✔ F02 cleanup: unknown cannot become a late success (52.1259ms)
+✔ F02 run probeReset timeout, quiescent=true, blocks next item (487.6692ms)
+✔ F02 run probeReset stop, quiescent=true, blocks next item (199.1919ms)
+✔ F02 run probeReset timeout, quiescent=false, blocks next item (417.658ms)
+✔ F02 run probeReset stop, quiescent=false, blocks next item (457.3643ms)
+✔ F02 run collectLog timeout, quiescent=true, blocks next item (466.427ms)
+✔ F02 run collectLog stop, quiescent=true, blocks next item (185.1881ms)
+✔ F02 run collectLog timeout, quiescent=false, blocks next item (414.6961ms)
+✔ F02 run collectLog stop, quiescent=false, blocks next item (479.9879ms)
+✔ F02 run waveformSource timeout, quiescent=true, blocks next item (344.9515ms)
+✔ F02 run waveformSource stop, quiescent=true, blocks next item (188.3257ms)
+✔ F02 run waveformSource timeout, quiescent=false, blocks next item (335.5352ms)
+✔ F02 run waveformSource stop, quiescent=false, blocks next item (289.6435ms)
+✔ F02 run cleanup timeout, quiescent=true, blocks next item (386.4446ms)
+✔ F02 run cleanup stop, quiescent=true, blocks next item (332.5681ms)
+✔ F02 run cleanup timeout, quiescent=false, blocks next item (303.1066ms)
+✔ F02 run cleanup stop, quiescent=false, blocks next item (466.6997ms)
+✔ F08 result ENOSPC: no suite PASS, journal supports recovery (744.5311ms)
+✔ F08 result EPERM: no suite PASS, journal supports recovery (1596.2036ms)
+✔ F08 journal-start ENOSPC: no suite PASS, journal supports recovery (618.9909ms)
+✔ F08 journal-start EPERM: no suite PASS, journal supports recovery (617.7968ms)
+✔ F08 journal-complete ENOSPC: no suite PASS, journal supports recovery (593.2119ms)
+✔ F08 journal-complete EPERM: no suite PASS, journal supports recovery (651.3097ms)
+✔ F08 index ENOSPC: no suite PASS, journal supports recovery (554.3716ms)
+✔ F08 index EPERM: no suite PASS, journal supports recovery (541.6784ms)
+✔ F08 partial-start ENOSPC: no suite PASS, journal supports recovery (379.7613ms)
+✔ F08 partial-start EPERM: no suite PASS, journal supports recovery (464.2368ms)
+✔ F08 partial-complete ENOSPC: no suite PASS, journal supports recovery (525.1427ms)
+✔ F08 partial-complete EPERM: no suite PASS, journal supports recovery (497.4807ms)
+✔ F08 partial-index ENOSPC: no suite PASS, journal supports recovery (392.3669ms)
+✔ F08 partial-index EPERM: no suite PASS, journal supports recovery (600.3391ms)
+✔ F08 matrix ENOSPC: no suite PASS, journal supports recovery (517.4717ms)
+✔ F08 matrix EPERM: no suite PASS, journal supports recovery (2226.1193ms)
+✔ F08 matrix-terminal ENOSPC: no suite PASS, journal supports recovery (481.1106ms)
+✔ F08 matrix-terminal EPERM: no suite PASS, journal supports recovery (2216.2939ms)
+✔ F08 matrix-final ENOSPC: no suite PASS, journal supports recovery (572.633ms)
+✔ F08 matrix-final EPERM: no suite PASS, journal supports recovery (1339.2891ms)
+✔ F08 report-item ENOSPC: no suite PASS, journal supports recovery (295.666ms)
+✔ F08 report-item EPERM: no suite PASS, journal supports recovery (259.412ms)
+✔ F08 report-final ENOSPC: no suite PASS, journal supports recovery (482.958ms)
+✔ F08 report-final EPERM: no suite PASS, journal supports recovery (564.5156ms)
+✔ F08 suite ENOSPC: no suite PASS, journal supports recovery (546.1806ms)
+✔ F08 suite EPERM: no suite PASS, journal supports recovery (1541.5846ms)
+✔ F08 state-final ENOSPC: no suite PASS, journal supports recovery (509.8744ms)
+✔ F08 state-final EPERM: no suite PASS, journal supports recovery (1804.8416ms)
+✔ F12 AI timeout respects response and payload boundaries (18.362ms)
+✔ F12 AI throw respects response and payload boundaries (0.5672ms)
+✔ F12 AI malformed respects response and payload boundaries (0.254ms)
+✔ F12 AI empty-allowlist respects response and payload boundaries (0.1817ms)
+✔ F12 AI local-empty-allowlist respects response and payload boundaries (0.1744ms)
+✔ F12 AI disjoint-inputs respects response and payload boundaries (0.1397ms)
+✔ F08 recovery rejects corruption in a completed journal record (447.2359ms)
+✔ F12 required AI timeout, known FAIL=false (456.0365ms)
+✔ F12 required AI timeout, known FAIL=true (341.2503ms)
+✔ F12 required AI throw, known FAIL=false (247.3977ms)
+✔ F12 required AI throw, known FAIL=true (382.4923ms)
+✔ F12 required AI malformed, known FAIL=false (469.5435ms)
+✔ F12 required AI malformed, known FAIL=true (390.4011ms)
+✔ delivered plugin runs through real Hub/runner with five simulated cases and navigable evidence (16003.8014ms)
+✔ simulated FAIL remains a product failure with two selected and three skipped rows (12134.9955ms)
+✔ generated field labels remain independent across reused primitive and role schemas (5.0678ms)
+✔ status replacement retries transient Windows sharing and preserves old data on persistent failure (23.4301ms)
+✔ discovery ignores hidden/disabled files, rejects 501 and download (678.0723ms)
+✔ source overlap blocks, touching windows permitted (9.0693ms)
+✔ required FAIL dominates missing evidence; truncated logs never PASS (1.9793ms)
+✔ public AI permission gates transport and payload excludes identity/log (2.5641ms)
+✔ mock host end-to-end freezes evidence and creates independent cycle attempts (671.3749ms)
+✔ missing host adapter fails closed (13.8881ms)
+✔ stop during an attempt records ABORTED and never starts next item (375.5129ms)
+✔ valid 500 configurations retain deterministic natural order (5115.0451ms)
+✔ project snapshot requires saved valid scope and canonical hash (10.4872ms)
+✔ effective case uses frozen project without mutating raw case or actual identity inputs (19.5634ms)
+✔ case binding overrides and unresolved roles fail explicitly (8.027ms)
+✔ changed shared binding changes effective identity and does not reuse old project hash (3.8883ms)
+✔ shared role validation rejects unstable IDs and invalid UART channels (2.5914ms)
+✔ real Hub previews and explicitly commits all 20 cases with backup and idempotence (8956.0901ms)
+✔ Hub conflict or stale preview cannot partially migrate user data (4204.8663ms)
+✔ property patch preserves untouched configuration and enforces concurrency (7485.0135ms)
+✔ log capture patch preserves source binding and rejects invalid and stale updates (5814.4633ms)
+✔ waveform patch updates only the selected capture and keeps channels and other captures (9248.7322ms)
+✔ verdict rule patch maintains evidence bindings and rejects invalid limits (3518.4046ms)
+✔ cloning creates a listed independent case and respects source version and project (2639.1275ms)
+✔ new case is saved disabled and immediately listed without overwriting (1944.3592ms)
+✔ firmware selection hashes the selected allowed file and leaves download reserved (2815.1529ms)
+✔ project DUT edit changes global identity and preserves instrument bindings (2197.5366ms)
+✔ project resource edit preserves other selector constraints and rejects stale versions (2690.455ms)
+✔ project serial edit preserves settings and rejects wrong role and baud (1916.5125ms)
+✔ project Dongle UART edit uses stable physical serial and supported channel (2934.007ms)
+✔ reset edit uses current project roles and preserves release confirmation and timing (3726.9479ms)
+✔ migration replacement failure rolls back and interrupted rollback recovers through host journal (7535.0445ms)
+✔ 20-item preview preserves every name, binding, log transport, reset and timeout without mutation (60.2726ms)
+✔ migration refuses incompatible DUT constraints and same-role device differences (14.3433ms)
+✔ migration never overwrites a conflicting saved project binding (12.5465ms)
+✔ migration is idempotent after explicit host commit and rejects missing saved shared data (19.0281ms)
+✔ migration rejects unresolved references, unsupported versions and duplicate IDs (14.8436ms)
+✔ project runtime fails closed without saved shared settings, wrong scope or per-item overrides (65.9815ms)
+✔ project runtime archives raw/effective configuration, scope, numeric/UUID attempt and actual role sources (450.7052ms)
+✔ shared edits invalidate runtime and resume while unchanged frozen input ignores mutable project files (421.2304ms)
+✔ explicit actual identity input is never overwritten by shared applicability constraints (48.9047ms)
+✔ simulation-only identity fill records per-field provenance without changing supplied inputs (379.0111ms)
+✔ recipe cases are schema/2 and the shared project keeps every distinct role (638.7896ms)
+✔ saved schema/2 demo preflight uses simulation and does not ask for a hardware adapter (176.4719ms)
+✔ simulation run of fpga_01_pll_clock records simulation_only evidence (15357.8397ms)
+✔ schema/1 fixture still previews and direct preflight fails (140.7357ms)
+✔ firmware download still fails preflight (24.3641ms)
+✔ selected preflight failure blocks entire plan without silently deselecting the bad case (95.2512ms)
+✔ invalid repository file cannot be silently ignored while valid cases pass (110.2626ms)
+✔ unknown selection from host cannot be executed (45.9736ms)
+✔ disabled selection from host cannot be executed (61.2901ms)
+✔ failure stop exposes unexecuted coverage and evidence reasons in offline report (334.8105ms)
+✔ relative recovery path is based on the test directory rather than process cwd (1226.7131ms)
+✔ malformed base64 is rejected and bad measurement quality/unit have specific reasons (42.1716ms)
+✔ schema generator retains published project and evidence capabilities (899.7414ms)
+✔ measurement capability is checked before acquiring devices or resetting DUT (47.5375ms)
+✔ hub outputs expose wave log and shot views under item evidence (4.3473ms)
+✔ published editor metadata loads and retains all twenty business configurations (645.2212ms)
+✔ F13 rejects noncanonical waveform units and incompatible reset roles (31.5574ms)
+✔ F15 nested report retains child limits and escapes text without inventing log links (25.043ms)
+✔ report embeds waveform screenshots and retains source file links (26.5175ms)
+✔ F01 malformed rule branches are rejected by schema and defensive verdict (530.9274ms)
+✔ F04 exact Dongle UART channel is required (1.9017ms)
+✔ FPGA role names resolve real WiParse instrument kinds without inventing identity (1.0717ms)
+✔ F03 Stop between screenshot and source never starts source (9.2402ms)
+✔ F02 hung I/O is bounded and cancellation must confirm quiescence (43.2655ms)
+✔ F05 matrix is validated before a lease, and post-acquire file failure releases once (213.504ms)
+✔ F06 failed retry uses immutable content identity and a new linked attempt (745.8197ms)
+✔ F08 archive failure leaves ERROR, and preserves known product FAIL (1345.7046ms)
+✔ F11 nested measurement rules compile to acquisition dependencies (294.2799ms)
+✔ F12 required AI skipped by external policy cannot keep PASS (290.1625ms)
+✔ F12 AI sends the intersection of case inputs and provider allowlist (4.8008ms)
+✔ pause is acknowledged only at a safe item boundary, continue starts the next item (495.1832ms)
+✔ Stop remains effective while paused and never resets a DUT (191.218ms)
+✔ generic run control rejects stale run IDs and invalid transitions (29.5621ms)
+✔ pathological regex cannot block the runner or Stop (188.2722ms)
+✔ crash recovery prefers a newer interrupted attempt over an older completed index (713.4764ms)
+✔ hardware discovery excludes simulated instruments (9.9835ms)
+✔ Dongle UART discovery requires an explicit WinUSB serial and exposes the real port (31.0069ms)
+✔ resolved Dongle UART reuses an existing monitor and does not stop it on release (73.6419ms)
+✔ I2C commands require the leased Dongle and confirmed matching job (30.3693ms)
+✔ leased FT4222 routes MT5788 register reads through confirmed instrument jobs (146.8456ms)
+✔ load commands require the exact leased load and allow only confirmed CC operations (55.8533ms)
+✔ unknown device state retains a recovery lock even if the owner is gone (53.1782ms)
+✔ power voltage selects the exact channel and V unit, not current or another channel (5.8474ms)
+✔ a new active RX message permits readiness without reusing old serial rows (88.8506ms)
+✔ plugins without host_adapter do not receive fpgaAdapter (50.1538ms)
+✔ host_adapter wiparse.fpga-host/1 selects createFpgaHostAdapter (31.167ms)
+✔ station lease is exclusive, stolen from a dead pid, and released only by the owner (173.8963ms)
+✔ preflight reports a missing resource instead of HOST.ADAPTER_REQUIRED (4.9444ms)
+✔ collectLog base64 matches the cursor span and stays incomplete when stopped (585.1817ms)
+✔ cancelAndConfirm stays unsettled until the instrument job finishes (105.1529ms)
+✔ handoff starts an extra COM while another session is already live (36.6937ms)
+✔ waveformSource forwards measured metrics and does not invent missing ones (24.9592ms)
+✔ storage reports a real free-space number for data_root (6.6362ms)
+✔ project seed is an unsaved draft in the config root and preflight still requires a save (748.2706ms)
+✔ FT4222 sends separate address writes and reads and verifies returned bytes (9.6656ms)
+✔ FT4222 rejects incomplete and mismatched results (6.6538ms)
+✔ Windows transient rename conflicts retry without deleting the destination (568.1984ms)
+✔ project settings require explicit save, validate bindings and optimistic revision (4357.9968ms)
+✔ project/test/plugin isolation and envelope integrity reject cross-scope or tampered data (1974.1658ms)
+✔ shared changes invalidate preflight, freeze metadata and block active-run edits (3288.8941ms)
+✔ project and multi-file migration journal rolls back failures and preserves exact backup (11142.8272ms)
+✔ migration preview binds all old inputs and conflicting cases remain untouched (6598.3938ms)
+✔ same project with two repositories shares CAS, recovery and active-run guards (3910.512ms)
+✔ result details verify scope, both attempts, item and shared hashes; old files are unverified (505.3663ms)
+✔ repository acquisition contention waits and enters the action exactly once (3.9067ms)
+✔ repository waiting stops before entering an operation (1.7492ms)
+✔ repository waiting has a fixed deadline (0.5774ms)
+✔ recovery, stale bindings, I/O failures and business BUSY are never replayed (0.6611ms)
+✔ runner configure has no project side effects; preflight/run freeze and stale gating (13980.6727ms)
+✔ plugin endpoint inherits GUI bind without overriding explicit user server (2.5424ms)
+✔ explicit file inspection hashes actual bytes and returns a portable jailed reference (27.2784ms)
+✔ Draft 2020-12 conditional, local references, formats and strict unknown fields (481.079ms)
+✔ workspace: typed defaults, strict schema, optimistic conflicts, rename, archive, restore (4215.812ms)
+✔ journal failures roll back both content and audit; recovery rolls back interrupted replacement (4753.4773ms)
+✔ bundle validation is atomic; 500 configurations paginate and batch without changing limits (22192.9874ms)
+✔ preflight selection, immutable snapshot and active configuration locks (1457.2065ms)
+✔ matrix rejects rollback, terminal regression, escapes and oversized snapshots; last valid survives corruption (272.0813ms)
+✔ manifest and path jail reject unsafe source, missing limits and reparse escapes (163.3356ms)
+✔ actual item counts: empty, five, and capacity are never padded (1441.1675ms)
+✔ process crashes at all transaction boundaries recover to a complete old or new state (4189.7567ms)
+✔ invalid bundle and duplicate batch ids do not leave partial changes (321.1287ms)
+✔ compileTriggers skips disabled and honors unless (9.2243ms)
+✔ contains match and Hub JSON string overlay (1.2918ms)
+✔ rising-edge fires once per inactive→active (0.7436ms)
+✔ level match (rising_edge false) fires every line (0.3648ms)
+✔ first_match: earlier rule wins on the same line (0.3956ms)
+✔ global and sticky regexes do not leak lastIndex across lines (0.6103ms)
+✔ global exclude regex is reset before every line (0.283ms)
+✔ visual string rules preserve literal punctuation, case and exclusions (0.2511ms)
+✔ duplicate enabled IDs including sanitized collisions are rejected (1.1041ms)
+✔ visual editor manifest retains JSON overlays and the factory recipe (4.3078ms)
+✔ validate package meta + install/list/discover (179.4284ms)
+✔ hash mismatch fails with E_HASH (15.6592ms)
+✔ signature required + verify (32.8711ms)
+✔ path escape rejected on zip entry (3.6755ms)
+✔ resolveMarketplaceRoot defaults under data root (1.2734ms)
+✔ loopback HTTP is allowed without WIPARSE_MARKETPLACE_ALLOW_HTTP (0.9023ms)
+✔ MT5788 HW identity, telemetry and limit-guarded VOUT sequence (8.0321ms)
+✔ MT5788 HH identity, telemetry and limit-guarded VOUT sequence (1.5759ms)
+✔ MT5788 refuses unknown customer, short reads and uncertain writes (1.3267ms)
+✔ concurrent telemetry operations do not interleave register address and read (210.9232ms)
+✔ terminal blocks expose observations without inferring timing, units or split fields (6.1668ms)
+✔ FOD alert investigation retains evidence order and avoids manufacturing a verdict (1.4275ms)
+✔ switching a project file replaces the case list and switching back restores it (7153.3297ms)
+✔ a project file cannot contain more than 500 cases (1879.26ms)
+✔ import and export round-trip one project file (3178.9414ms)
+✔ scope writable-directory probe preserves an existing user file (36.417ms)
+✔ monitor lock acquisition is exclusive and never replaces a prior lock (15.3672ms)
+✔ instrument submission is not treated as completion and failures stay failures (11.4461ms)
+✔ waveform evidence must be an actual nonempty file inside the output directory (48.3741ms)
+✔ monitor resolves the configured port and does not confuse another open session (0.9548ms)
+✔ log polling binds the configured port and rejects malformed responses (1.1575ms)
+✔ monitor refuses an active or unknown test instead of aborting it (0.9212ms)
+preflight FAIL
+  OK gui_api  http://127.0.0.1:63557
+  OK gui_version  1.2.2 (min 1.1.16)
+  OK browser  C:\Program Files\nodejs\node.exe
+  OK test_dir  C:\Users\ROYZHA~1\AppData\Local\Temp\wiparse-scope-preflight-mtRJ3A
+  OK status_file  C:\Users\ROYZHA~1\AppData\Local\Temp\wiparse-scope-preflight-mtRJ3A\status.json
+  OK single_instance  free
+  OK serial_api  待启动目标串口 (COM7@2000000)
+  OK instrument_job_api  支持任务完成确认
+  OK scope  SIM id=1 SIM
+  OK scope_model  SIM
+  OK serial_triggers  ASK2:ASK\s+0?2\b unless(ASK 2 C,ASK 2 b,Idx[2]) | timeout:regex:\btimeout\b
+  X  test_idle  其他测试正在运行，请先停止后再启动监控
+[stopped] 预检失败，未启动监控
+preflight FAIL
+  X  instrument_job_api  请更新 WiParse：缺少仪器任务确认接口
+  OK gui_api  http://127.0.0.1:63557
+  OK gui_version  1.2.2 (min 1.1.16)
+  OK browser  C:\Program Files\nodejs\node.exe
+  OK test_dir  C:\Users\ROYZHA~1\AppData\Local\Temp\wiparse-scope-preflight-mtRJ3A
+  OK status_file  C:\Users\ROYZHA~1\AppData\Local\Temp\wiparse-scope-preflight-mtRJ3A\status.json
+  OK single_instance  free
+  OK serial_api  待启动目标串口 (COM7@2000000)
+  OK test_idle  没有其他活动测试
+  OK scope  SIM id=1 SIM
+  OK scope_model  SIM
+  OK serial_triggers  ASK2:ASK\s+0?2\b unless(ASK 2 C,ASK 2 b,Idx[2]) | timeout:regex:\btimeout\b
+[stopped] 预检失败，未启动监控
+preflight OK
+  OK gui_api  http://127.0.0.1:63557
+  OK gui_version  1.2.2 (min 1.1.16)
+  OK browser  C:\Program Files\nodejs\node.exe
+  OK test_dir  C:\Users\ROYZHA~1\AppData\Local\Temp\wiparse-scope-preflight-mtRJ3A
+  OK status_file  C:\Users\ROYZHA~1\AppData\Local\Temp\wiparse-scope-preflight-mtRJ3A\status.json
+  OK single_instance  free
+  OK serial_api  待启动目标串口 (COM7@2000000)
+  OK test_idle  没有其他活动测试
+  OK instrument_job_api  支持任务完成确认
+  OK scope  SIM id=1 SIM
+  OK scope_model  SIM
+  OK serial_triggers  ASK2:ASK\s+0?2\b unless(ASK 2 C,ASK 2 b,Idx[2]) | timeout:regex:\btimeout\b
+✔ scope preflight checks a simulated service without interrupting its active test (472.2279ms)
+[pdf] pdf failed code=9 C:\Program Files\nodejs\node.exe: bad option: --headless=new
+C:\Program Files\nodejs\node.exe: bad option: --disable-gpu
+C:\Program Files\nodejs\node.exe: bad option: --print-to-pdf=C:\Users\ROYZHA~1\AppData\Local\Temp\wiparse-scope-loop-i4wXOp\ScopeSerial_timeout_20261108_081830_53d553a2.pdf
+C:\
+preflight OK
+  OK gui_api  http://127.0.0.1:63560
+  OK gui_version  1.2.2 (min 1.1.16)
+  OK browser  C:\Program Files\nodejs\node.exe
+  OK test_dir  C:\Users\ROYZHA~1\AppData\Local\Temp\wiparse-scope-loop-i4wXOp
+  OK isf_dir  C:\Users\ROYZHA~1\AppData\Local\Temp\wiparse-scope-loop-i4wXOp
+  OK report_dir  C:\Users\ROYZHA~1\AppData\Local\Temp\wiparse-scope-loop-i4wXOp
+  OK status_file  C:\Users\ROYZHA~1\AppData\Local\Temp\wiparse-scope-loop-i4wXOp\status.json
+  OK single_instance  free
+  OK serial_api  待启动目标串口 (COM7@2000000)
+  OK test_idle  没有其他活动测试
+  OK instrument_job_api  支持任务完成确认
+  OK scope  SIM id=1 SIM
+  OK scope_model  SIM
+  OK serial_triggers  ASK2:ASK\s+0?2\b unless(ASK 2 C,ASK 2 b,Idx[2]) | timeout:regex:\btimeout\b
+[armed #0] 准备中：启动示波器与串口
+[armed #0] 准备完成：示波器 RUN 已完成，进入监控
+[wait #1] 监控中：第 1 轮，等待串口 ASK 2 非C/b / timeout
+[wait #1] 监控中：第 1 轮，等待串口 ASK 2 非C/b / timeout（已等 0s）
+[processing #1] 已触发 timeout：数据处理中（延时 0ms / 同时停示波器与串口 / 截图 / 存源文件 / 出报告）
+[processing #1] 已触发 timeout：数据处理中（同时暂停示波器与串口）
+[processing #1] 已触发 timeout：串口已停 monitoring=false，截图并读源文件
+[processing #1] 已触发 timeout：数据处理中（生成 PDF 报告；串口 monitoring=false）
+[stopped #1] 监控已停止
+✔ simulated capture uses the selected serial port and only reports completed evidence (1022.6331ms)
+✔ scope report embeds screenshots under each capture and keeps other portable evidence links (87.1562ms)
+✔ manifest accepted and SYS-01..10 have cases; forbidden limit/safety overlays rejected (136.9193ms)
+✔ preflight and idle stop never allocate a run or stimulate (19.6916ms)
+✔ live blocks even when capabilities asserted; all dependency reasons visible (23.6092ms)
+✔ gold replay validates all SYS and never certifies a DUT (555.7047ms)
+✔ bad replay validates all SYS and never certifies a DUT (236.568ms)
+✔ missing replay validates all SYS and never certifies a DUT (887.0915ms)
+✔ quality replay validates all SYS and never certifies a DUT (348.6154ms)
+✔ dry-run has no measurements/PASS; no service calls (141.2927ms)
+✔ cancel after confirmed failure preserves first failure and remaining coverage (253.2928ms)
+✔ unknown service state after a FAIL remains interrupted and never retries (576.5249ms)
+✔ null/empty/uncertain/state mismatch/window/channel mismatch cannot pass (1815.5912ms)
+✔ state rule catches physical inconsistency, illegal transitions, battery evidence and missing quality (10.8446ms)
+✔ communication requires independent denominator, complete coverage and layer match (12.7744ms)
+✔ aggregate: no empty PASS, no unapproved SKIP, FAIL retained in error/cancel (0.4808ms)
+✔ standard result and run metadata preserve separate execution and product statuses (9.7069ms)
+✔ automation client polls with remaining deadline and no unknown resubmission (0.8077ms)
+✔ late succeeded response cannot bypass a step deadline (939.0664ms)
+✔ reused stamp cannot overwrite an existing attempt and stop targets only active attempt (203.7772ms)
+✔ generated Markdown links resolve to intact per-case and raw evidence files (235.6221ms)
+✔ MT5788 goes through owned confirmed WiParse I2C jobs (9.0026ms)
+✔ I2C malformed, short or unconfirmed replies never become success (1.7464ms)
+✔ bounded CC load applies off, mode, level, on, measure, off in order (3.4611ms)
+✔ limit error sends no command, action error still turns load off (1.885ms)
+✔ unknown command state and failed shutdown retain recovery without retry (3.4512ms)
+✔ stop after enabling the load still sends the shutdown command (0.8094ms)
+✔ an unresolved instrument operation is never overlapped by shutdown (0.6364ms)
+✖ RX preflight refuses a simulated FT4222 in a hardware workflow (2.5028ms)
+✖ MT5788 read mode executes leased FT4222 jobs and retains raw observations (11.3386ms)
+✔ RX preflight rejects missing device or mixed test selection without I2C (1.5984ms)
+✔ RX output control rejects missing or inverted limits before any device call (2.8522ms)
+✖ RX stale log never triggers I2C (10.5226ms)
+✖ RX dropped log never triggers I2C (7.8254ms)
+✖ stop while waiting for RX identification prevents I2C and releases serial (10.66ms)
+✖ real runner completes RX read against WiParse HTTP and event stream simulator (5.2293ms)
+✔ readiness uses exact VISA identities and never sends an output command (9.77ms)
+✔ serial inventory accepts actual and legacy envelopes but rejects unknown responses (1.0475ms)
+✔ limit configuration rejects an inverted range (2.4462ms)
+✖ wireless RX limits save independently, preserve case data and reject stale or unsafe changes (9.9281ms)
+✖ wireless station selection preserves other settings, saves seed and checks revisions (3.0832ms)
+✖ 20 templates load through the Hub and review cannot certify a DUT (5.6835ms)
+✖ runner binds a saved project and freezes all 20 configurations (4.7661ms)
+✔ log analysis freezes source bytes, reports observed recovery and rejects changed inputs (116.9994ms)
+✖ real runner executes selected FOD log analysis with frozen project and evidence (3.6129ms)
+ℹ tests 348
+ℹ suites 0
+ℹ pass 336
+ℹ fail 12
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 69099.8026
+
+✖ failing tests:
+
+test at lib\plugin-contract.test.mjs:70:1
+✖ scope-serial-monitor plugin.json validates (4.6874ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '0.7.1' !== '0.6.2'
+  
+      at TestContext.<anonymous> (file:///D:/windlink/windlink/WiParse-R/test-tools/lib/plugin-contract.test.mjs:80:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '0.7.1',
+    expected: '0.6.2',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\wireless-rx-observe.test.mjs:12:1
+✖ RX preflight refuses a simulated FT4222 in a hardware workflow (2.5028ms)
+  Error: ENOENT: no such file or directory, open 'D:\windlink\windlink\WiParse-R\test-tools\recipes\wireless-whitebox\cases\wcv_07.json'
+      at Object.openSync (node:fs:561:18)
+      at Object.readFileSync (node:fs:445:35)
+      at TestContext.<anonymous> (file:///D:/windlink/windlink/WiParse-R/test-tools/test/wireless-rx-observe.test.mjs:13:28)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'D:\\windlink\\windlink\\WiParse-R\\test-tools\\recipes\\wireless-whitebox\\cases\\wcv_07.json'
+  }
+
+test at test\wireless-rx-observe.test.mjs:18:1
+✖ MT5788 read mode executes leased FT4222 jobs and retains raw observations (11.3386ms)
+  Error: ENOENT: no such file or directory, open 'D:\windlink\windlink\WiParse-R\test-tools\recipes\wireless-whitebox\cases\wcv_07.json'
+      at Object.openSync (node:fs:561:18)
+      at Object.readFileSync (node:fs:445:35)
+      at TestContext.<anonymous> (file:///D:/windlink/windlink/WiParse-R/test-tools/test/wireless-rx-observe.test.mjs:52:28)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'D:\\windlink\\windlink\\WiParse-R\\test-tools\\recipes\\wireless-whitebox\\cases\\wcv_07.json'
+  }
+
+test at test\wireless-rx-observe.test.mjs:120:40
+✖ RX stale log never triggers I2C (10.5226ms)
+  Error: ENOENT: no such file or directory, open 'D:\windlink\windlink\WiParse-R\test-tools\recipes\wireless-whitebox\cases\wcv_07.json'
+      at Object.openSync (node:fs:561:18)
+      at Object.readFileSync (node:fs:445:35)
+      at TestContext.<anonymous> (file:///D:/windlink/windlink/WiParse-R/test-tools/test/wireless-rx-observe.test.mjs:139:28)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'D:\\windlink\\windlink\\WiParse-R\\test-tools\\recipes\\wireless-whitebox\\cases\\wcv_07.json'
+  }
+
+test at test\wireless-rx-observe.test.mjs:120:40
+✖ RX dropped log never triggers I2C (7.8254ms)
+  Error: ENOENT: no such file or directory, open 'D:\windlink\windlink\WiParse-R\test-tools\recipes\wireless-whitebox\cases\wcv_07.json'
+      at Object.openSync (node:fs:561:18)
+      at Object.readFileSync (node:fs:445:35)
+      at TestContext.<anonymous> (file:///D:/windlink/windlink/WiParse-R/test-tools/test/wireless-rx-observe.test.mjs:139:28)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'D:\\windlink\\windlink\\WiParse-R\\test-tools\\recipes\\wireless-whitebox\\cases\\wcv_07.json'
+  }
+
+test at test\wireless-rx-observe.test.mjs:145:1
+✖ stop while waiting for RX identification prevents I2C and releases serial (10.66ms)
+  Error: ENOENT: no such file or directory, open 'D:\windlink\windlink\WiParse-R\test-tools\recipes\wireless-whitebox\cases\wcv_07.json'
+      at Object.openSync (node:fs:561:18)
+      at Object.readFileSync (node:fs:445:35)
+      at TestContext.<anonymous> (file:///D:/windlink/windlink/WiParse-R/test-tools/test/wireless-rx-observe.test.mjs:160:28)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'D:\\windlink\\windlink\\WiParse-R\\test-tools\\recipes\\wireless-whitebox\\cases\\wcv_07.json'
+  }
+
+test at test\wireless-rx-observe.test.mjs:166:1
+✖ real runner completes RX read against WiParse HTTP and event stream simulator (5.2293ms)
+  Error: ENOENT: no such file or directory, lstat 'D:\windlink\windlink\WiParse-R\test-tools\recipes\wireless-whitebox'
+      at cpSyncFn (node:internal/fs/cp/cp-sync:56:13)
+      at Object.cpSync (node:fs:3147:3)
+      at TestContext.<anonymous> (file:///D:/windlink/windlink/WiParse-R/test-tools/test/wireless-rx-observe.test.mjs:168:6)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'lstat',
+    path: 'D:\\windlink\\windlink\\WiParse-R\\test-tools\\recipes\\wireless-whitebox'
+  }
+
+test at test\wireless-whitebox.test.mjs:16:1
+✖ wireless RX limits save independently, preserve case data and reject stale or unsafe changes (9.9281ms)
+  Error: ENOENT: no such file or directory, lstat 'D:\windlink\windlink\WiParse-R\test-tools\recipes\wireless-whitebox\cases'
+      at cpSyncFn (node:internal/fs/cp/cp-sync:56:13)
+      at Object.cpSync (node:fs:3147:3)
+      at TestContext.<anonymous> (file:///D:/windlink/windlink/WiParse-R/test-tools/test/wireless-whitebox.test.mjs:18:42)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'lstat',
+    path: 'D:\\windlink\\windlink\\WiParse-R\\test-tools\\recipes\\wireless-whitebox\\cases'
+  }
+
+test at test\wireless-whitebox.test.mjs:33:1
+✖ wireless station selection preserves other settings, saves seed and checks revisions (3.0832ms)
+  Error: ENOENT: no such file or directory, lstat 'D:\windlink\windlink\WiParse-R\test-tools\recipes\wireless-whitebox'
+      at cpSyncFn (node:internal/fs/cp/cp-sync:56:13)
+      at Object.cpSync (node:fs:3147:3)
+      at TestContext.<anonymous> (file:///D:/windlink/windlink/WiParse-R/test-tools/test/wireless-whitebox.test.mjs:35:6)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'lstat',
+    path: 'D:\\windlink\\windlink\\WiParse-R\\test-tools\\recipes\\wireless-whitebox'
+  }
+
+test at test\wireless-whitebox.test.mjs:49:1
+✖ 20 templates load through the Hub and review cannot certify a DUT (5.6835ms)
+  Error: ENOENT: no such file or directory, lstat 'D:\windlink\windlink\WiParse-R\test-tools\recipes\wireless-whitebox\cases'
+      at cpSyncFn (node:internal/fs/cp/cp-sync:56:13)
+      at Object.cpSync (node:fs:3147:3)
+      at TestContext.<anonymous> (file:///D:/windlink/windlink/WiParse-R/test-tools/test/wireless-whitebox.test.mjs:53:6)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'lstat',
+    path: 'D:\\windlink\\windlink\\WiParse-R\\test-tools\\recipes\\wireless-whitebox\\cases'
+  }
+
+test at test\wireless-whitebox.test.mjs:72:1
+✖ runner binds a saved project and freezes all 20 configurations (4.7661ms)
+  Error: ENOENT: no such file or directory, lstat 'D:\windlink\windlink\WiParse-R\test-tools\recipes\wireless-whitebox'
+      at cpSyncFn (node:internal/fs/cp/cp-sync:56:13)
+      at Object.cpSync (node:fs:3147:3)
+      at TestContext.<anonymous> (file:///D:/windlink/windlink/WiParse-R/test-tools/test/wireless-whitebox.test.mjs:75:6)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'lstat',
+    path: 'D:\\windlink\\windlink\\WiParse-R\\test-tools\\recipes\\wireless-whitebox'
+  }
+
+test at test\wireless-whitebox.test.mjs:116:1
+✖ real runner executes selected FOD log analysis with frozen project and evidence (3.6129ms)
+  Error: ENOENT: no such file or directory, lstat 'D:\windlink\windlink\WiParse-R\test-tools\recipes\wireless-whitebox'
+      at cpSyncFn (node:internal/fs/cp/cp-sync:56:13)
+      at Object.cpSync (node:fs:3147:3)
+      at TestContext.<anonymous> (file:///D:/windlink/windlink/WiParse-R/test-tools/test/wireless-whitebox.test.mjs:118:6)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'lstat',
+    path: 'D:\\windlink\\windlink\\WiParse-R\\test-tools\\recipes\\wireless-whitebox'
+  }
+npm notice
+npm notice New major version of npm available! 11.12.1 -> 12.2.2
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.2
+npm notice To update run: npm install -g npm@12.2.2
+npm notice

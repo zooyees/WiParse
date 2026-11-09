@@ -13,7 +13,7 @@ pub(super) fn probe(ui: &mut egui::Ui, lang: Lang, t: &Tokens, d: &mut DeviceUi)
             property(ui, t, text(lang, "写后校验", "Verify"), |ui| {
                 toggle(ui, t, &mut d.controls.probe_flash_verify);
             });
-            ui.add_space(12.0);
+            ui.add_space(8.0);
             if action(ui, t, text(lang, "选择文件…", "Choose file…"), false).clicked() {
                 if let Some(path) = rfd::FileDialog::new()
                     .add_filter("Firmware", &["hex", "ihex", "bin", "elf"])

@@ -1,0 +1,30 @@
+{
+  "hardware_executed": false,
+  "candidate_sha256": "d3ef65b17757e5ef00e18ad4aedb227498170599da986021ca502e829aa37ff6",
+  "full_gui_latency_measured": false,
+  "checks": [
+    {
+      "profile": "debug",
+      "passed": true,
+      "exit_code": 0,
+      "duration_sec": 15.0012755,
+      "name": "core-scp"
+    },
+    {
+      "passed": true,
+      "exit_code": 0,
+      "duration_sec": 11.2465818,
+      "name": "release-source-view"
+    },
+    {
+      "passed": true,
+      "exit_code": 0,
+      "duration_sec": 1.6807217,
+      "name": "release-viewport-stress"
+    }
+  ],
+  "passed": true,
+  "kind": "release_viewport_index_benchmark",
+  "source_and_binary_hashes_unchanged": true,
+  "user_test_package": "WiParse-Next-20261108-R20-Test.zip (unchanged)"
+}

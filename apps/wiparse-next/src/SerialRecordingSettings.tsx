@@ -1,0 +1,17 @@
+import {LocalizedLabel,localizeLabel} from './localization';
+import {useEffect,useState} from 'react';
+import {invoke} from '@tauri-apps/api/core';
+import {object,string} from './model';
+
+type Draft={enabled:boolean;file_name:string;directory:string};
+const draftFrom=(value:unknown):Draft=>{const fields=object(object(value).settings);return {enabled:fields.enabled===true,file_name:string(fields.file_name),directory:string(fields.directory)};};
+
+export function SerialRecordingSettings({recording,disabled,onSaved,onEditingChange}:{recording:unknown;disabled:boolean;onEditingChange:(value:boolean)=>void;onSaved:(value:unknown)=>void}) {
+  const [base,setBase]=useState<unknown>(recording),[draft,setDraft]=useState(()=>draftFrom(recording)),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
+  const dirty=JSON.stringify(draft)!==JSON.stringify(draftFrom(base)),latest=string(object(recording).revision),revision=string(object(base).revision);
+  useEffect(()=>{onEditingChange(dirty||busy);return()=>onEditingChange(false);},[dirty,busy,onEditingChange]);
+  useEffect(()=>{if(!dirty&&!busy){setBase(recording);setDraft(draftFrom(recording));}},[latest,dirty,busy]);
+  const save=async()=>{setBusy(true);setMessage('');try{const value=await invoke('serial_recording_settings_safe',{revision,enabled:draft.enabled,fileName:draft.file_name,directory:draft.directory});setBase(value);setDraft(draftFrom(value));onSaved(value);setMessage(localizeLabel("已保存，下次启动接收时使用。原日志文件保留。"));}catch(reason){setMessage(`${String(reason)}；请核对设置后再操作，不会自动重试。`);}finally{setBusy(false);}};
+  const selectDirectory=async()=>{setBusy(true);try{const value=await invoke<string|null>('serial_recording_directory');if(value)setDraft(previous=>({...previous,directory:value}));}catch(reason){setMessage(String(reason));}finally{setBusy(false);}};
+  return <details className="serial-recording-settings"><summary><LocalizedLabel text={"日志记录设置"}/></summary><div className="serial-recording-fields"><label><LocalizedLabel text={"文件名（不含 .txt）"}/><input maxLength={120} value={draft.file_name} disabled={disabled||busy} onChange={event=>setDraft({...draft,file_name:event.target.value})}/></label><label><LocalizedLabel text={"保存目录"}/><input value={draft.directory} disabled={disabled||busy} onChange={event=>setDraft({...draft,directory:event.target.value})}/></label><button type="button" className="button secondary" disabled={disabled||busy} onClick={()=>void selectDirectory()}><LocalizedLabel text={"选择目录"}/></button><label className="item-enabled"><input type="checkbox" checked={draft.enabled} disabled={disabled||busy} onChange={event=>setDraft({...draft,enabled:event.target.checked})}/><LocalizedLabel text={"保存主串口日志"}/></label><small><LocalizedLabel text={"相对目录随应用位置迁移；更改设置不重命名或覆盖已有日志。同名日志保持原有追加规则。"}/></small><div className="serial-buttons"><button type="button" className="button secondary" disabled={disabled||busy||!dirty||!revision||latest!==revision||!draft.file_name.trim()||!draft.directory.trim()} onClick={()=>void save()}><LocalizedLabel text={"保存"}/></button><button type="button" className="button secondary" disabled={busy||!dirty} onClick={()=>{setBase(recording);setDraft(draftFrom(recording));setMessage('');}}><LocalizedLabel text={"放弃修改"}/></button></div>{dirty&&latest!==revision&&<small role="alert"><LocalizedLabel text={"设置已在其他入口修改，请放弃本地修改后重新编辑。"}/></small>}{disabled&&<small><LocalizedLabel text={"请停止所有串口后修改记录设置。"}/></small>}{message&&<div className="detail-help" role="status">{message}</div>}</div></details>;
+}

@@ -153,7 +153,16 @@ impl Window {
         // NOTE: mark that we requested a redraw to handle requests during `WM_PAINT` handling.
         self.window_state.lock().unwrap().redraw_requested = true;
         unsafe {
-            RedrawWindow(self.hwnd(), ptr::null(), 0, RDW_INTERNALPAINT);
+            if IsWindowVisible(self.hwnd()) == 0 {
+                // Hidden windows do not reliably receive internal WM_PAINT on
+                // Windows. API wakeups and timers must still reach the owner
+                // thread; an application message supplies the redraw event.
+                if PostMessageW(self.hwnd(), event_loop::HIDDEN_REPAINT_MSG_ID.get(), 0, 0) == 0 {
+                    warn!("Unable to queue hidden-window redraw: {}", io::Error::last_os_error());
+                }
+            } else {
+                RedrawWindow(self.hwnd(), ptr::null(), 0, RDW_INTERNALPAINT);
+            }
         }
     }
 

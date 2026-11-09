@@ -1,0 +1,18 @@
+{
+  "identity_source": "simulation",
+  "operator": "demo",
+  "input_at": "2026-11-08T04:22:59.660Z",
+  "field_sources": {
+    "operator": "run_parameters",
+    "dut_serial": "run_parameters",
+    "board_revision": "run_parameters",
+    "fpga_model": "run_parameters",
+    "fixture_id": "run_parameters",
+    "station_id": "run_parameters"
+  },
+  "dut_serial": "DEMO-SN-0001",
+  "board_revision": "DEMO-REV-A",
+  "fpga_model": "DEMO-FPGA",
+  "fixture_id": "DEMO-FIXTURE-01",
+  "station_id": "DEMO-STATION-01"
+}

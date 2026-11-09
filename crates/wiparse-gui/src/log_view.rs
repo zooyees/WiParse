@@ -1448,7 +1448,7 @@ pub fn show_virtual_search_pane<S: LogStore + ?Sized>(
 
                     if response.secondary_clicked() {
                         response.context_menu(|ui| {
-                            if ui.button("Copy").clicked() {
+                            if ui.button(tr(lang, "btn.copy")).clicked() {
                                 let text = copy_search_selection(store, search_map, selection)
                                     .unwrap_or_else(|| selection.last_selected_text.clone());
                                 if !text.is_empty() {

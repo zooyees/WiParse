@@ -1,0 +1,14 @@
+
+> wiparse-next@0.1.0 build
+> tsc --noEmit && vite build
+
+src/App.tsx(517,119): error TS6133: 'scopeSupported' is declared but its value is never read.
+src/App.tsx(517,203): error TS2339: Property 'typedSupported' does not exist on type '{ initial: unknown; connected: boolean; supported: boolean; connectSupported: boolean; disconnectSupported: boolean; measureSupported: boolean; scopeSupported: boolean; sourceSupported: boolean; loadSupported: boolean; captureSupported: boolean; waveformSupported: boolean; }'.
+src/App.tsx(528,9): error TS6133: 'controlScope' is declared but its value is never read.
+src/App.tsx(770,730): error TS2322: Type '{ initial: unknown; connected: boolean; supported: boolean; connectSupported: boolean; disconnectSupported: boolean; measureSupported: boolean; scopeSupported: boolean; sourceSupported: boolean; loadSupported: boolean; captureSupported: boolean; waveformSupported: boolean; typedSupported: boolean; }' is not assignable to type 'IntrinsicAttributes & { initial: unknown; connected: boolean; supported: boolean; connectSupported: boolean; disconnectSupported: boolean; measureSupported: boolean; ... 4 more ...; waveformSupported: boolean; }'.
+  Property 'typedSupported' does not exist on type 'IntrinsicAttributes & { initial: unknown; connected: boolean; supported: boolean; connectSupported: boolean; disconnectSupported: boolean; measureSupported: boolean; ... 4 more ...; waveformSupported: boolean; }'.
+npm notice
+npm notice New major version of npm available! 11.12.1 -> 12.2.2
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.2
+npm notice To update run: npm install -g npm@12.2.2
+npm notice

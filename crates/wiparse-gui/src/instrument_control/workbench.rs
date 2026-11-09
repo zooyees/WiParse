@@ -9,6 +9,37 @@ mod ports;
 mod scope_layout;
 use design::*;
 
+fn operation_failed_banner(ui: &mut egui::Ui, lang: Lang, t: &Tokens, error: &str) -> bool {
+    let mut dismiss = false;
+    let line = error
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or(error);
+    let short = if line.chars().count() > 96 {
+        format!("{}…", line.chars().take(95).collect::<String>())
+    } else {
+        line.to_string()
+    };
+    Frame::NONE
+        .fill(t.stop_bg.linear_multiply(0.08))
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(Margin::same(10))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(text(lang, "上次操作未完成", "Last operation failed"))
+                    .strong()
+                    .color(t.stop_bg),
+            );
+            ui.add(egui::Label::new(short).truncate())
+                .on_hover_text(error);
+            if ui.small_button(text(lang, "收起", "Dismiss")).clicked() {
+                dismiss = true;
+            }
+        });
+    dismiss
+}
+
 impl InstrumentControlPanel {
     pub(super) fn apple_sidebar(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
         navigation::sidebar(self, ui, lang, t);
@@ -56,26 +87,16 @@ impl InstrumentControlPanel {
         if kind == InstrumentKind::Oscilloscope && defer {
             self.scope_heavy_defer_frames = self.scope_heavy_defer_frames.saturating_sub(1);
             ui.ctx().request_repaint();
+            ui.label(
+                RichText::new(text(lang, "正在准备波形", "Preparing waveform")).color(t.text_muted),
+            );
         }
-        ui.add_space(16.0);
+        ui.add_space(8.0);
         if let Some(error) = self.devices[index].last_error.clone() {
-            Frame::NONE
-                .fill(t.stop_bg.linear_multiply(0.08))
-                .corner_radius(CornerRadius::same(8))
-                .inner_margin(Margin::same(10))
-                .show(ui, |ui| {
-                    ui.label(
-                        RichText::new(text(lang, "上次操作未完成", "Last operation failed"))
-                            .strong()
-                            .color(t.stop_bg),
-                    );
-                    ui.add(egui::Label::new(&error).truncate())
-                        .on_hover_text(&error);
-                    if ui.small_button(text(lang, "收起", "Dismiss")).clicked() {
-                        self.devices[index].last_error = None;
-                    }
-                });
-            ui.add_space(12.0);
+            if operation_failed_banner(ui, lang, t, &error) {
+                self.devices[index].last_error = None;
+            }
+            ui.add_space(8.0);
         }
         if self.busy_device == Some(id) {
             ui.horizontal(|ui| {
@@ -235,7 +256,7 @@ impl InstrumentControlPanel {
                         )
                         .wrap(),
                     );
-                    ui.add_space(16.0);
+                    ui.add_space(8.0);
                     property(ui, t, text(lang, "测量项目", "Measurement"), |ui| {
                         egui::ComboBox::from_id_salt(("scope-reading", id))
                             .width(ui.available_width())
@@ -250,7 +271,7 @@ impl InstrumentControlPanel {
                                 }
                             });
                     });
-                    ui.add_space(12.0);
+                    ui.add_space(8.0);
                     if action(ui, t, text(lang, "读取测量", "Read measurement"), true).clicked()
                     {
                         let ch = self.devices[index].controls.scope_channel;
@@ -272,7 +293,7 @@ impl InstrumentControlPanel {
                         self.latest.get(&(id, function.scpi().into())),
                         28.0,
                     );
-                    ui.add_space(20.0);
+                    ui.add_space(8.0);
                     self.measurement_actions(ui, lang, t, index);
                 } else {
                     let prefix = if kind == InstrumentKind::DcSource {
@@ -287,7 +308,7 @@ impl InstrumentControlPanel {
                         self.latest.get(&(id, format!("{prefix}Voltage"))),
                         28.0,
                     );
-                    ui.add_space(16.0);
+                    ui.add_space(8.0);
                     ui.columns(2, |cols| {
                         metric(
                             &mut cols[0],
@@ -304,10 +325,10 @@ impl InstrumentControlPanel {
                             22.0,
                         );
                     });
-                    ui.add_space(20.0);
+                    ui.add_space(8.0);
                     self.measurement_actions(ui, lang, t, index);
                 }
-                ui.add_space(14.0);
+                ui.add_space(8.0);
                 if let Some(sample) = self
                     .samples
                     .iter()
@@ -456,7 +477,7 @@ impl InstrumentControlPanel {
                 });
                 if kind == InstrumentKind::WiparseDongle {
                     ports::network(ui, lang, t, &mut self.devices[index]);
-                    ui.add_space(12.0);
+                    ui.add_space(8.0);
                     if action(ui, t, text(lang, "读取链路信息", "Read link info"), false).clicked()
                     {
                         let d = &self.devices[index];

@@ -5540,6 +5540,7 @@ dependencies = [
 name = "wiparse-gui"
 version = "1.2.2"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "crossbeam-channel",
  "dirs",
@@ -5557,6 +5558,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ureq",
+ "uuid",
  "winresource",
  "wiparse-core",
 ]

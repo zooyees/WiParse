@@ -1,0 +1,78 @@
+
+> wiparse-next@0.1.0 test
+> node --test tests/*.test.mjs
+
+✔ bandpass schematic nodes stay inside the drawing and run left to right (2.2494ms)
+✔ crc parameter table matches the old presets and hides an invalid custom polynomial (2.721ms)
+✔ display mapping keeps the old full-scale spans and kind bands (3.1338ms)
+✔ the shared axis fits mapped extrema and zooms around the center (0.6895ms)
+✔ dragging a handle follows the old offset and scale formulas (1.6955ms)
+✔ serial live starts at the recent tail and skips rows the log has already dropped (1.1314ms)
+✔ pending operation survives reopening and blocks another command until verified (1.6524ms)
+✔ a late completion cannot remove a newer recovery marker (0.2814ms)
+✔ storage errors prevent starting an untracked operation (0.1737ms)
+✔ manual console and power controls share the same resource recovery marker (0.1608ms)
+✔ legacy recovery markers remain blocking until the operator acknowledges them (0.1819ms)
+✔ engineering request includes only explicit context and the last eight selected turns (0.9777ms)
+✔ engineering request uses the bridge UTF-8 byte budget and rejects invalid input (0.7141ms)
+✔ scientific keypad appends the old tokens and edits one character at a time (4.136ms)
+✔ interface language switches without changing unknown source data (2.3803ms)
+✔ resonance points stay in frequency order and drop invented samples (3.3349ms)
+✔ configured items use matching results, with no fabricated pass (2.278ms)
+✔ validation and historical phase use readable labels (0.6159ms)
+✔ status filters never count stale results as passed (0.4405ms)
+✔ 500 test items render a bounded window and retain the correct scroll geometry (1.6251ms)
+✔ stale and missing results are not shown as current pass (0.5213ms)
+✔ platform navigation uses only current explicit requests and known pages (2.4192ms)
+✔ workspace selection follows actual host activation and never invents a default (2.1297ms)
+✔ radix conversion matches the old signed i128 cases (1.6705ms)
+✔ rc settling matches the old one, three and five tau percentages (0.9265ms)
+✔ report links route portable evidence and legacy local paths to the correct viewer (1.8028ms)
+✔ report links never treat executable schemes or shares as evidence (0.2714ms)
+✔ all report headings have stable unique anchors, including formatted titles (1.6797ms)
+✔ report artifacts follow the old extension and group view (0.7792ms)
+✔ latest markdown ignores newer logs and keeps the last equal mtime after path order (0.9885ms)
+✔ a test report follows run order when modification times match (0.5381ms)
+✔ referenced configuration forms preserve required fields and choose the actual rule variant (1.5847ms)
+✔ readOnly constants and defaults keep their actual JSON types (0.5132ms)
+✔ nullable and primitive schema alternatives retain their actual variant (0.2879ms)
+✔ scope triggers preserve array and items document contracts (1.9985ms)
+✔ history search can distinguish case or ignore it (1.0484ms)
+✔ tracks the chosen log through reordered tabs and refuses an absent view (0.1665ms)
+✔ finds a match beyond the current page and resumes after it (1.5043ms)
+✔ continues correctly when the byte limit makes a page shorter (0.2607ms)
+✔ detects evicted rows and refuses a mixed snapshot (0.5279ms)
+✔ rejects a replaced log even when its row count is unchanged (0.3434ms)
+✔ reports previously evicted rows and honors cancellation (0.3074ms)
+✔ next and previous wrap within the same retained snapshot (0.3655ms)
+✔ reverse search finds the last match even with byte-shortened pages (0.9466ms)
+✔ reverse search rejects mutation and honors cancellation between partial pages (0.4203ms)
+✔ row navigation refuses evicted rows, partial numbers and unsafe integers (0.2282ms)
+✔ serial navigation shortcuts preserve browser chords, repeats and direction (0.2928ms)
+✔ collects matching retained rows across byte-shortened pages with bounded previews (2.3278ms)
+✔ all-results capacity does not change the count or original log limit (0.3896ms)
+✔ all-results scan rejects eviction, edits and cancellation instead of mixing snapshots (0.6969ms)
+✔ masked values retain original locations through edits and reordering (1.1449ms)
+✔ a third cursor replaces the pair and vertical clicks use the plot scale (1.402ms)
+✔ auto extent keeps square-wave plateaus inside the plot and overlays share its cursor scale (0.1809ms)
+✔ nonrepresentable padded extents are rejected instead of drawing NaN pixels (0.1498ms)
+✔ wheel zoom keeps the pointer sample anchored and clamps at both source ends (0.2927ms)
+✔ repeated zoom cannot collapse below source resolution or produce invalid ranges (1.323ms)
+✔ cursor dragging picks the closest visible handle and keeps stable pair indices (0.2275ms)
+✔ reverse box gestures use the same source and vertical mapping as the plot (0.4832ms)
+✔ rail keeps 200px minimum and reserves room for content at supported window sizes (0.9563ms)
+✔ narrow containers keep the rail readable and require overflow instead of hiding controls (0.1481ms)
+✔ corrupt or obsolete persisted widths recover to the user-required default (0.1546ms)
+ℹ tests 61
+ℹ suites 0
+ℹ pass 61
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3300.159
+npm notice
+npm notice New major version of npm available! 11.12.1 -> 12.2.2
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.2
+npm notice To update run: npm install -g npm@12.2.2
+npm notice

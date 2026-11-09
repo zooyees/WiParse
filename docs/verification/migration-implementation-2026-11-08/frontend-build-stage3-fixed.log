@@ -1,0 +1,21 @@
+
+> wiparse-next@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v5.4.21 building for production...
+transforming...
+✓ 316 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                            0.36 kB │ gzip:   0.26 kB
+dist/assets/index-tsxqh0VN.css            42.52 kB │ gzip:   8.23 kB
+dist/assets/AiAssistant-D6vm97n0.js        8.45 kB │ gzip:   3.77 kB
+dist/assets/ReportWorkspace-CPBPKHEL.js   14.96 kB │ gzip:   6.12 kB
+dist/assets/index-D4EI32c7.js            167.46 kB │ gzip:  50.82 kB
+dist/assets/index-DyU4mpyL.js            383.50 kB │ gzip: 118.13 kB
+✓ built in 2.07s
+npm notice
+npm notice New major version of npm available! 11.12.1 -> 12.2.2
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.2
+npm notice To update run: npm install -g npm@12.2.2
+npm notice

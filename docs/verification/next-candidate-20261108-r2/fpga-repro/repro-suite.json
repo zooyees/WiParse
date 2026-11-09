@@ -1,0 +1,303 @@
+{
+  "simulation_only": true,
+  "ok": true,
+  "execution_status": "completed",
+  "product_verdict": "PASS",
+  "validation_verdict": "PASS",
+  "industrial_approved": false,
+  "run_id": "394d1280-4c78-4163-a5bb-73b7de3679a4",
+  "content_sha256": "919ec7f32ddb38411873e84997b6b239f288723299852af359f22a9f7a9460b7",
+  "manifest_sha256": "4cd5de5d512eff98ab8dc268a03d15797514fc972ea0f9a25609740c27b41cf3",
+  "identity": {
+    "identity_source": "simulation",
+    "operator": "demo",
+    "input_at": "2026-11-08T04:22:59.660Z",
+    "field_sources": {
+      "operator": "run_parameters",
+      "dut_serial": "run_parameters",
+      "board_revision": "run_parameters",
+      "fpga_model": "run_parameters",
+      "fixture_id": "run_parameters",
+      "station_id": "run_parameters"
+    },
+    "dut_serial": "DEMO-SN-0001",
+    "board_revision": "DEMO-REV-A",
+    "fpga_model": "DEMO-FPGA",
+    "fixture_id": "DEMO-FIXTURE-01",
+    "station_id": "DEMO-STATION-01"
+  },
+  "attempt_count": 1,
+  "results_truncated": false,
+  "attempt_index_ref": "attempt-index.jsonl",
+  "recovery_required": false,
+  "results": [
+    {
+      "item_id": "fpga_01_pll_clock",
+      "name": "PLL 时钟锁定与输出频率验证",
+      "attempt_id": "26143986-6990-470b-a0ca-4c1102c787ee",
+      "cycle": 1,
+      "started_at": "2026-11-08T04:22:59.742Z",
+      "completed_at": "2026-11-08T04:23:14.805Z",
+      "execution_status": "completed",
+      "product_verdict": "PASS",
+      "result_ref": "../items/fpga_01_pll_clock/26143986-6990-470b-a0ca-4c1102c787ee/result.json",
+      "attempt": 1
+    }
+  ],
+  "project_config": {
+    "revision": 1,
+    "sha256": "e3c937182ae96661b0787a3b4a10447a4c01ab0eacdb23a8d701ef74bd45a1f9",
+    "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "coverage": [
+    {
+      "item_id": "fpga_01_pll_clock",
+      "name": "PLL 时钟锁定与输出频率验证",
+      "selected": true,
+      "planned": 1,
+      "completed": 1,
+      "pass": 1,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_02_reset_controller",
+      "name": "Reset Controller 复位时序验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_03_gpio",
+      "name": "GPIO 输入输出与中断验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_04_uart",
+      "name": "UART 串口收发与回环验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_05_spi_master",
+      "name": "SPI Master 主机传输验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_06_spi_slave",
+      "name": "SPI Slave 从机响应验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_07_i2c_master",
+      "name": "I2C Master 读写与应答验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_08_i2c_slave",
+      "name": "I2C Slave 地址与寄存器验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_09_pwm",
+      "name": "PWM 输出频率与占空比验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_10_timer_counter",
+      "name": "Timer Counter 定时计数验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_11_watchdog",
+      "name": "Watchdog 看门狗超时复位验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_12_sync_fifo",
+      "name": "Sync FIFO 同步读写与满空验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_13_async_fifo",
+      "name": "Async FIFO 跨时钟域传输验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_14_block_ram",
+      "name": "Block RAM 存储读写验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_15_ddr_controller",
+      "name": "DDR Controller 内存训练与访问验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_16_axi_lite",
+      "name": "AXI4-Lite 寄存器接口验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_17_axi_stream",
+      "name": "AXI4-Stream 数据流与背压验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_18_dma",
+      "name": "DMA 数据搬运与中断验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_19_ethernet_mac",
+      "name": "Ethernet MAC 帧收发与校验验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    },
+    {
+      "item_id": "fpga_20_crc32",
+      "name": "CRC32 数据校验计算验证",
+      "selected": false,
+      "planned": 0,
+      "completed": 0,
+      "pass": 0,
+      "fail": 0,
+      "inconclusive": 0,
+      "error": 0,
+      "cancelled": 0
+    }
+  ],
+  "stop_reason": "plan_completed",
+  "archive_complete": true,
+  "summary_md": "D:\\windlink\\windlink\\WiParse-R\\docs\\verification\\next-candidate-20261108-r2\\fpga-repro\\runs\\sim\\artifacts\\reports\\summary.md",
+  "artifacts": {
+    "reports": [
+      "D:\\windlink\\windlink\\WiParse-R\\docs\\verification\\next-candidate-20261108-r2\\fpga-repro\\runs\\sim\\artifacts\\reports\\summary.md",
+      "D:\\windlink\\windlink\\WiParse-R\\docs\\verification\\next-candidate-20261108-r2\\fpga-repro\\runs\\sim\\artifacts\\reports\\suite-result.json"
+    ]
+  }
+}

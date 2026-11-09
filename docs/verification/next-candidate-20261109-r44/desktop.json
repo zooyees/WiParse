@@ -1,0 +1,26 @@
+{
+  "passed": true,
+  "binary_candidate": "R44",
+  "runtime_directory": "dist/WiParse-Next-20261109-QA-R42",
+  "candidate_gui_hash_checked_before_launch": true,
+  "fixture": "docs/verification/next-candidate-20261109-r39/uart-two-channels.csv",
+  "checks": [
+    "空文档 DDSSS 添加/移除/批量解析/解码/报告操作禁用",
+    "UART 双通道样本同时显示 CH1/CH2",
+    "横向放大后两条曲线保留",
+    "滚轮平移后两条曲线保留",
+    "二维拖动后范围与两条曲线更新",
+    "切换 CH2 主通道后 CH1 保持叠加，CH2 原始极值 1.2–1.7 V",
+    "切换计算器后返回，主通道与叠加状态保留"
+  ],
+  "evidence": [
+    "empty-actions.txt",
+    "desktop-readout.txt",
+    "multi-channel-return.jpg"
+  ],
+  "qa_closed_normally": true,
+  "hardware": "not_executed",
+  "real_ai": "not_executed",
+  "protocol_decode_this_round": "not_executed",
+  "cpu_memory_fps_benchmark": "not_executed"
+}

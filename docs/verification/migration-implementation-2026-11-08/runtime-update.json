@@ -1,0 +1,17 @@
+{
+    "fixture":  "D:\\windlink\\windlink\\WiParse-R\\target\\update-test-9ff7218493e748e1bdeac019b2e36a6f",
+    "real_executable_started":  false,
+    "checks":  [
+                   "stage-is-nondestructive",
+                   "complete-apply",
+                   "preserve-config-and-project",
+                   "rollback",
+                   "concurrent-change-rejected",
+                   "interrupted-update-recovery",
+                   "zip-traversal-rejected",
+                   "consecutive-update-rollback-binding",
+                   "rollback-replay-rejected",
+                   "plugin-default-config-managed"
+               ],
+    "passed":  true
+}

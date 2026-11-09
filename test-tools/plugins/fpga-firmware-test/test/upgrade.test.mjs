@@ -37,6 +37,12 @@ test('F01 malformed rule branches are rejected by schema and defensive verdict',
 test('F04 exact Dongle UART channel is required',()=>{
  assert.throws(()=>resolveResources({log:{kind:'wiparse_dongle_uart',selector:{dongle_serial:'D1',uart_channel:1},required:true}},[{kind:'wiparse_dongle_uart',dongle_serial:'D1',uart_channel:0}]),/RESOURCE.MISSING/);
 });
+test('FPGA role names resolve real WiParse instrument kinds without inventing identity',()=>{
+ const roles={load:{kind:'load',selector:{serial:'L1'},required:true},meter:{kind:'dmm',selector:{serial:'M1'},required:true},bridge:{kind:'bridge',selector:{serial:'B1'},required:true}};
+ const devices=[{kind:'electronic_load',serial:'L1',device_id:1},{kind:'multimeter',serial:'M1',device_id:2},{kind:'usb_bridge',serial:'B1',device_id:3}];
+ const resolved=resolveResources(roles,devices);assert.equal(resolved.load.kind,'electronic_load');assert.equal(resolved.meter.device_id,2);assert.equal(resolved.bridge.device_id,3);
+ assert.throws(()=>resolveResources(roles,[...devices,{kind:'electronic_load',serial:'L1',device_id:4}]),/RESOURCE.AMBIGUOUS/);
+});
 test('F03 Stop between screenshot and source never starts source',async t=>{
  const {root}=fixture(t);let stop=false,calls=0;const shot=path.join(root,'s.png');fs.writeFileSync(shot,'shot');
  await assert.rejects(capture({id:'case',log_capture:{enabled:false},waveform_captures:[{id:'s',at_s:0,source_waveform:{enabled:true}}]},{scope:{}},{capture:async()=>{stop=true;return {screenshot:{path:shot,sha256:hash('shot')}}},waveformSource:async()=>{calls++;}}, {now:()=>0,sleep:async()=>{}},()=>stop,{capture_t0:0},root,{}),/RUN.ABORTED/);

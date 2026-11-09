@@ -1,0 +1,221 @@
+{
+  "date": "2026-11-08",
+  "head": "fa62efe71f7ee3b9927597df5209b60daaf6604b",
+  "baseline_comparison": [
+    {
+      "file": "apps/wiparse-next/src/ResizableWorkspace.tsx",
+      "baseline_sha256": "f4dfe5be35e34b6d3a244757a9d42bf78ad68a78f14664688ff8800f32d05422",
+      "current_sha256": "f4dfe5be35e34b6d3a244757a9d42bf78ad68a78f14664688ff8800f32d05422",
+      "changed": false
+    },
+    {
+      "file": "apps/wiparse-next/src/workspaceLayout.ts",
+      "baseline_sha256": "49d3ccc27d2c38a3a75fe929bd1c3c97cc9e526a886ea643ba142ad76251ed82",
+      "current_sha256": "49d3ccc27d2c38a3a75fe929bd1c3c97cc9e526a886ea643ba142ad76251ed82",
+      "changed": false
+    },
+    {
+      "file": "apps/wiparse-next/tests/workspace-layout.test.mjs",
+      "baseline_sha256": "32728525a4087e1dfb5b462e77074ab96229248992a98df1e0453164aef5678d",
+      "current_sha256": "32728525a4087e1dfb5b462e77074ab96229248992a98df1e0453164aef5678d",
+      "changed": false
+    },
+    {
+      "file": "apps/wiparse-next/src/App.tsx",
+      "baseline_sha256": "29289f9fb4b30d379257040a2db188f1a2f4c71e510ea61d72882e341509b2ed",
+      "current_sha256": "f1de5ee7f1640d2387ef556485564044d98ddc4b005c2e1ca09faab38839eae7",
+      "changed": true
+    },
+    {
+      "file": "apps/wiparse-next/src/WaveWorkspace.tsx",
+      "baseline_sha256": "5892e56575cbe8014a3016b8f9626ed319918ff0958af8cec85444479ff3a54e",
+      "current_sha256": "37449410050c17494be7e2cd1f214c64abe9e945b12ee8af5ae2ffa03e2a01d9",
+      "changed": true
+    },
+    {
+      "file": "apps/wiparse-next/src/DataWorkspace.tsx",
+      "baseline_sha256": "668f875e02ed2aa652ee02d05c67d3b59e1f1717552e23c12c589750880cffb1",
+      "current_sha256": "36812c39a7e877e4ae324884732154f020f4000a27581a81e9713b6aefd4cd34",
+      "changed": true
+    },
+    {
+      "file": "apps/wiparse-next/src/ReportWorkspace.tsx",
+      "baseline_sha256": "6a32d8ecb21c9255780bb8ace91537d703402462eed12333e5cddbaf4b1eec74",
+      "current_sha256": "945f63c2a09f54c45837cc66a27ff1fa60d26c8e69ec832e756a5f95d9735846",
+      "changed": true
+    },
+    {
+      "file": "apps/wiparse-next/src/style.css",
+      "baseline_sha256": "b885d36f53dee97739e39f36647bd4718945c91f703dceff6382065a6d0b53f5",
+      "current_sha256": "6735663cf62bd86d86524461cc1d1385bd9995f9bd0f6deb00a7a639f278303d",
+      "changed": true
+    },
+    {
+      "file": "apps/wiparse-next/README.md",
+      "baseline_sha256": "698bb35a91963a0bebeeac52df9ed866076b6aa15d5ecd9e126198c4a6d052bb",
+      "current_sha256": "698bb35a91963a0bebeeac52df9ed866076b6aa15d5ecd9e126198c4a6d052bb",
+      "changed": false
+    },
+    {
+      "file": "apps/wiparse-next/REVIEW.md",
+      "baseline_sha256": "d28ea35ca9e17fe393bb85dd0a1215cd52fe87216847a4b0665e7339a16f4bc0",
+      "current_sha256": "d28ea35ca9e17fe393bb85dd0a1215cd52fe87216847a4b0665e7339a16f4bc0",
+      "changed": false
+    },
+    {
+      "file": "docs/plans/wiparse-tauri-react-refactor-plan.md",
+      "baseline_sha256": "6730557854ec7d031c28c13cd91ee22c5f8fed276f774b6b906465410de6f3db",
+      "current_sha256": "6730557854ec7d031c28c13cd91ee22c5f8fed276f774b6b906465410de6f3db",
+      "changed": false
+    }
+  ],
+  "selected_backup_changed_files": [
+    {
+      "file": "apps/wiparse-next/MIGRATION-STATUS.md",
+      "before_bytes": 16599,
+      "now_bytes": 20668
+    },
+    {
+      "file": "apps/wiparse-next/README.md",
+      "before_bytes": 2904,
+      "now_bytes": 3671
+    },
+    {
+      "file": "apps/wiparse-next/REVIEW.md",
+      "before_bytes": 1188,
+      "now_bytes": 1530
+    },
+    {
+      "file": "apps/wiparse-next/src/App.tsx",
+      "before_bytes": 158468,
+      "now_bytes": 165884
+    },
+    {
+      "file": "apps/wiparse-next/src/bridge.ts",
+      "before_bytes": 18609,
+      "now_bytes": 19109
+    },
+    {
+      "file": "apps/wiparse-next/src/DataWorkspace.tsx",
+      "before_bytes": 9596,
+      "now_bytes": 28733
+    },
+    {
+      "file": "apps/wiparse-next/src/ReportWorkspace.tsx",
+      "before_bytes": 7493,
+      "now_bytes": 15074
+    },
+    {
+      "file": "apps/wiparse-next/src/style.css",
+      "before_bytes": 32223,
+      "now_bytes": 41184
+    },
+    {
+      "file": "apps/wiparse-next/src/WaveWorkspace.tsx",
+      "before_bytes": 13308,
+      "now_bytes": 31224
+    },
+    {
+      "file": "apps/wiparse-next/src-tauri/src/data_view.rs",
+      "before_bytes": 15399,
+      "now_bytes": 22495
+    },
+    {
+      "file": "apps/wiparse-next/src-tauri/src/main.rs",
+      "before_bytes": 74884,
+      "now_bytes": 83481
+    },
+    {
+      "file": "apps/wiparse-next/src-tauri/src/report_view.rs",
+      "before_bytes": 13863,
+      "now_bytes": 16114
+    },
+    {
+      "file": "apps/wiparse-next/src-tauri/src/wave_view.rs",
+      "before_bytes": 17201,
+      "now_bytes": 33397
+    },
+    {
+      "file": "apps/wiparse-next/src-tauri/tauri.conf.json",
+      "before_bytes": 639,
+      "now_bytes": 618
+    },
+    {
+      "file": "docs/plans/wiparse-tauri-migration-handoff-2026-11-07.md",
+      "before_bytes": 28959,
+      "now_bytes": 10532
+    },
+    {
+      "file": "docs/plans/wiparse-tauri-react-refactor-plan.md",
+      "before_bytes": 15500,
+      "now_bytes": 15750
+    }
+  ],
+  "file_metrics": [
+    {
+      "file": "apps/wiparse-next/src/App.tsx",
+      "bytes": 165884,
+      "lines": 772,
+      "max_line_chars": 3965
+    },
+    {
+      "file": "apps/wiparse-next/src-tauri/src/main.rs",
+      "bytes": 83481,
+      "lines": 1104,
+      "max_line_chars": 2305
+    },
+    {
+      "file": "crates/wiparse-gui/src/instrument_control.rs",
+      "bytes": 237222,
+      "lines": 5598,
+      "max_line_chars": 370
+    },
+    {
+      "file": "crates/wiparse-gui/src/test_tool.rs",
+      "bytes": 257876,
+      "lines": 5603,
+      "max_line_chars": 353
+    }
+  ],
+  "registered_commands": 97,
+  "source_hashes": {
+    "apps/wiparse-next/src/AiAssistant.tsx": "84cb42aae084b31a3a84d8d3ec0c3ad49e3b872bf2be17b1b7b083bf568181d8",
+    "apps/wiparse-next/src/App.tsx": "f1de5ee7f1640d2387ef556485564044d98ddc4b005c2e1ca09faab38839eae7",
+    "apps/wiparse-next/src/bandpassGeometry.ts": "321004b567c99dd50ef8a2db90b865c8c87bbc3ceabb2cb3330e9b03e3f6e0d3",
+    "apps/wiparse-next/src/BandpassSchematic.tsx": "3fd21ebc9e1e167bdd14c45cca2baa55f2709e411f85c7919be8c6888157031f",
+    "apps/wiparse-next/src/bridge.ts": "a4fea2ef0d53e7ee1e0a87ab9f98261dc17182bc31ea8940eebfd581546425fe",
+    "apps/wiparse-next/src/crcPreset.ts": "5e45f7cc4078e04c7282ce558a677edbe19d982096a7c0bf01a8bd05ac7e3f90",
+    "apps/wiparse-next/src/dataDisplay.ts": "603149e529925493f084142fce7df6172ae234972ae924a6d6ee7904356c9cfb",
+    "apps/wiparse-next/src/dataLive.ts": "efc8d13333ca5600412301c35e76304d827774c42b8e73937b34287896458322",
+    "apps/wiparse-next/src/DataWorkspace.tsx": "36812c39a7e877e4ae324884732154f020f4000a27581a81e9713b6aefd4cd34",
+    "apps/wiparse-next/src/deviceInterlock.ts": "541f1ac10a1b7dfe94a2d306267c741a114c194dce84afdf44e1d30f732c7e4f",
+    "apps/wiparse-next/src/GenericPluginWorkspace.tsx": "30d1134348d182eb40be20782103149b4c9524d6f36d9c0f2c9657453c44e30f",
+    "apps/wiparse-next/src/keypad.ts": "b8422ff05fb794612dd52d6e9c0c7df651c3c4f2c40ae18ec0337da87ef359d9",
+    "apps/wiparse-next/src/lcCurve.ts": "0f37143fc4923dc261eee13fd59c2f30483caccfc967e13b65bbc6627d9e6eb0",
+    "apps/wiparse-next/src/LoadControl.tsx": "316dfafeeb9f6bd13fde29ec857cfb795550a86e6976a14c2864d42791299797",
+    "apps/wiparse-next/src/main.tsx": "47bbb595a850847154dcb069ad195c21151fa6393059c1a0b7c25d9e46fd8498",
+    "apps/wiparse-next/src/model.ts": "4ddc55d30711166797f3ece2d88ce60485ed7126c13add240c737f16e17ac2ea",
+    "apps/wiparse-next/src/radixValue.ts": "7491361cc29872787bb89723889df7518c7e107e7e56b2b83efcbe12a934a4b2",
+    "apps/wiparse-next/src/rcSettling.ts": "59d4b55379668101ec2230bf5a5be8099327be9b53d53e3270506ab65360badb",
+    "apps/wiparse-next/src/reportOpen.ts": "edd51f02832ab83e67c4ef2988750ad166c1f1e73a8de956d7d9fa50be9fc585",
+    "apps/wiparse-next/src/reportTree.ts": "5db737cddb02ba1f6a2ffa69f020b608ca5e12035468b7ad3138ec962a773f78",
+    "apps/wiparse-next/src/ReportWorkspace.tsx": "945f63c2a09f54c45837cc66a27ff1fa60d26c8e69ec832e756a5f95d9735846",
+    "apps/wiparse-next/src/ResizableWorkspace.tsx": "f4dfe5be35e34b6d3a244757a9d42bf78ad68a78f14664688ff8800f32d05422",
+    "apps/wiparse-next/src/ResonanceCurve.tsx": "acfa4b8c3aaf63d4961ff8d052c29e68fbfe62200e2bfa7276aedfed3c7cc1d4",
+    "apps/wiparse-next/src/ScopeSerialWorkspace.tsx": "c11b8093a836b9c7dc697dc3655f1d6d2876e732da5ddfe06e853d0a09a8f917",
+    "apps/wiparse-next/src/serialSearch.ts": "a5477f96ea48bf6a1f384de7e868bc4d4b3e079fc181b8cdec5962336d3e5c80",
+    "apps/wiparse-next/src/SettingsWorkspace.tsx": "1c5785a98050724ff97fa1fa752ccab264ce783e04ea6b50081569702f31f77b",
+    "apps/wiparse-next/src/SourceControl.tsx": "3d93f9a03aa841a01ab2b139ef1f72c8635ff5bee8636e91d5296b223f09cc6c",
+    "apps/wiparse-next/src/style.css": "6735663cf62bd86d86524461cc1d1385bd9995f9bd0f6deb00a7a639f278303d",
+    "apps/wiparse-next/src/useDeviceInterlock.ts": "91f37bb9547a59337b977b266cb0ffd9131e946c23798205c72f926d3d28e0f4",
+    "apps/wiparse-next/src/waveCursor.ts": "69dc4f1704fbefbf2fd43f3005df36163d18d4785d210d475135463b7757a37c",
+    "apps/wiparse-next/src/WaveSourceControl.tsx": "3ae330216ae5ffd658f996703d400fde6bc9926e3176ec4752701eaea3970822",
+    "apps/wiparse-next/src/WaveWorkspace.tsx": "37449410050c17494be7e2cd1f214c64abe9e945b12ee8af5ae2ffa03e2a01d9",
+    "apps/wiparse-next/src/workspaceLayout.ts": "49d3ccc27d2c38a3a75fe929bd1c3c97cc9e526a886ea643ba142ad76251ed82",
+    "apps/wiparse-next/src-tauri/src/data_view.rs": "0ee41fc9f07e08c2451e61f9a5438658283de6a309a9778c18f5b9d0959e07d8",
+    "apps/wiparse-next/src-tauri/src/main.rs": "2e8ec9067b59e2218145cb2c76389544763f654f822bfe34c2113d41daf629e8",
+    "apps/wiparse-next/src-tauri/src/report_view.rs": "61b59afca7063f2a1714bb71ee6df0b680c7443680711fcc543233f688a70278",
+    "apps/wiparse-next/src-tauri/src/wave_view.rs": "6a3d582875921eaf097c5a894413d2fb48bd5919c027ed53f67f40571525ddd2"
+  },
+  "authorship": "Cannot attribute uncommitted files to Cursor from Git metadata alone"
+}

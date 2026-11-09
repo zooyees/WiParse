@@ -29,9 +29,37 @@ mod windows_icon;
 mod ui_audit;
 
 use app::WiParseApp;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use wiparse_core::config::load_config;
 use wiparse_core::paths::project_path;
+
+static COMPANION_PARENT: OnceLock<Option<u32>> = OnceLock::new();
+static COMPANION_DETACHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) fn companion_detached() -> bool { COMPANION_DETACHED.load(std::sync::atomic::Ordering::Acquire) }
+
+pub(crate) fn companion_window() -> bool {
+    COMPANION_PARENT.get().is_some()
+}
+
+pub(crate) fn companion_parent() -> Option<u32> {
+    COMPANION_PARENT.get().copied().flatten()
+}
+
+fn remember_companion() {
+    let mut args = std::env::args().skip(1);
+    let mut companion = false;
+    let mut parent = None;
+    while let Some(arg) = args.next() {
+        if arg == "--companion" {
+            companion = true;
+        } else if arg == "--companion-parent" {
+            parent = args.next().and_then(|value| value.parse::<u32>().ok());
+        }
+    }
+    if companion {
+        let _ = COMPANION_PARENT.set(parent);
+    }
+}
 
 /// Embedded at compile time so window/taskbar icons work from dist without sidecar files.
 const EMBEDDED_ICO: &[u8] = include_bytes!("../../../Icon/WiParse.ico");
@@ -95,8 +123,42 @@ fn load_window_icon() -> Option<egui::IconData> {
     None
 }
 
+#[cfg(windows)]
+fn watch_companion_parent(pid: u32) {
+    std::thread::spawn(move || {
+        unsafe {
+            const SYNCHRONIZE: u32 = 0x00100000;
+            const INFINITE: u32 = 0xFFFFFFFF;
+            #[link(name = "kernel32")]
+            unsafe extern "system" {
+                fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut std::ffi::c_void;
+                fn WaitForSingleObject(handle: *mut std::ffi::c_void, milliseconds: u32) -> u32;
+                fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+            }
+            let handle = OpenProcess(SYNCHRONIZE, 0, pid);
+            if handle.is_null() {
+                // An inaccessible parent is not proof of process death. Keep
+                // the host available for recovery rather than losing data.
+                COMPANION_DETACHED.store(true, std::sync::atomic::Ordering::Release);
+                return;
+            }
+            let result = WaitForSingleObject(handle, INFINITE);
+            CloseHandle(handle);
+            if result != 0 { tracing::warn!("Companion parent wait failed; retaining host for recovery"); }
+        }
+        COMPANION_DETACHED.store(true, std::sync::atomic::Ordering::Release);
+    });
+}
+
+#[cfg(not(windows))]
+fn watch_companion_parent(_pid: u32) {}
+
 fn main() -> eframe::Result<()> {
     error_log::init();
+    remember_companion();
+    if let Some(parent) = companion_parent() {
+        watch_companion_parent(parent);
+    }
     windows_icon::set_process_app_id();
 
     let (cfg, config_warning) = match load_config() {
@@ -107,10 +169,14 @@ fn main() -> eframe::Result<()> {
         }
     };
     let icon = load_window_icon();
+    let companion = companion_window();
     let mut viewport = egui::ViewportBuilder::default()
-        .with_inner_size([1440.0, 900.0])
-        .with_min_inner_size([1100.0, 720.0])
-        .with_title("WiParse");
+        .with_inner_size(if companion { [320.0, 240.0] } else { [1440.0, 900.0] })
+        .with_min_inner_size(if companion { [320.0, 240.0] } else { [1100.0, 720.0] })
+        .with_title("WiParse")
+        .with_visible(!companion)
+        .with_taskbar(!companion)
+        .with_active(!companion);
     if let Some(ref icon) = icon {
         viewport = viewport.with_icon(Arc::new(icon.clone()));
     }

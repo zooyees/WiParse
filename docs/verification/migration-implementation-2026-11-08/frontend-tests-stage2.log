@@ -1,0 +1,51 @@
+
+> wiparse-next@0.1.0 test
+> node --test tests/*.test.mjs
+
+✔ bandpass schematic nodes stay inside the drawing and run left to right (0.9974ms)
+✔ crc parameter table matches the old presets and hides an invalid custom polynomial (1.5395ms)
+✔ display mapping keeps the old full-scale spans and kind bands (4.8169ms)
+✔ the shared axis fits mapped extrema and zooms around the center (0.6456ms)
+✔ dragging a handle follows the old offset and scale formulas (3.2448ms)
+✔ serial live starts at the recent tail and skips rows the log has already dropped (2.056ms)
+✔ pending operation survives reopening and blocks another command until verified (2.3777ms)
+✔ a late completion cannot remove a newer recovery marker (0.4293ms)
+✔ storage errors prevent starting an untracked operation (0.501ms)
+✔ scientific keypad appends the old tokens and edits one character at a time (4.8705ms)
+✔ resonance points stay in frequency order and drop invented samples (2.6506ms)
+✔ configured items use matching results, with no fabricated pass (2.7633ms)
+✔ validation and historical phase use readable labels (1.2601ms)
+✔ status filters never count stale results as passed (0.5242ms)
+✔ 500 test items render a bounded window and retain the correct scroll geometry (2.154ms)
+✔ stale and missing results are not shown as current pass (0.901ms)
+✔ radix conversion matches the old signed i128 cases (3.1875ms)
+✔ rc settling matches the old one, three and five tau percentages (2.0807ms)
+✔ report links route portable evidence and legacy local paths to the correct viewer (2.9075ms)
+✔ report links never treat executable schemes or shares as evidence (0.414ms)
+✔ report artifacts follow the old extension and group view (1.3558ms)
+✔ latest markdown ignores newer logs and keeps the last equal mtime after path order (1.9486ms)
+✔ a test report follows run order when modification times match (0.7573ms)
+✔ history search can distinguish case or ignore it (2.8652ms)
+✔ tracks the chosen log through reordered tabs and refuses an absent view (0.4147ms)
+✔ finds a match beyond the current page and resumes after it (3.1186ms)
+✔ continues correctly when the byte limit makes a page shorter (1.9805ms)
+✔ detects evicted rows and refuses a mixed snapshot (1.0261ms)
+✔ rejects a replaced log even when its row count is unchanged (0.6023ms)
+✔ reports previously evicted rows and honors cancellation (0.4408ms)
+✔ a third cursor replaces the pair and vertical clicks use the plot scale (1.3965ms)
+✔ rail keeps 200px minimum and reserves room for content at supported window sizes (0.9452ms)
+✔ narrow containers keep the rail readable and require overflow instead of hiding controls (0.2613ms)
+✔ corrupt or obsolete persisted widths recover to the user-required default (0.3279ms)
+ℹ tests 34
+ℹ suites 0
+ℹ pass 34
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1163.1507
+npm notice
+npm notice New major version of npm available! 11.12.1 -> 12.2.2
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.2
+npm notice To update run: npm install -g npm@12.2.2
+npm notice

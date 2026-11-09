@@ -330,6 +330,9 @@ impl ResourceManager {
     }
 
     pub fn open(&self, resource: &str, timeout_ms: u32) -> Result<Instrument, VisaError> {
+        #[cfg(windows)]
+        let resource_lease=Some(crate::resource_lock::acquire_visa_resource(resource)
+            .map_err(|e|VisaError::Io(format!("VISA resource lock: {e}")))?);
         let c_res = CString::new(resource).map_err(|e| VisaError::Io(e.to_string()))?;
         let mut instr = 0u32;
         // Match PyVISA: with VI_NO_LOCK, openTimeout is unused — pass VI_TMO_IMMEDIATE.
@@ -355,6 +358,8 @@ impl ResourceManager {
             api: Arc::clone(&self.api),
             session: instr,
             connection_lost: AtomicBool::new(false),
+            #[cfg(windows)]
+            _resource_lease: resource_lease,
         };
         // Timeout is optional on some USB/TekVISA sessions (0xBFFF001D NSUP_ATTR).
         // Python still communicates if attribute set fails; do not abort the open.
@@ -380,6 +385,8 @@ pub struct Instrument {
     api: Arc<VisaApi>,
     session: ViSession,
     connection_lost: AtomicBool,
+    #[cfg(windows)]
+    _resource_lease: Option<crate::resource_lock::ResourceLease>,
 }
 
 impl Instrument {

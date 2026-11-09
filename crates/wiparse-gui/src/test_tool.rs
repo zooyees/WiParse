@@ -25,7 +25,7 @@ use wiparse_core::paths::project_path;
 use wiparse_core::marketplace::CHANNELS;
 
 const SIDE_W: f32 = ui_theme::SIDEBAR_W;
-const PANEL_GAP: f32 = 8.0;
+const PANEL_GAP: f32 = ui_theme::PANEL_GAP;
 const CARD_MARGIN_X: i8 = 8;
 const MAX_LOG_CHARS: usize = 200_000;
 const LABEL_COL_MIN: f32 = 84.0;
@@ -36,8 +36,8 @@ const PARAM_GAP_X: f32 = 8.0;
 const PLUGIN_ROW_H: f32 = 44.0;
 const HUD_H: f32 = 26.0;
 /// Config / Output horizontal split inside the runner card.
-const RUNNER_SPLIT_GAP: f32 = 8.0;
-const CONFIG_FRAC: f32 = 0.42;
+const RUNNER_SPLIT_GAP: f32 = ui_theme::PANEL_GAP / 2.0;
+const CONFIG_FRAC: f32 = 0.60;
 const CONFIG_MIN_W: f32 = 320.0;
 const OUTPUT_MIN_W: f32 = 240.0;
 /// Fixed viewport for `type: json` / `type: text`. Content scrolls inside;
@@ -154,6 +154,9 @@ enum LogKind {
     System,
 }
 
+#[derive(Clone)]
+struct ExecutionLog { project:String,plugin:String,id:String,text:String,dropped:usize,incomplete:bool }
+
 struct LogLine {
     kind: LogKind,
     text: String,
@@ -162,6 +165,7 @@ struct LogLine {
 struct RunningJob {
     child: Child,
     rx: Receiver<LogLine>,
+    token: String,
         plugin_id: String,
     test_id: String,
     stop_file: Option<PathBuf>,
@@ -170,6 +174,7 @@ struct RunningJob {
     last_status_mtime: Option<std::time::SystemTime>,
     /// After Stop: force-kill child once this instant is reached (graceful window).
     kill_after: Option<Instant>,
+    drain_deadline: Option<Instant>,
     /// Run-scoped overlay JSON; deleted when the job ends. Not written to station.json.
     overlay_file: Option<PathBuf>,
 }
@@ -205,9 +210,12 @@ pub struct TestToolPanel {
     /// Version chosen in Market detail (defaults to latest).
     catalog_selected_version: Option<String>,
     catalog_status: String,
+    market_operation: Option<serde_json::Value>,
+    market_result: Option<serde_json::Value>,
     catalog_busy: bool,
     catalog_autoload: bool,
     market_job: Option<MarketJob>,
+    hub_workers: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     plugins: Vec<PluginInfo>,
     selected: Option<String>,
     type_filter: String,
@@ -215,6 +223,8 @@ pub struct TestToolPanel {
     loop_hint: String,
     loop_hud: LoopHud,
     log: String,
+    execution_log: Option<ExecutionLog>,
+    execution_history:std::collections::VecDeque<ExecutionLog>,
     pending_pick: Option<PathPickTarget>,
     job: Option<RunningJob>,
     /// Extra free-form args after form params.
@@ -230,6 +240,9 @@ pub struct TestToolPanel {
     live_devices: Vec<LiveDevice>,
     /// Params the user edited this selection (preflight autofill skips these).
     param_touched: HashSet<String>,
+    /// Unsaved panel state is isolated per project and plugin for this process.
+    project_param_sessions: HashMap<(PathBuf, String, PathBuf, String), (HashMap<String, String>, HashSet<String>, String, bool)>,
+    active_param_session: Option<(PathBuf, String, PathBuf, String)>,
     serial_ports: Vec<wiparse_core::serial::PortInfo>,
     serial_ports_at: Option<Instant>,
     project_id: String,
@@ -241,6 +254,8 @@ pub struct TestToolPanel {
     workspace: Workspace,
     approved_config_roots: Vec<String>,
     hub_api_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    scope_preflight_pending: Option<(String,String)>,
+    scope_preflight_finished: Option<(String,bool)>,
 }
 
 impl TestToolPanel {
@@ -284,9 +299,12 @@ impl TestToolPanel {
             catalog_selected: None,
             catalog_selected_version: None,
             catalog_status: String::new(),
+            market_operation: None,
+            market_result: None,
             catalog_busy: false,
             catalog_autoload: false,
             market_job: None,
+            hub_workers: Default::default(),
             plugins: Vec::new(),
             selected: None,
             type_filter: String::new(),
@@ -294,6 +312,8 @@ impl TestToolPanel {
             loop_hint: String::new(),
             loop_hud: LoopHud::default(),
             log: String::new(),
+            execution_log: None,
+            execution_history:Default::default(),
             pending_pick: None,
             job: None,
             extra_args: String::new(),
@@ -303,6 +323,8 @@ impl TestToolPanel {
             station_cache: HashMap::new(),
             live_devices: Vec::new(),
             param_touched: HashSet::new(),
+            project_param_sessions: HashMap::new(),
+            active_param_session: None,
             serial_ports: Vec::new(),
             serial_ports_at: None,
             project_id: {
@@ -319,6 +341,8 @@ impl TestToolPanel {
             workspace: Workspace::default(),
             approved_config_roots: cfg.apps.test_tool.approved_config_roots.clone(),
             hub_api_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            scope_preflight_pending: None,
+            scope_preflight_finished: None,
         };
         panel.refresh_plugins();
         panel
@@ -328,8 +352,68 @@ impl TestToolPanel {
         let id = wiparse_core::project::sanitize_id(&id, "default");
         if self.project_id != id {
             if self.workspace.dirty() { self.workspace_switch("__project",id);self.status="CONFIG.UNSAVED_CHANGES".into();return; }
-            self.project_id = id;
+            self.switch_project_session(id);
             self.persist_config();
+        }
+    }
+
+    fn save_current_param_session(&mut self) {
+        if let Some(key) = self.active_param_session.clone() {
+            if self.pending_station_merge {
+                self.pending_station_merge = false;
+                self.merge_station_into_params();
+            }
+            let edits=self.param_touched.iter().filter_map(|name|self.param_values.get(name).map(|value|(name.clone(),value.clone()))).collect();
+            self.project_param_sessions.insert(key,
+                (edits, self.param_touched.clone(), self.extra_args.clone(), self.preflight_only));
+        }
+    }
+
+    fn current_param_session_key(&self) -> Option<(PathBuf, String, PathBuf, String)> {
+        self.selected_plugin().map(|plugin| {
+            let root=PathBuf::from(self.data_root_resolved());
+            let plugin_dir=plugin.dir.clone();
+            (fs::canonicalize(&root).unwrap_or(root), self.effective_project_id(), fs::canonicalize(&plugin_dir).unwrap_or(plugin_dir), plugin.id.clone())
+        })
+    }
+
+    fn restore_current_param_session(&mut self) {
+        let key = self.current_param_session_key();
+        self.active_param_session = key.clone();
+        if let Some((values, touched, extra, preflight)) = key.and_then(|key| self.project_param_sessions.get(&key).cloned()) {
+            self.apply_param_defaults_fast();
+            self.merge_station_into_params();
+            for name in touched {
+                if let Some(value)=values.get(&name) {
+                    self.param_values.insert(name.clone(), value.clone());
+                    self.param_touched.insert(name);
+                }
+            }
+            self.extra_args = extra;
+            self.preflight_only = preflight;
+            self.pending_station_merge = false;
+        } else {
+            self.extra_args.clear();
+            self.preflight_only = false;
+            self.apply_param_defaults_fast();
+            self.pending_station_merge = self.selected.is_some();
+        }
+    }
+
+    fn switch_project_session(&mut self, id: String) {
+        self.save_current_param_session();
+        self.project_id = id;
+        self.restore_current_param_session();
+        if self.pending_station_merge { self.pending_station_merge=false; self.merge_station_into_params(); }
+        self.scope_preflight_finished = None;
+    }
+
+    fn sync_param_session_context(&mut self) {
+        if self.active_param_session != self.current_param_session_key() {
+            self.save_current_param_session();
+            self.restore_current_param_session();
+            if self.pending_station_merge { self.pending_station_merge=false; self.merge_station_into_params(); }
+            self.scope_preflight_finished = None;
         }
     }
 
@@ -341,6 +425,13 @@ impl TestToolPanel {
 
     pub fn current_project_id(&self) -> String {
         self.effective_project_id()
+    }
+
+    pub fn project_switch_blocker(&self)->Option<&'static str>{
+        if self.job.is_some(){Some("RUN.STATION_BUSY")}
+        else if self.workspace.dirty(){Some("CONFIG.UNSAVED_CHANGES")}
+        else if std::env::var("WIPARSE_PROJECT").ok().is_some_and(|value|!value.trim().is_empty()){Some("PROJECT.LOCKED_BY_ENVIRONMENT")}
+        else {None}
     }
 
     pub fn artifact_epoch(&self) -> u64 {
@@ -443,29 +534,120 @@ impl TestToolPanel {
     }
 
     pub fn api_snapshot(&self) -> serde_json::Value {
+        let plugins=self.plugins.iter().map(|p| serde_json::json!({
+            "id": p.id,"name": p.name,"name_zh": p.name_zh,
+            "report_name": p.report_name,"report_name_zh": p.report_name_zh,
+            "type": p.type_name,"version": p.version,"matrix_workspace": p.configure,
+        })).collect::<Vec<_>>();
+        let generic_params=self.selected_plugin().filter(|p|!p.configure&&!matches!(p.id.as_str(),"scope-serial-monitor"|"wireless-whitebox"|"fpga-firmware-test")).map(|p|p.params.iter().filter(|param|!param.hidden).map(|param|serde_json::json!({
+            "name":param.name,"type":param.type_name,"widget":param.widget,"label":if param.label_zh.is_empty(){&param.label}else{&param.label_zh},
+            "help":if param.help_zh.is_empty(){&param.help}else{&param.help_zh},"group":if param.group_zh.is_empty(){&param.group}else{&param.group_zh},"advanced":param.advanced,
+            "filter_kind":param.filter_kind,"filter_from":param.filter_from,
+            "options":param.options.iter().map(|(value,label,zh)|serde_json::json!({"value":value,"label":if zh.is_empty(){label}else{zh}})).collect::<Vec<_>>()
+        })).collect::<Vec<_>>()).unwrap_or_default();
         serde_json::json!({
             "plugins_dir": self.plugins_dir,
             "cli_path": self.cli_path,
             "node_path": self.node_path,
             "data_root": self.data_root,
+            "data_root_resolved": self.data_root_resolved(),
             "project": self.effective_project_id(),
             "marketplace_install_dir": self.marketplace_install_dir,
             "plugin_count": self.plugins.len(),
             "selected": self.selected,
             "running": self.job.is_some(),
+            "running_plugin": self.running_plugin_id(),
+            "running_token": self.job.as_ref().map(|job|job.token.as_str()),
+            "fpga_preflight_safe_version": 1,
+            "wireless_safe_version": 1,
+            "scope_rule_enabled_safe_version": 1,
+            "scope_rule_add_safe_version": 1,
+            "scope_rule_text_safe_version": 1,
+            "scope_rules_replace_safe_version":1,
+            "scope_rule_exclusion_safe_version": 1,
+            "scope_rule_order_safe_version": 1,
+            "scope_settings_import_version": 1,
+            "scope_settings_export_version": 1,
+            "scope_edge_mode_version": 1,
+            "scope_serial_settings_safe_version": 1,
+            "scope_instrument_safe_version": 1,
+            "scope_preflight_safe_version": 1,
+            "scope_run_safe_version": 1,
+            "compact_state_safe_version": 1,
+            "scope_preflight_state": self.scope_preflight_state(),
+            "scope_recent_log": if self.selected.as_deref()==Some("scope-serial-monitor") {self.log.chars().rev().take(6000).collect::<String>().chars().rev().collect::<String>()}else{String::new()},
+            "generic_recent_log": if self.selected_plugin().is_some_and(|p|!p.configure&&p.id!="scope-serial-monitor") {self.log.chars().rev().take(6000).collect::<String>().chars().rev().collect::<String>()}else{String::new()},
+            "safe_project_switch_version": 1,
+            "safe_project_create_version": 1,
             "status": self.status,
             "loop_hint": self.loop_hint,
             "params": self.param_values,
-            "plugins": self.plugins.iter().map(|p| serde_json::json!({
-                "id": p.id,
-                "name": p.name,
-                "name_zh": p.name_zh,
-                "report_name": p.report_name,
-                "report_name_zh": p.report_name_zh,
-                "type": p.type_name,
-                "version": p.version,
-            })).collect::<Vec<_>>(),
+            "generic_params":generic_params,
+            "generic_workspace_version":1,
+            "plugins": plugins,
         })
+    }
+
+    /// Service clients may use a different active tab. Drain child output and
+    /// completion there as well, rather than requiring the egui panel to paint.
+    pub(crate) fn runtime_busy(&self)->bool{self.job.is_some()||self.catalog_busy||self.market_job.is_some()||self.hub_workers.load(std::sync::atomic::Ordering::Acquire)>0}
+    pub fn api_poll(&mut self, lang:Lang) { self.poll_job(lang);self.poll_market_job(lang); }
+
+    fn scope_fingerprint(&self)->Option<String> {
+        let plugin=self.selected_plugin()?;
+        if plugin.id!="scope-serial-monitor" {return None;}
+        let path=plugin.dir.join(&plugin.config);let meta=fs::metadata(&path).ok()?;
+        if !meta.is_file()||meta.len()>1_000_000{return None;}
+        let station=fs::read(path).ok()?;
+        let ordered:std::collections::BTreeMap<_,_>=self.param_values.iter().collect();
+        serde_json::to_string(&(self.effective_project_id(),ordered,station)).ok()
+    }
+    fn scope_preflight_state(&self)->&'static str {
+        if self.scope_preflight_pending.is_some(){return "running";}
+        let Some((prior,passed))=&self.scope_preflight_finished else{return "unknown"};
+        match self.scope_fingerprint(){Some(current) if *prior==current=>if *passed {"passed"}else{"failed"},_=>"stale"}
+    }
+    fn scope_serial_parameters_valid(&self)->bool {
+        let port=self.param_values.get("port").map(String::as_str).unwrap_or("");
+        !port.trim().is_empty()&&port.len()<=256&&!port.chars().any(char::is_control)
+            &&self.param_values.get("baud").and_then(|value|value.parse::<u64>().ok()).is_some_and(|baud|(300..=12_000_000).contains(&baud))
+    }
+    pub fn api_scope_preflight_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};
+        let method="ui.test_tool.scope_preflight_safe";
+        if self.job.is_some(){return err(method,"RUN.STATION_BUSY");}
+        if self.workspace.dirty(){return err(method,"CONFIG.UNSAVED_CHANGES");}
+        if self.effective_project_id()!=params.get("project").and_then(|v|v.as_str()).unwrap_or("")||self.selected.as_deref()!=Some("scope-serial-monitor"){return err(method,"CONFIG.CONTEXT_CHANGED");}
+        if self.pending_station_merge {self.pending_station_merge=false;self.merge_station_into_params();}
+        for key in ["port","baud","triggers"] {if self.param_values.get(key).map(String::as_str)!=params.get(key).and_then(|v|v.as_str()){return err(method,"CONFIG.STALE");}}
+        if !self.scope_serial_parameters_valid(){return err(method,"SERIAL.INVALID_PARAMETERS");}
+        let Some(fingerprint)=self.scope_fingerprint() else{return err(method,"CONFIG.UNAVAILABLE")};
+        self.scope_preflight_finished=None;
+        let old_preflight=self.preflight_only;let old_extra=std::mem::take(&mut self.extra_args);self.preflight_only=true;
+        let result=self.start_selected(Lang::En);self.preflight_only=old_preflight;self.extra_args=old_extra;
+        match result {
+            Ok(())=>{let token=self.job.as_ref().expect("started job").token.clone();self.scope_preflight_pending=Some((token,fingerprint));ok(method,self.api_snapshot())},
+            Err(error)=>err(method,&error),
+        }
+    }
+
+    pub fn api_scope_run_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.test_tool.scope_run_safe";
+        if self.job.is_some(){return err(method,"RUN.STATION_BUSY");}
+        if self.workspace.dirty(){return err(method,"CONFIG.UNSAVED_CHANGES");}
+        if self.effective_project_id()!=params.get("project").and_then(|v|v.as_str()).unwrap_or("")||self.selected.as_deref()!=Some("scope-serial-monitor"){return err(method,"CONFIG.CONTEXT_CHANGED");}
+        for key in ["port","baud","triggers"] {if self.param_values.get(key).map(String::as_str)!=params.get(key).and_then(|v|v.as_str()){return err(method,"CONFIG.STALE");}}
+        if !self.scope_serial_parameters_valid(){return err(method,"SERIAL.INVALID_PARAMETERS");}
+        if self.scope_preflight_state()!="passed"{return err(method,"PREFLIGHT.REQUIRED");}
+        let old_preflight=self.preflight_only;let old_extra=std::mem::take(&mut self.extra_args);self.preflight_only=false;
+        let result=self.start_selected(Lang::En);self.preflight_only=old_preflight;self.extra_args=old_extra;
+        match result {Ok(())=>{self.scope_preflight_finished=None;ok(method,self.api_snapshot())},Err(error)=>err(method,&error)}
+    }
+    pub fn api_scope_stop_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.test_tool.scope_stop_safe";
+        if self.running_plugin_id()!=Some("scope-serial-monitor"){return err(method,"RUN.NOT_ACTIVE");}
+        if self.job.as_ref().is_none_or(|job|params.get("running_token").and_then(|v|v.as_str())!=Some(job.token.as_str())){return err(method,"RUN.STALE");}
+        self.stop_job(Lang::En);ok(method,serde_json::json!({"accepted":true,"running":self.job.is_some()}))
     }
 
     /// Project, selection and matrix counts. Paths, parameters and secrets stay local.
@@ -509,6 +691,367 @@ impl TestToolPanel {
         self.refresh_plugins();
         self.persist_config();
         ok("ui.test_tool.browser", self.api_snapshot())
+    }
+
+    pub fn api_select_plugin_safe(&mut self, params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};
+        if self.job.is_some(){return err("ui.test_tool.select_safe","RUN.STATION_BUSY");}
+        if self.workspace.dirty(){return err("ui.test_tool.select_safe","CONFIG.UNSAVED_CHANGES");}
+        if self.effective_project_id()!=params.get("project").and_then(|v|v.as_str()).unwrap_or(""){return err("ui.test_tool.select_safe","CONFIG.CONTEXT_CHANGED");}
+        let id=params.get("plugin").and_then(|v|v.as_str()).unwrap_or("");
+        if !self.plugins.iter().any(|p|p.id==id){return err("ui.test_tool.select_safe","PLUGIN.NOT_FOUND");}
+        self.select_plugin(id.to_owned());
+        // API callers receive the selected station immediately; unlike a local
+        // click they cannot rely on a subsequent egui frame to merge it.
+        if self.pending_station_merge {self.pending_station_merge=false;self.merge_station_into_params();}
+        ok("ui.test_tool.select_safe",self.api_snapshot())
+    }
+
+    /// Run legacy non-matrix plugins using their own parameter contract.
+    pub fn api_generic_run_safe(&mut self, params:&serde_json::Value,devices:&[LiveDevice])->crate::backend::InvokeReply {
+        use crate::backend::invoke_err as err;
+        let method="ui.test_tool.generic_run_safe";
+        if self.job.is_some(){return err(method,"RUN.STATION_BUSY");}
+        if self.workspace.dirty(){return err(method,"CONFIG.UNSAVED_CHANGES");}
+        let Some(plugin)=self.selected_plugin() else{return err(method,"CONFIG.CONTEXT_CHANGED")};
+        if plugin.configure||matches!(plugin.id.as_str(),"scope-serial-monitor"|"wireless-whitebox"|"fpga-firmware-test")||params["plugin"].as_str()!=Some(plugin.id.as_str())||params["project"].as_str()!=Some(self.effective_project_id().as_str())||params["data_root"].as_str()!=Some(self.data_root.as_str()){return err(method,"CONFIG.CONTEXT_CHANGED");}
+        if serde_json::to_value(&self.param_values).ok().as_ref()!=params.get("expected"){return err(method,"CONFIG.STALE");}
+        let Some(values)=params["values"].as_object() else{return err(method,"CONFIG.INVALID_REQUEST")};
+        if values.len()>plugin.params.len(){return err(method,"CONFIG.INVALID_REQUEST");}
+        let mut resolved=values.clone();
+        for (key,value) in values {
+            let Some(spec)=plugin.params.iter().find(|spec|!spec.hidden&&spec.name==*key) else{return err(method,"CONFIG.INVALID_REQUEST")};
+            let Some(text)=value.as_str().filter(|s|s.len()<=1_000_000&&!s.contains('\0')) else{return err(method,"CONFIG.INVALID_REQUEST")};
+            let kind=spec.type_name.trim().to_ascii_lowercase();
+            if matches!(kind.as_str(),"boolean"|"bool")&&!matches!(text,"true"|"false"){return err(method,"CONFIG.INVALID_REQUEST");}
+            if kind=="enum"&&!spec.options.iter().any(|(value,_,_)|value==text){return err(method,"CONFIG.INVALID_REQUEST");}
+            if kind=="json"&&!text.trim().is_empty()&&serde_json::from_str::<serde_json::Value>(text).is_err(){return err(method,"CONFIG.INVALID_REQUEST");}
+            if kind=="device"&&!text.is_empty(){
+                let filter=if spec.filter_from.is_empty(){spec.filter_kind.as_str()}else{values.get(&spec.filter_from).and_then(|v|v.as_str()).or_else(||self.param_values.get(&spec.filter_from).map(String::as_str)).filter(|v|!v.trim().is_empty()).unwrap_or(spec.filter_kind.as_str())};
+                let Some(device)=devices.iter().find(|device|device.device_id.to_string()==text&&kind_allowed(filter,&device.kind)) else{return err(method,"INSTRUMENT.SESSION_CHANGED")};
+                for (target,field) in &spec.fills {let value=device.field(field);if !value.is_empty(){resolved.insert(target.clone(),serde_json::Value::String(value));}}
+            }
+        }
+        let Some(lifecycle)=params["lifecycle"].as_str().filter(|life|matches!(*life,"preflight"|"run")) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let request=serde_json::json!({"plugin":plugin.id,"params":resolved,"lifecycle":lifecycle,"args":""});
+        let mut reply=self.api_run(&request);reply.cmd=method.into();reply
+    }
+
+    pub fn api_generic_stop_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.test_tool.generic_stop_safe";
+        if self.job.as_ref().is_none_or(|job|params["running_token"].as_str()!=Some(job.token.as_str())||params["plugin"].as_str()!=Some(job.plugin_id.as_str())){return err(method,"RUN.STALE");}
+        self.stop_job(Lang::En);ok(method,serde_json::json!({"accepted":true,"running":self.job.is_some()}))
+    }
+
+    /// Change only the enabled flag of one existing rule; retain every other
+    /// field, including unknown future fields and legacy exclusion rules.
+    pub fn api_scope_rules_replace_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.test_tool.scope_rules_replace_safe";
+        if self.job.is_some(){return err(method,"RUN.STATION_BUSY");}if self.workspace.dirty(){return err(method,"CONFIG.UNSAVED_CHANGES");}
+        if self.effective_project_id()!=params["project"].as_str().unwrap_or("")||self.selected.as_deref()!=Some("scope-serial-monitor")||self.active_param_session!=self.current_param_session_key(){return err(method,"CONFIG.CONTEXT_CHANGED");}
+        if self.pending_station_merge {self.pending_station_merge=false;self.merge_station_into_params();}
+        let Some(expected)=params["expected"].as_str().filter(|value|value.len()<=1_000_000) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        if self.param_values.get("triggers").map(String::as_str).unwrap_or("")!=expected{return err(method,"CONFIG.STALE");}
+        let Some(replacement)=params["replacement"].as_str().filter(|value|value.len()<=1_000_000) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let Ok(mut parsed)=serde_json::from_str::<serde_json::Value>(replacement) else{return err(method,"CONFIG.INVALID_RULES")};
+        if !scope_rule_items_mut(&mut parsed).is_some_and(|items|items.len()<=500){return err(method,"CONFIG.INVALID_RULES");}
+        if let Err(reason)=line_trigger_editor::validate(replacement,Lang::En){return err(method,&format!("CONFIG.INVALID_RULES: {reason}"));}
+        if params["validate_only"]==true{return ok(method,serde_json::json!({"valid":true}));}
+        self.param_values.insert("triggers".into(),replacement.to_string());self.param_touched.insert("triggers".into());self.scope_preflight_finished=None;
+        ok(method,self.api_snapshot())
+    }
+
+    pub fn api_scope_rule_enabled_safe(&mut self, params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};
+        let method="ui.test_tool.scope_rule_enabled_safe";
+        if self.job.is_some(){return err(method,"RUN.STATION_BUSY");}
+        if self.workspace.dirty(){return err(method,"CONFIG.UNSAVED_CHANGES");}
+        if self.effective_project_id()!=params.get("project").and_then(|v|v.as_str()).unwrap_or("")||self.selected.as_deref()!=Some("scope-serial-monitor"){return err(method,"CONFIG.CONTEXT_CHANGED");}
+        if self.pending_station_merge {self.pending_station_merge=false;self.merge_station_into_params();}
+        let Some(expected)=params.get("expected").and_then(|v|v.as_str()).filter(|s|s.len()<=1_000_000) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let Some(index)=params.get("index").and_then(|v|v.as_u64()).and_then(|v|usize::try_from(v).ok()) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let Some(enabled)=params.get("enabled").and_then(|v|v.as_bool()) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let current=self.param_values.get("triggers").map(String::as_str).unwrap_or("");
+        if current!=expected{return err(method,"CONFIG.STALE");}
+        let Ok(mut value)=(if current.trim().is_empty(){Ok(serde_json::json!([]))}else{serde_json::from_str::<serde_json::Value>(current)}) else{return err(method,"CONFIG.INVALID_RULES")};
+        let Some(rule)=scope_rule_items_mut(&mut value).and_then(|items|items.get_mut(index)).and_then(|item|item.as_object_mut()) else{return err(method,"CONFIG.INVALID_RULES")};
+        rule.insert("enabled".into(),serde_json::Value::Bool(enabled));
+        let Ok(updated)=serde_json::to_string(&value) else{return err(method,"CONFIG.INVALID_RULES")};
+        if line_trigger_editor::validate(&updated,Lang::En).is_err(){return err(method,"CONFIG.INVALID_RULES");}
+        self.param_values.insert("triggers".into(),updated);
+        self.param_touched.insert("triggers".into());
+        ok(method,self.api_snapshot())
+    }
+
+    pub fn api_scope_rule_add_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};
+        let method="ui.test_tool.scope_rule_add_safe";
+        if self.job.is_some(){return err(method,"RUN.STATION_BUSY");}
+        if self.workspace.dirty(){return err(method,"CONFIG.UNSAVED_CHANGES");}
+        if self.effective_project_id()!=params.get("project").and_then(|v|v.as_str()).unwrap_or("")||self.selected.as_deref()!=Some("scope-serial-monitor"){return err(method,"CONFIG.CONTEXT_CHANGED");}
+        if self.pending_station_merge {self.pending_station_merge=false;self.merge_station_into_params();}
+        let Some(expected)=params.get("expected").and_then(|v|v.as_str()).filter(|s|s.len()<=1_000_000) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let Some(pattern)=params.get("pattern").and_then(|v|v.as_str()).filter(|s|!s.trim().is_empty()&&s.len()<=512&&!s.chars().any(char::is_control)) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let current=self.param_values.get("triggers").map(String::as_str).unwrap_or("");
+        if current!=expected{return err(method,"CONFIG.STALE");}
+        let Ok(mut value)=(if current.trim().is_empty(){Ok(serde_json::json!([]))}else{serde_json::from_str::<serde_json::Value>(current)}) else{return err(method,"CONFIG.INVALID_RULES")};
+        let Some(items)=scope_rule_items_mut(&mut value).filter(|items|items.len()<500) else{return err(method,"CONFIG.INVALID_RULES")};
+        let mut n=1;while items.iter().any(|item|item.get("id").and_then(|id|id.as_str())==Some(format!("text_{n}").as_str())){n+=1;}
+        items.push(serde_json::json!({"id":format!("text_{n}"),"label":pattern,"enabled":true,"type":"contains","pattern":pattern}));
+        let Ok(updated)=serde_json::to_string(&value) else{return err(method,"CONFIG.INVALID_RULES")};
+        if line_trigger_editor::validate(&updated,Lang::En).is_err(){return err(method,"CONFIG.INVALID_RULES");}
+        self.param_values.insert("triggers".into(),updated);self.param_touched.insert("triggers".into());
+        ok(method,self.api_snapshot())
+    }
+
+    pub fn api_scope_rule_text_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.test_tool.scope_rule_text_safe";
+        if self.job.is_some(){return err(method,"RUN.STATION_BUSY");}if self.workspace.dirty(){return err(method,"CONFIG.UNSAVED_CHANGES");}
+        if self.effective_project_id()!=params.get("project").and_then(|v|v.as_str()).unwrap_or("")||self.selected.as_deref()!=Some("scope-serial-monitor"){return err(method,"CONFIG.CONTEXT_CHANGED");}
+        if self.pending_station_merge {self.pending_station_merge=false;self.merge_station_into_params();}
+        let Some(expected)=params.get("expected").and_then(|v|v.as_str()).filter(|s|s.len()<=1_000_000) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let Some(index)=params.get("index").and_then(|v|v.as_u64()).and_then(|v|usize::try_from(v).ok()) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let Some(pattern)=params.get("pattern").and_then(|v|v.as_str()).filter(|s|!s.trim().is_empty()&&s.len()<=512&&!s.chars().any(char::is_control)) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let current=self.param_values.get("triggers").map(String::as_str).unwrap_or("");if current!=expected{return err(method,"CONFIG.STALE");}
+        let Ok(mut value)=(if current.trim().is_empty(){Ok(serde_json::json!([]))}else{serde_json::from_str::<serde_json::Value>(current)}) else{return err(method,"CONFIG.INVALID_RULES")};
+        let Some(rule)=scope_rule_items_mut(&mut value).and_then(|items|items.get_mut(index)).and_then(|item|item.as_object_mut()) else{return err(method,"CONFIG.INVALID_RULES")};
+        let mode=rule.get("type").and_then(|value|value.as_str()).filter(|value|!value.is_empty()).unwrap_or("regex");
+        if !mode.eq_ignore_ascii_case("contains")&&!mode.eq_ignore_ascii_case("regex"){return err(method,"CONFIG.COMPLEX_RULE");}
+        let key=if rule.get("pattern").is_some_and(|value|!value.is_null()){ "pattern" }else if rule.get("regex").is_some_and(|value|!value.is_null()){ "regex" }else if rule.get("text").is_some_and(|value|!value.is_null()){ "text" }else{ "pattern" };
+        let old=rule.get(key).and_then(|value|value.as_str()).unwrap_or("").to_owned();
+        if rule.get("label").and_then(|value|value.as_str())==Some(old.as_str()){rule.insert("label".into(),serde_json::json!(pattern));}
+        rule.insert(key.into(),serde_json::json!(pattern));
+        let Ok(updated)=serde_json::to_string(&value) else{return err(method,"CONFIG.INVALID_RULES")};
+        if line_trigger_editor::validate(&updated,Lang::En).is_err(){return err(method,"CONFIG.INVALID_RULES");}
+        self.param_values.insert("triggers".into(),updated);self.param_touched.insert("triggers".into());ok(method,self.api_snapshot())
+    }
+
+    pub fn api_scope_rule_exclusion_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.test_tool.scope_rule_exclusion_safe";
+        if self.job.is_some(){return err(method,"RUN.STATION_BUSY");}if self.workspace.dirty(){return err(method,"CONFIG.UNSAVED_CHANGES");}
+        if self.effective_project_id()!=params["project"].as_str().unwrap_or("")||self.selected.as_deref()!=Some("scope-serial-monitor"){return err(method,"CONFIG.CONTEXT_CHANGED");}
+        if self.pending_station_merge {self.pending_station_merge=false;self.merge_station_into_params();}
+        let Some(expected)=params["expected"].as_str().filter(|s|s.len()<=1_000_000) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        if self.param_values.get("triggers").map(String::as_str)!=Some(expected){return err(method,"CONFIG.STALE");}
+        let Some(index)=params["index"].as_u64().and_then(|value|usize::try_from(value).ok()) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let Ok(mut value)=serde_json::from_str::<serde_json::Value>(expected) else{return err(method,"CONFIG.INVALID_RULES")};
+        let Some(rule)=scope_rule_items_mut(&mut value).and_then(|items|items.get_mut(index)).and_then(|item|item.as_object_mut()) else{return err(method,"CONFIG.INVALID_RULES")};
+        match params["action"].as_str(){
+            Some("add")=>{
+                let Some(text)=params["text"].as_str().filter(|s|!s.trim().is_empty()&&s.len()<=512&&!s.chars().any(char::is_control)) else{return err(method,"CONFIG.INVALID_REQUEST")};
+                let entries=rule.entry("unless").or_insert_with(||serde_json::json!([]));
+                let Some(entries)=entries.as_array_mut() else{return err(method,"CONFIG.INVALID_RULES")};
+                if entries.len()>=500{return err(method,"CONFIG.INVALID_REQUEST");}
+                entries.push(serde_json::json!({"type":"contains","pattern":text}));
+            }
+            Some("remove")=>{
+                let Some(key)=params["key"].as_str().filter(|key|matches!(*key,"unless"|"except"|"exclude")) else{return err(method,"CONFIG.INVALID_REQUEST")};
+                let Some(item_index)=params["item_index"].as_u64().and_then(|value|usize::try_from(value).ok()) else{return err(method,"CONFIG.INVALID_REQUEST")};
+                let Some(entry)=rule.get_mut(key) else{return err(method,"CONFIG.INVALID_REQUEST")};
+                if let Some(items)=entry.as_array_mut(){if item_index>=items.len(){return err(method,"CONFIG.INVALID_REQUEST");}items.remove(item_index);}
+                else if key=="exclude"&&item_index==0&&(entry.is_string()||entry.is_object()){rule.remove(key);}
+                else{return err(method,"CONFIG.INVALID_REQUEST");}
+            }
+            _=>return err(method,"CONFIG.INVALID_REQUEST"),
+        }
+        let Ok(updated)=serde_json::to_string(&value) else{return err(method,"CONFIG.INVALID_RULES")};
+        if line_trigger_editor::validate(&updated,Lang::En).is_err(){return err(method,"CONFIG.INVALID_RULES");}
+        self.param_values.insert("triggers".into(),updated);self.param_touched.insert("triggers".into());ok(method,self.api_snapshot())
+    }
+
+    pub fn api_scope_rule_order_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.test_tool.scope_rule_order_safe";
+        if self.job.is_some(){return err(method,"RUN.STATION_BUSY");}if self.workspace.dirty(){return err(method,"CONFIG.UNSAVED_CHANGES");}
+        if self.effective_project_id()!=params.get("project").and_then(|v|v.as_str()).unwrap_or("")||self.selected.as_deref()!=Some("scope-serial-monitor"){return err(method,"CONFIG.CONTEXT_CHANGED");}
+        if self.pending_station_merge {self.pending_station_merge=false;self.merge_station_into_params();}
+        let Some(expected)=params.get("expected").and_then(|v|v.as_str()).filter(|s|s.len()<=1_000_000) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let Some(index)=params.get("index").and_then(|v|v.as_u64()).and_then(|v|usize::try_from(v).ok()) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        if self.param_values.get("triggers").map(String::as_str)!=Some(expected){return err(method,"CONFIG.STALE");}
+        let Ok(mut value)=serde_json::from_str::<serde_json::Value>(expected) else{return err(method,"CONFIG.INVALID_RULES")};
+        let Some(items)=scope_rule_items_mut(&mut value) else{return err(method,"CONFIG.INVALID_RULES")};
+        if index>=items.len(){return err(method,"CONFIG.INVALID_REQUEST");}
+        match params.get("action").and_then(|v|v.as_str()) {
+            Some("remove")=>{items.remove(index);},
+            Some("up") if index>0=>items.swap(index,index-1),
+            Some("down") if index+1<items.len()=>items.swap(index,index+1),
+            _=>return err(method,"CONFIG.INVALID_REQUEST"),
+        }
+        let Ok(updated)=serde_json::to_string(&value) else{return err(method,"CONFIG.INVALID_RULES")};
+        if line_trigger_editor::validate(&updated,Lang::En).is_err(){return err(method,"CONFIG.INVALID_RULES");}
+        self.param_values.insert("triggers".into(),updated);self.param_touched.insert("triggers".into());ok(method,self.api_snapshot())
+    }
+
+    pub fn api_scope_edge_mode_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.test_tool.scope_edge_mode_safe";
+        if self.job.is_some(){return err(method,"RUN.STATION_BUSY");}if self.workspace.dirty(){return err(method,"CONFIG.UNSAVED_CHANGES");}
+        if self.effective_project_id()!=params.get("project").and_then(|v|v.as_str()).unwrap_or("")||self.selected.as_deref()!=Some("scope-serial-monitor")||self.active_param_session!=self.current_param_session_key(){return err(method,"CONFIG.CONTEXT_CHANGED");}
+        if self.pending_station_merge {self.pending_station_merge=false;self.merge_station_into_params();}
+        if self.param_values.get("rising_edge").map(String::as_str)!=params.get("expected").and_then(|v|v.as_str()){return err(method,"CONFIG.STALE");}
+        let Some(enabled)=params.get("enabled").and_then(|v|v.as_bool()) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        self.param_values.insert("rising_edge".into(),enabled.to_string());self.param_touched.insert("rising_edge".into());
+        self.scope_preflight_finished=None;ok(method,self.api_snapshot())
+    }
+
+    pub fn api_scope_settings_export_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.test_tool.scope_settings_export_safe";
+        if self.job.is_some(){return err(method,"RUN.STATION_BUSY");}if self.workspace.dirty(){return err(method,"CONFIG.UNSAVED_CHANGES");}
+        if self.effective_project_id()!=params.get("project").and_then(|v|v.as_str()).unwrap_or("")||self.selected.as_deref()!=Some("scope-serial-monitor")||self.active_param_session!=self.current_param_session_key(){return err(method,"CONFIG.CONTEXT_CHANGED");}
+        if self.pending_station_merge {self.pending_station_merge=false;self.merge_station_into_params();}
+        let keys=["port","baud","triggers","prefer_device_id","scope_resource","scope_model","scope_kind","rising_edge"];
+        let Some(expected)=params.get("expected").and_then(|v|v.as_object()) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        if keys.iter().any(|key|self.param_values.get(*key).map(String::as_str)!=expected.get(*key).and_then(|v|v.as_str())){return err(method,"CONFIG.STALE");}
+        if !self.scope_serial_parameters_valid(){return err(method,"SERIAL.INVALID_PARAMETERS");}
+        let Some(triggers)=self.param_values.get("triggers").filter(|value|value.len()<=1_000_000) else{return err(method,"CONFIG.INVALID_RULES")};
+        if line_trigger_editor::validate(triggers,Lang::En).is_err(){return err(method,"CONFIG.INVALID_RULES");}
+        let mut values=serde_json::Map::new();
+        for key in ["port","baud","triggers","scope_resource","scope_model","scope_kind","rising_edge"] {
+            let Some(value)=self.param_values.get(key) else{return err(method,"CONFIG.INVALID_REQUEST")};values.insert(key.into(),serde_json::json!(value));
+        }
+        ok(method,serde_json::Value::Object(values))
+    }
+
+    pub fn api_scope_settings_import_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.test_tool.scope_settings_import_safe";
+        if self.job.is_some(){return err(method,"RUN.STATION_BUSY");}if self.workspace.dirty(){return err(method,"CONFIG.UNSAVED_CHANGES");}
+        if self.effective_project_id()!=params.get("project").and_then(|v|v.as_str()).unwrap_or("")||self.selected.as_deref()!=Some("scope-serial-monitor")||self.active_param_session!=self.current_param_session_key(){return err(method,"CONFIG.CONTEXT_CHANGED");}
+        if self.pending_station_merge {self.pending_station_merge=false;self.merge_station_into_params();}
+        let keys=["port","baud","triggers","prefer_device_id","scope_resource","scope_model","scope_kind","rising_edge"];
+        let Some(expected)=params.get("expected").and_then(|v|v.as_object()) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        if keys.iter().any(|key|self.param_values.get(*key).map(String::as_str)!=expected.get(*key).and_then(|v|v.as_str())){return err(method,"CONFIG.STALE");}
+        let Some(values)=params.get("values").and_then(|v|v.as_object()) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let Some(port)=values.get("port").and_then(|v|v.as_str()).filter(|s|!s.trim().is_empty()&&s.len()<=256&&!s.chars().any(char::is_control)) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let Some(baud)=values.get("baud").and_then(|v|v.as_str()).and_then(|s|s.parse::<u64>().ok()).filter(|b|(300..=12_000_000).contains(b)) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let Some(triggers)=values.get("triggers").and_then(|v|v.as_str()).filter(|s|s.len()<=1_000_000) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        if line_trigger_editor::validate(triggers,Lang::En).is_err(){return err(method,"CONFIG.INVALID_RULES");}
+        let Some(resource)=values.get("scope_resource").and_then(|v|v.as_str()).filter(|s|s.len()<=1024&&!s.chars().any(char::is_control)) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let Some(model)=values.get("scope_model").and_then(|v|v.as_str()).filter(|s|s.len()<=256&&!s.chars().any(char::is_control)) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let Some(kind)=values.get("scope_kind").and_then(|v|v.as_str()).filter(|s|["oscilloscope","dc_source","electronic_load","multimeter","generic"].contains(s)) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let Some(edge)=values.get("rising_edge").and_then(|v|v.as_str()).filter(|s|["true","false"].contains(s)) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        if values.keys().any(|key|!["port","baud","triggers","scope_resource","scope_model","scope_kind","rising_edge"].contains(&key.as_str())) {return err(method,"CONFIG.INVALID_REQUEST");}
+        for (key,value) in [("port",port.to_owned()),("baud",baud.to_string()),("triggers",triggers.to_owned()),("scope_resource",resource.to_owned()),("scope_model",model.to_owned()),("scope_kind",kind.to_owned()),("rising_edge",edge.to_owned()),("prefer_device_id",String::new())] {
+            self.param_values.insert(key.into(),value);self.param_touched.insert(key.into());
+        }
+        self.scope_preflight_finished=None;ok(method,self.api_snapshot())
+    }
+
+    pub fn api_scope_serial_settings_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};
+        let method="ui.test_tool.scope_serial_settings_safe";
+        if self.job.is_some(){return err(method,"RUN.STATION_BUSY");}
+        if self.workspace.dirty(){return err(method,"CONFIG.UNSAVED_CHANGES");}
+        if self.effective_project_id()!=params.get("project").and_then(|v|v.as_str()).unwrap_or("")||self.selected.as_deref()!=Some("scope-serial-monitor"){return err(method,"CONFIG.CONTEXT_CHANGED");}
+        if self.pending_station_merge {self.pending_station_merge=false;self.merge_station_into_params();}
+        let Some(port)=params.get("port").and_then(|v|v.as_str()).filter(|s|!s.trim().is_empty()&&s.len()<=256&&!s.chars().any(char::is_control)) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let Some(baud)=params.get("baud").and_then(|v|v.as_u64()).filter(|v|(300..=12_000_000).contains(v)) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let expected_port=params.get("expected_port").and_then(|v|v.as_str());let expected_baud=params.get("expected_baud").and_then(|v|v.as_str());
+        if self.param_values.get("port").map(String::as_str)!=expected_port||self.param_values.get("baud").map(String::as_str)!=expected_baud{return err(method,"CONFIG.STALE");}
+        self.param_values.insert("port".into(),port.to_owned());self.param_values.insert("baud".into(),baud.to_string());
+        self.param_touched.insert("port".into());self.param_touched.insert("baud".into());
+        ok(method,self.api_snapshot())
+    }
+
+    pub fn api_scope_instrument_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.test_tool.scope_instrument_safe";
+        if self.job.is_some(){return err(method,"RUN.STATION_BUSY");}if self.workspace.dirty(){return err(method,"CONFIG.UNSAVED_CHANGES");}
+        if self.effective_project_id()!=params.get("project").and_then(|v|v.as_str()).unwrap_or("")||self.selected.as_deref()!=Some("scope-serial-monitor"){return err(method,"CONFIG.CONTEXT_CHANGED");}
+        if self.pending_station_merge {self.pending_station_merge=false;self.merge_station_into_params();}
+        for key in ["prefer_device_id","scope_resource","scope_model","scope_kind"] {
+            let expected=params.get("expected").and_then(|value|value.get(key)).and_then(|value|value.as_str());
+            if self.param_values.get(key).map(String::as_str)!=expected{return err(method,"CONFIG.STALE");}
+        }
+        let Some(id)=params.get("device_id").and_then(|v|v.as_u64()) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let Some(resource)=params.get("resource").and_then(|v|v.as_str()).filter(|s|!s.trim().is_empty()&&s.len()<=1024&&!s.chars().any(char::is_control)) else{return err(method,"CONFIG.INVALID_REQUEST")};
+        let model=params.get("model").and_then(|v|v.as_str()).unwrap_or("");if model.len()>256||model.chars().any(char::is_control){return err(method,"CONFIG.INVALID_REQUEST");}
+        for (key,value) in [("prefer_device_id",id.to_string()),("scope_resource",resource.to_owned()),("scope_model",model.to_owned()),("scope_kind","oscilloscope".to_owned())]{self.param_values.insert(key.into(),value);self.param_touched.insert(key.into());}
+        ok(method,self.api_snapshot())
+    }
+
+    pub fn api_fpga_preflight_safe(&mut self, params:&serde_json::Value)->crate::backend::InvokeReply {
+        self.api_fpga_lifecycle_safe(params,false)
+    }
+    pub fn api_fpga_run_safe(&mut self, params:&serde_json::Value)->crate::backend::InvokeReply {
+        self.api_fpga_lifecycle_safe(params,true)
+    }
+    fn api_fpga_lifecycle_safe(&mut self, params:&serde_json::Value,run:bool)->crate::backend::InvokeReply {
+        use crate::backend::invoke_err as err;
+        if self.effective_project_id()!=params.get("project").and_then(|v|v.as_str()).unwrap_or("")||self.selected.as_deref()!=Some("fpga-firmware-test") {
+            return err("ui.test_tool.preflight_safe","CONFIG.CONTEXT_CHANGED");
+        }
+        let Some(ids)=params.get("selected_ids").and_then(|v|v.as_array()) else{return err("ui.test_tool.preflight_safe","CONFIG.INVALID_REQUEST")};
+        if ids.is_empty()||ids.len()>500||ids.iter().any(|v|v.as_str().is_none_or(|s|s.is_empty()||s.len()>64||!s.bytes().all(|b|b.is_ascii_alphanumeric()||b"._-".contains(&b)))) {
+            return err("ui.test_tool.preflight_safe","CONFIG.INVALID_REQUEST");
+        }
+        let unique:std::collections::HashSet<_>=ids.iter().filter_map(|v|v.as_str()).collect();if unique.len()!=ids.len(){return err("ui.test_tool.preflight_safe","CONFIG.INVALID_REQUEST");}
+        let Some(identity)=params.get("identity").and_then(|v|v.as_object()) else{return err("ui.test_tool.preflight_safe","CONFIG.INVALID_REQUEST")};
+        let fields=["dut_serial","board_revision","fpga_model","fixture_id","station_id","operator"];
+        if identity.len()!=fields.len()||identity.iter().any(|(k,v)|!fields.contains(&k.as_str())||v.as_str().is_none_or(|s|s.len()>512||s.chars().any(char::is_control))) {
+            return err("ui.test_tool.preflight_safe","CONFIG.INVALID_REQUEST");
+        }
+        let mode=params.get("execution_mode").and_then(|v|v.as_str()).unwrap_or("");if !["hardware","simulation"].contains(&mode){return err("ui.test_tool.preflight_safe","CONFIG.INVALID_REQUEST");}
+        let mut run_params=identity.clone();run_params.insert("execution_mode".into(),serde_json::json!(mode));
+        // This interface currently exposes a single fresh cycle. Do not inherit
+        // hidden settings from a previous job, especially resume or AI output.
+        for (key,value) in [
+            ("selected_ids",serde_json::json!(ids.iter().filter_map(|v|v.as_str()).collect::<Vec<_>>().join(","))),
+            ("name_filter",serde_json::json!("")),("tag_filter",serde_json::json!("")),
+            ("loop_count",serde_json::json!(1)),("duration_limit_s",serde_json::json!(0)),
+            ("stop_on_fail",serde_json::json!(false)),("resume_mode",serde_json::json!("fresh")),
+            ("resume_from",serde_json::json!("")),("ai_global_enable",serde_json::json!(false))
+        ]{run_params.insert(key.into(),value);}
+        if mode=="simulation" {run_params.insert("simulation_scenario".into(),serde_json::json!("pass"));}
+        let binding=if run {
+            let hash=params.get("manifest_sha256").and_then(|v|v.as_str()).unwrap_or("");let revision=params.get("preflight_revision").and_then(|v|v.as_str()).unwrap_or("");
+            if hash.len()!=64||revision.len()!=64||!hash.bytes().all(|b|b.is_ascii_hexdigit())||!revision.bytes().all(|b|b.is_ascii_hexdigit()){return err("ui.test_tool.run_safe","PREFLIGHT.REQUIRED");}
+            serde_json::json!({"selected_item_ids":ids,"config_manifest_sha256":hash,"preflight_revision":revision})
+        }else{serde_json::json!({"selected_item_ids":ids})};
+        let previous_values=self.param_values.clone();let previous_touched=self.param_touched.clone();
+        let previous_binding=self.workspace.api_binding.clone();let previous_preflight=self.preflight_only;let previous_extra=self.extra_args.clone();
+        let reply=self.api_run(&serde_json::json!({"plugin":"fpga-firmware-test","lifecycle":if run {"run"}else{"preflight"},"params":run_params,"test_matrix":binding,"args":""}));
+        self.extra_args=previous_extra;
+        if !reply.ok {self.param_values=previous_values;self.param_touched=previous_touched;self.workspace.api_binding=previous_binding;self.preflight_only=previous_preflight;}
+        reply
+    }
+    pub fn api_fpga_stop_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};
+        if self.running_plugin_id()!=Some("fpga-firmware-test"){return err("ui.test_tool.stop_safe","RUN.NOT_ACTIVE");}
+        if self.job.as_ref().is_none_or(|job|params.get("running_token").and_then(|v|v.as_str())!=Some(job.token.as_str())){return err("ui.test_tool.stop_safe","RUN.STALE");}
+        self.stop_job(Lang::En);ok("ui.test_tool.stop_safe",serde_json::json!({"accepted":true,"running":self.job.is_some()}))
+    }
+
+    pub fn api_wireless_lifecycle_safe(&mut self,params:&serde_json::Value,run:bool)->crate::backend::InvokeReply {
+        use crate::backend::invoke_err as err;
+        let command=if run {"ui.test_tool.wireless_run_safe"}else{"ui.test_tool.wireless_preflight_safe"};
+        if self.effective_project_id()!=params.get("project").and_then(|v|v.as_str()).unwrap_or("")||self.selected.as_deref()!=Some("wireless-whitebox"){return err(command,"CONFIG.CONTEXT_CHANGED");}
+        let Some(ids)=params.get("selected_ids").and_then(|v|v.as_array()) else{return err(command,"CONFIG.INVALID_REQUEST")};
+        if ids.is_empty()||ids.len()>500||ids.iter().any(|v|v.as_str().is_none_or(|s|s.is_empty()||s.len()>64||!s.bytes().all(|b|b.is_ascii_alphanumeric()||b"._-".contains(&b)))){return err(command,"CONFIG.INVALID_REQUEST");}
+        let unique:std::collections::HashSet<_>=ids.iter().filter_map(|v|v.as_str()).collect();if unique.len()!=ids.len(){return err(command,"CONFIG.INVALID_REQUEST");}
+        let mode=params.get("mode").and_then(|v|v.as_str()).unwrap_or("");
+        if !["review","log_analysis","rx_read","rx_control","rx_load"].contains(&mode){return err(command,"WIRELESS.MODE_UNAVAILABLE");}
+        if ["rx_read","rx_control","rx_load"].contains(&mode) && (ids.len()!=1||ids[0].as_str()!=Some("wcv_07")){return err(command,"WIRELESS.SELECT_RX_CASE");}
+        let mut values=serde_json::Map::new();values.insert("mode".into(),serde_json::json!(mode));
+        for key in ["log_file","dut_serial","firmware_version"] {
+            let Some(value)=params.get(key).and_then(|v|v.as_str()) else{return err(command,"CONFIG.INVALID_REQUEST")};
+            if value.len()>1024||value.chars().any(char::is_control){return err(command,"CONFIG.INVALID_REQUEST");}
+            values.insert(key.into(),serde_json::json!(value));
+        }
+        if mode=="log_analysis"&&values["log_file"].as_str().unwrap_or("").trim().is_empty(){return err(command,"LOG.FILE_REQUIRED");}
+        let binding=if run {
+            let hash=params.get("manifest_sha256").and_then(|v|v.as_str()).unwrap_or("");let revision=params.get("preflight_revision").and_then(|v|v.as_str()).unwrap_or("");
+            if hash.len()!=64||revision.len()!=64||!hash.bytes().all(|b|b.is_ascii_hexdigit())||!revision.bytes().all(|b|b.is_ascii_hexdigit()){return err(command,"PREFLIGHT.REQUIRED");}
+            serde_json::json!({"selected_item_ids":ids,"config_manifest_sha256":hash,"preflight_revision":revision})
+        }else{serde_json::json!({"selected_item_ids":ids})};
+        let previous_values=self.param_values.clone();let previous_touched=self.param_touched.clone();let previous_binding=self.workspace.api_binding.clone();let previous_preflight=self.preflight_only;let previous_extra=self.extra_args.clone();
+        let reply=self.api_run(&serde_json::json!({"plugin":"wireless-whitebox","lifecycle":if run {"run"}else{"preflight"},"params":values,"test_matrix":binding,"args":""}));
+        self.extra_args=previous_extra;
+        if !reply.ok {self.param_values=previous_values;self.param_touched=previous_touched;self.workspace.api_binding=previous_binding;self.preflight_only=previous_preflight;}
+        reply
+    }
+
+    pub fn api_wireless_stop_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};
+        if self.running_plugin_id()!=Some("wireless-whitebox"){return err("ui.test_tool.wireless_stop_safe","RUN.NOT_ACTIVE");}
+        if self.job.as_ref().is_none_or(|job|params.get("running_token").and_then(|v|v.as_str())!=Some(job.token.as_str())){return err("ui.test_tool.wireless_stop_safe","RUN.STALE");}
+        self.stop_job(Lang::En);ok("ui.test_tool.wireless_stop_safe",serde_json::json!({"accepted":true,"running":self.job.is_some()}))
     }
 
     pub fn api_run(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
@@ -889,6 +1432,7 @@ impl TestToolPanel {
                         "--flag value",
                     );
                     if persist_host {
+                        self.sync_param_session_context();
                         self.persist_config();
                     }
                     });
@@ -1057,6 +1601,9 @@ impl TestToolPanel {
 
                 if sel_idx.is_some_and(|i|self.plugins[i].configure) { self.paint_workspace(ui,lang,tokens);return; }
                 self.paint_runner_header(ui, lang, tokens, sel_idx);
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(6.0);
                 let body_h = ui.available_height().max(1.0);
                 let body_w = ui.available_width().max(1.0);
                 let gap = RUNNER_SPLIT_GAP * 2.0 + 1.0;
@@ -1196,18 +1743,12 @@ impl TestToolPanel {
                     );
                 }
                 let width = ui.available_width().max(1.0);
-                ui.add_sized(
-                    [width, row_h],
-                    egui::Label::new(
-                        RichText::new(&title)
-                            .size(ui_theme::FONT_TITLE)
-                            .strong()
-                            .color(tokens.text_primary),
-                    )
-                    .truncate()
-                    .selectable(false),
-                )
-                .on_hover_text(&title);
+                let (title_rect, response) = ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::hover());
+                ui.painter_at(title_rect).text(
+                    title_rect.left_center(), Align2::LEFT_CENTER, &title,
+                    FontId::proportional(ui_theme::FONT_SECTION), tokens.text_primary,
+                );
+                response.on_hover_text(&title);
             },
         );
         let mut run_clicked = false;
@@ -1437,10 +1978,13 @@ impl TestToolPanel {
                         let wrap_w = (ui.available_width() - 4.0).max(80.0);
                         ui.set_min_width(wrap_w);
                         if self.log.is_empty() {
-                            ui.label(
-                                RichText::new(tr(lang, "test_tool.log_empty"))
-                                    .size(ui_theme::FONT_CAPTION)
-                                    .color(tokens.text_muted),
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(wrap_w, (log_h - 24.0).max(ui_theme::CTRL_H)),
+                                egui::Layout::centered_and_justified(egui::Direction::TopDown),
+                                |ui| {
+                                    ui.label(RichText::new(tr(lang, "test_tool.log_empty"))
+                                        .size(ui_theme::FONT_BODY).color(tokens.text_muted));
+                                },
                             );
                         } else {
                             let job = hub_log_layout_job(&self.log, tokens, wrap_w);
@@ -1494,16 +2038,11 @@ impl TestToolPanel {
         } else {
             tr(lang, "test_tool.case_new")
         };
-        let mark_color = if exists {
-            tokens.text_muted
-        } else {
-            tokens.warning
-        };
         ui.label(
-            RichText::new(format!("tests/{slug}/  ·  {mark}"))
+            RichText::new(format!("{mark}  ·  {slug}"))
                 .size(ui_theme::FONT_CAPTION)
-                .color(mark_color),
-        );
+                .color(tokens.text_muted),
+        ).on_hover_text(format!("tests/{slug}/"));
     }
 
     fn paint_param_field(
@@ -2116,10 +2655,11 @@ impl TestToolPanel {
             return;
         }
         if self.workspace.dirty() { self.workspace_switch("__plugin",id);self.status = "CONFIG.UNSAVED_CHANGES".into(); return; }
+        self.save_current_param_session();
         self.selected = Some(id);
         self.param_advanced_open = false;
-        self.apply_param_defaults_fast();
-        self.pending_station_merge = true;
+        self.restore_current_param_session();
+        self.scope_preflight_finished = None;
     }
 
     fn apply_param_defaults_fast(&mut self) {
@@ -2181,12 +2721,8 @@ impl TestToolPanel {
             .unwrap_or(serde_json::Value::Null)
     }
 
-    fn load_param_defaults_for_selection(&mut self) {
-        self.apply_param_defaults_fast();
-        self.merge_station_into_params();
-    }
-
     fn refresh_plugins(&mut self) {
+        self.save_current_param_session();
         let mut by_id: HashMap<String, PluginInfo> = HashMap::new();
         for p in scan_plugins(&resolve_dir(self.plugins_dir.trim())) {
             by_id.insert(p.id.clone(), p);
@@ -2208,8 +2744,9 @@ impl TestToolPanel {
         if self.selected.is_none() {
             self.selected = self.plugins.first().map(|p| p.id.clone());
         }
-        self.load_param_defaults_for_selection();
-        self.pending_station_merge = false;
+        self.restore_current_param_session();
+        if self.pending_station_merge { self.pending_station_merge=false; self.merge_station_into_params(); }
+        self.scope_preflight_finished = None;
     }
 
     fn resolve_marketplace_root(&self) -> PathBuf {
@@ -2292,6 +2829,34 @@ impl TestToolPanel {
         }
     }
 
+    pub fn api_market_snapshot(&mut self,lang:Lang)->serde_json::Value{
+        use std::hash::{Hash,Hasher};self.poll_market_job(lang);
+        let settings=serde_json::json!({"enabled":self.marketplace_enabled,"base_url":self.marketplace_base_url,"channel":self.marketplace_channel,"install_dir":self.marketplace_install_dir});
+        let installed=self.plugins.iter().map(|plugin|serde_json::json!({"id":plugin.id,"name":if plugin.name_zh.is_empty(){&plugin.id}else{&plugin.name_zh},"version":plugin.version,"source":plugin.source})).collect::<Vec<_>>();
+        let catalog=serde_json::to_value(&self.catalog).unwrap_or(serde_json::Value::Null);
+        let mut hash=std::collections::hash_map::DefaultHasher::new();serde_json::json!({"settings":settings,"catalog":catalog,"installed":installed}).to_string().hash(&mut hash);
+        serde_json::json!({"revision":format!("{:016x}",hash.finish()),"settings":settings,"channels":wiparse_core::marketplace::CHANNELS,"catalog":catalog,"installed":installed,"busy":self.catalog_busy||self.market_job.is_some()||self.hub_workers.load(std::sync::atomic::Ordering::Acquire)>0,"running":self.job.is_some(),"status":self.catalog_status,"operation":self.market_operation,"result":self.market_result})
+    }
+    pub fn api_market_apply_settings(&mut self,cfg:&AppConfig){
+        let market=&cfg.apps.test_tool.marketplace;self.marketplace_enabled=market.enabled;self.marketplace_base_url=market.base_url.clone();self.marketplace_channel=market.channel.clone();self.marketplace_install_dir=market.install_dir.clone();self.catalog.clear();self.catalog_selected=None;self.catalog_selected_version=None;
+    }
+    pub fn api_market_action(&mut self,params:&serde_json::Value,lang:Lang)->crate::backend::InvokeReply{
+        use crate::backend::{invoke_err as err,invoke_ok as ok};if self.hub_workers.load(std::sync::atomic::Ordering::Acquire)>0{return crate::backend::invoke_err("ui.market.action_safe","CONFIG.WORKER_BUSY");}
+        let method="ui.market.action_safe";let snapshot=self.api_market_snapshot(lang);
+        if snapshot["busy"]==true||self.job.is_some(){return err(method,"MARKET.BUSY");}
+        if params["revision"]!=snapshot["revision"]{return err(method,"MARKET.STALE");}
+        if params["consent"]!=true{return err(method,"MARKET.CONSENT_REQUIRED");}
+        let id=params["id"].as_str().unwrap_or("");let version=params["version"].as_str().unwrap_or("");
+        match params["action"].as_str(){
+            Some("refresh")=>{if !self.marketplace_enabled||self.marketplace_base_url.trim().is_empty(){return err(method,"MARKET.NOT_CONFIGURED");}self.refresh_catalog(lang);},
+            Some("install")=>{if !self.marketplace_enabled||!self.catalog.iter().any(|row|row.id==id&&(row.latest_version==version||row.versions.iter().any(|entry|entry==version))){return err(method,"MARKET.SELECTION_CHANGED");}self.catalog_selected=Some(id.to_owned());self.catalog_selected_version=Some(version.to_owned());self.install_selected_catalog_plugin(lang);},
+            Some("uninstall")=>{if !installed_map_from_registry(&self.resolve_marketplace_root()).iter().any(|(installed_id,installed_version)|installed_id==id&&installed_version==version){return err(method,"MARKET.SELECTION_CHANGED");}if !self.plugins.iter().any(|plugin|plugin.id==id&&plugin.version==version&&plugin.source=="marketplace"){return err(method,"MARKET.SELECTION_CHANGED");}self.uninstall_marketplace_plugin(id,lang);},
+            _=>return err(method,"MARKET.INVALID_ACTION")
+        }
+        if self.market_job.is_none(){return err(method,&format!("MARKET.NOT_STARTED: {}",self.catalog_status));}
+        ok(method,serde_json::json!({"accepted":true,"operation":self.market_operation}))
+    }
+
     fn refresh_catalog(&mut self, lang: Lang) {
         if self.catalog_busy {
             return;
@@ -2309,6 +2874,7 @@ impl TestToolPanel {
         self.catalog_status = tr(lang, "test_tool.market_loading").to_string();
         let installed =
             installed_map_from_registry(&self.resolve_marketplace_root());
+        self.market_operation=Some(serde_json::json!({"id":uuid::Uuid::new_v4().to_string(),"action":"refresh","channel":self.marketplace_channel}));self.market_result=None;
         self.market_job = Some(spawn_catalog_refresh(
             url,
             self.marketplace_channel.clone(),
@@ -2351,6 +2917,7 @@ impl TestToolPanel {
             LogKind::System,
             &format!("—— marketplace install {id}@{version} ——\n"),
         );
+        self.market_operation=Some(serde_json::json!({"id":uuid::Uuid::new_v4().to_string(),"action":"install","plugin":id,"version":version}));self.market_result=None;
         self.market_job = Some(spawn_pull_install(
             node,
             cli,
@@ -2416,6 +2983,7 @@ impl TestToolPanel {
             LogKind::System,
             &format!("—— marketplace uninstall {id}@{version} ——\n"),
         );
+        self.market_operation=Some(serde_json::json!({"id":uuid::Uuid::new_v4().to_string(),"action":"uninstall","plugin":id,"version":version}));self.market_result=None;
         self.market_job = Some(spawn_uninstall(
             node,
             cli,
@@ -2446,6 +3014,13 @@ impl TestToolPanel {
 
         let mut done = disconnected;
         for ev in events {
+            self.market_result=match &ev{
+                MarketJobEvent::CatalogOk(_)|MarketJobEvent::InstallOk{..}|MarketJobEvent::UninstallOk{..}=>Some(serde_json::json!({"ok":true})),
+                MarketJobEvent::CatalogErr(error)=>Some(serde_json::json!({"ok":false,"message":error})),
+                MarketJobEvent::InstallErr{message,..}|MarketJobEvent::UninstallErr{message,..}=>Some(serde_json::json!({"ok":false,"message":message})),
+                MarketJobEvent::Log(_)=>self.market_result.clone(),
+            };
+
             match ev {
                 MarketJobEvent::Log(t) => {
                     self.append_log(LogKind::System, &t);
@@ -2488,8 +3063,7 @@ impl TestToolPanel {
                     self.catalog_busy = false;
                     done = true;
                     self.refresh_plugins();
-                    self.selected = Some(id.clone());
-                    self.load_param_defaults_for_selection();
+                    self.select_plugin(id.clone());
                     self.hub_mode = HubMode::Plugins;
                     let installed = installed_map_from_registry(&self.resolve_marketplace_root());
                     for row in &mut self.catalog {
@@ -2852,8 +3426,7 @@ impl TestToolPanel {
                                 .clicked()
                                 {
                                     if row.installed && !update_available {
-                                        self.selected = Some(row.id.clone());
-                                        self.load_param_defaults_for_selection();
+                                        self.select_plugin(row.id.clone());
                                         self.hub_mode = HubMode::Plugins;
                                     } else if !busy {
                                         self.catalog_selected_version =
@@ -2965,8 +3538,12 @@ impl TestToolPanel {
     }
 
     fn start_selected(&mut self, lang: Lang) -> Result<(), String> {
+        if self.catalog_busy||self.market_job.is_some()||self.hub_workers.load(std::sync::atomic::Ordering::Acquire)>0{return Err("MARKET.BUSY: 插件管理任务进行中".into());}
         if self.job.is_some() {
             return Err(tr(lang, "test_tool.status_busy"));
+        }
+        if self.active_param_session != self.current_param_session_key() {
+            return Err("CONFIG.CONTEXT_CHANGED: 请重新选择项目和插件后预检".into());
         }
         let plugin = self
             .selected_plugin()
@@ -3123,9 +3700,14 @@ impl TestToolPanel {
         }
         drop(tx);
 
+        let execution_token=uuid::Uuid::new_v4().to_string();
+        if let Some(previous)=self.execution_log.take(){self.execution_history.push_back(previous);while self.execution_history.len()>20||self.execution_history.iter().map(|log|log.text.len()).sum::<usize>()>8*1024*1024{self.execution_history.pop_front();}}
+        self.execution_log=Some(ExecutionLog{project:self.effective_project_id(),plugin:plugin.id.clone(),id:execution_token.clone(),text:String::new(),dropped:0,incomplete:false});
+        self.append_execution_log(&LogKind::System,"执行开始\n");
         self.job = Some(RunningJob {
             child,
             rx,
+            token: execution_token,
             plugin_id: plugin.id.clone(),
             test_id,
             stop_file,
@@ -3133,6 +3715,7 @@ impl TestToolPanel {
             last_status_read: Instant::now() - Duration::from_secs(1),
             last_status_mtime: None,
             kill_after: None,
+            drain_deadline: None,
             overlay_file,
         });
         self.status = format!("{} · {}", tr(lang, "test_tool.status_running"), plugin.id);
@@ -3163,10 +3746,14 @@ impl TestToolPanel {
             match job.child.try_wait() {
                 Ok(Some(status)) => {
                     let id = job.plugin_id.clone();
-                    while let Ok(line) = job.rx.try_recv() {
-                        pending.push(line);
+                    let mut closed=false;
+                    loop{match job.rx.try_recv(){Ok(line)=>pending.push(line),Err(TryRecvError::Empty)=>break,Err(TryRecvError::Disconnected)=>{closed=true;break;}}}
+                    let deadline=*job.drain_deadline.get_or_insert_with(||Instant::now()+Duration::from_secs(2));
+                    if closed{finished=Some((id,status));}else if Instant::now()>=deadline{
+                        if let Some(log)=self.execution_log.as_mut(){log.incomplete=true;}
+                        pending.push(LogLine{kind:LogKind::System,text:"日志管道在进程结束后未关闭，尾部完整性未确认。\n".into()});
+                        finished=Some((id,status));
                     }
-                    finished = Some((id, status));
                 }
                 Ok(None) => {}
                 Err(e) => wait_err = Some(e.to_string()),
@@ -3196,6 +3783,7 @@ impl TestToolPanel {
             if let Some(obj) = extract_json_value(&line.text) {
                 self.apply_suggested_params(&obj);
             }
+            self.append_execution_log(&line.kind,&line.text);
             self.append_log(line.kind, &line.text);
         }
 
@@ -3223,8 +3811,12 @@ impl TestToolPanel {
         }
 
         if let Some(e) = wait_err {
+            self.append_execution_log(&LogKind::System,&format!("wait error: {e}\n"));
             self.append_log(LogKind::System, &format!("wait error: {e}\n"));
             if let Some(job) = self.job.take() {
+                if self.scope_preflight_pending.as_ref().is_some_and(|(token,_)|*token==job.token){
+                    if let Some((_,fingerprint))=self.scope_preflight_pending.take(){self.scope_preflight_finished=Some((fingerprint,false));}
+                }
                 drop_overlay_file(job.overlay_file.as_deref());
             }
             self.bump_artifact_epoch();
@@ -3237,7 +3829,11 @@ impl TestToolPanel {
         }
 
         if let Some((id, status)) = finished {
+            self.append_execution_log(&LogKind::System,&format!("执行结束：{status}\n"));
             if let Some(job) = self.job.take() {
+                if self.scope_preflight_pending.as_ref().is_some_and(|(token,_)|*token==job.token){
+                    if let Some((_,fingerprint))=self.scope_preflight_pending.take(){self.scope_preflight_finished=Some((fingerprint,status.success()&&job.kill_after.is_none()));}
+                }
                 drop_overlay_file(job.overlay_file.as_deref());
             }
             self.bump_artifact_epoch();
@@ -3332,6 +3928,27 @@ impl TestToolPanel {
             step: "stopped".into(),
             ..LoopHud::default()
         };
+    }
+
+    fn append_execution_log(&mut self,kind:&LogKind,text:&str){
+        let Some(log)=self.execution_log.as_mut()else{return};
+        if matches!(kind,LogKind::Stderr){log.text.push_str("[err] ");}else if matches!(kind,LogKind::System){log.text.push_str("[sys] ");}
+        log.text.push_str(text);
+        const LIMIT:usize=1024*1024;
+        if log.text.len()>LIMIT{let mut cut=log.text.len()-LIMIT;while !log.text.is_char_boundary(cut){cut+=1;}log.text.drain(..cut);log.dropped=log.dropped.saturating_add(cut);}
+    }
+    pub fn api_execution_log(&self,params:&serde_json::Value)->crate::backend::InvokeReply{
+        use crate::backend::invoke_ok as ok;
+        let method="ui.test_tool.execution_log_safe";
+        let available=self.execution_history.iter().chain(self.execution_log.iter()).filter(|log|params["project"].as_str()==Some(log.project.as_str())&&params["plugin"].as_str()==Some(log.plugin.as_str())).collect::<Vec<_>>();
+        let sessions=available.iter().map(|log|serde_json::json!({"id":log.id,"bytes":log.text.len()+log.dropped,"incomplete":log.incomplete})).collect::<Vec<_>>();
+        let selected=params["selected_execution_id"].as_str();let chosen=if let Some(id)=selected{available.iter().find(|log|log.id==id).copied()}else{available.last().copied()};
+        let Some(log)=chosen else{return ok(method,serde_json::json!({"available":false,"sessions":sessions}));};
+        if params["execution_id"].as_str().is_some_and(|id|id!=log.id){return ok(method,serde_json::json!({"available":true,"changed":true,"sessions":sessions,"execution_id":log.id,"project":log.project,"plugin":log.plugin,"dropped":log.dropped}));}
+        let requested=params["from"].as_u64().unwrap_or(0).min(usize::MAX as u64) as usize;
+        let mut from=requested.saturating_sub(log.dropped).min(log.text.len());while !log.text.is_char_boundary(from){from+=1;}
+        let mut end=from.saturating_add(65536).min(log.text.len());while !log.text.is_char_boundary(end){end-=1;}
+        ok(method,serde_json::json!({"available":true,"sessions":sessions,"execution_id":log.id,"project":log.project,"plugin":log.plugin,"from":from+log.dropped,"next":end+log.dropped,"total":log.text.len()+log.dropped,"dropped":log.dropped,"incomplete":log.incomplete,"text":&log.text[from..end]}))
     }
 
     fn append_log(&mut self, kind: LogKind, text: &str) {
@@ -3752,11 +4369,11 @@ fn paint_plugin_row(
     painter.rect_filled(rect, CornerRadius::same(6), fill);
     let inner = rect.shrink2(egui::vec2(8.0, 6.0));
     let clip = ui.painter_at(inner);
-    let title_c = if selected {
-        tokens.accent
-    } else {
-        tokens.text_primary
-    };
+    let title_c = tokens.text_primary;
+    if selected {
+        let marker = egui::Rect::from_min_size(rect.min + egui::vec2(1.0, 8.0), egui::vec2(3.0, (rect.height() - 16.0).max(0.0)));
+        painter.rect_filled(marker, CornerRadius::same(2), tokens.accent);
+    }
     if let Some((text, color)) = badge {
         clip.text(
             egui::pos2(inner.max.x, inner.min.y + 1.0),
@@ -4742,6 +5359,262 @@ mod layout_regressions {
 #[cfg(test)]
 mod visual_snapshot {
     #[test]
+    fn generic_plugin_preflight_runs_with_temporary_data_root() {
+        use super::*;
+        let root=std::env::temp_dir().join(format!("wiparse-generic-test-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut cfg=AppConfig::default();
+        let repo=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        cfg.apps.test_tool.plugins_dir=repo.join("test-tools/plugins").display().to_string();
+        cfg.apps.test_tool.cli_path=repo.join("dist/WiParse-CLI.exe").display().to_string();
+        cfg.apps.test_tool.data_root=root.display().to_string();
+        let mut panel=TestToolPanel::new(&cfg);let project=panel.current_project_id();
+        assert!(panel.api_select_plugin_safe(&serde_json::json!({"project":project,"plugin":"example-smoke"})).ok);
+        let mut device_param=panel.selected_plugin().unwrap().params[0].clone();
+        device_param.name="test_device".into();device_param.type_name="device".into();device_param.filter_kind="oscilloscope".into();device_param.fills=vec![("test_resource".into(),"resource".into())];
+        panel.plugins.iter_mut().find(|plugin|plugin.id=="example-smoke").unwrap().params.push(device_param);
+        panel.param_values.insert("test_device".into(),String::new());
+        let devices=vec![LiveDevice{device_id:7,resource:"DEMO::SCOPE".into(),kind:"oscilloscope".into(),model:"demo".into(),manufacturer:String::new(),serial:String::new()}];
+        let request=serde_json::json!({"project":project,"plugin":"example-smoke","data_root":panel.data_root,"expected":panel.param_values,"values":{"check_api":"false","test_device":"7"},"lifecycle":"preflight"});
+        assert_eq!(panel.api_generic_run_safe(&request,&[]).error.as_deref(),Some("INSTRUMENT.SESSION_CHANGED"));
+        let mut wrong_kind=devices[0].clone();wrong_kind.kind="dc_source".into();
+        assert_eq!(panel.api_generic_run_safe(&request,&[wrong_kind]).error.as_deref(),Some("INSTRUMENT.SESSION_CHANGED"));
+        assert!(!panel.param_values.contains_key("test_resource"));
+        let reply=panel.api_generic_run_safe(&request,&devices);assert!(reply.ok,"{:?}",reply.error);
+        assert_eq!(panel.param_values["test_resource"],"DEMO::SCOPE");
+        let deadline=std::time::Instant::now()+std::time::Duration::from_secs(20);
+        while panel.job.is_some()&&std::time::Instant::now()<deadline {panel.poll_job(Lang::En);std::thread::sleep(std::time::Duration::from_millis(25));}
+        assert!(panel.job.is_none(),"preflight timed out");
+        assert!(panel.status.starts_with("Done"),"{}\n{}",panel.status,panel.log);
+        let run=serde_json::json!({"project":project,"plugin":"example-smoke","data_root":panel.data_root,"expected":panel.param_values,"values":{"check_api":"false","test_device":"7"},"lifecycle":"run"});
+        let reply=panel.api_generic_run_safe(&run,&devices);assert!(reply.ok,"{:?}",reply.error);
+        let deadline=std::time::Instant::now()+std::time::Duration::from_secs(20);
+        while panel.job.is_some()&&std::time::Instant::now()<deadline {panel.poll_job(Lang::En);std::thread::sleep(std::time::Duration::from_millis(25));}
+        assert!(panel.job.is_none(),"run timed out");
+        assert!(panel.status.starts_with("Done"),"{}\n{}",panel.status,panel.log);
+        drop(panel);
+        let target=root.canonicalize().unwrap();assert!(target.starts_with(std::env::temp_dir().canonicalize().unwrap()));
+        std::fs::remove_dir_all(target).unwrap();
+    }
+    #[test]
+    fn generic_plugin_rejects_stale_context_and_invalid_parameters() {
+        use super::*;
+        let mut cfg=AppConfig::default();
+        cfg.apps.test_tool.plugins_dir=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-tools/plugins").display().to_string();
+        let mut panel=TestToolPanel::new(&cfg);let project=panel.current_project_id();
+        assert!(panel.api_select_plugin_safe(&serde_json::json!({"project":project,"plugin":"example-smoke"})).ok);
+        let snapshot=panel.api_snapshot();
+        assert!(snapshot["generic_params"].as_array().unwrap().iter().any(|param|param["name"]=="check_api"));
+        let base=serde_json::json!({"project":project,"plugin":"example-smoke","data_root":panel.data_root,"expected":panel.param_values,"values":{"check_api":"true"},"lifecycle":"preflight"});
+        let mut bad=base.clone();bad["project"]=serde_json::json!("other");
+        assert_eq!(panel.api_generic_run_safe(&bad,&[]).error.as_deref(),Some("CONFIG.CONTEXT_CHANGED"));
+        let mut bad=base.clone();bad["data_root"]=serde_json::json!("other");
+        assert_eq!(panel.api_generic_run_safe(&bad,&[]).error.as_deref(),Some("CONFIG.CONTEXT_CHANGED"));
+        let mut bad=base.clone();bad["expected"]=serde_json::json!({});
+        assert_eq!(panel.api_generic_run_safe(&bad,&[]).error.as_deref(),Some("CONFIG.STALE"));
+        let mut bad=base.clone();bad["values"]=serde_json::json!({"check_api":"maybe"});
+        assert_eq!(panel.api_generic_run_safe(&bad,&[]).error.as_deref(),Some("CONFIG.INVALID_REQUEST"));
+        let mut bad=base.clone();bad["values"]=serde_json::json!({"unknown":"value"});
+        assert_eq!(panel.api_generic_run_safe(&bad,&[]).error.as_deref(),Some("CONFIG.INVALID_REQUEST"));
+    }
+    #[test]
+    fn guarded_plugin_selection_requires_current_project_and_installed_plugin() {
+        use super::*;
+        let mut cfg=AppConfig::default();cfg.apps.test_tool.plugins_dir=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-tools/plugins").display().to_string();
+        let mut panel=TestToolPanel::new(&cfg);
+        let project=panel.current_project_id();
+        let wrong=panel.api_select_plugin_safe(&serde_json::json!({"project":"other-project","plugin":"fpga-firmware-test"}));
+        assert_eq!(wrong.error.as_deref(),Some("CONFIG.CONTEXT_CHANGED"));
+        let unknown=panel.api_select_plugin_safe(&serde_json::json!({"project":project,"plugin":"missing-plugin"}));
+        assert_eq!(unknown.error.as_deref(),Some("PLUGIN.NOT_FOUND"));
+        let valid=panel.api_select_plugin_safe(&serde_json::json!({"project":project,"plugin":"fpga-firmware-test"}));
+        assert!(valid.ok);assert_eq!(panel.selected.as_deref(),Some("fpga-firmware-test"));
+    }
+
+    #[test]
+    fn project_switch_blocks_unsaved_workspace_changes(){
+        use super::*;
+        let mut panel=TestToolPanel::new(&AppConfig::default());assert_eq!(panel.project_switch_blocker(),None);
+        panel.workspace.mark_dirty_for_test();
+        assert_eq!(panel.project_switch_blocker(),Some("CONFIG.UNSAVED_CHANGES"));
+    }
+
+    #[test]
+    fn session_parameters_stay_with_their_project_and_plugin() {
+        use super::*;
+        let mut cfg=AppConfig::default();
+        cfg.apps.test_tool.plugins_dir=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-tools/plugins").display().to_string();
+        let mut panel=TestToolPanel::new(&cfg);
+        panel.select_plugin("scope-serial-monitor".into());
+        if panel.pending_station_merge {panel.pending_station_merge=false;panel.merge_station_into_params();}
+        let project_a=panel.project_id.clone();
+        panel.param_values.insert("port".into(),"COM_PROJECT_A".into());panel.param_touched.insert("port".into());panel.extra_args="--project-a".into();
+        panel.switch_project_session("project_b_test".into());
+        if panel.pending_station_merge {panel.pending_station_merge=false;panel.merge_station_into_params();}
+        assert_ne!(panel.param_values["port"],"COM_PROJECT_A");assert!(panel.extra_args.is_empty());
+        panel.param_values.insert("port".into(),"COM_PROJECT_B".into());panel.param_touched.insert("port".into());
+        panel.refresh_plugins();assert_eq!(panel.param_values["port"],"COM_PROJECT_B");
+        panel.select_plugin("fpga-firmware-test".into());
+        panel.select_plugin("scope-serial-monitor".into());
+        assert_eq!(panel.param_values["port"],"COM_PROJECT_B");
+        panel.switch_project_session(project_a);
+        assert_eq!(panel.param_values["port"],"COM_PROJECT_A");assert_eq!(panel.extra_args,"--project-a");assert!(panel.param_touched.contains("port"));
+        assert!(panel.scope_preflight_finished.is_none());
+        let root_a=panel.data_root.clone();
+        panel.data_root=std::env::temp_dir().join("wiparse-other-root-test").display().to_string();
+        assert_ne!(panel.active_param_session,panel.current_param_session_key());
+        assert!(panel.start_selected(Lang::En).unwrap_err().contains("CONFIG.CONTEXT_CHANGED"));
+        panel.sync_param_session_context();assert_ne!(panel.param_values["port"],"COM_PROJECT_A");
+        panel.data_root=root_a;panel.sync_param_session_context();assert_eq!(panel.param_values["port"],"COM_PROJECT_A");
+    }
+
+    #[test]
+    fn safe_plugin_selection_returns_station_rules_without_waiting_for_ui_frame() {
+        use super::*;
+        let mut cfg=AppConfig::default();
+        cfg.apps.test_tool.plugins_dir=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-tools/plugins").display().to_string();
+        let mut panel=TestToolPanel::new(&cfg);
+        panel.select_plugin("fpga-firmware-test".into());
+        let project=panel.current_project_id();
+        let reply=panel.api_select_plugin_safe(&serde_json::json!({"project":project,"plugin":"scope-serial-monitor"}));
+        assert!(reply.ok);
+        let rules:serde_json::Value=serde_json::from_str(panel.param_values.get("triggers").unwrap()).unwrap();
+        assert!(rules.as_array().is_some_and(|items| items.iter().any(|item|item.get("id").and_then(|id|id.as_str())==Some("ASK2"))));
+        assert!(!panel.pending_station_merge);
+    }
+
+    #[test]
+    fn scope_rule_toggle_preserves_complex_rule_and_rejects_stale_write() {
+        use super::*;
+        let mut cfg=AppConfig::default();
+        cfg.apps.test_tool.plugins_dir=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-tools/plugins").display().to_string();
+        let mut panel=TestToolPanel::new(&cfg);let project=panel.current_project_id();
+        assert!(panel.api_select_plugin_safe(&serde_json::json!({"project":project,"plugin":"scope-serial-monitor"})).ok);
+        let before=panel.param_values["triggers"].clone();
+        let original:serde_json::Value=serde_json::from_str(&before).unwrap();
+        assert!(panel.api_scope_rule_enabled_safe(&serde_json::json!({"project":project,"expected":before,"index":0,"enabled":false})).ok);
+        let mut changed:serde_json::Value=serde_json::from_str(&panel.param_values["triggers"]).unwrap();
+        assert_eq!(changed[0]["enabled"],false);
+        changed[0]["enabled"]=original[0]["enabled"].clone();
+        assert_eq!(changed,original);
+        let stale=panel.api_scope_rule_enabled_safe(&serde_json::json!({"project":project,"expected":before,"index":0,"enabled":true}));
+        assert_eq!(stale.error.as_deref(),Some("CONFIG.STALE"));
+        let updated=panel.param_values["triggers"].clone();
+        let before_add:serde_json::Value=serde_json::from_str(&updated).unwrap();
+        assert!(panel.api_scope_rule_add_safe(&serde_json::json!({"project":project,"expected":updated,"pattern":"timeout [test]"})).ok);
+        let after:serde_json::Value=serde_json::from_str(&panel.param_values["triggers"]).unwrap();
+        let added=after.as_array().unwrap();assert_eq!(&added[..added.len()-1],before_add.as_array().unwrap().as_slice());
+        assert_eq!(added.last().unwrap()["type"],"contains");assert_eq!(added.last().unwrap()["pattern"],"timeout [test]");
+        let after_add=panel.param_values["triggers"].clone();let index=added.len()-1;
+        let original_rule=after[1].as_object().unwrap();
+        let key=if original_rule.get("pattern").is_some_and(|v|!v.is_null()){ "pattern" }else if original_rule.get("regex").is_some_and(|v|!v.is_null()){ "regex" }else{ "text" };
+        let original_pattern=original_rule[key].as_str().unwrap().to_owned();
+        assert!(panel.api_scope_rule_text_safe(&serde_json::json!({"project":project,"expected":after_add,"index":1,"pattern":"NEW_MATCH"})).ok);
+        let modified:serde_json::Value=serde_json::from_str(&panel.param_values["triggers"]).unwrap();
+        let mut expected_rule=original_rule.clone();expected_rule.insert(key.into(),serde_json::json!("NEW_MATCH"));
+        if original_rule.get("label").and_then(|v|v.as_str())==Some(original_pattern.as_str()){expected_rule.insert("label".into(),serde_json::json!("NEW_MATCH"));}
+        assert_eq!(modified[1],serde_json::Value::Object(expected_rule));
+        let changed=panel.param_values["triggers"].clone();
+        assert!(panel.api_scope_rule_text_safe(&serde_json::json!({"project":project,"expected":changed,"index":1,"pattern":original_pattern})).ok);
+        let restored:serde_json::Value=serde_json::from_str(&panel.param_values["triggers"]).unwrap();assert_eq!(restored,after);
+        let after_add=panel.param_values["triggers"].clone();
+        assert!(panel.api_scope_rule_exclusion_safe(&serde_json::json!({"project":project,"expected":after_add,"index":index,"action":"add","text":"ignore me"})).ok);
+        let with_exclusion:serde_json::Value=serde_json::from_str(&panel.param_values["triggers"]).unwrap();
+        assert_eq!(with_exclusion[index]["unless"][0],serde_json::json!({"type":"contains","pattern":"ignore me"}));
+        assert_eq!(with_exclusion[0],after[0]);
+        assert_eq!(panel.api_scope_rule_exclusion_safe(&serde_json::json!({"project":project,"expected":after_add,"index":index,"action":"remove","key":"unless","item_index":0})).error.as_deref(),Some("CONFIG.STALE"));
+        let current=panel.param_values["triggers"].clone();
+        assert!(panel.api_scope_rule_exclusion_safe(&serde_json::json!({"project":project,"expected":current,"index":index,"action":"remove","key":"unless","item_index":0})).ok);
+        let without_exclusion:serde_json::Value=serde_json::from_str(&panel.param_values["triggers"]).unwrap();assert_eq!(without_exclusion[index]["unless"],serde_json::json!([]));
+        let after_add=panel.param_values["triggers"].clone();
+        assert!(panel.api_scope_rule_text_safe(&serde_json::json!({"project":project,"expected":after_add,"index":index,"pattern":"new text"})).ok);
+        let edited:serde_json::Value=serde_json::from_str(&panel.param_values["triggers"]).unwrap();
+        assert_eq!(edited[index]["pattern"],"new text");assert_eq!(edited[index]["label"],"new text");assert_eq!(edited[0],after[0]);
+        let before_move=panel.param_values["triggers"].clone();
+        assert!(panel.api_scope_rule_order_safe(&serde_json::json!({"project":project,"expected":before_move,"index":index,"action":"up"})).ok);
+        let moved:serde_json::Value=serde_json::from_str(&panel.param_values["triggers"]).unwrap();
+        assert_eq!(moved[index-1],edited[index]);assert_eq!(moved[index],edited[index-1]);
+        assert_eq!(panel.api_scope_rule_order_safe(&serde_json::json!({"project":project,"expected":before_move,"index":index,"action":"remove"})).error.as_deref(),Some("CONFIG.STALE"));
+        let before_remove=panel.param_values["triggers"].clone();
+        assert!(panel.api_scope_rule_order_safe(&serde_json::json!({"project":project,"expected":before_remove,"index":index-1,"action":"remove"})).ok);
+        let removed:serde_json::Value=serde_json::from_str(&panel.param_values["triggers"]).unwrap();
+        assert_eq!(removed.as_array().unwrap(),&edited.as_array().unwrap()[..index]);
+        assert_eq!(panel.api_scope_rule_order_safe(&serde_json::json!({"project":project,"expected":panel.param_values["triggers"],"index":0,"action":"up"})).error.as_deref(),Some("CONFIG.INVALID_REQUEST"));
+        let rules_before=panel.param_values["triggers"].clone();
+        let port=panel.param_values["port"].clone();let baud=panel.param_values["baud"].clone();
+        let params=serde_json::json!({"project":project,"expected_port":port,"expected_baud":baud,"port":"COM8","baud":115200});
+        assert!(panel.api_scope_serial_settings_safe(&params).ok);
+        assert_eq!(panel.param_values["triggers"],rules_before);
+        assert_eq!(panel.api_scope_serial_settings_safe(&params).error.as_deref(),Some("CONFIG.STALE"));
+        let expected:serde_json::Map<String,serde_json::Value>=["prefer_device_id","scope_resource","scope_model","scope_kind"].into_iter().map(|key|(key.into(),serde_json::json!(panel.param_values[key]))).collect();
+        let instrument=serde_json::json!({"project":project,"expected":expected,"device_id":5,"resource":"USB::SCOPE","model":"MDO3014"});
+        assert!(panel.api_scope_instrument_safe(&instrument).ok);assert_eq!(panel.param_values["scope_resource"],"USB::SCOPE");
+        assert_eq!(panel.api_scope_instrument_safe(&instrument).error.as_deref(),Some("CONFIG.STALE"));
+        let edge=panel.param_values["rising_edge"].clone();
+        assert!(panel.api_scope_edge_mode_safe(&serde_json::json!({"project":project,"expected":edge,"enabled":false})).ok);
+        assert_eq!(panel.param_values["rising_edge"],"false");
+        assert_eq!(panel.api_scope_edge_mode_safe(&serde_json::json!({"project":project,"expected":edge,"enabled":true})).error.as_deref(),Some("CONFIG.STALE"));
+        let keys=["port","baud","triggers","prefer_device_id","scope_resource","scope_model","scope_kind","rising_edge"];
+        let import_expected:serde_json::Map<String,serde_json::Value>=keys.into_iter().map(|key|(key.into(),serde_json::json!(panel.param_values[key]))).collect();
+        let exported=panel.api_scope_settings_export_safe(&serde_json::json!({"project":project,"expected":import_expected}));
+        assert!(exported.ok);assert_eq!(exported.data["port"],"COM8");assert_eq!(exported.data["scope_model"],"MDO3014");assert!(exported.data.get("prefer_device_id").is_none());
+        let imported=serde_json::json!({"port":"COM12","baud":"9600","triggers":panel.param_values["triggers"],"scope_resource":"USB::SCOPE","scope_model":"MDO3014","scope_kind":"oscilloscope","rising_edge":"true"});
+        let invalid=serde_json::json!({"project":project,"expected":import_expected,"values":{"port":"COM12","baud":"9600","triggers":"[]","scope_resource":"","scope_model":"","scope_kind":"oscilloscope","rising_edge":"true"}});
+        assert_eq!(panel.api_scope_settings_import_safe(&invalid).error.as_deref(),Some("CONFIG.INVALID_RULES"));assert_eq!(panel.param_values["port"],"COM8");
+        let request=serde_json::json!({"project":project,"expected":import_expected,"values":imported});
+        assert!(panel.api_scope_settings_import_safe(&request).ok);assert_eq!(panel.param_values["port"],"COM12");assert!(panel.param_values["prefer_device_id"].is_empty());assert_eq!(panel.param_values["rising_edge"],"true");assert_eq!(panel.param_values["triggers"],imported["triggers"].as_str().unwrap());
+        assert_eq!(panel.api_scope_settings_import_safe(&request).error.as_deref(),Some("CONFIG.STALE"));
+        assert_eq!(panel.api_scope_settings_export_safe(&serde_json::json!({"project":project,"expected":import_expected})).error.as_deref(),Some("CONFIG.STALE"));
+        let stale_preflight=panel.api_scope_preflight_safe(&serde_json::json!({"project":project,"port":"stale","baud":"115200","triggers":panel.param_values["triggers"]}));
+        assert_eq!(stale_preflight.error.as_deref(),Some("CONFIG.STALE"));assert!(panel.job.is_none());
+        let run=panel.api_scope_run_safe(&serde_json::json!({"project":project,"port":panel.param_values["port"],"baud":panel.param_values["baud"],"triggers":panel.param_values["triggers"]}));
+        assert_eq!(run.error.as_deref(),Some("PREFLIGHT.REQUIRED"));assert!(panel.job.is_none());
+        panel.param_values.insert("port".into(),String::new());
+        let invalid=panel.api_scope_preflight_safe(&serde_json::json!({"project":project,"port":"","baud":panel.param_values["baud"],"triggers":panel.param_values["triggers"]}));
+        assert_eq!(invalid.error.as_deref(),Some("SERIAL.INVALID_PARAMETERS"));assert!(panel.job.is_none());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn service_poll_reaps_finished_job_without_opening_test_panel() {
+        use super::*;
+        let mut cfg=AppConfig::default();cfg.apps.test_tool.plugins_dir=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-tools/plugins").display().to_string();
+        let mut panel=TestToolPanel::new(&cfg);let project=panel.current_project_id();
+        assert!(panel.api_select_plugin_safe(&serde_json::json!({"project":project,"plugin":"scope-serial-monitor"})).ok);
+        let fingerprint=panel.scope_fingerprint().unwrap();panel.scope_preflight_pending=Some(("test".into(),fingerprint));
+        let child=Command::new("cmd").args(["/C","exit 0"]).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+        let (_sender,rx)=mpsc::channel();
+        panel.job=Some(RunningJob{child,rx,drain_deadline:None,token:"test".into(),plugin_id:"test".into(),test_id:"test".into(),stop_file:None,status_file:None,last_status_read:Instant::now(),last_status_mtime:None,kill_after:None,overlay_file:None});
+        let deadline=Instant::now()+Duration::from_secs(5);
+        while panel.job.is_some()&&Instant::now()<deadline {panel.api_poll(Lang::En);std::thread::sleep(Duration::from_millis(10));}
+        assert!(panel.job.is_none());assert!(panel.status.contains("test"));assert_eq!(panel.scope_preflight_state(),"passed");
+        panel.param_values.insert("baud".into(),"9600".into());assert_eq!(panel.scope_preflight_state(),"stale");
+    }
+
+    #[test]
+    fn guarded_wireless_actions_reject_wrong_scope_and_unimplemented_live_mode() {
+        use super::*;
+        let mut cfg=AppConfig::default();cfg.apps.test_tool.plugins_dir=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-tools/plugins").display().to_string();
+        let mut panel=TestToolPanel::new(&cfg);panel.select_plugin("wireless-whitebox".into());let project=panel.current_project_id();
+        let input=serde_json::json!({"project":project,"selected_ids":["wcv_07"],"mode":"live","log_file":"","dut_serial":"SN","firmware_version":"v1"});
+        let unavailable=panel.api_wireless_lifecycle_safe(&input,false);assert_eq!(unavailable.error.as_deref(),Some("WIRELESS.MODE_UNAVAILABLE"));
+        let wrong=panel.api_wireless_lifecycle_safe(&serde_json::json!({"project":project,"selected_ids":["wcv_20"],"mode":"rx_control","log_file":"","dut_serial":"SN","firmware_version":"v1"}),false);
+        assert_eq!(wrong.error.as_deref(),Some("WIRELESS.SELECT_RX_CASE"));assert!(panel.job.is_none());
+    }
+
+    #[test]
+    fn guarded_fpga_preflight_rejects_wrong_context_and_empty_selection() {
+        use super::*;
+        let mut cfg=AppConfig::default();cfg.apps.test_tool.plugins_dir=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-tools/plugins").display().to_string();
+        let mut panel=TestToolPanel::new(&cfg);panel.select_plugin("fpga-firmware-test".into());
+        let project=panel.current_project_id();
+        let identity=serde_json::json!({"dut_serial":"D","board_revision":"","fpga_model":"","fixture_id":"","station_id":"S","operator":""});
+        let wrong=panel.api_fpga_preflight_safe(&serde_json::json!({"project":"other-project","selected_ids":["case_1"],"identity":identity,"execution_mode":"simulation"}));
+        assert!(!wrong.ok);assert_eq!(wrong.error.as_deref(),Some("CONFIG.CONTEXT_CHANGED"));assert!(panel.job.is_none());
+        let empty=panel.api_fpga_preflight_safe(&serde_json::json!({"project":project,"selected_ids":[],"identity":identity,"execution_mode":"simulation"}));
+        assert!(!empty.ok);assert_eq!(empty.error.as_deref(),Some("CONFIG.INVALID_REQUEST"));assert!(panel.job.is_none());
+    }
+    #[test]
     fn serial_trigger_host_form_keeps_legacy_station_and_fits_narrow_widths() {
         use super::*;
         let mut cfg = AppConfig::default();
@@ -4831,4 +5704,8 @@ mod visual_snapshot {
         }, |ctx| { egui::CentralPanel::default().show(ctx, |ui| { panel.ui(ui, super::Lang::Zh, &tokens, &[]); }); });
         crate::ui_audit::export_frame(&ctx, output, &std::path::PathBuf::from(dir), "cmsis-dap", size);
     }
+}
+
+fn scope_rule_items_mut(value:&mut serde_json::Value)->Option<&mut Vec<serde_json::Value>>{
+    if value.is_array(){value.as_array_mut()}else{value.get_mut("items").and_then(serde_json::Value::as_array_mut)}
 }

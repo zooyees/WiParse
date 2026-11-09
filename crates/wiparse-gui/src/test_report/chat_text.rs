@@ -66,14 +66,7 @@ impl TextMarkdown {
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
                                         if ui
-                                            .button(
-                                                RichText::new(if lang == Lang::Zh {
-                                                    "复制"
-                                                } else {
-                                                    "Copy"
-                                                })
-                                                .size(12.0),
-                                            )
+                                            .button(RichText::new(tr(lang, "btn.copy")).size(12.0))
                                             .clicked()
                                         {
                                             ui.ctx().copy_text(body.clone());

@@ -1,5 +1,7 @@
 # FPGA固件测试 0.5.5
 
+当前 GUI 宿主 `log.lines.get` 返回的是解码后的文本行。宿主重建的日志保存为 `serial.reconstructed.txt`，时间戳为主机轮询时间，并标记原始字节及事件时间不可用、采集不完整。依赖完整日志的实物判定可能因此为无法判定；需要真正的原始串口字节和采集时间后才能恢复完整证据判定。模拟适配器不受此限制，但模拟结果不能代表实物通过。
+
 插件实现和模拟宿主测试；硬件运行需要 `wiparse.fpga-host/1` 适配器。未提供适配器时以 `HOST.ADAPTER_REQUIRED` 阻断，不能将模拟执行当作硬件验收。固件下载保留接口，`download=true` 始终阻断，无 ProbeFlash 调用。
 
 0.5.0需要WiParse>=1.2.2。工程基本信息、DUT适用约束及仪器绑定统一保存在当前project/test/plugin共享实例中，station.json只保留插件工位策略。测试项使用schema/2，仅保存独立名称、ID、启停、顺序/标签、单项超时和固件/复位/采集/规则；日志通过resource_role选择共享COM或Dongle角色，不能重复填写或覆盖绑定。

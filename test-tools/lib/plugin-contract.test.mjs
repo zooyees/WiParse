@@ -77,7 +77,7 @@ test("scope-serial-monitor plugin.json validates", () => {
   );
   const check = validatePluginManifest(raw);
   assert.equal(check.ok, true, check.errors?.join("; "));
-  assert.equal(raw.version, "0.6.2");
+  assert.equal(raw.version, "0.7.1");
   assert.equal(raw.engines?.wiparse, ">=1.1.16");
   assert.ok(!String(raw.description || "").includes("tests/scope-serial-monitor"));
   const station = JSON.parse(

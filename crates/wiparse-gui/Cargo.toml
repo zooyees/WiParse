@@ -10,6 +10,8 @@ name = "wiparse-gui"
 path = "src/main.rs"
 
 [dependencies]
+uuid.workspace = true
+base64 = "0.22"
 wiparse-core = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }

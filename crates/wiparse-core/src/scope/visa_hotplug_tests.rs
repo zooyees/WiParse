@@ -43,6 +43,7 @@ fn fixture(reads: Vec<(ViStatus, Vec<u8>)>) -> Instrument {
         }),
         session: 42,
         connection_lost: AtomicBool::new(false),
+        _resource_lease: None,
     }
 }
 

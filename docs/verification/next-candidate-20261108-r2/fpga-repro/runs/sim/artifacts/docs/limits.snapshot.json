@@ -1,0 +1,385 @@
+{
+  "mode": "engineering_editable",
+  "rules": [
+    {
+      "id": "fpga_01_pll_clock",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "PLL_LOCK_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        },
+        {
+          "id": "output_frequency",
+          "type": "waveform_metric_range",
+          "capture": "ip_output",
+          "channel": "CH1",
+          "metric": "frequency_hz",
+          "minimum": 99000000,
+          "maximum": 101000000,
+          "unit": "Hz",
+          "required": true,
+          "limit_source": "inline",
+          "limit_sha256": "2647d2b908e0ed2e6643db045d65ee276cb9a23d8b2917108d47ce8b703358f3"
+        }
+      ]
+    },
+    {
+      "id": "fpga_02_reset_controller",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "RESET_SEQUENCE_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "fpga_03_gpio",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "GPIO_TEST_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "fpga_04_uart",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "UART_LOOPBACK_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "fpga_05_spi_master",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "SPI_MASTER_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "fpga_06_spi_slave",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "SPI_SLAVE_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "fpga_07_i2c_master",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "I2C_MASTER_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "fpga_08_i2c_slave",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "I2C_SLAVE_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "fpga_09_pwm",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "PWM_TEST_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        },
+        {
+          "id": "output_frequency",
+          "type": "waveform_metric_range",
+          "capture": "ip_output",
+          "channel": "CH1",
+          "metric": "frequency_hz",
+          "minimum": 19800,
+          "maximum": 20200,
+          "unit": "Hz",
+          "required": true,
+          "limit_source": "inline",
+          "limit_sha256": "c5feefd67af2c607ec111d10ea614560487def795a54dfea8713815d5d0115b0"
+        },
+        {
+          "id": "output_duty_cycle",
+          "type": "waveform_metric_range",
+          "capture": "ip_output",
+          "channel": "CH1",
+          "metric": "duty_cycle",
+          "minimum": 0.49,
+          "maximum": 0.51,
+          "unit": "ratio",
+          "required": true,
+          "limit_source": "inline",
+          "limit_sha256": "ed520ffecc5f84b37ca751b1c643bfda0cd1210a3e1af62ea0de46699a5a9ff1"
+        }
+      ]
+    },
+    {
+      "id": "fpga_10_timer_counter",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "TIMER_COUNTER_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "fpga_11_watchdog",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "WATCHDOG_RESET_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "fpga_12_sync_fifo",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "SYNC_FIFO_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "fpga_13_async_fifo",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "ASYNC_FIFO_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "fpga_14_block_ram",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "BRAM_TEST_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "fpga_15_ddr_controller",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "DDR_TRAINING_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "fpga_16_axi_lite",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "AXI_LITE_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "fpga_17_axi_stream",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "AXI_STREAM_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "fpga_18_dma",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "DMA_TRANSFER_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "fpga_19_ethernet_mac",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "ETH_MAC_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "fpga_20_crc32",
+      "rules": [
+        {
+          "id": "functional_success",
+          "type": "log_contains",
+          "text": "CRC32_TEST_OK",
+          "required": true
+        },
+        {
+          "id": "no_fatal_errors",
+          "type": "log_not_regex",
+          "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+          "required": true
+        }
+      ]
+    }
+  ],
+  "sha256": "48a5907579b98574b4776e65d21e0aefecea40a383616597839377233b568ed4"
+}

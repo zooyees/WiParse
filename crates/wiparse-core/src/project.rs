@@ -478,6 +478,30 @@ pub fn test_case_label(
 }
 
 /// Register a Hub test from plugin id + report name (folder slug and display name).
+pub fn addable_report_tests(plugins: &[PluginMeta], present: &[String]) -> Vec<Value> {
+    let mut rows = Vec::new();
+    for plugin in plugins {
+        if !is_valid_id(&plugin.id) || plugin.id.len() > 128 {
+            continue;
+        }
+        let entry = test_ref_from_report(&plugin.id, plugin.report_slug());
+        if !is_valid_id(&entry.id) || entry.id.len() > 128 || present.iter().any(|id| id == &entry.id) {
+            continue;
+        }
+        let title = plugin.report_label(true).trim();
+        let name = if title.is_empty() { entry.display_name().to_owned() } else { title.to_owned() };
+        if name.is_empty() || name.len() > 512 || name.chars().any(char::is_control) {
+            continue;
+        }
+        rows.push(serde_json::json!({
+            "id": entry.id,
+            "plugin_id": plugin.id,
+            "name": name,
+        }));
+    }
+    rows
+}
+
 pub fn test_ref_from_report(plugin_id: &str, report_name: &str) -> ProjectTestRef {
     let label = report_name.trim();
     if label.is_empty() {
@@ -617,6 +641,29 @@ pub fn save_project(data_root: &Path, doc: &ProjectDoc) -> std::io::Result<PathB
     let text = serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".into());
     fs::write(&path, format!("{text}\n"))?;
     Ok(path)
+}
+
+/// Create a new project without opening or replacing an existing project.
+/// If a write fails after the directory is reserved, it is left for explicit
+/// inspection rather than recursively deleting anything another process may own.
+pub fn create_project_new(data_root:&Path,id:&str,name:Option<&str>)->std::io::Result<ProjectDoc>{
+    use std::io::{Error,ErrorKind,Write};
+    // New identifiers must be portable to Windows, where reserved device names
+    // and trailing dots can otherwise refer to a different path than intended.
+    let base=id.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved=matches!(base.as_str(),"CON"|"PRN"|"AUX"|"NUL")
+        || (base.len()==4 && (base.starts_with("COM")||base.starts_with("LPT")) && matches!(base.as_bytes()[3],b'1'..=b'9'));
+    if !is_valid_id(id)||id.len()>64||id.ends_with('.')||reserved{return Err(Error::new(ErrorKind::InvalidInput,"invalid project id"));}
+    if name.is_some_and(|n|n.len()>512||n.chars().any(char::is_control)){return Err(Error::new(ErrorKind::InvalidInput,"invalid project name"));}
+    fs::create_dir_all(data_root)?;let root=fs::canonicalize(data_root)?;let projects=projects_root(&root);
+    match fs::create_dir(&projects){Ok(())=>{},Err(error) if error.kind()==ErrorKind::AlreadyExists=>{},Err(error)=>return Err(error)};
+    let meta=fs::symlink_metadata(&projects)?;
+    if meta.file_type().is_symlink()||!meta.is_dir()||fs::canonicalize(&projects)?.parent()!=Some(root.as_path()){return Err(Error::new(ErrorKind::PermissionDenied,"invalid project directory"));}
+    let dir=projects.join(id);fs::create_dir(&dir)?;
+    let doc=ProjectDoc::new(id,name);let text=serde_json::to_vec_pretty(&doc).map_err(Error::other)?;
+    let mut file=fs::OpenOptions::new().write(true).create_new(true).open(dir.join("project.json"))?;
+    file.write_all(&text)?;file.write_all(b"\n")?;file.sync_all()?;
+    Ok(doc)
 }
 
 pub fn ensure_project(data_root: &Path, project_id: &str, name: Option<&str>) -> ProjectDoc {
@@ -1025,6 +1072,7 @@ fn group_snapshot(g: &IndexedGroup) -> Value {
                 "name": f.name,
                 "path": f.path.display().to_string(),
                 "size": f.size,
+                "mtime_ms": f.mtime.and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok()).map(|duration| duration.as_millis() as u64),
                 "view": f.view.as_str(),
                 "output": f.output_id,
             })
@@ -1088,6 +1136,18 @@ mod tests {
         ));
         fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    #[test]
+    fn new_project_creation_never_overwrites_an_existing_directory(){
+        let root=tmp();let doc=create_project_new(&root,"lab_a",Some("研发工位")).unwrap();assert_eq!(doc.id,"lab_a");
+        let path=project_json_path(&root,"lab_a");let original=fs::read(&path).unwrap();
+        let error=create_project_new(&root,"lab_a",Some("other")).unwrap_err();assert_eq!(error.kind(),std::io::ErrorKind::AlreadyExists);
+        for invalid in ["CON", "con.txt", "LPT1", "COM9", "test.", "a/b", &"a".repeat(65)] {
+            assert_eq!(create_project_new(&root,invalid,Some("name")).unwrap_err().kind(),std::io::ErrorKind::InvalidInput,"{invalid}");
+        }
+        assert_eq!(fs::read(&path).unwrap(),original);assert_eq!(list_projects(&root).len(),1);
+        fs::remove_file(path).unwrap();fs::remove_dir(project_dir(&root,"lab_a")).unwrap();fs::remove_dir(projects_root(&root)).unwrap();fs::remove_dir(root).unwrap();
     }
 
     #[test]
@@ -1256,6 +1316,25 @@ mod tests {
             sanitize_test_id("  ", "scope-serial-monitor"),
             "scope-serial-monitor"
         );
+    }
+
+    #[test]
+    fn addable_report_tests_skip_ids_already_in_the_project() {
+        let plugin = PluginMeta {
+            id: "scope-serial-monitor".into(),
+            name: "Scope".into(),
+            name_zh: "示波器串口".into(),
+            outputs: Vec::new(),
+            file_prefix: String::new(),
+            report_name: "ScopeSerial".into(),
+            report_name_zh: "示波器串口监控".into(),
+        };
+        let open = addable_report_tests(&[plugin.clone()], &[]);
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0]["id"], "ScopeSerial");
+        assert_eq!(open[0]["plugin_id"], "scope-serial-monitor");
+        assert_eq!(open[0]["name"], "示波器串口监控");
+        assert!(addable_report_tests(&[plugin], &["ScopeSerial".into()]).is_empty());
     }
 
     #[test]
@@ -1439,6 +1518,7 @@ mod tests {
         assert_eq!(idx.tests[0].results[1].ok, Some(false));
         let snap = tree_snapshot(&idx);
         assert_eq!(snap["tests"][0]["results"].as_array().unwrap().len(), 2);
+        assert!(snap["tests"][0]["results"][0]["groups"][0]["files"][0]["mtime_ms"].is_number());
         fs::remove_dir_all(&root).ok();
     }
 

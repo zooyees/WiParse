@@ -1,0 +1,44 @@
+{
+  "candidate": "R31",
+  "date": "2026-11-08",
+  "method": "Native desktop Sky UI actions against isolated QA-R31 packaged EXE",
+  "desktop_checks": {
+    "project_creation": true,
+    "software_smoke_preflight": true,
+    "software_smoke_run": true,
+    "execution_session_latest_and_history": true,
+    "scope_plugin_no_cross_plugin_log": true,
+    "completion_status_and_accepted_notice": true,
+    "report_tree_one_case_one_result": true,
+    "report_remove_button_horizontal_at_200px": true,
+    "generated_markdown_open": true,
+    "generated_json_link_open": true,
+    "return_to_markdown": true,
+    "normal_exit_qa_instance": true
+  },
+  "artifacts": [
+    {
+      "relative": "tests/ExampleSmoke/runs/20261108_224718/artifacts/logs/smoke_20261108_224718.json",
+      "bytes": 1203,
+      "sha256": "e90c841abccd65263c2825cea951f2d916d7f3ec58c2beab8792b6b0b2ac1c62"
+    },
+    {
+      "relative": "tests/ExampleSmoke/runs/20261108_224718/artifacts/reports/ExampleSmoke_20261108_224718.md",
+      "bytes": 204,
+      "sha256": "0695a01bad509670f3c739b3557507a2c6be4ba83fdb0025b7ddbe85eba17370"
+    }
+  ],
+  "screenshots": [
+    "report-markdown-desktop.jpg",
+    "report-evidence-desktop.jpg"
+  ],
+  "simulation_only": true,
+  "hardware_executed": false,
+  "real_ai_executed": false,
+  "user_installation_modified": false,
+  "limitations": [
+    "No real instrument/probe operations",
+    "No real AI request",
+    "No multi-DPI or long-duration industrial acceptance"
+  ]
+}

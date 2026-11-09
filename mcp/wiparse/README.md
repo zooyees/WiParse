@@ -67,3 +67,15 @@ CLI 说明见 [`docs/CLI_REFERENCE.md`](../../docs/CLI_REFERENCE.md)。
 参数使用 `plugin` 或 `plugin_id`；单项使用 `config_id`。保存需要 `value`、`expected_revision` 和 `expected_sha256`。分页默认 100，硬上限 500；实际只有 5 项就返回 5 项。导入/导出传受控 `file`，不通过 MCP 传整个 bundle。返回值屏蔽本地绝对路径、敏感键和 schema.writeOnly 字段。
 
 预检成功后读取 `test_tool.preflight.state`，运行时在 `test_matrix` 中传 `config_manifest_sha256`、`preflight_revision`、`selected_item_ids`。修改配置或选择集后应重新预检。
+
+
+## Tauri 兼容宿主适配（2026-11-08，待统一验收）
+
+新界面启动 `WiParse-Host.exe` 作为受保护 companion，桥协议 2 对调用和事件要求实例凭据。MCP 仍连接同一个固定本机 API；需要使用本次构建的配套 CLI，不能混用旧便携包。
+
+- `WIPARSE_LOCAL_API_TOKEN` 可由宿主继承，仅向 `http://127.0.0.1:7878` 的根地址提交；不会发给自定义远程地址或重定向目标。
+- 未继承凭据时，只有明确的 HTTP 401 拒绝才允许通过配套 CLI 提交一次。CLI 使用 Windows 当前用户 DPAPI 读取实例凭据，MCP 不读取或打印解密值。
+- 默认从同包 `bin/WiParse-CLI.exe` 或同目录 CLI 查找；可通过 `WIPARSE_CLI` 显式指定。网络超时、断连和 HTTP 5xx 均不自动重发设备操作。
+- 新增 `preferences.get|set`、`serial.recording_settings|new_log|select_log`、`instrument.control|acquisition`、`test_tool.config.edit|project.edit|run.control` 操作，继续使用原来的 `wiparse_ui` 工具，不增加任意方法调用入口。配置编辑须携带当前工程、版本和 Schema 身份；设备动作须绑定设备与资源，受测试互锁。
+
+统一验收将执行 MCP TypeScript 构建、HTTP 目标隔离/不重放检查和六个工具的模拟调用。源码已适配不代表真实 Windows 用户凭据或实际设备闭环通过。

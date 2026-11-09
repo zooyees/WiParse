@@ -242,6 +242,8 @@ pub struct WiParseApp {
     taskbar_icon_applied: bool,
     taskbar_icon_attempts: u8,
     startup_warning: Option<String>,
+    exit_log_prompt:bool,
+    exit_log_confirmed:bool,
 }
 
 impl WiParseApp {
@@ -270,6 +272,9 @@ impl WiParseApp {
         let api = ApiBridge::new();
         if let Err(e) = backend::start(api.clone()) {
             tracing::error!("Failed to start WiParse API: {e}");
+            if crate::companion_window() {
+                std::process::exit(2);
+            }
         }
         let updater = UpdateController::new(cfg.update.clone());
         Self {
@@ -318,6 +323,8 @@ impl WiParseApp {
             taskbar_icon_applied: false,
             taskbar_icon_attempts: 0,
             startup_warning,
+            exit_log_prompt:false,
+            exit_log_confirmed:false,
         }
     }
 
@@ -1061,6 +1068,35 @@ impl WiParseApp {
 
 impl eframe::App for WiParseApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if ctx.input(|input|input.viewport().close_requested())&&!self.exit_log_confirmed&&self.serial.has_pending_log_edits(){
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);self.exit_log_prompt=true;
+        }
+        if self.exit_log_prompt {
+            let zh=self.lang==Lang::Zh;let mut discard=false;let mut stay=false;
+            egui::Window::new(if zh{"日志仍在编辑"}else{"Log editing is still active"}).collapsible(false).resizable(false).show(ctx,|ui|{
+                ui.label(if zh{"日志编辑缓冲尚未结束。请返回保存或放弃编辑，也可以明确放弃未保存内容并退出。"}else{"A log editor is still active. Return to save or discard it, or explicitly discard unsaved edits and exit."});
+                ui.horizontal(|ui|{if ui.button(if zh{"返回处理"}else{"Return"}).clicked(){stay=true;}if ui.button(if zh{"放弃并退出"}else{"Discard and exit"}).clicked(){discard=true;}});
+            });
+            if stay{self.exit_log_prompt=false;}
+            if discard{self.exit_log_confirmed=true;self.exit_log_prompt=false;ctx.send_viewport_cmd(egui::ViewportCommand::Close);}
+        }
+        if crate::companion_window() {
+            let detached = crate::companion_detached();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(detached||self.exit_log_prompt));
+            if detached {
+                if self.test_tool.companion_shutdown_blocked() || self.serial.is_monitoring() || self.serial.has_pending_log_edits()
+                    || self.serial.is_test_running() || self.instruments.api_operations_pending() {
+                    // Keep the one actual device owner alive. The operator can
+                    // finish/stop operations through the retained host.
+                    if self.startup_warning.is_none() {
+                        self.startup_warning = Some("新界面已关闭。采集、测试或未保存的配置仍在处理中，设备宿主已保留；请完成或停止任务后正常关闭。".into());
+                    }
+                } else {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+            ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        }
         self.ai.install(ctx);
         self.test_tool.workspace_close_guard(ctx, self.lang);
         self.serial.attach_repaint_context(ctx);
@@ -1093,6 +1129,7 @@ impl eframe::App for WiParseApp {
         if live_filters {
             self.serial.sync_visible_live_filters();
         }
+        let serial_log_versions=self.serial.log_versions();
         // Drain Agent/CLI API requests on the UI thread (shared serial/instrument/UI state).
         let persist = backend::drain_api_requests(
             &self.api,
@@ -1114,6 +1151,7 @@ impl eframe::App for WiParseApp {
                 data_analysis: &mut self.data_analysis,
                 test_report: &mut self.test_report,
                 test_tool: &mut self.test_tool,
+                ai: &mut self.ai,
             },
         );
         if persist {
@@ -1121,16 +1159,18 @@ impl eframe::App for WiParseApp {
             self.ensure_visible_tab();
         }
         // Live filters only need refresh when serial UI shows the live tab.
-        self.serial.set_live_view_visible(serial_visible);
+        let serial_stream_visible=self.api.events.has_serial_log_subscribers();
+        self.serial.set_live_view_visible(serial_visible||serial_stream_visible);
         self.serial
             .drain_events_with_bus(live_filters, Some(&self.api));
+        self.serial.publish_log_changes(&serial_log_versions,&self.api);
         ctx.data_mut(|data| {
             data.insert_temp(egui::Id::new("wiparse-ai-platform-bridge"),self.api.clone());
             data.insert_temp(egui::Id::new("wiparse-ai-project-root"),self.test_tool.data_root_path());
         });
         self.serial.tick_ai(ctx, self.lang, self.test_tool.current_project_id(), &self.cfg.ai, self.test_tool.running_plugin_id().is_some());
         // Data Analysis serial-live: pull new live lines after serial drain.
-        if self.data_analysis.wants_live_serial() {
+        if !crate::companion_window() && self.data_analysis.wants_live_serial() {
             let dropped = self.serial.live_dropped();
             let total = self.serial.live_abs_len();
             self.data_analysis.prepare_live_poll(total, dropped);
@@ -1210,7 +1250,8 @@ impl eframe::App for WiParseApp {
         }
         let t = self.tokens;
         self.ensure_visible_tab();
-        if self.last_logged_tab != Some(self.active) {
+        let reveal_active_tab = self.last_logged_tab != Some(self.active);
+        if reveal_active_tab {
             tracing::info!(tab = self.active.as_id(), "active WiParse page");
             self.last_logged_tab = Some(self.active);
         }
@@ -1222,109 +1263,105 @@ impl eframe::App for WiParseApp {
                     .inner_margin(Margin::symmetric(10, 0))
                     .stroke(Stroke::new(1.0_f32, t.divider)),
             )
-            .exact_height(40.0)
+            .exact_height(48.0)
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    let compact_nav = ui.available_width() < 1160.0;
-
-                    main_tab(
-                        ui,
-                        &t,
-                        &mut self.active,
-                        MainTab::Serial,
-                        self.show_serial,
-                        &tr(self.lang, "tool.serial_tool.name"),
-                    );
-                    main_tab(
-                        ui,
-                        &t,
-                        &mut self.active,
-                        MainTab::Instruments,
-                        self.show_instruments,
-                        &tr(self.lang, "tool.instrument_control.name"),
-                    );
-                    main_tab(
-                        ui,
-                        &t,
-                        &mut self.active,
-                        MainTab::Waveform,
-                        self.show_waveform,
-                        &tr(self.lang, "tool.waveform_analysis.name"),
-                    );
-                    if compact_nav {
-                        ui.menu_button(
-                            if self.lang == Lang::Zh {
-                                "更多"
-                            } else {
-                                "More"
-                            },
-                            |ui| {
-                            for (tab, visible, label) in [
-                                    (
-                                        MainTab::DataAnalysis,
-                                        self.show_data_analysis,
-                                        tr(self.lang, "tool.data_analysis.name"),
-                                    ),
-                                    (
-                                        MainTab::TestTool,
-                                        self.show_test_tool,
-                                        tr(self.lang, "tool.test_tool.name"),
-                                    ),
-                                    (
-                                        MainTab::TestReport,
-                                        self.show_test_report,
-                                        tr(self.lang, "tool.test_report.name"),
-                                    ),
-                                    (
-                                        MainTab::Calculator,
-                                        self.show_calculator,
-                                        tr(self.lang, "tool.calculator.name"),
-                                    ),
-                            ] {
-                                    if visible
-                                        && ui.selectable_label(self.active == tab, label).clicked()
-                                    {
-                                    self.active = tab;
-                                    ui.close_menu();
-                                }
-                            }
-                            },
-                        );
-                    } else {
-                        main_tab(
-                            ui,
-                            &t,
-                            &mut self.active,
-                            MainTab::DataAnalysis,
-                            self.show_data_analysis,
-                            &tr(self.lang, "tool.data_analysis.name"),
-                        );
-                        main_tab(
-                            ui,
-                            &t,
-                            &mut self.active,
-                            MainTab::TestTool,
-                            self.show_test_tool,
-                            &tr(self.lang, "tool.test_tool.name"),
-                        );
-                        main_tab(
-                            ui,
-                            &t,
-                            &mut self.active,
-                            MainTab::TestReport,
-                            self.show_test_report,
-                            &tr(self.lang, "tool.test_report.name"),
-                        );
-                        main_tab(
-                            ui,
-                            &t,
-                            &mut self.active,
-                            MainTab::Calculator,
-                            self.show_calculator,
-                            &tr(self.lang, "tool.calculator.name"),
-                        );
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    let brand_w = if ui.available_width() >= 820.0 { 112.0 } else { 30.0 };
+                    let (brand, _) = ui.allocate_exact_size(egui::vec2(brand_w, 32.0), Sense::hover());
+                    let icon = egui::Rect::from_center_size(
+                        egui::pos2(brand.left() + 14.0, brand.center().y), egui::vec2(24.0, 24.0));
+                    ui.painter().rect_filled(icon, CornerRadius::same(7), t.accent);
+                    let center = icon.center();
+                    let points = [center + egui::vec2(-7.0, 1.0), center + egui::vec2(-3.0, 1.0),
+                        center + egui::vec2(-1.0, -5.0), center + egui::vec2(2.0, 5.0),
+                        center + egui::vec2(4.0, -1.0), center + egui::vec2(7.0, -1.0)];
+                    ui.painter().add(egui::Shape::line(points.to_vec(), Stroke::new(1.6_f32, t.accent_text)));
+                    if brand_w > 30.0 {
+                        ui.painter().text(egui::pos2(brand.left() + 34.0, brand.center().y),
+                            egui::Align2::LEFT_CENTER, "WiParse", FontId::proportional(16.0), t.text_primary);
                     }
+                    let gear_w = 36.0;
+                    let tabs_w = (ui.available_width() - gear_w - ui.spacing().item_spacing.x).max(1.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(tabs_w, ui.available_height()),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            egui::ScrollArea::horizontal()
+                                .id_salt("main-nav")
+                                .scroll_bar_visibility(
+                                    egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
+                                )
+                                .show(ui, |ui| {
+                                    ui.horizontal_centered(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 2.0;
+                                        main_tab(
+                                            ui,
+                                            &t,
+                                            &mut self.active,
+                                            MainTab::Serial,
+                                            self.show_serial,
+                                            reveal_active_tab,
+                                            &tr(self.lang, "tool.serial_tool.name"),
+                                        );
+                                        main_tab(
+                                            ui,
+                                            &t,
+                                            &mut self.active,
+                                            MainTab::Instruments,
+                                            self.show_instruments,
+                                            reveal_active_tab,
+                                            &tr(self.lang, "tool.instrument_control.name"),
+                                        );
+                                        main_tab(
+                                            ui,
+                                            &t,
+                                            &mut self.active,
+                                            MainTab::Waveform,
+                                            self.show_waveform,
+                                            reveal_active_tab,
+                                            &tr(self.lang, "tool.waveform_analysis.name"),
+                                        );
+                                        main_tab(
+                                            ui,
+                                            &t,
+                                            &mut self.active,
+                                            MainTab::DataAnalysis,
+                                            self.show_data_analysis,
+                                            reveal_active_tab,
+                                            &tr(self.lang, "tool.data_analysis.name"),
+                                        );
+                                        main_tab(
+                                            ui,
+                                            &t,
+                                            &mut self.active,
+                                            MainTab::TestTool,
+                                            self.show_test_tool,
+                                            reveal_active_tab,
+                                            &tr(self.lang, "tool.test_tool.name"),
+                                        );
+                                        main_tab(
+                                            ui,
+                                            &t,
+                                            &mut self.active,
+                                            MainTab::TestReport,
+                                            self.show_test_report,
+                                            reveal_active_tab,
+                                            &tr(self.lang, "tool.test_report.name"),
+                                        );
+                                        main_tab(
+                                            ui,
+                                            &t,
+                                            &mut self.active,
+                                            MainTab::Calculator,
+                                            self.show_calculator,
+                                            reveal_active_tab,
+                                            &tr(self.lang, "tool.calculator.name"),
+                                        );
+                                    });
+                                });
+                        },
+                    );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Gear icon settings — quieter than text label.
@@ -1449,20 +1486,23 @@ impl eframe::App for WiParseApp {
                     } else if self.active == MainTab::TestTool {
                         (
                             self.test_tool.status_text().to_string(),
-                            ui_theme::tone_from_status(self.test_tool.status_text()),
+                            self.test_tool.status_tone(),
                         )
                     } else {
-                        (
-                            tr(self.lang, "status.ready").to_string(),
-                            ui_theme::StatusTone::Ok,
-                        )
+                        let status = self.calculator.status_line(self.lang);
+                        let tone = if status == tr(self.lang, "status.ready") {
+                            ui_theme::StatusTone::Ok
+                        } else {
+                            ui_theme::StatusTone::Error
+                        };
+                        (status, tone)
                     };
                     ui_theme::status_line(ui, &t, tone, &status);
                 });
             });
 
         egui::CentralPanel::default()
-            .frame(Frame::NONE.fill(t.canvas_bg).inner_margin(Margin::same(8)))
+            .frame(Frame::NONE.fill(t.canvas_bg).inner_margin(Margin::same(ui_theme::SHELL_INSET)))
             .show(ctx, |ui| match self.active {
                 MainTab::Serial if self.show_serial => {
                     self.serial.ui(ui, self.lang, &t);
@@ -1521,7 +1561,7 @@ impl eframe::App for WiParseApp {
                 _ => {
                     ui.centered_and_justified(|ui| {
                         ui.label(
-                            egui::RichText::new("Enable a panel in Settings").color(t.text_muted),
+                            egui::RichText::new(tr(self.lang, "shell.enable_panel")).color(t.text_muted),
                         );
                     });
                 }
@@ -1690,6 +1730,7 @@ fn main_tab(
     active: &mut MainTab,
     tab: MainTab,
     visible: bool,
+    reveal_selected: bool,
     label: &str,
 ) {
     if !visible {
@@ -1712,6 +1753,9 @@ fn main_tab(
     let pad_x = 14.0;
     let size = Vec2::new(galley.size().x + pad_x * 2.0, 36.0);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    if selected && reveal_selected {
+        resp.scroll_to_me(Some(egui::Align::Center));
+    }
 
     if ui.is_rect_visible(rect) {
         if resp.hovered() || selected {

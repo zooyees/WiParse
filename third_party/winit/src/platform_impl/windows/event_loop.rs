@@ -897,6 +897,9 @@ static EXEC_MSG_ID: LazyMessageId = LazyMessageId::new("Winit::ExecMsg\0");
 // Message sent by a `Window` when it wants to be destroyed by the main thread.
 // WPARAM and LPARAM are unused.
 pub(crate) static DESTROY_MSG_ID: LazyMessageId = LazyMessageId::new("Winit::DestroyMsg\0");
+
+// WiParse: hidden companion windows still own API/device work on this thread.
+pub(crate) static HIDDEN_REPAINT_MSG_ID: LazyMessageId = LazyMessageId::new("Winit::HiddenRepaintMsg\0");
 // WPARAM is a bool specifying the `WindowFlags::MARKER_RETAIN_STATE_ON_SIZE` flag. See the
 // documentation in the `window_state` module for more information.
 pub(crate) static SET_RETAIN_STATE_ON_SIZE_MSG_ID: LazyMessageId =
@@ -2378,6 +2381,16 @@ unsafe fn public_window_callback_inner(
         _ => {
             if msg == DESTROY_MSG_ID.get() {
                 unsafe { DestroyWindow(window) };
+                result = ProcResult::Value(0);
+            } else if msg == HIDDEN_REPAINT_MSG_ID.get() {
+                // Use our registered message rather than posting WM_PAINT,
+                // which Microsoft reserves for the system. Keep execution on
+                // the same event-loop thread as ordinary redraw callbacks.
+                userdata.window_state_lock().redraw_requested = false;
+                userdata.send_event(Event::WindowEvent {
+                    window_id: RootWindowId(WindowId(window)),
+                    event: WindowEvent::RedrawRequested,
+                });
                 result = ProcResult::Value(0);
             } else if msg == SET_RETAIN_STATE_ON_SIZE_MSG_ID.get() {
                 let mut window_state = userdata.window_state_lock();

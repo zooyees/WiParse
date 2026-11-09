@@ -1,0 +1,50 @@
+{
+  "date": "2026-11-07",
+  "status": "stopped_by_user",
+  "current_authorized_scope": "handoff_documentation_only",
+  "frontend_tests": {
+    "passed": 18,
+    "failed": 0,
+    "new_tests": 3,
+    "scope": "Geometry limits, narrow layout fallback and invalid stored width; existing frontend model tests. No DOM pointer or desktop interaction test."
+  },
+  "frontend_build": "passed",
+  "desktop_dev_build": {
+    "passed": true,
+    "features": [
+      "custom-protocol"
+    ],
+    "production_release": false
+  },
+  "desktop_visual": {
+    "status": "not_verified",
+    "reason": "Computer Use app approval timed out; no captured window screenshot or interaction evidence"
+  },
+  "formal_acceptance_rounds_completed": 0,
+  "packaged": false,
+  "deployed": false,
+  "physical_hardware_operated": false,
+  "code_reverted": false,
+  "source_before_backup": "takeover-source-before.zip",
+  "source_before_backup_sha256": "a2e54b1ac661132e19176f8f57dc65ab07546972a4dad2bea754775b7fd6def3",
+  "source_after_sha256": {
+    "apps/wiparse-next/src/ResizableWorkspace.tsx": "f4dfe5be35e34b6d3a244757a9d42bf78ad68a78f14664688ff8800f32d05422",
+    "apps/wiparse-next/src/workspaceLayout.ts": "49d3ccc27d2c38a3a75fe929bd1c3c97cc9e526a886ea643ba142ad76251ed82",
+    "apps/wiparse-next/tests/workspace-layout.test.mjs": "32728525a4087e1dfb5b462e77074ab96229248992a98df1e0453164aef5678d",
+    "apps/wiparse-next/src/App.tsx": "29289f9fb4b30d379257040a2db188f1a2f4c71e510ea61d72882e341509b2ed",
+    "apps/wiparse-next/src/WaveWorkspace.tsx": "5892e56575cbe8014a3016b8f9626ed319918ff0958af8cec85444479ff3a54e",
+    "apps/wiparse-next/src/DataWorkspace.tsx": "668f875e02ed2aa652ee02d05c67d3b59e1f1717552e23c12c589750880cffb1",
+    "apps/wiparse-next/src/ReportWorkspace.tsx": "6a32d8ecb21c9255780bb8ace91537d703402462eed12333e5cddbaf4b1eec74",
+    "apps/wiparse-next/src/style.css": "b885d36f53dee97739e39f36647bd4718945c91f703dceff6382065a6d0b53f5",
+    "apps/wiparse-next/README.md": "698bb35a91963a0bebeeac52df9ed866076b6aa15d5ecd9e126198c4a6d052bb",
+    "apps/wiparse-next/REVIEW.md": "d28ea35ca9e17fe393bb85dd0a1215cd52fe87216847a4b0665e7339a16f4bc0",
+    "docs/plans/wiparse-tauri-react-refactor-plan.md": "6730557854ec7d031c28c13cd91ee22c5f8fed276f774b6b906465410de6f3db"
+  },
+  "handoff_pending": [
+    "H01 full original-function parity inventory and full workspace freeze",
+    "H02 backend lifecycle, instance/capability negotiation and authorization boundaries",
+    "H03-H06 migration gaps",
+    "H07 real desktop interaction and visual validation",
+    "H08-H10 full comparison, five complete rounds, packaging and deployment"
+  ]
+}

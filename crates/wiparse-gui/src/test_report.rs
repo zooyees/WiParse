@@ -24,7 +24,7 @@ use wiparse_core::project::{
 };
 
 const SIDE_W: f32 = ui_theme::SIDEBAR_W;
-const PANEL_GAP: f32 = 8.0;
+const PANEL_GAP: f32 = ui_theme::PANEL_GAP;
 const CARD_MARGIN_X: i8 = 10;
 const TREE_ROW_H: f32 = 24.0;
 const TREE_PAD: f32 = 6.0;
@@ -571,6 +571,18 @@ impl TestReportPanel {
         Ok(doc.id)
     }
 
+    pub fn add_report_test(
+        &mut self,
+        data_root: &Path,
+        plugins: &[PluginMeta],
+        entry: wiparse_core::project::ProjectTestRef,
+    ) -> Result<(), String> {
+        add_test_entry(data_root, &self.project_id, entry).map_err(|error| error.to_string())?;
+        self.index_dirty = true;
+        self.rebuild_index(data_root, plugins);
+        Ok(())
+    }
+
     pub fn add_hub_test(
         &mut self,
         data_root: &Path,
@@ -1057,6 +1069,7 @@ impl TestReportPanel {
                                         })
                                     });
                                     let reports = report_files(result);
+                                    let single = reports.len() <= 1;
                                     let run_selected = selected.as_ref().is_some_and(|p| {
                                         reports.iter().any(|f| same_path(p, &f.path))
                                     });
@@ -1068,8 +1081,8 @@ impl TestReportPanel {
                                         rtitle,
                                         tokens.text_primary,
                                         false,
-                                        true,
-                                        ri == 0,
+                                        !single,
+                                        ri == 0 && !single,
                                         run_selected,
                                         trail.as_ref(),
                                     );
@@ -1080,13 +1093,9 @@ impl TestReportPanel {
                                             self.selected = None;
                                             self.return_report = None;
                                             self.preview_title = wiparse_core::project::format_run_stamp(&result.stamp);
-                                            let hint = if lang == Lang::Zh {
-                                                "此批次尚未生成 MD 报告。波形、图片和日志在报告生成后通过正文链接查看。"
-                                            } else {
-                                                "No Markdown report for this run yet. Evidence is opened through links in the generated report."
-                                            };
-                                            self.preview = Some(PreviewKind::EmptyHint(hint.into()));
-                                            self.status = hint.into();
+                                            let hint = tr(lang, "report.no_md_yet").to_string();
+                                            self.preview = Some(PreviewKind::EmptyHint(hint.clone()));
+                                            self.status = hint;
                                         }
                                     }
                                     if let Some(target) = result.latest_report() {
@@ -1103,7 +1112,7 @@ impl TestReportPanel {
                                             }
                                         });
                                     }
-                                    if ropen {
+                                    if ropen && !single {
                                         paint_report_files(
                                             ui,
                                             lang,
@@ -1326,7 +1335,7 @@ impl TestReportPanel {
                                 Some(PreviewKind::Wave) => {}
                                 Some(PreviewKind::EmptyHint(note)) => {
                                     ui.vertical_centered(|ui| {
-                                        ui.add_space(24.0);
+                                        ui.add_space(12.0);
                                         ui.label(
                                             RichText::new(note.as_str())
                                                 .size(ui_theme::FONT_BODY)
@@ -1448,16 +1457,7 @@ fn paint_report_files(
 ) {
     let reports = report_files(result);
     if reports.is_empty() {
-        tree_hint_row(
-            ui,
-            tokens,
-            depth,
-            if lang == Lang::Zh {
-                "尚无 MD 报告"
-            } else {
-                "No Markdown report"
-            },
-        );
+        tree_hint_row(ui, tokens, depth, &tr(lang, "report.no_md"));
         return;
     }
     let labels: Vec<_> = reports
@@ -3408,8 +3408,8 @@ mod tests {
                 .collect();
             assert_eq!(
                 texts.iter().filter(|s| **s == "总报告").count(),
-                1,
-                "only latest run starts expanded: {texts:?}"
+                0,
+                "a run with one report opens directly without a redundant child row: {texts:?}"
             );
             assert!(!texts.iter().any(|s| s.contains("capture-")
                 || s.contains("index.jsonl")
@@ -3454,9 +3454,7 @@ mod tests {
                     assert!(matches!(panel.preview, Some(PreviewKind::Markdown(_))));
                 } else {
                     assert!(panel.selected.is_none(), "missing report must never fall back to evidence or display the previous run");
-                    assert!(matches!(panel.preview, Some(PreviewKind::EmptyHint(_))));
-                    let out = frame(&mut panel, vec![]);
-                    assert!(out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == "尚无 MD 报告")));
+                    assert!(matches!(&panel.preview, Some(PreviewKind::EmptyHint(note)) if note == &tr(Lang::Zh, "report.no_md_yet")));
                 }
             }
         });

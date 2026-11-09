@@ -1,0 +1,14 @@
+{
+  "relative_runtime_paths": true,
+  "kind": "r23_preview_delivery",
+  "file_hashes_passed": true,
+  "r20_zip_sha256": "3949ae3f3e7669b0d9bc910e1df2d379d7527d988078ff5e7aba390fa3197084",
+  "preliminary_delivery_attempt": "delivery-attempt-before-stage.json (failed, superseded after completed staging)",
+  "zip_created": false,
+  "verified_files": 4525,
+  "hardware": "not_executed",
+  "candidate_sha256": "d3ef65b17757e5ef00e18ad4aedb227498170599da986021ca502e829aa37ff6",
+  "real_ai": "not_executed",
+  "ai_disabled": true,
+  "desktop": "not_executed_user_r20_running"
+}

@@ -191,16 +191,15 @@ impl LogStore for FileLogStore {
 fn sidecar_path(path: &Path) -> PathBuf {
     let mut p = path.to_path_buf();
     let name = format!(
-        "{}.wiparse.idx",
+        "{}.wiparse-v3.idx",
         path.file_name().and_then(|s| s.to_str()).unwrap_or("log")
     );
     p.set_file_name(name);
     p
 }
 
-// Version 2 indexes LF, CRLF, and lone-CR line endings. Bumping the magic
-// invalidates sidecars created by the old LF-only scanner.
-const IDX_MAGIC: &[u8; 8] = b"WPRIDX02";
+// Version 3 also records subsecond file modification time.
+const IDX_MAGIC: &[u8; 8] = b"WPRIDX03";
 
 fn read_u64_le(r: &mut impl Read) -> std::io::Result<u64> {
     let mut b = [0u8; 8];
@@ -233,37 +232,41 @@ fn try_load_sidecar(path: &Path, meta: &std::fs::Metadata) -> Option<(Vec<u64>, 
     let mtime = read_u64_le(&mut f).ok()?;
     let size = read_u64_le(&mut f).ok()?;
     let max_chars = read_u32_le(&mut f).ok()? as usize;
-    let count = read_u64_le(&mut f).ok()? as usize;
-    #[allow(clippy::cast_possible_truncation)]
+    let count = usize::try_from(read_u64_le(&mut f).ok()?).ok()?;
     let file_mtime = meta
         .modified()
         .ok()?
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?
-        .as_secs();
-    #[allow(clippy::cast_possible_truncation)]
+        .as_nanos();
+    let file_mtime=u64::try_from(file_mtime).ok()?;
     if mtime != file_mtime || size != meta.len() {
         return None;
     }
+    let encoded_bytes=(count as u64).checked_mul(8)?.checked_add(36)?;
+    if count as u64>size || max_chars as u64>size || f.metadata().ok()?.len()!=encoded_bytes{return None;}
     let mut starts = Vec::with_capacity(count);
     for _ in 0..count {
-        starts.push(read_u64_le(&mut f).ok()?);
+        let offset=read_u64_le(&mut f).ok()?;
+        if offset>size||starts.last().is_some_and(|last|*last>=offset){return None;}
+        starts.push(offset);
     }
     Some((starts, max_chars))
 }
 
 fn write_sidecar(path: &Path, meta: &std::fs::Metadata, starts: &[u64], max_chars: usize) {
     let side = sidecar_path(path);
-    let Ok(mut f) = File::create(&side) else {
+    // A sidecar can be an existing user file or a link. Never truncate it just
+    // because the cached index is stale or malformed.
+    let Ok(mut f) = std::fs::OpenOptions::new().write(true).create_new(true).open(&side) else {
         return;
     };
     let _ = f.write_all(IDX_MAGIC);
-    #[allow(clippy::cast_possible_truncation)]
     let mtime = meta
         .modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
+        .and_then(|d|u64::try_from(d.as_nanos()).ok())
         .unwrap_or(0);
     let _ = write_u64_le(&mut f, mtime);
     let _ = write_u64_le(&mut f, meta.len());
@@ -331,9 +334,9 @@ fn build_index(
         offset += n as u64;
         if starts.len().is_multiple_of(50_000) {
             if let Some(tx) = progress {
-                let _ = tx.send(FileBuildEvent::Progress {
+                if tx.send(FileBuildEvent::Progress {
                     lines: starts.len(),
-                });
+                }).is_err() { return Err("log indexing cancelled".into()); }
             }
         }
     }
@@ -363,6 +366,56 @@ pub fn build_file_store_worker(path: PathBuf, tx: Sender<FileBuildEvent>) {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn indexing_does_not_replace_an_existing_sidecar() {
+        let dir=std::env::temp_dir().join(format!("wiparse-index-preserve-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();let path=dir.join("sample.log");let side=sidecar_path(&path);
+        std::fs::write(&path,b"one\ntwo\n").unwrap();std::fs::write(&side,b"existing content").unwrap();
+        let (starts,_)=build_index(&path,None).unwrap();assert_eq!(starts.len(),2);
+        assert_eq!(std::fs::read(&side).unwrap(),b"existing content");assert_eq!(std::fs::read(&path).unwrap(),b"one\ntwo\n");
+        std::fs::remove_file(side).unwrap();std::fs::remove_file(path).unwrap();std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn malformed_index_count_is_rejected_without_allocating_it() {
+        let dir=std::env::temp_dir().join(format!("wiparse-index-invalid-{}",uuid::Uuid::new_v4()));std::fs::create_dir(&dir).unwrap();
+        let path=dir.join("sample.log");let side=sidecar_path(&path);std::fs::write(&path,b"a\n").unwrap();
+        let meta=std::fs::metadata(&path).unwrap();let timestamp=u64::try_from(meta.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()).unwrap();
+        let mut file=File::create(&side).unwrap();file.write_all(IDX_MAGIC).unwrap();write_u64_le(&mut file,timestamp).unwrap();write_u64_le(&mut file,meta.len()).unwrap();write_u32_le(&mut file,1).unwrap();write_u64_le(&mut file,u64::MAX).unwrap();drop(file);
+        assert!(try_load_sidecar(&path,&meta).is_none());
+        std::fs::remove_file(side).unwrap();std::fs::remove_file(path).unwrap();std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn fresh_index_is_reused_and_offsets_are_checked() {
+        let dir=std::env::temp_dir().join(format!("wiparse-index-valid-{}",uuid::Uuid::new_v4()));std::fs::create_dir(&dir).unwrap();
+        let path=dir.join("sample.log");let side=sidecar_path(&path);std::fs::write(&path,b"first\nsecond\n").unwrap();
+        let old=dir.join("sample.log.wiparse.idx");std::fs::write(&old,b"previous index").unwrap();
+        let original=build_index(&path,None).unwrap();let meta=std::fs::metadata(&path).unwrap();
+        assert_eq!(try_load_sidecar(&path,&meta).unwrap(),original);
+        assert_eq!(std::fs::read(&old).unwrap(),b"previous index");
+        let mut bytes=std::fs::read(&side).unwrap();let last=bytes.len()-8;bytes[last..].copy_from_slice(&(meta.len()+1).to_le_bytes());std::fs::write(&side,bytes).unwrap();
+        assert!(try_load_sidecar(&path,&meta).is_none());
+        std::fs::remove_file(old).unwrap();std::fs::remove_file(side).unwrap();std::fs::remove_file(path).unwrap();std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn index_supports_a_bom_only_file() {
+        let dir=std::env::temp_dir().join(format!("wiparse-index-bom-{}",uuid::Uuid::new_v4()));std::fs::create_dir(&dir).unwrap();
+        let path=dir.join("sample.log");let side=sidecar_path(&path);std::fs::write(&path,b"\xEF\xBB\xBF").unwrap();
+        let built=build_index(&path,None).unwrap();assert_eq!(try_load_sidecar(&path,&std::fs::metadata(&path).unwrap()).unwrap(),built);
+        std::fs::remove_file(side).unwrap();std::fs::remove_file(path).unwrap();std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn closing_the_log_consumer_stops_the_indexing_worker() {
+        let dir=std::env::temp_dir().join(format!("wiparse-index-cancel-{}",uuid::Uuid::new_v4()));std::fs::create_dir(&dir).unwrap();
+        let path=dir.join("many.log");std::fs::write(&path,"x\n".repeat(100_000)).unwrap();
+        let (tx,rx)=crossbeam_channel::unbounded();drop(rx);
+        assert!(build_index(&path,Some(&tx)).unwrap_err().contains("cancelled"));assert!(!sidecar_path(&path).exists());
+        std::fs::remove_file(path).unwrap();std::fs::remove_dir(dir).unwrap();
+    }
 
     #[test]
     fn file_store_reads_lines() {

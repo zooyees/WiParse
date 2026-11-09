@@ -13,7 +13,7 @@ const HUB_CONTENT_MAX_W: f32 = 1680.0;
 const HUB_WIDE_MIN_W: f32 = 1120.0;
 const HUB_LIST_W: f32 = 320.0;
 const HUB_CHECKS_W: f32 = 320.0;
-const HUB_PANEL_GAP: f32 = 12.0;
+const HUB_PANEL_GAP: f32 = ui_theme::PANEL_GAP;
 #[derive(Default)]
 pub(super) struct Workspace {
     key: String,
@@ -76,6 +76,10 @@ impl Workspace {
     pub(super) fn dirty(&self) -> bool {
         (!self.current.is_empty() && self.document != self.original)
             || self.project_document != self.project_original
+    }
+    #[cfg(test)]
+    pub(super) fn mark_dirty_for_test(&mut self){
+        self.current="case".into();self.original=json!({"name":"old"});self.document=json!({"name":"new"});
     }
 
     pub(super) fn ai_brief(&self) -> Value {
@@ -229,6 +233,10 @@ impl TestToolPanel {
         }
         Ok(())
     }
+    pub fn companion_shutdown_blocked(&self) -> bool {
+        self.workspace.dirty() || self.workspace.rx.is_some() || self.running_plugin_id().is_some()
+    }
+
     pub fn workspace_close_guard(&mut self, ctx: &egui::Context, lang: Lang) {
         self.workspace_poll(ctx);
         self.workspace_nav_dialog(ctx, lang);
@@ -299,10 +307,15 @@ impl TestToolPanel {
         params: Value,
         internal: bool,
     ) -> Value {
-        json!({"context":{"pluginDir":plugin.dir,"dataRoot":self.data_root_resolved(),"project":self.effective_project_id(),"testId":self.hub_test_id_for(plugin),"params":self.param_values,"approvedRoots":self.approved_config_roots,"protectedRoots":[resolve_dir(self.plugins_dir.trim()),self.resolve_marketplace_root()]},"method":method,"params":params,"internal":internal})
+        json!({"context":{"pluginDir":plugin.dir,"activePlugin":self.selected,"dataRoot":self.data_root_resolved(),"project":self.effective_project_id(),"testId":self.hub_test_id_for(plugin),"params":self.param_values,"approvedRoots":self.approved_config_roots,"protectedRoots":[resolve_dir(self.plugins_dir.trim()),self.resolve_marketplace_root()]},"method":method,"params":params,"internal":internal})
     }
     /// API replies are delivered from a bounded background worker, never blocking Stop/UI.
     pub fn api_workspace(&self, req: crate::backend::PendingRequest) {
+        if self.catalog_busy||self.market_job.is_some(){let _=req.reply.try_send(crate::backend::invoke_err(&req.method,"MARKET.BUSY"));return;}
+        if req.method=="ui.test_tool.config.batch"&&req.params.get("expected_project").is_some(){
+            let error=if req.params["expected_project"].as_str()!=Some(self.effective_project_id().as_str())||req.params["plugin"].as_str()!=self.selected.as_deref(){Some("CONFIG.CONTEXT_CHANGED")}else if self.job.is_some(){Some("RUN.STATION_BUSY")}else{None};
+            if let Some(error)=error{let _=req.reply.try_send(crate::backend::invoke_err(&req.method,error));return;}
+        }
         let id = req
             .params
             .get("plugin")
@@ -326,7 +339,10 @@ impl TestToolPanel {
         }
         let node = resolve_command(self.node_path.trim());
         let epoch = self.hub_api_epoch.clone();
+        let workers=self.hub_workers.clone();workers.fetch_add(1,std::sync::atomic::Ordering::AcqRel);
         thread::spawn(move || {
+            struct WorkerGuard(std::sync::Arc<std::sync::atomic::AtomicUsize>);impl Drop for WorkerGuard{fn drop(&mut self){self.0.fetch_sub(1,std::sync::atomic::Ordering::AcqRel);}}
+            let _guard=WorkerGuard(workers);
             if Instant::now() > req.deadline {
                 let _ = req.reply.try_send(crate::backend::invoke_err(
                     &req.method,
@@ -355,11 +371,22 @@ impl TestToolPanel {
             if reply.ok
                 && [
                     "ui.test_tool.config.save",
+                    "ui.test_tool.config.edit",
+                    "ui.test_tool.config.patch",
+                    "ui.test_tool.config.clone",
+                    "ui.test_tool.config.create_saved",
+                    "ui.test_tool.config.select_firmware",
+                    "ui.test_tool.project.patch_dut",
+                    "ui.test_tool.project.patch_resource",
+                    "ui.test_tool.project.patch_serial",
+                    "ui.test_tool.project.patch_dongle_uart",
+                    "ui.test_tool.project.patch_wireless_station",
                     "ui.test_tool.config.archive",
                     "ui.test_tool.config.restore",
                     "ui.test_tool.config.import",
                     "ui.test_tool.config.batch",
                     "ui.test_tool.project.save",
+                    "ui.test_tool.project.edit",
                     "ui.test_tool.project.migration.commit",
                     "ui.test_tool.project.file.activate",
                     "ui.test_tool.project.file.import",
@@ -1275,7 +1302,7 @@ impl TestToolPanel {
         let zh = matches!(lang, Lang::Zh);
         let text = |cn, en| if zh { cn } else { en };
         let available = ui.available_size();
-        ui.add_space((available.y * 0.12).clamp(24.0, 96.0));
+        ui.add_space((available.y * 0.08).clamp(12.0, 48.0));
         let card_w = ui.available_width().min(620.0);
         ui.horizontal(|ui| {
             ui.add_space(((ui.available_width() - card_w) * 0.5).max(0.0));
@@ -1283,10 +1310,10 @@ impl TestToolPanel {
                 .fill(tokens.surface_bg)
                 .stroke(Stroke::new(1.0_f32, tokens.border))
                 .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-                .inner_margin(Margin::same(24))
+                .inner_margin(Margin::same(16))
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
-                        ui.set_width((card_w - 48.0).max(1.0));
+                        ui.set_width((card_w - 32.0).max(1.0));
                         ui.vertical_centered(|ui| {
                             ui.label(
                                 RichText::new(text(
@@ -1669,7 +1696,7 @@ impl TestToolPanel {
                         .any(|id| id.as_str() == Some(&self.workspace.current))
                 });
         if locked {
-            ui.label("CONFIG.LOCKED_BY_RUN");
+            ui.label(RichText::new(if matches!(lang, Lang::Zh) { "测试运行中，配置暂不可修改" } else { "Configuration is locked while the test is running" }).color(tokens.text_muted));
         }
         let mut ui_schema = ui_schema;
         if !ui_schema["groups"].is_array() && ui_schema["layout"]["groups"].is_array() {
@@ -1707,9 +1734,10 @@ impl TestToolPanel {
             let name=self.workspace.document["name"].as_str().filter(|name|!name.is_empty()).unwrap_or(&self.workspace.current);
             let dirty=self.workspace.document!=self.workspace.original;
             let width=(ui.available_width()-if dirty {72.0}else{0.0}).max(1.0);
-            ui.add_sized([width,ui_theme::CTRL_H],egui::Label::new(RichText::new(name)
-                .size(ui_theme::FONT_SECTION).strong().color(tokens.text_primary)).truncate())
-                .on_hover_text(format!("{name}\n{}",self.workspace.current));
+            let (title_rect, response) = ui.allocate_exact_size(egui::vec2(width, ui_theme::CTRL_H), egui::Sense::hover());
+            ui.painter_at(title_rect).text(title_rect.left_center(), egui::Align2::LEFT_CENTER,
+                name, egui::FontId::proportional(ui_theme::FONT_SECTION), tokens.text_primary);
+            response.on_hover_text(format!("{name}\n{}",self.workspace.current));
             if dirty {ui.label(RichText::new(if matches!(lang,Lang::Zh){"已修改"}else{"Modified"}).small().color(tokens.accent));}
         });
         self.paint_config_edit_actions(ui,lang,tokens,locked);
@@ -2510,11 +2538,12 @@ fn form(
                 })
                 .unwrap_or(0);
             let mut chosen = idx;
+            let discriminator_spec = ui_spec(layout, "fields", &format!("{dot}.type"));
             egui::ComboBox::from_id_salt("variant")
-                .selected_text(localized_title(&variants[idx], zh))
+                .selected_text(variant_title(&variants[idx], discriminator_spec, idx, zh))
                 .show_ui(ui, |ui| {
                     for (i, v) in variants.iter().enumerate() {
-                        ui.selectable_value(&mut chosen, i, localized_title(v, zh));
+                        ui.selectable_value(&mut chosen, i, variant_title(v, discriminator_spec, i, zh));
                     }
                 });
             if idx != chosen {
@@ -3074,6 +3103,22 @@ fn localized_title(value: &Value, zh: bool) -> &str {
     .or(value["label"].as_str())
     .unwrap_or(if zh { "选项" } else { "Option" })
 }
+fn variant_title(value: &Value, discriminator_spec: &Value, index: usize, zh: bool) -> String {
+    let label = localized_title(value, zh);
+    if !label.is_empty() && label != "选项" && label != "Option" {
+        return label.to_owned();
+    }
+    let kind = &value["properties"]["type"];
+    let values: Vec<&Value> = if !kind["const"].is_null() {
+        vec![&kind["const"]]
+    } else {
+        kind["enum"].as_array().map(|v| v.iter().collect()).unwrap_or_default()
+    };
+    if !values.is_empty() {
+        return values.iter().map(|v| enum_caption(kind, discriminator_spec, v, zh)).collect::<Vec<_>>().join(" / ");
+    }
+    if zh { format!("方式 {}", index + 1) } else { format!("Method {}", index + 1) }
+}
 fn friendly_error(message: &str, zh: bool) -> &str {
     if !zh {
         return message;
@@ -3217,6 +3262,15 @@ fn has_reference(root: &Value, id: &str, item: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unnamed_union_variants_use_discriminator_labels() {
+        let spec = json!({"enum_labels_zh":{"voltage_threshold":"电压阈值确认","command_ack":"指令应答确认","command_complete":"指令完成确认"}});
+        let voltage = json!({"properties":{"type":{"const":"voltage_threshold"}}});
+        let command = json!({"properties":{"type":{"enum":["command_ack","command_complete"]}}});
+        assert_eq!(variant_title(&voltage, &spec, 0, true), "电压阈值确认");
+        assert_eq!(variant_title(&command, &spec, 1, true), "指令应答确认 / 指令完成确认");
+        assert_eq!(variant_title(&json!({}), &spec, 1, true), "方式 2");
+    }
     pub(super) fn fixture(count: usize) -> TestToolPanel {
         let mut cfg = AppConfig::default();
         cfg.apps.test_tool.plugins_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -3409,6 +3463,7 @@ mod tests {
         let _cleanup = Cleanup(root.clone());
         panel.data_root = root.display().to_string();
         let plugin = panel.selected_plugin().unwrap().clone();
+        assert_eq!(panel.workspace_request(&plugin,"config.list",json!({}),false)["context"]["activePlugin"],plugin.id);
         let call = |method: &str, params: Value| {
             run_worker(
                 "node".into(),

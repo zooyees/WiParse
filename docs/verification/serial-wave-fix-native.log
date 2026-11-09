@@ -1,0 +1,163 @@
+warning: unused import: `Path`
+ --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\waveform_protocol_html.rs:5:17
+  |
+5 | use std::path::{Path, PathBuf};
+  |                 ^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\protocol\decode.rs:891:17
+    |
+891 |             let mut fields = vec![field("pattern", name, "", Some(format!("0x{header:02X}")))];
+    |                 ----^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\rigol_wfm.rs:481:9
+    |
+481 |     let mut dec = ZlibDecoder::new(payload);
+    |         ----^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: function `lfsr_msequence` is never used
+   --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\bus_decode\ddsss.rs:181:8
+    |
+181 | pub fn lfsr_msequence(width: u8, taps: &[u8]) -> Vec<bool> {
+    |        ^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `scope_screen_point_count`, `tek_screen_point_count`, `keysight_screen_point_count`, `prepare_keysight_screen_waveform`, and `apply_tek_visible_data_window` are never used
+    --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\instrument\drivers.rs:1361:8
+     |
+ 882 | impl InstrumentDevice {
+     | --------------------- methods in this implementation
+...
+1361 |     fn scope_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1399 |     fn tek_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^
+...
+1406 |     fn keysight_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1449 |     fn prepare_keysight_screen_waveform(&mut self, channel: u8) -> Result<(), InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2018 |     fn apply_tek_visible_data_window(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `parse_keysight_preamble_points` is never used
+    --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\instrument\drivers.rs:3167:4
+     |
+3167 | fn parse_keysight_preamble_points(pre: &str) -> Option<usize> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `verify_file_against_meta` is never used
+   --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\marketplace\trust.rs:160:8
+    |
+160 | pub fn verify_file_against_meta(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `open_tcp_uart_from_info` is never used
+   --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\serial.rs:636:4
+    |
+636 | fn open_tcp_uart_from_info(info: &PortInfo, baud: u32) -> Result<SerialSession, SerialError> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `load_tek_wfm` is never used
+    --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\waveform_file.rs:1029:4
+     |
+1029 | fn load_tek_wfm(bytes: &[u8], default_channel: &str) -> Result<WaveformTrace, WaveformFileError> {
+     |    ^^^^^^^^^^^^
+
+warning: `wiparse-core` (lib) generated 9 warnings (run `cargo fix --lib -p wiparse-core` to apply 3 suggestions)
+   Compiling wiparse-next v0.1.0 (D:\windlink\windlink\WiParse-R\apps\wiparse-next\src-tauri)
+warning: linker stdout: 正在创建库 D:\windlink\windlink\WiParse-R\apps\wiparse-next\src-tauri\target\debug\deps\wiparse_next-1500182bf1ed01f7.lib 和对象 D:\windlink\windlink\WiParse-R\apps\wiparse-next\src-tauri\target\debug\deps\wiparse_next-1500182bf1ed01f7.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `wiparse-next` (bin "wiparse-next" test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 22.53s
+     Running unittests src\main.rs (apps\wiparse-next\src-tauri\target\debug\deps\wiparse_next-1500182bf1ed01f7.exe)
+
+running 70 tests
+test data_view::tests::export_uses_every_frame_and_escapes_headers ... ok
+test data_view::tests::cached_frame_index_is_reused_and_invalidated_for_a_different_header ... ok
+test data_view::tests::changed_rules_do_not_reinterpret_the_previous_partial_frame ... ok
+test data_view::tests::live_keeps_the_unfinished_frame_and_restarts_when_the_filter_changes ... ok
+test data_view::tests::frame_range_keeps_absolute_indices_and_recomputes_visible_extrema ... ok
+test data_view::tests::optional_real_log_extracts_without_device_access ... ok
+test data_view::tests::original_filter_semantics_and_missing_values ... ok
+test data_view::tests::a_previous_source_cannot_append_after_live_session_reset ... ok
+test protocol_overlay::tests::invalid_or_unbounded_overlay_requests_are_rejected ... ok
+test report_view::tests::indexed_report_must_match_an_actual_tree_entry ... ok
+test report_view::tests::local_images_are_jail_limited_and_external_sources_rejected ... ok
+test protocol_overlay::tests::zoomed_chip_window_preserves_original_time_and_uncertain_polarity ... ok
+test protocol_overlay::tests::viewport_keeps_selected_frame_without_exceeding_budget ... ok
+test report_view::tests::report_location_rejects_a_broken_path ... ok
+test report_view::tests::reads_actual_document_with_hash_and_rejects_other_types ... ok
+test commit_file::tests::publishes_unicode_names_and_never_replaces_existing_files ... ok
+test log_browser::tests::directory_navigation_never_escapes_selected_root ... ok
+test runtime_update::tests::update_sources_reject_plain_http_credentials_and_cross_origin ... ok
+test data_view::migration_cache_tests::sparse_legacy_wida_roundtrips_metadata_ranges_and_csv ... ok
+test tests::bridge_response_reader_rejects_oversized_and_invalid_json ... ok
+test tests::converter_accepts_only_bounded_explicit_fields ... ok
+test serial_events::tests::fragmented_headers_and_records_survive_idle_reads ... ok
+test data_view::tests::large_valid_batches_commit_frames_before_trimming_the_partial_tail ... ok
+test tests::crc_rejects_unrecognised_settings ... ok
+test tests::fpga_patch_requires_project_and_snapshot ... ok
+test tests::electrical_calculator_validates_operation_and_all_fields ... ok
+test tests::legacy_error_retains_specific_code_or_message ... ok
+test tests::lc_validation_excludes_arbitrary_commands_and_bad_numbers ... ok
+test tests::host_identity_rejects_old_wrong_or_incomplete_services ... ok
+test tests::only_explicit_read_methods_are_allowed ... ok
+test report_view::tests::indexed_report_rejects_a_listed_file_outside_its_project ... ok
+test tests::serial_controls_reject_arbitrary_resources ... ok
+test hub_files::tests::exported_file_is_new_and_preserves_all_bytes ... ok
+test serial_events::tests::rejected_and_oversized_streams_do_not_look_like_success ... ok
+test tests::fpga_rules_reject_unrelated_fields_and_inverted_limits ... ok
+test tests::removable_test_id_matches_project_identifiers ... ok
+test tests::optional_supplied_tx_log_import_preserves_all_bytes ... ok
+test tests::legacy_response_is_interpreted_without_fabricating_a_result ... ok
+test tests::wireless_input_excludes_unimplemented_modes_and_invalid_selection ... ok
+test tests::scope_settings_export_creates_new_file_without_overwriting ... ok
+test wave_view::tests::empty_primary_view_keeps_shared_document_axes ... ok
+test wave_view::tests::decode_settings_keep_core_defaults_and_reject_bad_input ... ok
+test wave_view::tests::indexed_wave_accepts_only_waveform_extensions ... ok
+test report_view::tests::evidence_links_accept_portable_and_legacy_paths_but_reject_escape_and_executables ... ok
+test wave_view::tests::frequency_is_not_labelled_hertz_when_time_unit_is_not_seconds ... ok
+test tests::screenshot_export_preserves_bytes_and_never_replaces_existing_file ... ok
+test wave_view::tests::native_export_rejects_timebase_loss_before_creating_a_file ... ok
+test tests::host_lookup_uses_the_packaged_sibling_and_the_workspace_binary ... ok
+test wave_view::tests::actual_scope_fixtures_load_and_produce_bounded_views ... ok
+test wave_view::tests::export_never_overwrites_and_preserves_original_samples ... ok
+test commit_file::tests::supports_long_paths_and_one_winner_for_concurrent_publication ... ok
+test wave_view::tests::supplied_scope_record_loads_and_views_without_copying_source_arrays ... ignored, requires WIPARSE_WAVE_SAMPLE; large real scope fixture, run explicitly
+test wave_view::tests::supplied_scope_viewport_stress_uses_exact_index_and_bounded_output ... ignored, requires WIPARSE_WAVE_SAMPLE; records real-file viewport pressure evidence
+test wave_view::tests::supplied_scp_record_uses_core_decode_and_field_explanations ... ignored, requires WIPARSE_WAVE_SAMPLE pointing at the supplied SCP record
+test wave_view::tests::multichannel_fixture_renders_a_shared_range_with_bounded_output ... ok
+test wave_extrema::tests::invalid_samples_are_rejected_and_large_index_is_small ... ok
+test tests::wireless_log_import_is_bounded_idempotent_and_never_replaces_data ... ok
+test wave_view::tests::superseded_measurements_are_not_returned ... ok
+test wave_view::tests::large_constant_signal_keeps_sample_count_and_value ... ok
+test wave_view::tests::protocol_overlay_requires_current_generation_revision_and_gate_and_shares_samples ... ok
+test wave_view::tests::rendering_preserves_extrema_and_rejects_bad_ranges ... ok
+test wave_view::tests::open_replaces_append_respects_remaining_budget_and_failure_preserves_library ... ok
+test wave_extrema::tests::indexed_ranges_match_exact_scan_at_block_edges_and_tail ... ok
+test wave_view::tests::legacy_export_formats_roundtrip_without_overwriting_or_changing_samples ... ok
+test data_view::tests::large_input_is_bounded_and_keeps_extrema ... ok
+test wave_view::tests::indexed_views_preserve_every_bucket_for_nonuniform_times_spikes_and_zoom ... ok
+test wave_view::tests::waveform_library_groups_sources_shares_samples_and_removes_transactionally ... ok
+test report_view::large_report_tests::report_over_four_mib_has_full_hash_and_bounded_utf8_preview ... ok
+test data_view::tests::live_window_drops_the_oldest_frames_after_the_original_cap ... ok
+test tests::unused_loopback_port_allows_cold_host_start_on_windows ... ok
+
+test result: ok. 67 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 2.07s
+

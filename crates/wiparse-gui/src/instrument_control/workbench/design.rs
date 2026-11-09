@@ -12,9 +12,9 @@ pub(super) fn section(
     Frame::NONE
         .fill(t.surface_bg)
         .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
-        .inner_margin(Margin::same(12))
+        .inner_margin(Margin::same(8))
         .show(ui, |ui| {
-            ui.set_width((width - 24.0).max(1.0));
+            ui.set_width((width - 16.0).max(1.0));
             if !title.is_empty() {
                 ui.label(
                     RichText::new(title)
@@ -25,11 +25,11 @@ pub(super) fn section(
                 if !subtitle.is_empty() {
                     ui.label(RichText::new(subtitle).size(12.0).color(t.text_muted));
                 }
-                ui.add_space(12.0);
+                ui.add_space(6.0);
             }
             body(ui);
         });
-    ui.add_space(12.0);
+    ui.add_space(8.0);
 }
 
 /// Every label, value and accessory follows the same row alignment.
@@ -324,10 +324,10 @@ pub(super) fn metric(
 pub(super) fn split(ui: &mut egui::Ui, mut content: impl FnMut(&mut egui::Ui, usize)) {
     let width = ui.available_width();
     if width >= 720.0 {
-        let left = (width - 16.0) * 0.5;
+        let left = (width - 8.0) * 0.5;
         ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = 16.0;
-            for (i, width) in [left, (width - left - 16.0).max(1.0)]
+            ui.spacing_mut().item_spacing.x = 8.0;
+            for (i, width) in [left, (width - left - 8.0).max(1.0)]
                 .into_iter()
                 .enumerate()
             {
@@ -357,7 +357,7 @@ pub(super) fn nav_row(
     connected: bool,
 ) -> egui::Response {
     let (r, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 54.0), egui::Sense::click());
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 42.0), egui::Sense::click());
     if selected || response.hovered() {
         ui.painter().rect_filled(
             r,
@@ -396,8 +396,8 @@ pub(super) fn nav_row(
         Stroke::new(1.2_f32, color),
     ));
     let rect = Rect::from_min_max(
-        egui::pos2(r.left() + 42.0, r.top() + 7.0),
-        egui::pos2(r.right() - 18.0, r.bottom() - 6.0),
+        egui::pos2(r.left() + 42.0, r.top() + 4.0),
+        egui::pos2(r.right() - 18.0, r.bottom() - 4.0),
     );
     theme::scope_in_allocated_rect(
         ui,
@@ -435,13 +435,13 @@ pub(super) fn task_form(
     let width = ui.available_width();
     if width < 460.0 {
         parameters(ui, lang, t, d);
-        ui.add_space(12.0);
+        ui.add_space(8.0);
         return actions(ui, lang, t, d);
     }
     let mut out = Vec::new();
-    let parameter_width = width - 240.0;
+    let parameter_width = width - 232.0;
     let row = ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing.x = 16.0;
+        ui.spacing_mut().item_spacing.x = 8.0;
         ui.allocate_ui_with_layout(
             egui::vec2(parameter_width, 0.0),
             egui::Layout::top_down(egui::Align::Min),
@@ -491,7 +491,7 @@ pub(super) fn aligned_panel(
     theme::scope_in_allocated_rect(
         ui,
         egui::UiBuilder::new()
-            .max_rect(rect.shrink(12.0))
+            .max_rect(rect.shrink(8.0))
             .layout(egui::Layout::top_down(egui::Align::Min)),
         |ui| {
             ui.set_clip_rect(rect.intersect(ui.clip_rect()));
@@ -501,9 +501,9 @@ pub(super) fn aligned_panel(
                     .strong()
                     .color(t.text_primary),
             );
-            ui.add_space(12.0);
+            ui.add_space(6.0);
             body(ui);
         },
     );
-    ui.add_space(12.0);
+    ui.add_space(8.0);
 }

@@ -1,5 +1,7 @@
 # WiParse
 
+当前新框架开发分支：`codex/tauri-gui-migration`（Tauri 2 + React + TypeScript）。入口、构建和最新 R46 验证结果见 [新框架分支说明](docs/TAURI_BRANCH.md)。
+
 **[中文](#中文)** · **[English](#english)**
 
 无线充电（Qi）测试与工位工具。当前版本 **1.2.2**（以工作区 `Cargo.toml` 的 `workspace.package.version` 为准）。

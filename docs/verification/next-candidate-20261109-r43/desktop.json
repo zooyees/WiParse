@@ -1,0 +1,15 @@
+{
+  "candidate": "R43",
+  "passed": true,
+  "scope": "final help layout delta; functional acceptance inherited explicitly from R42",
+  "qa_directory": "dist/WiParse-Next-20261109-QA-R42",
+  "qa_binary_matches": "R43 candidate SHA256, checked before launch",
+  "observed": [
+    "DDSSS help spans entire sidebar grid row",
+    "Decode button remains below help aligned with first column; no side-by-side narrow paragraph",
+    "Empty source correctly shows Select channel and disabled Decode"
+  ],
+  "inherited_desktop": "R42 actual DDSSS 3frames retained after X1/X2 and cursor focus; R43 changes only help grid span/margin",
+  "not_retested": "full R41 workflow, hardware, real AI, long-running stress",
+  "screenshot": "ddsss-help-layout.jpg"
+}

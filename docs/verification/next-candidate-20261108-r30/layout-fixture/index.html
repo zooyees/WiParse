@@ -1,0 +1,9 @@
+<!doctype html><meta charset="utf-8"><title>WiParse isolated layout regression</title><h1>WiParse layout checks</h1><pre id="result">Running</pre><div id="frames"></div><script>
+(async()=>{const results=[];for(const [width,height] of [[1000,720],[900,600],[520,800]])for(const flavor of ['current','legacy']){
+ for(const kind of ['wave','probe']){const frame=document.createElement('iframe');frame.width=width;frame.height=height;frame.src=`${kind}-${flavor}.html`;document.querySelector('#frames').append(frame);await new Promise(resolve=>frame.onload=resolve);await new Promise(requestAnimationFrame);
+ const d=frame.contentDocument;let passed,details;
+ if(kind==='wave'){const plot=d.querySelector('.wave-plot').getBoundingClientRect(),canvas=d.querySelector('canvas').getBoundingClientRect(),meta=d.querySelector('.wave-meta').getBoundingClientRect();passed=canvas.bottom<=plot.bottom+1&&canvas.top>=plot.top-1&&meta.top>=canvas.bottom-1;details={canvas_bottom:canvas.bottom,plot_bottom:plot.bottom,measurements_top:meta.top};}
+ else{const input=d.querySelector('input[type=checkbox]').getBoundingClientRect(),label=d.querySelector('input[type=checkbox]').parentElement.getBoundingClientRect();passed=input.width<=20&&input.height<=20&&input.left-label.left<12;details={checkbox_width:input.width,label_left:label.left,checkbox_left:input.left};}
+ results.push({kind,flavor,width,height,passed,details});}
+ }const current=results.filter(r=>r.flavor==='current');const legacy=results.filter(r=>r.flavor==='legacy');document.querySelector('#result').textContent=JSON.stringify({passed:current.every(r=>r.passed),regression_sensitivity:legacy.some(r=>!r.passed),results},null,2);})();
+</script>

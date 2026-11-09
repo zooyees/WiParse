@@ -1,0 +1,25 @@
+{
+  "runtime": "dist/WiParse-Next-20261108-QA-R25",
+  "hardware_mode": "7 built-in demo sessions only",
+  "observed": [
+    "workspace starts and owns companion",
+    "two-channel CSV loads and source extrema visible",
+    "display gain 2 survives wave to data to wave",
+    "legacy-compatible WIDA displays 120 frames and 2 curves",
+    "Markdown table and waveform PNG render inline",
+    "report CSV link switches to waveform tool",
+    "oscilloscope 4 channels and preview open",
+    "probe flash/verify/erase UI visible; no firmware command issued"
+  ],
+  "issues_found": [
+    "canvas intrinsic sizing overflow; fixed in R26 CSS",
+    "probe verify checkbox alignment; fixed in R27 CSS"
+  ],
+  "not_executed": [
+    "real instruments",
+    "real probe flash or erase",
+    "real AI",
+    "all DPI/monitor matrix",
+    "long-duration load"
+  ]
+}

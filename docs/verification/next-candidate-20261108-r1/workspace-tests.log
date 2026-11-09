@@ -1,0 +1,8 @@
+cargo.exe : warning: variable does not need to be mutable
+At D:\windlink\windlink\WiParse-R\scripts\verify-next-candidate.ps1:20 char:11
++     try { & $Program @Arguments *> (Join-Path $evidence "$Name.log"); ...
++           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: variab...d to be mutable:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+

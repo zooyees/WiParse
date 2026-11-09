@@ -1,0 +1,24 @@
+{
+  "kind":"wiparse_next_partial_desktop_validation",
+  "date":"2026-11-08",
+  "source":"Windows Computer Use screenshots and accessibility",
+  "windows":[{"candidate":"r9","pixels":[1443,931],"theme":"dark"},{"candidate":"r11","pixels":[1443,931],"theme":"light"}],
+  "observations":[
+    {"candidate":"r9","check":"cold startup, protected host readiness and actual selected plugin","result":"passed"},
+    {"candidate":"r9","check":"example smoke preflight and run","result":"UI observed running then completed; not full plugin acceptance"},
+    {"candidate":"r9","check":"engineering assistant explicit preview and local fixed mock reply","result":"passed: heading/table/list/code block readable and navigation unlocked after completion","network":"loopback only","requests":1,"request_bytes":1032,"messages":2},
+    {"candidate":"r9","check":"scope/DC/load/DMM/probe/bridge/dongle demo panels and data empty view","result":"observed; load layout and boolean label defects subsequently corrected"},
+    {"candidate":"r9","check":"synthetic square-wave display","result":"passed: high/low plateaus and padded axis visible with dark grid"},
+    {"candidate":"r11","check":"cold startup and simulated scope","result":"passed"},
+    {"candidate":"r11","check":"electronic load field/button alignment and DMM boolean label","result":"passed"},
+    {"candidate":"r11","check":"portable example Markdown and relative embedded PNG","result":"passed"},
+    {"candidate":"r11","check":"report chapter navigation and linked raw log starts at first line","result":"passed"},
+    {"candidate":"r11","check":"new install without initialized project","result":"raw PROJECT.NOT_FOUND observed; friendly guidance fixed in r12"}
+  ],
+  "not_executed":["physical instruments/DUT/USB hotplug","real AI provider","full old feature equivalence","all settings and log operations","1100x720/1920x1080 window matrix","125/150 percent DPI","actual Ctrl+wheel and middle-button input","multi-hour performance/stability","five formal acceptance rounds"],
+  "mock_server_stopped":true,
+  "keys_used":false,
+  "hardware_commands_sent":false,
+  "formal_rounds_passed":0,
+  "industrial_approved":false
+}

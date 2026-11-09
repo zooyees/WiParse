@@ -1,0 +1,5 @@
+{
+ "kind":"wiparse_next_partial_desktop_validation","candidate":"r19","date":"2026-11-08","pixels":[1443,931],"theme":"dark",
+ "observations":[{"check":"cold startup","result":"passed"},{"check":"two-file waveform grouping and Close all wording","result":"passed"},{"check":"source-qualified cross-file legend and colors","result":"passed: 1 scope-simulation.csv and 2 scope-comparison.csv match the blue/orange plotted signals"},{"check":"selected interaction-mode visibility","result":"dark theme override obscured selection; fixed and desktop-retested in r20"}],
+ "hardware_commands_sent":false,"real_ai_called":false,"formal_rounds_passed":0,"industrial_approved":false
+}

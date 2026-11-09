@@ -46,7 +46,16 @@ export function atomicWrite(file, bytes) {
   const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID()}.tmp`);
   const fd = fs.openSync(tmp, 'wx', 0o600);
   try { fs.writeFileSync(fd, bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-  try { fs.renameSync(tmp, file); flushDir(path.dirname(file)); }
+  try {
+    // Windows file scanners may briefly hold the destination without delete
+    // sharing. Retry only the same atomic rename; never unlink the destination.
+    const delays=[10,20,40,80,160];let attempt=0;
+    for(;;){try{fs.renameSync(tmp,file);break;}catch(e){
+      if(process.platform!=='win32'||!['EPERM','EACCES','EBUSY'].includes(e.code)||attempt>=delays.length||!fs.existsSync(tmp))throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,delays[attempt++]);
+    }}
+    flushDir(path.dirname(file));
+  }
   catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }
 }
 export function appendSync(file, text) {

@@ -1,0 +1,16 @@
+{
+  "id": "wcv_11",
+  "name": "输入欠压",
+  "enabled": true,
+  "order": 110,
+  "tags": [
+    "研发",
+    "TX"
+  ],
+  "objective": "UVLO 原因、停桥和恢复",
+  "stimulus": "按产品与工位条件执行：输入欠压",
+  "internal_evidence": "记录固件状态、原因码及相关日志，具体字段待产品定义。",
+  "physical_evidence": "采集并核对：UVLO 原因、停桥和恢复",
+  "judgment": "根据产品配置的限值、状态和证据质量判定；限值待产品确认。",
+  "notes": "测试模板：设备、时序、刺激和具体限值尚未配置。"
+}

@@ -104,18 +104,16 @@ pub fn parse_usb_resource(address: &str) -> Option<UsbResource> {
     } else {
         return None;
     };
-    let rest = rest.split_once('?').map(|(p, _)| p).unwrap_or(rest);
+    let (rest, query) = rest.split_once('?').unwrap_or((rest, ""));
     let (iface_str, serial) = if let Some((head, tail)) = rest.split_once("/serial=") {
         (head, tail.trim().to_owned())
-    } else if let Some((head, tail)) = rest.split_once('?') {
-        let serial = tail
+    } else {
+        let serial = query
             .split('&')
             .find_map(|p| p.strip_prefix("serial="))
             .unwrap_or("")
             .to_owned();
-        (head, serial)
-    } else {
-        (rest, String::new())
+        (rest, serial)
     };
     let iface = match iface_str.trim().to_ascii_lowercase().as_str() {
         "jlink" | "j-link" => UsbIface::Jlink,
@@ -285,6 +283,9 @@ mod tests {
         assert_eq!(j.to_address(), "probe://jlink/serial=ABC");
         let b = parse_usb_resource("bridge://ft4222/serial=FT1").unwrap();
         assert_eq!(b.iface, UsbIface::Ft4222);
+        let query = parse_usb_resource("bridge://ft4222?serial=FT1&mode=i2c").unwrap();
+        assert_eq!(query.iface, UsbIface::Ft4222);
+        assert_eq!(query.serial, b.serial);
         assert_eq!(b.iface.kind(), InstrumentKind::UsbBridge);
         let d = parse_usb_resource("dongle://wiparse/serial=ABC?host=dap.local").unwrap();
         assert_eq!(d.iface, UsbIface::WiparseDongle);

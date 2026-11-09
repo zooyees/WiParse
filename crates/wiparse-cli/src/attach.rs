@@ -51,7 +51,18 @@ fn call_json(url: &str, method: &str, body: Option<&Value>) -> Result<Value, Str
         let Some(body) = body else {
             return Err("POST missing JSON body".into());
         };
-        ureq::post(url)
+        let mut request=ureq::post(url);
+        if url.starts_with("http://127.0.0.1:7878/v1/") {
+            let health=health("http://127.0.0.1:7878")?;
+            if health.pointer("/data/control_auth_required").and_then(Value::as_bool)==Some(true) || body["method"].as_str().is_some_and(|method|method.starts_with("ui.ai.")) {
+                let token=if let Ok(token)=std::env::var("WIPARSE_LOCAL_API_TOKEN") {token}else{
+                    let reference=health.pointer("/data/ai_auth_ref").and_then(Value::as_str).ok_or("本机服务凭据不可用")?;
+                    wiparse_core::ai::load_local_bridge_token(reference)?
+                };
+                request=request.set("Authorization",&format!("Bearer {token}"));
+            }
+        }
+        request
             .timeout(Duration::from_secs(90))
             .set("Content-Type", "application/json")
             .send_json(body)
@@ -81,7 +92,17 @@ pub fn stream_events(url: &str, since_seq: u64) -> Result<(), String> {
         "{}/v1/events?since_seq={since_seq}",
         url.trim_end_matches('/')
     );
-    let resp = ureq::get(&url)
+    let mut request=ureq::get(&url);
+    if url.starts_with("http://127.0.0.1:7878/v1/") {
+        let health=health("http://127.0.0.1:7878")?;
+        if health.pointer("/data/control_auth_required").and_then(Value::as_bool)==Some(true){
+            let token=if let Ok(token)=std::env::var("WIPARSE_LOCAL_API_TOKEN"){token}else{
+                wiparse_core::ai::load_local_bridge_token(health.pointer("/data/ai_auth_ref").and_then(Value::as_str).ok_or("本机服务凭据不可用")?)?
+            };
+            request=request.set("Authorization",&format!("Bearer {token}"));
+        }
+    }
+    let resp = request
         .timeout(Duration::from_secs(24 * 3600))
         .call()
         .map_err(|e| format!("events connect failed: {e}"))?;

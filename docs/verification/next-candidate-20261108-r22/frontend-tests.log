@@ -1,0 +1,106 @@
+
+> wiparse-next@0.1.0 test
+> node --test tests/*.test.mjs
+
+✔ bandpass schematic nodes stay inside the drawing and run left to right (0.9651ms)
+✔ crc parameter table matches the old presets and hides an invalid custom polynomial (2.9875ms)
+✔ display mapping keeps the old full-scale spans and kind bands (1.2989ms)
+✔ the shared axis fits mapped extrema and zooms around the center (0.2981ms)
+✔ dragging a handle follows the old offset and scale formulas (0.9037ms)
+✔ serial live starts at the recent tail and skips rows the log has already dropped (0.9409ms)
+✔ live analysis identity normalizes whitespace but preserves exact header/filter semantics (0.1696ms)
+✔ pending operation survives reopening and blocks another command until verified (1.0819ms)
+✔ a late completion cannot remove a newer recovery marker (0.1982ms)
+✔ storage errors prevent starting an untracked operation (0.1585ms)
+✔ manual console and power controls share the same resource recovery marker (0.135ms)
+✔ legacy recovery markers remain blocking until the operator acknowledges them (0.1371ms)
+✔ engineering request includes only explicit context and the last eight selected turns (2.0069ms)
+✔ engineering request uses the bridge UTF-8 byte budget and rejects invalid input (0.6789ms)
+✔ scientific keypad appends the old tokens and edits one character at a time (2.8293ms)
+✔ interface language switches without changing unknown source data (1.5781ms)
+✔ resonance points stay in frequency order and drop invented samples (2.9255ms)
+✔ configured items use matching results, with no fabricated pass (10.9742ms)
+✔ validation and historical phase use readable labels (2.6516ms)
+✔ status filters never count stale results as passed (0.5997ms)
+✔ 500 test items render a bounded window and retain the correct scroll geometry (1.5699ms)
+✔ stale and missing results are not shown as current pass (1.4121ms)
+✔ platform navigation uses only current explicit requests and known pages (2.8131ms)
+✔ workspace selection follows actual host activation and never invents a default (1.2232ms)
+✔ radix conversion matches the old signed i128 cases (2.3919ms)
+✔ rc settling matches the old one, three and five tau percentages (1.9016ms)
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+file:///D:/windlink/windlink/WiParse-R/apps/wiparse-next/src/reportImageLoader.ts:7
+  private active=0;
+  constructor(private limit=3){if(!Number.isSafeInteger(limit)||limit<1)throw Error('图片并发限制无效');}
+                      ^^^^^^^
+  enqueue(owner:object,run:()=>Promise<string>):Promise<string>{
+
+SyntaxError [ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX]: TypeScript parameter property is not supported in strip-only mode
+    at parseTypeScript (node:internal/modules/typescript:68:40)
+    at processTypeScriptCode (node:internal/modules/typescript:146:42)
+    at stripTypeScriptModuleTypes (node:internal/modules/typescript:209:22)
+    at ModuleLoader.<anonymous> (node:internal/modules/esm/translators:641:29)
+    at #translate (node:internal/modules/esm/loader:451:20)
+    at afterLoad (node:internal/modules/esm/loader:507:29)
+    at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:512:12)
+    at #getOrCreateModuleJobAfterResolve (node:internal/modules/esm/loader:555:36)
+    at afterResolve (node:internal/modules/esm/loader:603:52)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:609:12) {
+  code: 'ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX'
+}
+
+Node.js v24.15.0
+✖ tests\report-image-loader.test.mjs (284.1525ms)
+✔ report links route portable evidence and legacy local paths to the correct viewer (4.6206ms)
+✔ report links never treat executable schemes or shares as evidence (0.9709ms)
+✔ all report headings have stable unique anchors, including formatted titles (3.1292ms)
+✔ report artifacts follow the old extension and group view (2.2552ms)
+✔ latest markdown ignores newer logs and keeps the last equal mtime after path order (1.8762ms)
+✔ a test report follows run order when modification times match (0.9675ms)
+✔ referenced configuration forms preserve required fields and choose the actual rule variant (6.1778ms)
+✔ readOnly constants and defaults keep their actual JSON types (0.8331ms)
+✔ nullable and primitive schema alternatives retain their actual variant (0.4236ms)
+✔ scope triggers preserve array and items document contracts (3.1188ms)
+✔ history search can distinguish case or ignore it (3.7158ms)
+✔ tracks the chosen log through reordered tabs and refuses an absent view (0.436ms)
+✔ finds a match beyond the current page and resumes after it (5.475ms)
+✔ continues correctly when the byte limit makes a page shorter (3.3885ms)
+✔ detects evicted rows and refuses a mixed snapshot (1.3321ms)
+✔ rejects a replaced log even when its row count is unchanged (0.6442ms)
+✔ reports previously evicted rows and honors cancellation (0.7621ms)
+✔ next and previous wrap within the same retained snapshot (0.6082ms)
+✔ reverse search finds the last match even with byte-shortened pages (1.0741ms)
+✔ reverse search rejects mutation and honors cancellation between partial pages (2.0877ms)
+✔ row navigation refuses evicted rows, partial numbers and unsafe integers (0.3262ms)
+✔ serial navigation shortcuts preserve browser chords, repeats and direction (1.1284ms)
+✔ collects matching retained rows across byte-shortened pages with bounded previews (9.1537ms)
+✔ all-results capacity does not change the count or original log limit (1.1399ms)
+✔ all-results scan rejects eviction, edits and cancellation instead of mixing snapshots (1.6044ms)
+✔ masked values retain original locations through edits and reordering (2.4025ms)
+✔ a third cursor replaces the pair and vertical clicks use the plot scale (3.1152ms)
+✔ auto extent keeps square-wave plateaus inside the plot and overlays share its cursor scale (0.8302ms)
+✔ nonrepresentable padded extents are rejected instead of drawing NaN pixels (0.3223ms)
+✔ wheel zoom keeps the pointer sample anchored and clamps at both source ends (0.6386ms)
+✔ repeated zoom cannot collapse below source resolution or produce invalid ranges (2.429ms)
+✔ cursor dragging picks the closest visible handle and keeps stable pair indices (0.3627ms)
+✔ reverse box gestures use the same source and vertical mapping as the plot (0.4719ms)
+✔ rail keeps 200px minimum and reserves room for content at supported window sizes (1.3135ms)
+✔ narrow containers keep the rail readable and require overflow instead of hiding controls (0.1806ms)
+✔ corrupt or obsolete persisted widths recover to the user-required default (0.1669ms)
+ℹ tests 63
+ℹ suites 0
+ℹ pass 62
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1367.8253
+
+✖ failing tests:
+
+test at tests\report-image-loader.test.mjs:1:1
+✖ tests\report-image-loader.test.mjs (284.1525ms)
+  'test failed'

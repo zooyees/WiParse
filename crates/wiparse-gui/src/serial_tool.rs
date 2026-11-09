@@ -626,6 +626,49 @@ impl SerialToolPanel {
         self.persist_open_log_files();
     }
 
+    pub fn api_apply_default_baudrates(&mut self,values:&[String]) {
+        // Changing the menu must never restart or reconfigure a running link.
+        self.baud_options=values.to_vec();
+        self.baud_custom=!self.baud_options.iter().any(|value|value==&self.baud);
+    }
+
+    fn recording_settings(&self)->serde_json::Value {
+        serde_json::json!({"enabled":self.save_live_to_disk,"file_name":self.committed_live_name,"directory":self.live_dir})
+    }
+
+    pub fn api_recording_status(&self)->serde_json::Value {
+        use std::hash::{Hash,Hasher};let settings=self.recording_settings();let mut hash=std::collections::hash_map::DefaultHasher::new();settings.to_string().hash(&mut hash);
+        serde_json::json!({"enabled":self.save_live_to_disk,"active":self.live_writer.is_some(),"error":self.recording_error,"file_name":self.live_file.as_ref().and_then(|p|p.file_name()).and_then(|n|n.to_str()),"file_path":self.live_file.as_ref().map(|p|p.display().to_string()),"settings":settings,"revision":format!("{:016x}",hash.finish())})
+    }
+
+    pub fn api_recording_settings_safe(&mut self,cfg:&mut AppConfig,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.serial.recording_settings_safe";
+        if self.monitoring||!self.extras.is_empty()||self.is_test_running(){return err(method,"SERIAL.MONITOR_IN_PROGRESS");}
+        let status=self.api_recording_status();if params["revision"].as_str()!=status["revision"].as_str(){return err(method,"SERIAL.SETTINGS_STALE");}
+        let Some(enabled)=params["enabled"].as_bool() else{return err(method,"SERIAL.INVALID_REQUEST")};
+        let Some(raw)=params["file_name"].as_str().filter(|value|value.len()<=120) else{return err(method,"SERIAL.INVALID_NAME")};
+        let Ok(name)=normalized_log_name(raw) else{return err(method,"SERIAL.INVALID_NAME")};
+        let stem=name.split('.').next().unwrap_or("").to_ascii_uppercase();
+        if matches!(stem.as_str(),"CON"|"PRN"|"AUX"|"NUL")||(stem.len()==4&&(stem.starts_with("COM")||stem.starts_with("LPT"))&&matches!(stem.as_bytes()[3],b'1'..=b'9')){return err(method,"SERIAL.INVALID_NAME");}
+        let Some(directory)=params["directory"].as_str().filter(|value|!value.trim().is_empty()&&value.len()<=4096&&!value.chars().any(char::is_control)) else{return err(method,"SERIAL.INVALID_DIRECTORY")};
+        // Closing the existing writer is the only action on the previous file.
+        // Editing defaults must never rename, truncate or delete captured data.
+        if let Err(error)=self.close_live_writer(){self.recording_error=Some(error.to_string());return err(method,"SERIAL.FLUSH_FAILED");}
+        let mut next=cfg.clone();next.log_monitor.default_filename=name.clone();next.log_monitor.save_dir=directory.to_string();next.log_monitor.save_live_to_disk=enabled;
+        if let Err(error)=wiparse_core::config::save_config(&next){return err(method,&format!("SERIAL.SAVE_FAILED: {error}"));}
+        self.live_name=name.clone();self.committed_live_name=name;self.live_dir=directory.to_string();self.live_file=None;self.save_live_to_disk=enabled;self.live_write_failed=false;self.recording_error=None;
+        if let Some(tab)=self.tabs.first_mut(){tab.title=self.committed_live_name.clone();}
+        *cfg=next;ok(method,self.api_recording_status())
+    }
+
+    pub fn api_set_recording_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};
+        let Some(enabled)=params.get("enabled").and_then(|v|v.as_bool()) else{return err("ui.serial.recording_safe","SERIAL.INVALID_REQUEST")};
+        if self.monitoring||!self.extras.is_empty(){return err("ui.serial.recording_safe","SERIAL.MONITOR_IN_PROGRESS");}
+        self.set_save_live_to_disk(enabled);
+        ok("ui.serial.recording_safe",self.api_recording_status())
+    }
+
     fn release_writer_if_target_is_being_edited(&mut self) {
         let Some(live) = self.live_file.clone() else {
             return;
@@ -902,6 +945,25 @@ impl SerialToolPanel {
         self.write_tx.clone()
     }
 
+    /// Enqueue bytes for the explicitly named, confirmed open port. This does
+    /// not imply that the device has received them; the worker performs I/O.
+    pub fn api_queue_device_bytes(&self,device:&str,bytes:Vec<u8>)->Result<(),String>{
+        if bytes.is_empty()||bytes.len()>4096{return Err("SERIAL.INVALID_DATA".into());}
+        if !self.ai_confirmed.keys().any(|port|Self::serial_ports_equal(port,device)){return Err("SERIAL.NOT_CONFIRMED".into());}
+        let sender=if self.primary_device.as_deref().is_some_and(|port|Self::serial_ports_equal(port,device)) {
+            self.write_tx.as_ref()
+        }else{self.extras.iter().find(|link|Self::serial_ports_equal(&link.device,device)).map(|link|&link.write_tx)};
+        sender.ok_or("SERIAL.NOT_MONITORING")?.send(bytes).map_err(|_|"SERIAL.WRITE_QUEUE_CLOSED".into())
+    }
+
+    pub fn log_versions(&self)->Vec<(u64,u64,usize,bool,Option<String>)>{
+        let mut versions:Vec<_>=self.tabs.iter().map(|tab|(tab.ai_view_id(),tab.content_epoch(),tab.dropped().saturating_add(tab.line_count()),tab.loading,tab.load_error.clone())).collect();
+        versions.push((u64::MAX,self.active_tab as u64,0,false,None));versions
+    }
+    pub fn publish_log_changes(&self,before:&[(u64,u64,usize,bool,Option<String>)],api:&crate::backend::ApiBridge){
+        if before!=self.log_versions(){api.events.publish("serial.log.changed",serde_json::json!({}),None);}
+    }
+
     pub fn api_tabs_list(&self) -> serde_json::Value {
         let tabs: Vec<_> = self
             .tabs
@@ -910,10 +972,18 @@ impl SerialToolPanel {
             .map(|(id, tab)| {
                 serde_json::json!({
                     "tab_id": id,
+                    "view_id": tab.ai_view_id(),
+                    "content_epoch": tab.content_epoch(),
+                    "web_editing":tab.has_web_editor(),
                     "title": tab.title,
                     "live": tab.live,
                     "path": tab.filepath.clone(),
                     "lines": tab.line_count(),
+                    "total": tab.dropped().saturating_add(tab.line_count()),
+                    "dropped": tab.dropped(),
+                    "loading": tab.loading,
+                    "index_progress": tab.index_progress,
+                    "load_error": tab.load_error.as_ref().map(|error|error.chars().take(1024).collect::<String>()),
                 })
             })
             .collect();
@@ -949,16 +1019,38 @@ impl SerialToolPanel {
             .map(|link| link.device.as_str())
     }
 
+    pub fn baud_presets(&self) -> Vec<String> {
+        let values = if self.baud_options.is_empty() {
+            vec!["115200".into(), "1000000".into(), "2000000".into()]
+        } else {
+            self.baud_options.clone()
+        };
+        let mut unique = Vec::new();
+        for value in values {
+            let Ok(rate) = value.parse::<u32>() else { continue };
+            if (1..=12_000_000).contains(&rate) && !unique.iter().any(|seen| seen == &value) {
+                unique.push(value);
+            }
+            if unique.len() == 32 { break; }
+        }
+        if unique.is_empty() { vec!["115200".into(), "1000000".into(), "2000000".into()] } else { unique }
+    }
+
     pub fn monitor_sessions(&self) -> Vec<serde_json::Value> {
         let mut sessions = Vec::new();
         if let Some(port) = &self.primary_device {
-            sessions.push(serde_json::json!({ "port": port, "tab_id": 0 }));
+            let confirmed=self.ai_confirmed.iter().find(|(key,_)|Self::serial_ports_equal(key,port)).map(|(_,baud)|*baud);
+            let error=self.ai_serial_error.iter().find(|(key,_)|Self::serial_ports_equal(key,port)).map(|(_,message)|message);
+            sessions.push(serde_json::json!({ "port": port, "tab_id": 0, "confirmed": confirmed.is_some(), "baud":confirmed, "error":error }));
         }
         for link in &self.extras {
-            sessions.push(serde_json::json!({ "port": link.device, "tab_id": link.tab }));
+            let confirmed=self.ai_confirmed.iter().find(|(key,_)|Self::serial_ports_equal(key,&link.device)).map(|(_,baud)|*baud);
+            let error=self.ai_serial_error.iter().find(|(key,_)|Self::serial_ports_equal(key,&link.device)).map(|(_,message)|message);
+            sessions.push(serde_json::json!({ "port": link.device, "tab_id": link.tab, "confirmed":confirmed.is_some(), "baud":confirmed, "error":error }));
         }
         sessions
     }
+    pub fn monitor_errors(&self) -> &HashMap<String,String> { &self.ai_serial_error }
 
     pub fn api_lines_get(&self, params: &serde_json::Value) -> crate::backend::InvokeReply {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
@@ -985,14 +1077,26 @@ impl SerialToolPanel {
         let Some(tab) = self.tabs.get(tab_id) else {
             return err("log.lines.get", "tab not found");
         };
+        if params.get("view_id").is_some_and(|expected|expected.as_u64()!=Some(tab.ai_view_id())) {
+            return err("log.lines.get", "LOG.VIEW_CHANGED");
+        }
+        if params.get("content_epoch").is_some_and(|expected|expected.as_u64()!=Some(tab.content_epoch())) {
+            return err("log.lines.get", "LOG.CONTENT_CHANGED");
+        }
         let dropped = tab.dropped();
         let window = tab.line_count();
         let page = live_abs_page(dropped, window, from, limit);
-        let lines = tab.lines_slice(page.window_from, page.take);
+        let lines = if let Some(value)=params.get("max_bytes") {
+            let Some(max)=value.as_u64().filter(|n|(1024..=2_097_152).contains(n)) else{return err("log.lines.get","LOG.INVALID_BYTE_LIMIT")};
+            match tab.lines_slice_bounded(page.window_from,page.take,max as usize){Ok(lines)=>lines,Err(())=>return err("log.lines.get","LOG.LINE_TOO_LARGE")}
+        } else {tab.lines_slice(page.window_from, page.take)};
+        let next=if lines.len()==page.take {page.next_abs} else {dropped.saturating_add(page.window_from).saturating_add(lines.len())};
         ok(
             "log.lines.get",
             serde_json::json!({
                 "tab_id": tab_id,
+                "view_id": tab.ai_view_id(),
+                "content_epoch": tab.content_epoch(),
                 "port": self.port_for_tab(tab_id),
                 "from_row": from,
                 "lines": lines,
@@ -1000,7 +1104,7 @@ impl SerialToolPanel {
                 "total": page.total_abs,
                 "dropped": dropped,
                 "window": window,
-                "next_row": page.next_abs,
+                "next_row": next,
                 "truncated": page.truncated,
             }),
         )
@@ -1504,7 +1608,7 @@ impl SerialToolPanel {
         self.status = tr(lang, "status.stopped");
     }
 
-    fn new_live_log(&mut self, lang: Lang) {
+    fn new_live_log(&mut self, lang: Lang) -> bool {
         if !self.save_live_to_disk {
             self.clear_live_display();
             let stamp = Local::now().format("%Y%m%d_%H%M%S");
@@ -1515,25 +1619,29 @@ impl SerialToolPanel {
             }
             self.persist_live_log_name();
             self.status = format!("new live log: {}", self.live_name);
-            return;
+            self.ai_epoch=self.ai_epoch.wrapping_add(1);
+            return true;
         }
         // Flush current live to disk, then push it right as a file tab and
         // insert a fresh live tab at index 0 (newest live stays leftmost).
         if let Err(e) = self.ensure_live_file() {
             self.status = format!("{}: {e}", tr(lang, "status.create_failed"));
-            return;
+            return false;
         }
         if let Err(e) = self.close_live_writer() {
             self.recording_error = Some(e.to_string());
+            return false;
         }
         let Some(archived_path) = self.live_file.take() else {
             self.status = tr(lang, "status.create_failed").into();
-            return;
+            return false;
         };
         self.live_writer = None;
 
         let stamp = Local::now().format("%Y%m%d_%H%M%S");
         self.live_name = format!("{} {}", tr(lang, "log.default_filename"), stamp);
+        let unique=wiparse_core::paths::unique_file_path(self.live_path().parent().unwrap_or(Path::new("log")),&format!("{}.txt",self.live_name),false);
+        if let Some(stem)=unique.file_stem().and_then(|value|value.to_str()){self.live_name=stem.to_string();}
         self.committed_live_name = self.live_name.clone();
 
         let mut new_live = LogTabPage::live_tab(lang);
@@ -1542,6 +1650,7 @@ impl SerialToolPanel {
         for load in &mut self.pending_loads {
             load.tab_idx += 1;
         }
+        for link in &mut self.extras {link.tab+=1;}
 
         // Previous live is now at index 1 — reopen it as a closable file tab.
         let path_s = normalize_path(&archived_path.to_string_lossy());
@@ -1559,11 +1668,13 @@ impl SerialToolPanel {
         self.live_file = None;
         if let Err(e) = self.ensure_live_file() {
             self.status = format!("{}: {e}", tr(lang, "status.create_failed"));
-            return;
+            return false;
         }
         self.active_tab = 0;
         self.persist_open_log_files();
         self.status = format!("new live log: {}", self.live_name);
+        self.live_rows_received=0;self.ai_epoch=self.ai_epoch.wrapping_add(1);
+        true
     }
 
     fn clear_live_display(&mut self) {
@@ -1741,33 +1852,19 @@ impl SerialToolPanel {
         }
     }
 
-    fn close_tab(&mut self, idx: usize) {
-        if idx == 0 {
-            return; // never close live
-        }
-        if idx < self.tabs.len() {
-            self.tabs.remove(idx);
-            for extra in &mut self.extras {
-                if extra.tab > idx {
-                    extra.tab -= 1;
-                }
-            }
-            self.pending_loads.retain_mut(|load| {
-                if load.tab_idx == idx {
-                    return false;
-                }
-                if load.tab_idx > idx {
-                    load.tab_idx -= 1;
-                }
-                true
-            });
-            if self.active_tab >= self.tabs.len() {
-                self.active_tab = self.tabs.len().saturating_sub(1);
-            } else if self.active_tab > idx {
-                self.active_tab -= 1;
-            }
-            self.persist_open_log_files();
-        }
+    fn close_tab(&mut self,idx:usize){self.close_tab_indices(vec![idx]);}
+
+    fn close_tab_indices(&mut self,indices:Vec<usize>){
+        let removed=indices.into_iter().filter(|index|*index>0&&*index<self.tabs.len()&&!self.tabs[*index].is_editing()&&!self.extras.iter().any(|link|link.tab==*index)).collect::<std::collections::HashSet<_>>();
+        if removed.is_empty(){return;}
+        let mut shift=0;let mapping=(0..self.tabs.len()).map(|index|{let mapped=index-shift;if removed.contains(&index){shift+=1;}mapped}).collect::<Vec<_>>();
+        let remap=|index:usize|mapping.get(index).copied().unwrap_or(index);
+        let active=if removed.contains(&self.active_tab){(0..self.active_tab).rev().find(|index|!removed.contains(index)).unwrap_or(0)}else{self.active_tab};
+        self.active_tab=remap(active);
+        self.tabs=std::mem::take(&mut self.tabs).into_iter().enumerate().filter_map(|(index,tab)|(!removed.contains(&index)).then_some(tab)).collect();
+        self.pending_loads.retain_mut(|load|{if removed.contains(&load.tab_idx){false}else{load.tab_idx=remap(load.tab_idx);true}});
+        for link in &mut self.extras{link.tab=remap(link.tab);}
+        self.persist_open_log_files();
     }
 
     fn poll_file_loads(&mut self) {
@@ -1798,12 +1895,20 @@ impl SerialToolPanel {
                     Ok(FileBuildEvent::Err(e)) => {
                         self.status = format!("open failed: {e}");
                         if let Some(tab) = self.tabs.get_mut(load.tab_idx) {
+                            tab.load_error=Some(e);
                             tab.finish_loading();
                         }
                         finished = true;
                         break;
                     }
-                    Err(_) => break,
+                    Err(crossbeam_channel::TryRecvError::Empty) => break,
+                    Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                        let message="日志读取任务异常结束".to_owned();
+                        self.status=message.clone();
+                        if let Some(tab)=self.tabs.get_mut(load.tab_idx){tab.load_error=Some(message);tab.finish_loading();}
+                        finished=true;
+                        break;
+                    },
                 }
             }
             if finished {
@@ -1867,29 +1972,6 @@ impl SerialToolPanel {
             }
         }
 
-        if stop_seen {
-            self.ai_epoch = self.ai_epoch.wrapping_add(1);
-            if let Some(port) = &self.primary_device { self.ai_confirmed.remove(port); }
-            self.primary_device = None;
-            self.monitoring = !self.extras.is_empty();
-            self.stop_flag = None;
-            self.rx = None;
-            self.write_tx = None;
-            if let Err(e) = self.close_live_writer() {
-                self.recording_error = Some(e.to_string());
-            }
-            self.status = tr(self.last_lang, "status.stopped");
-            if let Some(api) = api {
-                api.set_monitoring(false, None, None);
-                *api.serial_write.lock().unwrap_or_else(|e| e.into_inner()) = None;
-                api.publish_serial_status("stopped");
-            }
-        }
-
-        if stop_seen && self.live_test.is_some() {
-            self.finish_test_and_record(RunVerdict::Aborted, "monitor stopped");
-        }
-
         if !batch.is_empty() {
             let start_row = self.live_rows_received;
             self.live_rows_received += batch.len() as u64;
@@ -1921,6 +2003,29 @@ impl SerialToolPanel {
                 live.append_lines(batch, update_live_filters);
             }
         }
+        if stop_seen {
+            self.ai_epoch = self.ai_epoch.wrapping_add(1);
+            if let Some(port) = &self.primary_device { self.ai_confirmed.remove(port); }
+            self.primary_device = None;
+            self.monitoring = !self.extras.is_empty();
+            self.stop_flag = None;
+            self.rx = None;
+            self.write_tx = None;
+            if let Err(e) = self.close_live_writer() {
+                self.recording_error = Some(e.to_string());
+            }
+            self.status = tr(self.last_lang, "status.stopped");
+            if let Some(api) = api {
+                api.set_monitoring(false, None, None);
+                *api.serial_write.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                api.publish_serial_status("stopped");
+            }
+        }
+
+        if stop_seen && self.live_test.is_some() {
+            self.finish_test_and_record(RunVerdict::Aborted, "monitor stopped");
+        }
+
         if let Some(error) = self.recording_error.as_ref() {
             self.status = format!("recording error: {error}");
         }
@@ -1958,6 +2063,8 @@ impl SerialToolPanel {
             .as_ref()
             .is_some_and(|t| t.driver.is_running() && !t.finished)
     }
+
+    pub(crate) fn runtime_busy(&self)->bool{self.is_monitoring()||self.is_test_running()||self.has_pending_log_edits()||self.ai_chat.monitoring_active()}
 
     pub fn is_monitoring(&self) -> bool {
         self.monitoring
@@ -2000,46 +2107,9 @@ impl SerialToolPanel {
         }
     }
 
-    fn close_tabs_left_of(&mut self, idx: usize) {
-        if idx <= 1 {
-            return;
-        }
-        self.tabs.drain(1..idx);
-        self.pending_loads.retain_mut(|load| {
-            if load.tab_idx > 0 && load.tab_idx < idx {
-                return false;
-            }
-            if load.tab_idx >= idx {
-                load.tab_idx -= idx - 1;
-            }
-            true
-        });
-        if self.active_tab >= idx {
-            self.active_tab = self.active_tab.saturating_sub(idx - 1);
-        }
-        self.persist_open_log_files();
-    }
-
-    fn close_tabs_right_of(&mut self, idx: usize) {
-        if idx + 1 >= self.tabs.len() {
-            return;
-        }
-        self.tabs.truncate(idx + 1);
-        self.pending_loads.retain_mut(|load| load.tab_idx <= idx);
-        if self.active_tab > idx {
-            self.active_tab = idx;
-        }
-        self.persist_open_log_files();
-    }
-
-    fn close_all_file_tabs(&mut self) {
-        if self.tabs.len() > 1 {
-            self.tabs.truncate(1);
-        }
-        self.pending_loads.clear();
-        self.active_tab = 0;
-        self.persist_open_log_files();
-    }
+    fn close_tabs_left_of(&mut self,idx:usize){self.close_tab_indices((1..idx.min(self.tabs.len())).collect());}
+    fn close_tabs_right_of(&mut self,idx:usize){self.close_tab_indices((idx.saturating_add(1)..self.tabs.len()).collect());}
+    fn close_all_file_tabs(&mut self){self.close_tab_indices((1..self.tabs.len()).collect());}
 
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
         self.last_lang = lang;
@@ -2053,7 +2123,7 @@ impl SerialToolPanel {
         // Independent left sidebar + content (must force top-down
         // layouts). Independent max_rects so ComboBox selected_text cannot leak
         // width into the parent and open a gap beside the card.
-        const SIDE_MAIN_GAP: f32 = 16.0;
+        const SIDE_MAIN_GAP: f32 = ui_theme::PANEL_GAP;
 
         let overall = ui.available_rect_before_wrap();
         let _ = ui.allocate_exact_size(overall.size(), egui::Sense::hover());
@@ -2095,14 +2165,14 @@ impl SerialToolPanel {
                     ui.set_clip_rect(side_rect.intersect(ui.clip_rect()));
                     egui::ScrollArea::vertical().id_salt("serial-controls-scroll").max_height(side_inner.height()).auto_shrink([false, false]).show(ui, |ui| {
                     let card_w = ui.available_width();
-                    const CARD_MARGIN_X: i8 = 12;
+                    const CARD_MARGIN_X: i8 = 8;
                     let inner_w = (card_w - f32::from(CARD_MARGIN_X) * 2.0).max(1.0);
 
                     // Group 1: serial port controls — fill + Inside stroke (no Frame stroke clip).
                     ui.set_width(card_w);
                     let g1 = Frame::NONE
                         .fill(t.surface_bg)
-                        .inner_margin(Margin::symmetric(CARD_MARGIN_X, 12))
+                        .inner_margin(Margin::symmetric(CARD_MARGIN_X, 8))
                         .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
                         .show(ui, |ui| {
                             ui.set_width(inner_w);
@@ -2363,7 +2433,9 @@ impl SerialToolPanel {
                         });
                     paint_sidebar_card_border(ui, g1.response.rect, card_w, t.border);
 
-                    ui.add_space(12.0);
+                    // Egui adds the surrounding item spacing as well; keep the
+                    // visible card-to-card gap at the shared panel spacing.
+                    ui.add_space((ui_theme::PANEL_GAP - ui.spacing().item_spacing.y).max(0.0));
 
                     // Group 2: log directory browser — same fixed width as Group 1.
                     let browser_h = (side_inner.bottom() - ui.cursor().min.y).max(160.0);
@@ -2526,7 +2598,7 @@ impl SerialToolPanel {
                     ui.set_clip_rect(content_rect.intersect(ui.clip_rect()));
                     Frame::NONE
                         .fill(t.surface_bg)
-                        .inner_margin(Margin::same(12))
+                        .inner_margin(Margin::same(6))
                         .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
                         .stroke(Stroke::new(1.0_f32, t.border))
                         .show(ui, |ui| {
@@ -2973,6 +3045,27 @@ impl SerialToolPanel {
         }
     }
 
+    pub fn api_open_log_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.serial.open_safe";
+        let Some(path)=params.get("path").and_then(|v|v.as_str()).filter(|s|!s.is_empty()&&s.len()<=4096&&!s.chars().any(char::is_control)) else{return err(method,"LOG.INVALID_PATH")};
+        let path=PathBuf::from(path);if !path.is_absolute()||!path.is_file(){return err(method,"LOG.NOT_FOUND");}
+        let reply=self.api_open_log(&json!({"path":path}));if !reply.ok{return reply;}
+        let Some(id)=reply.data["tab_id"].as_u64().and_then(|id|usize::try_from(id).ok()) else{return err(method,"LOG.OPEN_UNKNOWN")};
+        let Some(tab)=self.tabs.get(id) else{return err(method,"LOG.OPEN_UNKNOWN")};
+        ok(method,json!({"tab_id":id,"view_id":tab.ai_view_id()}))
+    }
+
+    pub fn api_close_tab_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.serial.close_safe";
+        let Some(id)=params.get("tab_id").and_then(|v|v.as_u64()).and_then(|id|usize::try_from(id).ok()) else{return err(method,"LOG.INVALID_REQUEST")};
+        let Some(view)=params.get("view_id").and_then(|v|v.as_u64()) else{return err(method,"LOG.INVALID_REQUEST")};
+        let Some(tab)=self.tabs.get(id) else{return err(method,"LOG.VIEW_CHANGED")};
+        if tab.ai_view_id()!=view{return err(method,"LOG.VIEW_CHANGED");}
+        if id==0||self.extras.iter().any(|session|session.tab==id){return err(method,"LOG.LIVE_SESSION");}
+        if tab.is_editing(){return err(method,"LOG.EDIT_IN_PROGRESS");}
+        self.close_tab(id);ok(method,self.api_tabs_list())
+    }
+
     pub fn api_close_tab(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let tab_id = params.get("tab_id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
@@ -2990,6 +3083,27 @@ impl SerialToolPanel {
         use crate::backend::invoke_ok as ok;
         self.clear_live_display();
         ok("ui.serial.clear", json!({ "cleared": true }))
+    }
+
+    pub fn api_new_live_log_safe(&mut self,lang:Lang,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.serial.new_log_safe";
+        if params["consent"]!=true{return err(method,"SERIAL.CONSENT_REQUIRED");}
+        if self.monitoring||!self.extras.is_empty()||self.is_test_running(){return err(method,"SERIAL.MONITOR_IN_PROGRESS");}
+        let Some(tab)=self.tabs.first() else{return err(method,"LOG.VIEW_CHANGED")};
+        if params["view_id"].as_u64()!=Some(tab.ai_view_id())||params["content_epoch"].as_u64()!=Some(tab.content_epoch()){return err(method,"LOG.CONTENT_CHANGED");}
+        if !self.new_live_log(lang){return err(method,&format!("SERIAL.NEW_LOG_FAILED: {}",self.status));}
+        ok(method,self.api_tabs_list())
+    }
+
+    pub fn api_clear_live_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.serial.clear_live_safe";
+        let Some(view)=params["view_id"].as_u64() else{return err(method,"LOG.INVALID_REQUEST")};
+        let Some(epoch)=params["content_epoch"].as_u64() else{return err(method,"LOG.INVALID_REQUEST")};
+        let Some(tab)=self.tabs.first() else{return err(method,"LOG.VIEW_CHANGED")};
+        if tab.ai_view_id()!=view||tab.content_epoch()!=epoch{return err(method,"LOG.VIEW_CHANGED");}
+        if tab.is_editing(){return err(method,"LOG.EDIT_IN_PROGRESS");}
+        if self.is_test_running(){return err(method,"RUN.STATION_BUSY");}
+        self.clear_live_display();ok(method,self.api_tabs_list())
     }
 
     pub fn api_filter(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
@@ -3011,6 +3125,30 @@ impl SerialToolPanel {
             "ui.serial.filter",
             json!({ "tab_id": tab_id, "pane": pane, "query": query }),
         )
+    }
+
+    pub(crate) fn has_pending_log_edits(&self)->bool{self.tabs.iter().any(|tab|tab.is_editing())}
+    pub fn api_edit_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.serial.edit_safe";
+        let Some(view)=params["view_id"].as_u64() else{return err(method,"LOG.INVALID_REQUEST")};let action=params["action"].as_str().unwrap_or("");
+        let Some(index)=self.tabs.iter().position(|tab|tab.ai_view_id()==view) else{return err(method,"LOG.VIEW_CHANGED")};
+        if action=="begin"&&params["tab_id"].as_u64()!=Some(index as u64){return err(method,"LOG.VIEW_CHANGED");}
+        if self.tabs[index].live||self.extras.iter().any(|link|link.tab==index){return err(method,"LOG.LIVE_SESSION");}
+        if matches!(action,"begin"|"save"|"save_as") {
+            let target=if action=="save_as"{params["path"].as_str()}else{self.tabs[index].filepath.as_deref()}.and_then(|path|Path::new(path).canonicalize().ok());
+            if self.monitoring&&target.is_some()&&self.live_file.as_ref().and_then(|path|path.canonicalize().ok())==target{return err(method,"LOG.LIVE_RECORDING");}
+            if target.is_some()&&self.tabs.iter().enumerate().any(|(other,tab)|other!=index&&tab.is_editing()&&tab.filepath.as_deref().and_then(|path|Path::new(path).canonicalize().ok())==target){return err(method,"LOG.TARGET_IN_EDIT");}
+        }
+        if action=="begin"{self.activate_tab(index);}
+        match self.tabs[index].web_edit_action(action,params){Ok(mut value)=>{value["tab_id"]=json!(index);value["view_id"]=json!(view);ok(method,value)},Err(error)=>err(method,&error)}
+    }
+
+    pub fn api_select_log_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.serial.select_log_safe";
+        let Some(id)=params["tab_id"].as_u64().and_then(|value|usize::try_from(value).ok()) else{return err(method,"LOG.INVALID_TAB")};
+        let Some(view)=params["view_id"].as_u64() else{return err(method,"LOG.VIEW_CHANGED")};
+        if self.tabs.get(id).is_none_or(|tab|tab.ai_view_id()!=view){return err(method,"LOG.VIEW_CHANGED");}
+        self.activate_tab(id);ok(method,json!({"tab_id":id,"view_id":view}))
     }
 
     pub fn api_activate_tab(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
@@ -3040,6 +3178,20 @@ impl SerialToolPanel {
             "ui.serial.name",
             json!({ "name": self.committed_live_name }),
         )
+    }
+
+    pub fn api_browser_root_safe(&mut self,cfg:&mut AppConfig,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.serial.browser_root_safe";
+        if let Some(value)=params.get("directory"){
+            let Some(directory)=value.as_str().filter(|value|!value.trim().is_empty()&&value.len()<=4096&&!value.chars().any(char::is_control)) else{return err(method,"LOG.INVALID_DIRECTORY")};
+            let Ok(canonical)=project_path(directory).canonicalize() else{return err(method,"LOG.DIRECTORY_NOT_FOUND")};if !canonical.is_dir(){return err(method,"LOG.INVALID_DIRECTORY");}
+            let root=wiparse_core::paths::app_root().canonicalize().unwrap_or_else(|_|wiparse_core::paths::app_root());
+            let saved=if canonical==root{".".to_string()}else{canonical.strip_prefix(&root).unwrap_or(&canonical).to_string_lossy().into_owned()};
+            let mut next=cfg.clone();next.log_monitor.log_browser_dir=saved.clone();
+            if let Err(error)=save_config(&next){return err(method,&format!("LOG.SAVE_FAILED: {error}"));}
+            self.browser_dir=saved;self.browser_scanned_dir.clear();*cfg=next;
+        }
+        ok(method,json!({"directory":self.browser_dir,"resolved":if self.browser_dir.is_empty(){None}else{Some(project_path(&self.browser_dir))}}))
     }
 
     pub fn api_set_browser_dir(
@@ -3400,6 +3552,118 @@ mod tests {
     use super::*;
 
     #[test]
+    fn log_change_events_are_commit_based_and_cover_extra_tabs_and_idle(){
+        let mut panel=SerialToolPanel::new(&AppConfig::default(),Lang::En);
+        let api=crate::backend::ApiBridge::new();let rx=api.events.subscribe(0).unwrap();rx.recv().unwrap();
+        let before=panel.log_versions();panel.publish_log_changes(&before,&api);assert!(rx.try_recv().is_err());
+        panel.tabs[0].append_lines(["first".into()],false);panel.publish_log_changes(&before,&api);
+        let event:serde_json::Value=serde_json::from_str(&rx.recv().unwrap()).unwrap();assert_eq!(event["type"],"serial.log.changed");
+        let current=panel.log_versions();panel.publish_log_changes(&current,&api);assert!(rx.try_recv().is_err());
+        panel.tabs.push(LogTabPage::live_tab(Lang::En));let before=panel.log_versions();
+        panel.tabs[1].append_lines(["extra".into()],false);panel.publish_log_changes(&before,&api);assert!(rx.recv().unwrap().contains("serial.log.changed"));
+        let before=panel.log_versions();panel.active_tab=1;panel.publish_log_changes(&before,&api);assert!(rx.recv().unwrap().contains("serial.log.changed"));
+        let before=panel.log_versions();panel.clear_live_display();panel.publish_log_changes(&before,&api);assert!(rx.recv().unwrap().contains("serial.log.changed"));
+    }
+
+    #[test]
+    fn final_serial_batch_is_flushed_before_the_writer_closes() {
+        let dir=std::env::temp_dir().join(format!("wiparse-serial-stop-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let mut cfg=AppConfig::default();cfg.log_monitor.save_dir=dir.display().to_string();cfg.log_monitor.default_filename="capture".into();cfg.log_monitor.save_live_to_disk=true;
+        let mut panel=SerialToolPanel::new(&cfg,Lang::En);panel.ensure_live_file().unwrap();panel.monitoring=true;panel.primary_device=Some("COM_TEST".into());
+        let (tx,rx)=bounded(4);panel.rx=Some(rx);
+        tx.send(SerialEvent::Line("last-line-before-stop".into())).unwrap();tx.send(SerialEvent::Stopped).unwrap();
+        panel.drain_events(false);
+        assert!(!panel.monitoring);assert!(panel.live_writer.is_none());assert!(panel.recording_error.is_none());
+        let path=dir.join("capture.txt");let content=std::fs::read(&path).unwrap();assert!(String::from_utf8_lossy(&content).contains("last-line-before-stop"));
+        std::fs::remove_file(path).unwrap();std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn recording_setting_cannot_change_during_a_monitor_session() {
+        let mut panel=SerialToolPanel::new(&AppConfig::default(),Lang::En);
+        let before=panel.save_live_to_disk;panel.monitoring=true;
+        let response=panel.api_set_recording_safe(&serde_json::json!({"enabled":!before}));
+        assert_eq!(response.error.as_deref(),Some("SERIAL.MONITOR_IN_PROGRESS"));
+        assert_eq!(panel.save_live_to_disk,before);
+    }
+
+    #[test]
+    fn guarded_live_clear_checks_view_and_invalidates_old_snapshot() {
+        let mut panel=SerialToolPanel::new(&AppConfig::default(),Lang::En);
+        panel.tabs[0].append_lines(vec!["unrecorded line".into()],true);
+        let view=panel.tabs[0].ai_view_id();let epoch=panel.tabs[0].content_epoch();
+        assert_eq!(panel.api_clear_live_safe(&json!({"view_id":view+1,"content_epoch":epoch})).error.as_deref(),Some("LOG.VIEW_CHANGED"));
+        assert_eq!(panel.api_clear_live_safe(&json!({"view_id":view,"content_epoch":epoch+1})).error.as_deref(),Some("LOG.VIEW_CHANGED"));
+        assert_eq!(panel.api_lines_get(&json!({"tab_id":0,"view_id":view,"from_row":0,"limit":10})).data["lines"],json!(["unrecorded line"]));
+        assert!(panel.api_clear_live_safe(&json!({"view_id":view,"content_epoch":epoch})).ok);
+        assert_ne!(panel.tabs[0].ai_view_id(),view);
+        assert_eq!(panel.api_lines_get(&json!({"tab_id":0,"view_id":view,"from_row":0,"limit":10})).error.as_deref(),Some("LOG.VIEW_CHANGED"));
+    }
+
+    #[test]
+    fn guarded_log_open_and_close_reject_wrong_or_live_tabs() {
+        let mut panel=SerialToolPanel::new(&AppConfig::default(),Lang::En);
+        assert_eq!(panel.api_open_log_safe(&json!({"path":"relative.txt"})).error.as_deref(),Some("LOG.NOT_FOUND"));
+        let live=panel.tabs[0].ai_view_id();
+        assert_eq!(panel.api_close_tab_safe(&json!({"tab_id":0,"view_id":live})).error.as_deref(),Some("LOG.LIVE_SESSION"));
+        panel.tabs.push(LogTabPage::live_tab(Lang::En));let tab=panel.tabs.len()-1;let view=panel.tabs[tab].ai_view_id();
+        assert_eq!(panel.api_close_tab_safe(&json!({"tab_id":tab,"view_id":view+1})).error.as_deref(),Some("LOG.VIEW_CHANGED"));
+        let (_tx,rx)=bounded(1);let (write_tx,_write_rx)=unbounded();
+        panel.extras.push(ExtraLink{device:"COM7".into(),stop:Arc::new(AtomicBool::new(false)),rx,write_tx,tab});
+        assert_eq!(panel.api_close_tab_safe(&json!({"tab_id":tab,"view_id":view})).error.as_deref(),Some("LOG.LIVE_SESSION"));
+        assert_eq!(panel.tabs.len(),tab+1);
+    }
+
+    #[test]
+    fn log_index_failure_is_visible_on_its_own_tab() {
+        let mut panel=SerialToolPanel::new(&AppConfig::default(),Lang::En);
+        panel.tabs.push(LogTabPage::file_tab_empty("fixture.log".into()));let tab=panel.tabs.len()-1;
+        let (tx,rx)=unbounded();panel.pending_loads.push(PendingFileLoad{tab_idx:tab,rx});
+        tx.send(FileBuildEvent::Err("fixture read failure".into())).unwrap();panel.poll_file_loads();
+        let rows=panel.api_tabs_list();assert_eq!(rows["tabs"][tab]["loading"],false);assert_eq!(rows["tabs"][tab]["load_error"],"fixture read failure");
+        panel.tabs.push(LogTabPage::file_tab_empty("disconnected.log".into()));let disconnected=panel.tabs.len()-1;
+        let (sender,rx)=unbounded();drop(sender);panel.pending_loads.push(PendingFileLoad{tab_idx:disconnected,rx});panel.poll_file_loads();
+        let rows=panel.api_tabs_list();assert_eq!(rows["tabs"][disconnected]["loading"],false);assert!(rows["tabs"][disconnected]["load_error"].as_str().is_some_and(|error|error.contains("异常结束")));
+    }
+
+    #[test]
+    fn guarded_log_file_round_trip_keeps_original_file() {
+        if let Ok(root)=std::env::var("WIPARSE_LOG_IO_TEST_ROOT") {
+            let root=PathBuf::from(root);let file=root.join("source.log");let data=b"first line\nsecond line\n";std::fs::write(&file,data).unwrap();
+            let mut panel=SerialToolPanel::new(&AppConfig::default(),Lang::En);
+            let reply=panel.api_open_log_safe(&json!({"path":file}));assert!(reply.ok,"{:?}",reply.error);
+            let id=reply.data["tab_id"].as_u64().unwrap() as usize;let view=reply.data["view_id"].as_u64().unwrap();
+            let deadline=Instant::now()+Duration::from_secs(5);
+            while panel.tabs[id].loading&&Instant::now()<deadline {panel.poll_file_loads();std::thread::sleep(Duration::from_millis(10));}
+            assert!(!panel.tabs[id].loading);assert_eq!(panel.api_lines_get(&json!({"tab_id":id,"view_id":view,"from_row":0,"limit":10})).data["lines"],json!(["first line","second line"]));
+            assert!(panel.api_close_tab_safe(&json!({"tab_id":id,"view_id":view})).ok);assert_eq!(std::fs::read(&file).unwrap(),data);
+            return;
+        }
+        let root=std::env::temp_dir().join(format!("wiparse-log-io-{}",uuid::Uuid::new_v4()));std::fs::create_dir(&root).unwrap();
+        let output=std::process::Command::new(std::env::current_exe().unwrap()).args(["--exact","serial_tool::tests::guarded_log_file_round_trip_keeps_original_file","--nocapture"])
+            .env("WIPARSE_LOG_IO_TEST_ROOT",&root).env("WIPARSE_CONFIG",root.join("config.json")).env_remove("WCM_CONFIG").output().unwrap();
+        assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stdout));
+        let temp=std::env::temp_dir().canonicalize().unwrap();assert!(root.canonicalize().unwrap().starts_with(temp));
+        for entry in std::fs::read_dir(&root).unwrap(){let entry=entry.unwrap();assert!(entry.file_type().unwrap().is_file());std::fs::remove_file(entry.path()).unwrap();}
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn safe_send_targets_only_the_named_confirmed_session() {
+        let mut panel=SerialToolPanel::new(&AppConfig::default(),Lang::Zh);
+        let (primary,primary_rx)=unbounded();let (extra,extra_rx)=unbounded();let (_event_tx,event_rx)=bounded(1);
+        panel.primary_device=Some("COM3".into());panel.write_tx=Some(primary);
+        panel.extras.push(ExtraLink{device:"COM4".into(),stop:Arc::new(AtomicBool::new(false)),rx:event_rx,write_tx:extra,tab:1});
+        assert!(panel.api_queue_device_bytes("COM4",vec![1]).is_err());
+        panel.ai_confirmed.insert("COM3".into(),115200);panel.ai_confirmed.insert("COM4".into(),115200);
+        panel.api_queue_device_bytes("com4",vec![0x41,0x42]).unwrap();
+        assert_eq!(extra_rx.try_recv().unwrap(),vec![0x41,0x42]);assert!(primary_rx.try_recv().is_err());
+        assert!(panel.api_queue_device_bytes("COM9",vec![1]).is_err());assert!(panel.api_queue_device_bytes("COM3",vec![]).is_err());
+        panel.api_queue_device_bytes("COM3",vec![7]).unwrap();assert_eq!(primary_rx.try_recv().unwrap(),vec![7]);
+    }
+
+    #[test]
     fn log_name_validation_rejects_windows_reserved_characters() {
         assert_eq!(normalized_log_name("  capture  "), Ok("capture".into()));
         assert!(normalized_log_name("").is_err());
@@ -3537,6 +3801,21 @@ mod tests {
         assert!(reply.ok, "{:?}", reply.error);
         assert_eq!(reply.data["tab_id"], json!(tab));
         assert_eq!(reply.data["port"], json!("COM7"));
+        let view_id=reply.data["view_id"].as_u64().unwrap();
+        assert!(panel.api_lines_get(&json!({"tab_id":tab,"view_id":view_id})).ok);
+        assert_eq!(panel.api_lines_get(&json!({"tab_id":tab,"view_id":view_id+1})).error.as_deref(),Some("LOG.VIEW_CHANGED"));
+        let epoch=reply.data["content_epoch"].as_u64().unwrap();
+        assert_eq!(panel.api_lines_get(&json!({"tab_id":tab,"view_id":view_id,"content_epoch":epoch+1})).error.as_deref(),Some("LOG.CONTENT_CHANGED"));
+        panel.tabs[tab].clear_display();
+        assert_eq!(panel.api_lines_get(&json!({"tab_id":tab,"view_id":view_id})).error.as_deref(),Some("LOG.VIEW_CHANGED"));
+        let new_view=panel.tabs[tab].ai_view_id();
+        assert_eq!(panel.api_lines_get(&json!({"tab_id":tab,"view_id":new_view,"content_epoch":epoch})).error.as_deref(),Some("LOG.CONTENT_CHANGED"));
+        panel.tabs[tab].append_lines(["a".repeat(800),"b".repeat(800),"c".repeat(1100)],false);
+        let first=panel.api_lines_get(&json!({"tab_id":tab,"view_id":new_view,"from_row":0,"limit":3,"max_bytes":1024}));
+        assert!(first.ok);assert_eq!(first.data["count"],1);assert_eq!(first.data["next_row"],1);
+        let second=panel.api_lines_get(&json!({"tab_id":tab,"view_id":new_view,"from_row":1,"limit":3,"max_bytes":1024}));
+        assert!(second.ok);assert_eq!(second.data["next_row"],2);
+        assert_eq!(panel.api_lines_get(&json!({"tab_id":tab,"view_id":new_view,"from_row":2,"max_bytes":1024})).error.as_deref(),Some("LOG.LINE_TOO_LARGE"));
         let missing = panel.api_lines_get(&json!({ "port": "COM9", "from_row": 0 }));
         assert!(!missing.ok);
     }

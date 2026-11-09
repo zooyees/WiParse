@@ -1,0 +1,28 @@
+{
+  "id": "wireless-whitebox",
+  "name": "Wireless charging white-box validation",
+  "name_zh": "无线充电白盒测试",
+  "type": "custom",
+  "version": "0.1.0",
+  "host_adapter": "wiparse.fpga-host/1",
+  "entry": "index.mjs",
+  "report_name": "WirelessWhitebox",
+  "capabilities": ["configure", "preflight", "run", "stop"],
+  "engines": {"node": ">=18", "wiparse": ">=1.2.2"},
+  "outputs": [{"id":"reports","label":"Report","label_zh":"测试报告和日志证据","view":"report","dir":"{artifacts_dir}/reports","include":["*.md","*.json","*.txt"]}],
+  "ui": {
+    "mode": "test_matrix",
+    "max_items": 500,
+    "matrix_status_file": "{test_dir}/matrix.json",
+    "config_editor": {"schema": "case.schema.json", "ui_schema": "case.ui.json", "repository": "{config_dir}", "max_items": 500, "source_view": "read_only"},
+    "project_config": {"protocol": "wiparse.project-config/1", "schema": "project.schema.json", "ui_schema": "project.ui.json", "seed": "{config_dir}/../project.json"},
+    "result_details": {"protocol":"wiparse.result-details/1","schema_version":"wiparse.wireless-result/1"}
+  },
+  "params": [
+    {"name": "config_dir", "type": "path", "default": "recipes/wireless-whitebox/cases", "label": "Configuration directory", "label_zh": "测试项目录"},
+    {"name": "mode", "type": "enum", "default": "review", "label": "Mode", "label_zh": "运行模式", "options": [{"value": "review", "label": "Review only", "label_zh": "配置检查"}, {"value": "log_analysis", "label": "Analyze terminal log", "label_zh": "分析已有串口日志"}, {"value": "rx_read", "label": "Read MT5788 status", "label_zh": "读取 MT5788 状态（只读）"}, {"value": "rx_control", "label": "Set MT5788 output", "label_zh": "设置 MT5788 输出电压"}, {"value": "rx_load", "label": "Apply CC load", "label_zh": "RX 恒流负载测试（开发中）"}, {"value": "live", "label": "Hardware", "label_zh": "实物自动测试（待接通）"}]},
+    {"name": "log_file", "type": "path", "default": "", "label": "Terminal log", "label_zh": "串口日志文件（数据目录内）"},
+    {"name": "dut_serial", "type": "string", "default": "", "label": "DUT serial", "label_zh": "本轮产品序列号"},
+    {"name": "firmware_version", "type": "string", "default": "", "label": "Firmware version", "label_zh": "本轮固件版本"}
+  ]
+}

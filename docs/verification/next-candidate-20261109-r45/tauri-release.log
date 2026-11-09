@@ -1,0 +1,87 @@
+warning: unused import: `Path`
+ --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\waveform_protocol_html.rs:5:17
+  |
+5 | use std::path::{Path, PathBuf};
+  |                 ^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\protocol\decode.rs:891:17
+    |
+891 |             let mut fields = vec![field("pattern", name, "", Some(format!("0x{header:02X}")))];
+    |                 ----^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\rigol_wfm.rs:481:9
+    |
+481 |     let mut dec = ZlibDecoder::new(payload);
+    |         ----^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: function `lfsr_msequence` is never used
+   --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\bus_decode\ddsss.rs:181:8
+    |
+181 | pub fn lfsr_msequence(width: u8, taps: &[u8]) -> Vec<bool> {
+    |        ^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `scope_screen_point_count`, `tek_screen_point_count`, `keysight_screen_point_count`, `prepare_keysight_screen_waveform`, and `apply_tek_visible_data_window` are never used
+    --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\instrument\drivers.rs:1361:8
+     |
+ 882 | impl InstrumentDevice {
+     | --------------------- methods in this implementation
+...
+1361 |     fn scope_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1399 |     fn tek_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^
+...
+1406 |     fn keysight_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1449 |     fn prepare_keysight_screen_waveform(&mut self, channel: u8) -> Result<(), InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2018 |     fn apply_tek_visible_data_window(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `parse_keysight_preamble_points` is never used
+    --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\instrument\drivers.rs:3167:4
+     |
+3167 | fn parse_keysight_preamble_points(pre: &str) -> Option<usize> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `verify_file_against_meta` is never used
+   --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\marketplace\trust.rs:160:8
+    |
+160 | pub fn verify_file_against_meta(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `open_tcp_uart_from_info` is never used
+   --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\serial.rs:636:4
+    |
+636 | fn open_tcp_uart_from_info(info: &PortInfo, baud: u32) -> Result<SerialSession, SerialError> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `load_tek_wfm` is never used
+    --> D:\windlink\windlink\WiParse-R\crates\wiparse-core\src\waveform_file.rs:1029:4
+     |
+1029 | fn load_tek_wfm(bytes: &[u8], default_channel: &str) -> Result<WaveformTrace, WaveformFileError> {
+     |    ^^^^^^^^^^^^
+
+warning: `wiparse-core` (lib) generated 9 warnings (run `cargo fix --lib -p wiparse-core` to apply 3 suggestions)
+   Compiling wiparse-next v0.1.0 (D:\windlink\windlink\WiParse-R\apps\wiparse-next\src-tauri)
+warning: linker stdout: 正在创建库 D:\windlink\windlink\WiParse-R\apps\wiparse-next\src-tauri\target\release\deps\wiparse_next.lib 和对象 D:\windlink\windlink\WiParse-R\apps\wiparse-next\src-tauri\target\release\deps\wiparse_next.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `wiparse-next` (bin "wiparse-next") generated 1 warning
+    Finished `release` profile [optimized] target(s) in 2m 19s

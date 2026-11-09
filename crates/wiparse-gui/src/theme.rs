@@ -19,6 +19,9 @@ pub const SPACE_LG: f32 = 16.0;
 pub const CTRL_H: f32 = 28.0;
 pub const SIDEBAR_W: f32 = 200.0;
 pub const SIDEBAR_MIN_W: f32 = 200.0;
+/// Space between adjacent workbench panels and the outer shell inset.
+pub const PANEL_GAP: f32 = 6.0;
+pub const SHELL_INSET: i8 = 4;
 
 /// Width bounds always fit both panes, including unusually small windows.
 fn sidebar_width_bounds(total: f32, gap: f32, min_side: f32, min_main: f32) -> (f32, f32) {
@@ -157,24 +160,24 @@ impl Tokens {
             text_primary: Color32::from_rgb(0xF5, 0xF5, 0xF7),
             // Brighter muted text so secondary / disabled labels stay readable.
             text_muted: Color32::from_rgb(0xAE, 0xAE, 0xB2),
-            canvas_bg: Color32::from_rgb(0x0C, 0x0C, 0x0E),
-            panel_bg: Color32::from_rgb(0x16, 0x16, 0x18),
-            surface_bg: Color32::from_rgb(0x1C, 0x1C, 0x1E),
-            header_bg: Color32::from_rgb(0x12, 0x12, 0x14),
-            border: Color32::from_rgb(0x3A, 0x3A, 0x3C),
-            divider: Color32::from_rgb(0x2C, 0x2C, 0x2E),
+            canvas_bg: Color32::from_rgb(0x0D, 0x11, 0x17),
+            panel_bg: Color32::from_rgb(0x17, 0x1C, 0x24),
+            surface_bg: Color32::from_rgb(0x1B, 0x21, 0x2B),
+            header_bg: Color32::from_rgb(0x12, 0x17, 0x1F),
+            border: Color32::from_rgb(0x3B, 0x46, 0x55),
+            divider: Color32::from_rgb(0x2D, 0x36, 0x43),
             // Desaturated mid-blue — readable CTA without neon glare on near-black.
             accent: Color32::from_rgb(0x3D, 0x7E, 0xC8),
             accent_text: Color32::WHITE,
             accent_soft: Color32::from_rgba_unmultiplied(0x3D, 0x7E, 0xC8, 40),
-            button_bg: Color32::from_rgb(0x2C, 0x2C, 0x2E),
-            button_hover: Color32::from_rgb(0x3A, 0x3A, 0x3C),
+            button_bg: Color32::from_rgb(0x29, 0x32, 0x3E),
+            button_hover: Color32::from_rgb(0x38, 0x45, 0x55),
             tab_inactive_bg: Color32::TRANSPARENT,
             tab_inactive_text: Color32::from_rgb(0xC7, 0xC7, 0xCC),
             stop_bg: Color32::from_rgb(0xFF, 0x45, 0x3A),
             success: Color32::from_rgb(0x30, 0xD1, 0x58),
             warning: Color32::from_rgb(0xFF, 0xD6, 0x0A),
-            input_bg: Color32::from_rgb(0x1C, 0x1C, 0x1E),
+            input_bg: Color32::from_rgb(0x13, 0x19, 0x22),
             focus_ring: Color32::from_rgba_unmultiplied(0x3D, 0x7E, 0xC8, 110),
             plot_bg: Color32::from_rgb(0x0C, 0x0C, 0x0E),
             plot_border: Color32::from_rgb(0x3A, 0x3A, 0x3C),
@@ -628,11 +631,10 @@ pub fn status_line(ui: &mut egui::Ui, t: &Tokens, tone: StatusTone, text: &str) 
     ui.painter()
         .circle_filled(rect.center(), 3.5, color);
     ui.add_space(SPACE_XS);
-    ui.label(
-        RichText::new(text)
-            .size(FONT_BODY)
-            .color(t.text_muted),
-    );
+    ui.add_sized(
+        Vec2::new(ui.available_width().max(0.0), CTRL_H.min(18.0)),
+        egui::Label::new(RichText::new(text).size(FONT_BODY).color(t.text_muted)).truncate(),
+    ).on_hover_text(text);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -644,42 +646,59 @@ pub enum StatusTone {
     Busy,
 }
 
-/// Infer a tone from common status strings (zh/en keywords).
+/// Tone for a status the caller already knows is success, failure, or in progress.
+/// Does not treat the substrings "ing" or "load" as busy: a finished sentence
+/// that merely contains those letters stays neutral or ok.
 pub fn tone_from_status(s: &str) -> StatusTone {
     let l = s.to_ascii_lowercase();
-    if l.contains("fail")
-        || l.contains("error")
-        || l.contains("失败")
+    let error = l.contains("失败")
         || l.contains("错误")
         || l.contains("超时")
+        || l.contains("failed")
+        || l.contains("error")
+        || l.contains("could not");
+    if error {
+        return StatusTone::Error;
+    }
+    if l.contains("警告") || l.contains("warning") {
+        return StatusTone::Warn;
+    }
+    // Check negative and completed states before positive/busy substrings:
+    // "disconnected" contains "connected", and "扫描完成" contains "扫描".
+    if l.contains("未连接") || l.contains("未打开") || l.contains("断开")
+        || l.contains("disconnected") || l.contains("not connected")
     {
-        StatusTone::Error
-    } else if l.contains("warn") || l.contains("警告") {
-        StatusTone::Warn
-    } else if l.contains("load")
-        || l.contains("…")
-        || l.contains("ing")
+        return StatusTone::Neutral;
+    }
+    if l.contains("扫描完成") || l.contains("扫描结束") || l.contains("scan complete")
+        || l.contains("scan finished")
+    {
+        return StatusTone::Ok;
+    }
+    let busy = l.contains('…')
+        || l.contains("...")
+        || l.contains("正在")
         || l.contains("连接中")
-        || l.contains("加载")
-        || l.contains("计算中")
-        || l.contains("decoding")
         || l.contains("扫描")
-    {
-        StatusTone::Busy
-    } else if l.contains("ok")
+        || l.contains("加载中")
+        || l.contains("计算中")
+        || l.contains("connecting")
+        || l.contains("scanning");
+    if busy {
+        return StatusTone::Busy;
+    }
+    if l.contains("就绪")
+        || l.contains("已连接")
+        || l.contains("已打开")
+        || l.contains("已停止")
         || l.contains("ready")
         || l.contains("connected")
-        || l.contains("loaded")
-        || l.contains("就绪")
-        || l.contains("已连接")
-        || l.contains("已加载")
+        || l.contains("opened")
         || l.contains("stopped")
-        || l.contains("已停止")
     {
-        StatusTone::Ok
-    } else {
-        StatusTone::Neutral
+        return StatusTone::Ok;
     }
+    StatusTone::Neutral
 }
 
 /// Quiet section frame (weak border) for side panels.
@@ -761,6 +780,17 @@ pub fn add_singleline(
 #[cfg(test)]
 mod tests {
     use super::{equal_widths, SPACE_SM};
+
+    #[test]
+    fn completed_scan_and_disconnected_states_do_not_look_busy_or_connected() {
+        use super::{tone_from_status, StatusTone};
+        assert!(matches!(tone_from_status("扫描完成：发现 2 台设备"), StatusTone::Ok));
+        assert!(matches!(tone_from_status("Scan finished"), StatusTone::Ok));
+        assert!(matches!(tone_from_status("设备未连接"), StatusTone::Neutral));
+        assert!(matches!(tone_from_status("Disconnected"), StatusTone::Neutral));
+        assert!(matches!(tone_from_status("扫描失败"), StatusTone::Error));
+        assert!(matches!(tone_from_status("正在扫描…"), StatusTone::Busy));
+    }
 
     #[test]
     fn sidebar_bounds_fit_small_windows_and_reserve_main_content() {

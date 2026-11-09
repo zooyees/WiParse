@@ -1,0 +1,24 @@
+{
+  "passed": true,
+  "shipped_binaries": [
+    {
+      "file": "WiParse.exe",
+      "sha256": "42bad9d741417a34699cf61538c897998154093476bf90a4c4c064e4a3b1daad"
+    },
+    {
+      "file": "WiParse-Host.exe",
+      "sha256": "8feb64d5f8793386ba429b677de1ff62b49abe3e477c73e71f3655bd48242ba0"
+    },
+    {
+      "file": "WiParse-CLI.exe",
+      "sha256": "31040c09a9a6067e2ab98e3538c4ad739a5b5f77fdcdefd1811c10115c8ddbeb"
+    },
+    {
+      "file": "WiParse-Service.exe",
+      "sha256": "30984d4effb3daa83e6318e703a904e393bd93a47cbd4027b41c311c3458dc44"
+    }
+  ],
+  "qa_processes_remaining": 0,
+  "source_identity_matches_candidate": true,
+  "source_files": 765
+}

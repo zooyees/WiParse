@@ -1,0 +1,44 @@
+
+> wiparse-next@0.1.0 test
+> node --test tests/*.test.mjs
+
+✔ bandpass schematic nodes stay inside the drawing and run left to right (2.4492ms)
+✔ crc parameter table matches the old presets and hides an invalid custom polynomial (8.5ms)
+✔ display mapping keeps the old full-scale spans and kind bands (3.4262ms)
+✔ the shared axis fits mapped extrema and zooms around the center (0.6652ms)
+✔ dragging a handle follows the old offset and scale formulas (1.9029ms)
+✔ serial live starts at the recent tail and skips rows the log has already dropped (1.6016ms)
+✔ pending operation survives reopening and blocks another command until verified (3.3529ms)
+✔ a late completion cannot remove a newer recovery marker (0.7765ms)
+✔ storage errors prevent starting an untracked operation (0.9025ms)
+✔ scientific keypad appends the old tokens and edits one character at a time (5.38ms)
+✔ resonance points stay in frequency order and drop invented samples (4.7692ms)
+✔ configured items use matching results, with no fabricated pass (4.168ms)
+✔ validation and historical phase use readable labels (0.7038ms)
+✔ status filters never count stale results as passed (0.4463ms)
+✔ 500 test items render a bounded window and retain the correct scroll geometry (1.4691ms)
+✔ stale and missing results are not shown as current pass (0.6289ms)
+✔ radix conversion matches the old signed i128 cases (2.3161ms)
+✔ rc settling matches the old one, three and five tau percentages (1.5268ms)
+✔ report artifacts follow the old extension and group view (2.7799ms)
+✔ latest markdown ignores newer logs and keeps the last equal mtime after path order (1.338ms)
+✔ a test report follows run order when modification times match (0.5121ms)
+✔ history search can distinguish case or ignore it (1.284ms)
+✔ tracks the chosen log through reordered tabs and refuses an absent view (0.2159ms)
+✔ finds a match beyond the current page and resumes after it (1.2274ms)
+✔ continues correctly when the byte limit makes a page shorter (1.3892ms)
+✔ detects evicted rows and refuses a mixed snapshot (0.6376ms)
+✔ rejects a replaced log even when its row count is unchanged (0.3103ms)
+✔ reports previously evicted rows and honors cancellation (0.2716ms)
+✔ a third cursor replaces the pair and vertical clicks use the plot scale (1.2949ms)
+✔ rail keeps 200px minimum and reserves room for content at supported window sizes (0.8866ms)
+✔ narrow containers keep the rail readable and require overflow instead of hiding controls (0.168ms)
+✔ corrupt or obsolete persisted widths recover to the user-required default (0.1541ms)
+ℹ tests 32
+ℹ suites 0
+ℹ pass 32
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 837.9714

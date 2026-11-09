@@ -1,0 +1,14 @@
+import {LocalizedLabel,localizeLabel} from './localization';
+import {useEffect,useId,useState} from 'react';
+import type {Dispatch,SetStateAction} from 'react';
+import {invoke} from '@tauri-apps/api/core';
+import {object} from './model';
+
+export function ScopeRulesEditor({project,raw,disabled,setOwner,onSaved}:{project:string;raw:string;disabled:boolean;setOwner:Dispatch<SetStateAction<string|null>>;onSaved:(snapshot:unknown)=>void}) {
+  const [open,setOpen]=useState(false),[baseline,setBaseline]=useState(''),[draft,setDraft]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
+  const owner=useId();
+  useEffect(()=>{if(!open)return;setOwner(current=>current??owner);return()=>setOwner(current=>current===owner?null:current);},[open,owner,setOwner]);
+  const show=()=>{let value=raw;try{value=JSON.stringify(JSON.parse(raw.trim()||'[]'),null,2);}catch{/* Keep malformed input visible for deliberate repair. */}setBaseline(raw);setDraft(value);setError('');setNotice('');setOpen(true);};
+  const save=async(validateOnly:boolean)=>{try{JSON.parse(draft);}catch{setError(localizeLabel("JSON 格式无效，请修正后再提交。"));return;}setBusy(true);setError('');setNotice('');try{const result=await invoke('scope_rules_replace_safe',{project,expected:baseline,replacement:draft,validateOnly});if(validateOnly){if(object(result).valid!==true)throw Error('规则校验结果未确认');setNotice(localizeLabel("规则校验通过，尚未保存。"));}else{onSaved(result);setOpen(false);}}catch(reason){setError(String(reason));}finally{setBusy(false);}};
+  return <><button type="button" className="button secondary" disabled={disabled||busy} onClick={show}><LocalizedLabel text={"完整规则 / 配置修复"}/></button>{open&&<div className="dialog-backdrop"><section className="document-editor" role="dialog" aria-modal="true" aria-label={localizeLabel("完整抓取规则")}><header className="section-heading"><div><h2><LocalizedLabel text={"完整抓取规则"}/></h2><p><LocalizedLabel text={"支持规则数组和 items 文档；保留标签、匹配方式、排除条件和扩展字段。"}/></p></div></header><div className="document-editor-body">{error&&<div className="detail-warning" role="alert">{error}</div>}{notice&&<div className="detail-help" role="status">{notice}</div>}<textarea className="scope-rules-json" spellCheck={false} aria-label={localizeLabel("抓取规则 JSON")} value={draft} disabled={busy} onChange={event=>setDraft(event.target.value)}/><small><LocalizedLabel text={"保存前校验全部启用条件和重复标识；保存后需要重新预检。"}/></small></div><footer className="assistant-buttons"><button className="button secondary" disabled={busy} onClick={()=>void save(true)}><LocalizedLabel text={"校验规则"}/></button><button className="button primary" disabled={busy||draft===baseline} onClick={()=>void save(false)}><LocalizedLabel text={"保存完整规则"}/></button><button className="button secondary" disabled={busy} onClick={()=>setOpen(false)}><LocalizedLabel text={"放弃并关闭"}/></button></footer></section></div>}</>;
+}

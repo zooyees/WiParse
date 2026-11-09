@@ -152,6 +152,7 @@ fn load_1000z(bytes: &[u8]) -> Result<Vec<WaveformTrace>, WaveformFileError> {
         let y_scale = -vdiv / 20.0;
         let y_offset = ch_shift[i] - vertical_bias;
         let n = raw.len();
+        crate::waveform_file::consume_wave_points(n)?;
         let mut x = Vec::with_capacity(n);
         let mut y = Vec::with_capacity(n);
         for (k, &r) in raw.iter().enumerate() {
@@ -247,6 +248,7 @@ fn load_1000b(bytes: &[u8]) -> Result<Vec<WaveformTrace>, WaveformFileError> {
         }
         let raw = &bytes[start..start + points];
         let h = points as f64 * spp / 2.0;
+        crate::waveform_file::consume_wave_points(points)?;
         let mut x = Vec::with_capacity(points);
         let mut y = Vec::with_capacity(points);
         for (k, &r) in raw.iter().enumerate() {
@@ -347,6 +349,7 @@ fn load_4000(bytes: &[u8]) -> Result<Vec<WaveformTrace>, WaveformFileError> {
         // DS4000 ADC polarity: y_scale = -volt_scale
         let y_scale = -volt_scale;
         let y_offset = voff[i];
+        crate::waveform_file::consume_wave_points(mem_depth)?;
         let mut x = Vec::with_capacity(mem_depth);
         let mut y = Vec::with_capacity(mem_depth);
         for (k, &r) in raw.iter().enumerate() {
@@ -443,6 +446,7 @@ fn load_dho800(bytes: &[u8]) -> Result<Vec<WaveformTrace>, WaveformFileError> {
     for ch in 0..n_ch {
         let sc = scale[ch].unwrap_or(1.0 / 750_000_000_000.0);
         let offv = offset[ch].unwrap_or(-sc * 32768.0);
+        crate::waveform_file::consume_wave_points(n_pts)?;
         let mut x = Vec::with_capacity(n_pts);
         let mut y = Vec::with_capacity(n_pts);
         for i in 0..n_pts {
@@ -475,9 +479,11 @@ fn decode_block_payload(
         return Ok(payload.to_vec());
     }
     let mut dec = ZlibDecoder::new(payload);
+    crate::waveform_file::check_wave_points(decomp_size)?;
     let mut out = Vec::with_capacity(decomp_size);
-    dec.read_to_end(&mut out)
+    dec.take(decomp_size as u64+1).read_to_end(&mut out)
         .map_err(|e| WaveformFileError::Parse(format!("DHO zlib: {e}")))?;
+    if out.len()!=decomp_size{return Err(WaveformFileError::Parse("DHO decompressed size mismatch".into()))}
     Ok(out)
 }
 

@@ -103,7 +103,7 @@ test('simulation run of fpga_01_pll_clock records simulation_only evidence',{tim
  const suite=await run(ctx);
  assert.equal(suite.simulation_only,true);
  assert.equal(suite.industrial_approved,false);
- assert.equal(suite.execution_status,'completed');
+ assert.equal(suite.execution_status,'completed',JSON.stringify(suite));
  assert.equal(suite.product_verdict,'PASS');
  assert.equal(suite.results.length,1);
  assert.equal(suite.results[0].item_id,'fpga_01_pll_clock');

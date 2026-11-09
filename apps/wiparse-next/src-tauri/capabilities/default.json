@@ -1,0 +1,11 @@
+{
+  "identifier": "main",
+  "description": "Main window, local UI only",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-destroy"
+  ]
+}

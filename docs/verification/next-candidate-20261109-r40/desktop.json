@@ -1,0 +1,18 @@
+{
+  "candidate": "R40",
+  "scope": "intermediate desktop acceptance",
+  "passed": false,
+  "observed": [
+    "Both UART channels visible by default with no overlay warning",
+    "Y+ changes vertical extent; Fit restores",
+    "Auto arrangement separates both channels; primary Y axis reads original unit",
+    "Raw whole-file measurement count 6216; precise X cursors snap to 0.0000998263888888889 and 0.0002001953125 s",
+    "Cursor delta 0.0001003689 s and reciprocal 9963.243 Hz; gated measurement count 186",
+    "Opening DDSSS CSV preserves UART, total 2 files/3 channels, union range 0..0.0721709 s",
+    "Closing UART only removes in-memory traces; remaining DDSSS becomes primary"
+  ],
+  "failure": "Removed source leaves protocol role undefined (correct), but required channel selector visually displays CH1 (incorrect). R41 adds explicit disabled Select channel option; no silent remapping. DDSSS decode in this state correctly warns missing channel, not actual decode failure.",
+  "qa_closed_normally": "requested; final process check required",
+  "hardware": false,
+  "real_ai": false
+}

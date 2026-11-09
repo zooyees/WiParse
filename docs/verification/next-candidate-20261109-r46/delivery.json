@@ -1,0 +1,12 @@
+{
+  "directory": "D:\\windlink\\windlink\\WiParse-R\\dist\\WiParse-Next-20261109-Preview-R46",
+  "inventory_sha256": "d036754eaef836361b36e0dc3b24a5579ae089666017f425e996bcea69c4843a",
+  "symbol_files": 4,
+  "portable_defaults": true,
+  "inventory_excludes_only_its_own_file": true,
+  "user_installation_modified": false,
+  "candidate_sha256": "185d01bcc12a4182d3723b921c27177654c8592766e0e96e0b8ec3baf0850392",
+  "passed": true,
+  "zip_created": false,
+  "file_count": 4676
+}

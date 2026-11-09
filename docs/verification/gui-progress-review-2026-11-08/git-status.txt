@@ -1,0 +1,119 @@
+ M Cargo.lock
+ M crates/wiparse-core/src/ai.rs
+ M crates/wiparse-core/src/bridge.rs
+ M crates/wiparse-core/src/dongle.rs
+ M crates/wiparse-core/src/i18n.rs
+ M crates/wiparse-core/src/lib.rs
+ M crates/wiparse-core/src/log/file.rs
+ M crates/wiparse-core/src/project.rs
+ M crates/wiparse-core/src/scope/visa.rs
+ M crates/wiparse-core/src/scope/visa_hotplug_tests.rs
+ M crates/wiparse-core/src/serial.rs
+ M crates/wiparse-core/src/usb.rs
+ M crates/wiparse-core/src/waveform_file.rs
+ M crates/wiparse-gui/Cargo.toml
+ M crates/wiparse-gui/src/ai.rs
+ M crates/wiparse-gui/src/app.rs
+ M crates/wiparse-gui/src/backend/capabilities.rs
+ M crates/wiparse-gui/src/backend/mod.rs
+ M crates/wiparse-gui/src/backend/stateful.rs
+ M crates/wiparse-gui/src/backend/ui.rs
+ M crates/wiparse-gui/src/calculator.rs
+ M crates/wiparse-gui/src/converter.rs
+ M crates/wiparse-gui/src/data_analysis.rs
+ M crates/wiparse-gui/src/instrument_control.rs
+ M crates/wiparse-gui/src/instrument_control/workbench.rs
+ M crates/wiparse-gui/src/instrument_control/workbench/channels.rs
+ M crates/wiparse-gui/src/instrument_control/workbench/controls.rs
+ M crates/wiparse-gui/src/instrument_control/workbench/design.rs
+ M crates/wiparse-gui/src/instrument_control/workbench/flat.rs
+ M crates/wiparse-gui/src/instrument_control/workbench/navigation.rs
+ M crates/wiparse-gui/src/instrument_control/workbench/ports.rs
+ M crates/wiparse-gui/src/instrument_control/workbench/scope_layout.rs
+ M crates/wiparse-gui/src/log_tab.rs
+ M crates/wiparse-gui/src/log_view.rs
+ M crates/wiparse-gui/src/main.rs
+ M crates/wiparse-gui/src/serial_tool.rs
+ M crates/wiparse-gui/src/test_report.rs
+ M crates/wiparse-gui/src/test_report/chat_text.rs
+ M crates/wiparse-gui/src/test_tool.rs
+ M crates/wiparse-gui/src/test_tool/workspace.rs
+ M crates/wiparse-gui/src/test_tool/workspace/project_matrix.rs
+ M crates/wiparse-gui/src/theme.rs
+ M crates/wiparse-gui/src/waveform_analysis.rs
+ M crates/wiparse-service/src/jobs.rs
+ M dist/WiParse-CLI.exe
+ M dist/WiParse-Service.exe
+ M dist/WiParse.exe
+ M scripts/package-marketplace-demo.ps1
+ M scripts/stage-exe-preview.ps1
+ M test-tools/hub-workspace.mjs
+ M test-tools/lib/host/fpga-host-adapter.mjs
+ M test-tools/lib/hub/common.mjs
+ M test-tools/lib/hub/config-store.mjs
+ M test-tools/lib/hub/run-binding.mjs
+ M test-tools/plugins/fpga-firmware-test/README.md
+ M test-tools/plugins/fpga-firmware-test/lib/log-capture.mjs
+ M test-tools/plugins/fpga-firmware-test/lib/resource-resolver.mjs
+ M test-tools/plugins/fpga-firmware-test/test/project-hub.test.mjs
+ M test-tools/plugins/fpga-firmware-test/test/upgrade.test.mjs
+ M test-tools/plugins/scope-serial-monitor/loop.mjs
+ M test-tools/test/fpga-host-adapter.test.mjs
+?? .npm-task-cache/
+?? PREVIEW.txt
+?? WiParse.exe.old
+?? WiParse.exe.previous
+?? apps/
+?? backup-spacing-20261106-221219/
+?? crates/wiparse-core/src/data_extract.rs
+?? crates/wiparse-core/src/device_session.rs
+?? crates/wiparse-core/src/resource_lock.rs
+?? dist/WiParse-1.2.2-20261107/
+?? dist/WiParse-1.2.2-Current-20261106/
+?? dist/WiParse-1.2.2-Spacing-20261106/
+?? dist/WiParse-1.2.2-UI-20261106/
+?? dist/WiParse-1.2.2-UI-Redesign-20261106/
+?? dist/WiParse-1.2.2-Windows-x64-20261025-Full/
+?? dist/WiParse-1.2.2-Windows-x64-20261103-Full/
+?? dist/WiParse-1.2.2-Windows-x64-20261104-2-Full/
+?? dist/WiParse-1.2.2-Windows-x64-20261104-3-Full/
+?? dist/WiParse-1.2.2-Windows-x64-20261104-Full/
+?? dist/WiParse-1.2.2-Windows-x64-20261105-2-Full/
+?? dist/WiParse-1.2.2-Windows-x64-20261105-3-Full/
+?? dist/WiParse-1.2.2-Windows-x64-20261105-4-Full/
+?? dist/WiParse-1.2.2-Windows-x64-20261105-5-Full/
+?? dist/WiParse-1.2.2-Windows-x64-20261105-Full/
+?? dist/WiParse-1.2.2-WirelessWhitebox-20261105/
+?? dist/WiParse-1.2.2-WirelessWhitebox-FT4222-20261105/
+?? dist/WiParse-1.2.2-WirelessWhitebox-FT4222-GUI-20261105/
+?? dist/wiparse-1.2.2-intelligent-serial-ai-20261025-preview-r2/
+?? docs/plans/
+?? docs/reviews/gui-framework-architecture-review-2026-11-07.md
+?? docs/reviews/gui-framework-progress-assessment-2026-11-07.md
+?? docs/reviews/mt5820-executable-test-plan.md
+?? docs/reviews/wiparse-ui-ue-review-2026-11-06.md
+?? docs/reviews/wiparse-wireless-whitebox-assessment-2026-11-05.md
+?? docs/ui-ue-assessment-2026-11-05.md
+?? docs/ui-ue-remediation-2026-11-05.md
+?? docs/verification/gui-framework-review-2026-11-07/
+?? docs/verification/gui-progress-review-2026-11-08/
+?? docs/verification/migration-takeover-2026-11-07/
+?? preview-manifest.json
+?? recipes/wireless-whitebox/
+?? scripts/deploy-wireless-interim.ps1
+?? scripts/deploy-workspace-gui.ps1
+?? scripts/package-current-release.py
+?? scripts/package-ui-review.py
+?? scripts/package-wireless-interim.py
+?? test-tools/plugins/wireless-whitebox/
+?? test-tools/test/ft4222-i2c-bus.test.mjs
+?? test-tools/test/hub-atomic-write.test.mjs
+?? test-tools/test/mt5788.test.mjs
+?? test-tools/test/mt5820-log.test.mjs
+?? test-tools/test/scope-preflight-safety.test.mjs
+?? test-tools/test/wireless-i2c-bus.test.mjs
+?? test-tools/test/wireless-load-sequence.test.mjs
+?? test-tools/test/wireless-rx-observe.test.mjs
+?? test-tools/test/wireless-station-readiness.test.mjs
+?? test-tools/test/wireless-whitebox.test.mjs
+?? wifi-uart-recent.json

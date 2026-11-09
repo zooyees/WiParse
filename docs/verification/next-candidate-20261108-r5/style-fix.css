@@ -1,0 +1,20 @@
+/* Complete dark-theme contrast for retained log and assistant surfaces. */
+:root[data-theme="dark"] * { scrollbar-color:#64758a #202731; }
+:root[data-theme="dark"] :is(.plugin,.log-content,.wave-frame-detail,.reading-grid strong,.summary b,.secondary,.status-filter) { color:var(--text); }
+:root[data-theme="dark"] :is(.plugin small,.summary,.row-title small,.row-title .row-id,.elapsed,.detail-label,.detail-id,.detail-line,.detail-empty,.result-details h4,.empty,.footer,.search,.log-line-number) { color:var(--muted); }
+:root[data-theme="dark"] :is(.details,.assistant-composer) { background:var(--panel); }
+:root[data-theme="dark"] :is(.plugin:hover,.report-tree-file:hover,.table-row:hover,.log-scroll-actions button:hover) { background:var(--raised); }
+:root[data-theme="dark"] :is(.plugin.selected,.table-row.row-active,.data-readout div.selected,.data-summary div.selected,.wave-frame.selected,.assistant-message.role-user) { background:#293e53; color:var(--text); border-color:#4f7090; }
+:root[data-theme="dark"] .assistant-tabs button[aria-selected="true"] { background:#293e53; color:#afd4fa; }
+:root[data-theme="dark"] :is(.plugin-icon,.empty-icon) { background:var(--raised); color:var(--accent); }
+:root[data-theme="dark"] :is(.assistant-message.role-alert,.alert,.detail-warning,.status-invalid,.status-stale) { background:#392d1e; color:#f0cc86; border-color:#785f32; }
+:root[data-theme="dark"] .alert small { color:inherit; }
+:root[data-theme="dark"] :is(.log-error) { color:#f0cc86; }
+:root[data-theme="dark"] :is(.calculator-error,.wave-frame.bad strong) { color:#f2aaaa; }
+:root[data-theme="dark"] .status { background:var(--raised); color:var(--muted); border-color:var(--line); }
+:root[data-theme="dark"] :is(.status-invalid,.status-stale) { background:#392d1e; color:#f0cc86; border-color:#785f32; }
+:root[data-theme="dark"] .status-pass { background:#18392e; color:#9cdfbd; border-color:#396a55; }
+:root[data-theme="dark"] :is(.status-fail,.status-error) { background:#422828; color:#f2aaaa; border-color:#815050; }
+:root[data-theme="dark"] :is(.status-running,.status-testing) { background:#213d58; color:#afd4fa; border-color:#4f789c; }
+:root[data-theme="dark"] :is(.button.primary,.settings-tabs .active) { background:#316faa; border-color:#5990c1; color:white; }
+:root[data-theme="dark"] .button.primary:hover:not(:disabled) { background:#3b7db9; }

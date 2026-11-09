@@ -1,0 +1,5080 @@
+{
+  "schema_version": "wiparse.fpga-manifest/1",
+  "items": [
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_01_pll_clock.json",
+      "config_sha256": "f5645b6cf80e0ec6a4a5eeab029b125e79dac87c77f647d890983ad1129b005b",
+      "input_sha256": "eec2ecb9afb67525daae7877c2380863323b1c0f26b10b8562a00956fee07927",
+      "effective_config_sha256": "30f6b10c278072ee7b34d4dd1241083742289c4c4dc1ef243e27e90b07b0346f",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_01_pll_clock",
+        "name": "PLL 时钟锁定与输出频率验证",
+        "enabled": true,
+        "order": 10,
+        "tags": [
+          "demo",
+          "clock",
+          "dongle-uart",
+          "dongle-reset",
+          "analog-scope"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 2,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": true,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "PLL_LOCK_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            },
+            {
+              "id": "output_frequency",
+              "type": "waveform_metric_range",
+              "capture": "ip_output",
+              "channel": "CH1",
+              "metric": "frequency_hz",
+              "minimum": 99000000,
+              "maximum": 101000000,
+              "unit": "Hz",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "programmer": "project_config.instruments.programmer",
+          "scope": "project_config.instruments.scope",
+          "log_dongle": "project_config.instruments.log_dongle"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_01_pll_clock",
+        "name": "PLL 时钟锁定与输出频率验证",
+        "enabled": true,
+        "order": 10,
+        "tags": [
+          "demo",
+          "clock",
+          "dongle-uart",
+          "dongle-reset",
+          "analog-scope"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 2,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": true,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "PLL_LOCK_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            },
+            {
+              "id": "output_frequency",
+              "type": "waveform_metric_range",
+              "capture": "ip_output",
+              "channel": "CH1",
+              "metric": "frequency_hz",
+              "minimum": 99000000,
+              "maximum": 101000000,
+              "unit": "Hz",
+              "required": true,
+              "limit_source": "inline",
+              "limit_sha256": "2647d2b908e0ed2e6643db045d65ee276cb9a23d8b2917108d47ce8b703358f3"
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "programmer": {
+            "kind": "debug_probe",
+            "selector": {
+              "serial": "DEMO-DONGLE-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_dongle": {
+            "kind": "wiparse_dongle_uart",
+            "selector": {
+              "dongle_serial": "DEMO-DONGLE-001",
+              "uart_channel": 0,
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": true,
+      "resources": {
+        "programmer": {
+          "kind": "debug_probe",
+          "serial": "DEMO-DONGLE-001",
+          "device_id": 1,
+          "model": "SIMULATED",
+          "simulation_only": true,
+          "selector": {
+            "serial": "DEMO-DONGLE-001"
+          }
+        },
+        "scope": {
+          "kind": "oscilloscope",
+          "serial": "DEMO-SCOPE-001",
+          "device_id": 2,
+          "model": "SIMULATED",
+          "simulation_only": true,
+          "selector": {
+            "serial": "DEMO-SCOPE-001"
+          }
+        },
+        "log_dongle": {
+          "kind": "wiparse_dongle_uart",
+          "dongle_serial": "DEMO-DONGLE-001",
+          "uart_channel": 0,
+          "baud": 115200,
+          "device_id": 3,
+          "model": "SIMULATED",
+          "simulation_only": true,
+          "selector": {
+            "dongle_serial": "DEMO-DONGLE-001",
+            "uart_channel": 0,
+            "baud": 115200
+          }
+        }
+      }
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_02_reset_controller.json",
+      "config_sha256": "409934551db99c34225eb58ffd08b0f9c5f0fa9d208aea6d8ef6d89dbe7e611d",
+      "input_sha256": "55d15357b858664b2f800722893325ad8fbefb3d2a19b8c2984eedf85d19c630",
+      "effective_config_sha256": "0b0840bf43c9ba0bf3abc1354db63041b8c470c56d4cb502533ba4f1e5dce2d6",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_02_reset_controller",
+        "name": "Reset Controller 复位时序验证",
+        "enabled": true,
+        "order": 20,
+        "tags": [
+          "demo",
+          "system",
+          "com-uart",
+          "dc-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "dc_power",
+          "power_role": "power",
+          "channel": 1,
+          "off_time_ms": 500,
+          "release_confirmation": {
+            "type": "voltage_threshold",
+            "minimum_v": 3.1,
+            "stable_ms": 20,
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 3,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "RESET_SEQUENCE_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "power": "project_config.instruments.power",
+          "scope": "project_config.instruments.scope",
+          "log_com": "project_config.instruments.log_com"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_02_reset_controller",
+        "name": "Reset Controller 复位时序验证",
+        "enabled": true,
+        "order": 20,
+        "tags": [
+          "demo",
+          "system",
+          "com-uart",
+          "dc-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "dc_power",
+          "power_role": "power",
+          "channel": 1,
+          "off_time_ms": 500,
+          "release_confirmation": {
+            "type": "voltage_threshold",
+            "minimum_v": 3.1,
+            "stable_ms": 20,
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 3,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "RESET_SEQUENCE_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "power": {
+            "kind": "dc_source",
+            "selector": {
+              "serial": "DEMO-POWER-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_com": {
+            "kind": "serial_port",
+            "selector": {
+              "port": "COM3",
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_03_gpio.json",
+      "config_sha256": "b8caab50cfc3eac9a804f3335e0db6346b578ea5a2258ac28dec82026cff4161",
+      "input_sha256": "c3886679d955a5d010b7d030fa2722ab18b579047b1275e173918667396a94f7",
+      "effective_config_sha256": "db7c4c77f43cff62ac7ce85d2d3c9c91ff94cb4ecc619e71fa6618e3b214812c",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_03_gpio",
+        "name": "GPIO 输入输出与中断验证",
+        "enabled": true,
+        "order": 30,
+        "tags": [
+          "demo",
+          "peripheral",
+          "dongle-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 4,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "GPIO_TEST_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "programmer": "project_config.instruments.programmer",
+          "scope": "project_config.instruments.scope",
+          "log_dongle": "project_config.instruments.log_dongle"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_03_gpio",
+        "name": "GPIO 输入输出与中断验证",
+        "enabled": true,
+        "order": 30,
+        "tags": [
+          "demo",
+          "peripheral",
+          "dongle-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 4,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "GPIO_TEST_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "programmer": {
+            "kind": "debug_probe",
+            "selector": {
+              "serial": "DEMO-DONGLE-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_dongle": {
+            "kind": "wiparse_dongle_uart",
+            "selector": {
+              "dongle_serial": "DEMO-DONGLE-001",
+              "uart_channel": 0,
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_04_uart.json",
+      "config_sha256": "da70b34320082c0d8cf48be4f55b75b3922c7a37d95d164777580adc1a88f206",
+      "input_sha256": "68157e9a66830d1f9e1d41bc9b7b37f8e7af6fd982d6ff2b8d0017dcfdb3d1b2",
+      "effective_config_sha256": "10f17b0ab90d5da655c1016383ae35738dead9f72049e2e554903b050aed2bda",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.191Z",
+        "id": "fpga_04_uart",
+        "name": "UART 串口收发与回环验证",
+        "enabled": true,
+        "order": 40,
+        "tags": [
+          "demo",
+          "communication",
+          "com-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 2,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "UART_LOOPBACK_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "programmer": "project_config.instruments.programmer",
+          "scope": "project_config.instruments.scope",
+          "log_com": "project_config.instruments.log_com"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.191Z",
+        "id": "fpga_04_uart",
+        "name": "UART 串口收发与回环验证",
+        "enabled": true,
+        "order": 40,
+        "tags": [
+          "demo",
+          "communication",
+          "com-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 2,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "UART_LOOPBACK_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "programmer": {
+            "kind": "debug_probe",
+            "selector": {
+              "serial": "DEMO-DONGLE-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_com": {
+            "kind": "serial_port",
+            "selector": {
+              "port": "COM3",
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_05_spi_master.json",
+      "config_sha256": "d1140aab9fa9b3c0547e1e2b3a777ee26870daabba090cc691b8ddbcc4e8651e",
+      "input_sha256": "44861418407bc442ae2bd324e18ecf7192c3aa787ece13aeaaf3a2c9c7b2265e",
+      "effective_config_sha256": "7c33916ede51b732b47808f570490d89ed51be9633bbef2f6881c8cdd9d333df",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_05_spi_master",
+        "name": "SPI Master 主机传输验证",
+        "enabled": true,
+        "order": 50,
+        "tags": [
+          "demo",
+          "communication",
+          "dongle-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 3,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "SPI_MASTER_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "programmer": "project_config.instruments.programmer",
+          "scope": "project_config.instruments.scope",
+          "log_dongle": "project_config.instruments.log_dongle"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_05_spi_master",
+        "name": "SPI Master 主机传输验证",
+        "enabled": true,
+        "order": 50,
+        "tags": [
+          "demo",
+          "communication",
+          "dongle-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 3,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "SPI_MASTER_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "programmer": {
+            "kind": "debug_probe",
+            "selector": {
+              "serial": "DEMO-DONGLE-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_dongle": {
+            "kind": "wiparse_dongle_uart",
+            "selector": {
+              "dongle_serial": "DEMO-DONGLE-001",
+              "uart_channel": 0,
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_06_spi_slave.json",
+      "config_sha256": "41e44d2df01004d9266e55403636c118e7c1c261ccc4d9879313de12a04a99df",
+      "input_sha256": "4c937f6df07c35927cf574160d87a6755c8b6261b5b148ef6cc9471afbfd2d35",
+      "effective_config_sha256": "aa52ec7f0c8b97ca238893264b0b3f45ba2ebe22f0419d0268174d7c91e8a714",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_06_spi_slave",
+        "name": "SPI Slave 从机响应验证",
+        "enabled": true,
+        "order": 60,
+        "tags": [
+          "demo",
+          "communication",
+          "com-uart",
+          "dc-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "dc_power",
+          "power_role": "power",
+          "channel": 1,
+          "off_time_ms": 500,
+          "release_confirmation": {
+            "type": "voltage_threshold",
+            "minimum_v": 3.1,
+            "stable_ms": 20,
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 4,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "SPI_SLAVE_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "power": "project_config.instruments.power",
+          "scope": "project_config.instruments.scope",
+          "log_com": "project_config.instruments.log_com"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_06_spi_slave",
+        "name": "SPI Slave 从机响应验证",
+        "enabled": true,
+        "order": 60,
+        "tags": [
+          "demo",
+          "communication",
+          "com-uart",
+          "dc-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "dc_power",
+          "power_role": "power",
+          "channel": 1,
+          "off_time_ms": 500,
+          "release_confirmation": {
+            "type": "voltage_threshold",
+            "minimum_v": 3.1,
+            "stable_ms": 20,
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 4,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "SPI_SLAVE_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "power": {
+            "kind": "dc_source",
+            "selector": {
+              "serial": "DEMO-POWER-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_com": {
+            "kind": "serial_port",
+            "selector": {
+              "port": "COM3",
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_07_i2c_master.json",
+      "config_sha256": "a50295d4a4971750d0d798969e7b05f06c789839a220df096af4663b2d97e2ff",
+      "input_sha256": "a7def4a54cc11ba56e7328a9eef15ea0328753f3e16b995065595f1446d8ae76",
+      "effective_config_sha256": "8d4b5baccdf3584aef3a44f8878269c055d393a612cf1f6402a883b842055384",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_07_i2c_master",
+        "name": "I2C Master 读写与应答验证",
+        "enabled": true,
+        "order": 70,
+        "tags": [
+          "demo",
+          "communication",
+          "dongle-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 2,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "I2C_MASTER_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "programmer": "project_config.instruments.programmer",
+          "scope": "project_config.instruments.scope",
+          "log_dongle": "project_config.instruments.log_dongle"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_07_i2c_master",
+        "name": "I2C Master 读写与应答验证",
+        "enabled": true,
+        "order": 70,
+        "tags": [
+          "demo",
+          "communication",
+          "dongle-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 2,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "I2C_MASTER_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "programmer": {
+            "kind": "debug_probe",
+            "selector": {
+              "serial": "DEMO-DONGLE-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_dongle": {
+            "kind": "wiparse_dongle_uart",
+            "selector": {
+              "dongle_serial": "DEMO-DONGLE-001",
+              "uart_channel": 0,
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_08_i2c_slave.json",
+      "config_sha256": "df6c70e9c6ddc08526c2c07a7668468f00e97552b8eae456ae3e4c2df9b36d44",
+      "input_sha256": "e44c64508fcdce31edcfddaa05e499b565a8f7287d4da54873928a2ead458c2e",
+      "effective_config_sha256": "0be3c9bc60731622daf3ed50ce17d11be928ecab23e35b0ff4afab84324547ad",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_08_i2c_slave",
+        "name": "I2C Slave 地址与寄存器验证",
+        "enabled": true,
+        "order": 80,
+        "tags": [
+          "demo",
+          "communication",
+          "com-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 3,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "I2C_SLAVE_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "programmer": "project_config.instruments.programmer",
+          "scope": "project_config.instruments.scope",
+          "log_com": "project_config.instruments.log_com"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_08_i2c_slave",
+        "name": "I2C Slave 地址与寄存器验证",
+        "enabled": true,
+        "order": 80,
+        "tags": [
+          "demo",
+          "communication",
+          "com-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 3,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "I2C_SLAVE_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "programmer": {
+            "kind": "debug_probe",
+            "selector": {
+              "serial": "DEMO-DONGLE-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_com": {
+            "kind": "serial_port",
+            "selector": {
+              "port": "COM3",
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_09_pwm.json",
+      "config_sha256": "fc714779453503d4e2e3318e94264e33a1a2df08e9373eba11ad51030a1df186",
+      "input_sha256": "ad516ba3d2a6873b05c5221a0c55fecc6ab3dbc0a62c9af619f063499e642b4e",
+      "effective_config_sha256": "156d2c2325a4af2254eb06e9c73a89b245def17c82cf0319bf712e04976331ac",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_09_pwm",
+        "name": "PWM 输出频率与占空比验证",
+        "enabled": true,
+        "order": 90,
+        "tags": [
+          "demo",
+          "peripheral",
+          "dongle-uart",
+          "dongle-reset",
+          "analog-scope"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 4,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": true,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "PWM_TEST_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            },
+            {
+              "id": "output_frequency",
+              "type": "waveform_metric_range",
+              "capture": "ip_output",
+              "channel": "CH1",
+              "metric": "frequency_hz",
+              "minimum": 19800,
+              "maximum": 20200,
+              "unit": "Hz",
+              "required": true
+            },
+            {
+              "id": "output_duty_cycle",
+              "type": "waveform_metric_range",
+              "capture": "ip_output",
+              "channel": "CH1",
+              "metric": "duty_cycle",
+              "minimum": 0.49,
+              "maximum": 0.51,
+              "unit": "ratio",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "programmer": "project_config.instruments.programmer",
+          "scope": "project_config.instruments.scope",
+          "log_dongle": "project_config.instruments.log_dongle"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_09_pwm",
+        "name": "PWM 输出频率与占空比验证",
+        "enabled": true,
+        "order": 90,
+        "tags": [
+          "demo",
+          "peripheral",
+          "dongle-uart",
+          "dongle-reset",
+          "analog-scope"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 4,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": true,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "PWM_TEST_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            },
+            {
+              "id": "output_frequency",
+              "type": "waveform_metric_range",
+              "capture": "ip_output",
+              "channel": "CH1",
+              "metric": "frequency_hz",
+              "minimum": 19800,
+              "maximum": 20200,
+              "unit": "Hz",
+              "required": true,
+              "limit_source": "inline",
+              "limit_sha256": "c5feefd67af2c607ec111d10ea614560487def795a54dfea8713815d5d0115b0"
+            },
+            {
+              "id": "output_duty_cycle",
+              "type": "waveform_metric_range",
+              "capture": "ip_output",
+              "channel": "CH1",
+              "metric": "duty_cycle",
+              "minimum": 0.49,
+              "maximum": 0.51,
+              "unit": "ratio",
+              "required": true,
+              "limit_source": "inline",
+              "limit_sha256": "ed520ffecc5f84b37ca751b1c643bfda0cd1210a3e1af62ea0de46699a5a9ff1"
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "programmer": {
+            "kind": "debug_probe",
+            "selector": {
+              "serial": "DEMO-DONGLE-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_dongle": {
+            "kind": "wiparse_dongle_uart",
+            "selector": {
+              "dongle_serial": "DEMO-DONGLE-001",
+              "uart_channel": 0,
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_10_timer_counter.json",
+      "config_sha256": "a5e24ab22bb5da3d40a7a8d6367f4287add2e7504aa977772bed7d6a2b982782",
+      "input_sha256": "4d3a3db3bbeb1b68dd93c7a94aa01b322295bcecb145cf14e8e3b52afb9e2704",
+      "effective_config_sha256": "39a889aaee655d356f1452df65ed65ac0d10dc58b3cdbdf1b4995b7a1f4480fe",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_10_timer_counter",
+        "name": "Timer Counter 定时计数验证",
+        "enabled": true,
+        "order": 100,
+        "tags": [
+          "demo",
+          "peripheral",
+          "com-uart",
+          "dc-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "dc_power",
+          "power_role": "power",
+          "channel": 1,
+          "off_time_ms": 500,
+          "release_confirmation": {
+            "type": "voltage_threshold",
+            "minimum_v": 3.1,
+            "stable_ms": 20,
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 2,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "TIMER_COUNTER_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "power": "project_config.instruments.power",
+          "scope": "project_config.instruments.scope",
+          "log_com": "project_config.instruments.log_com"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_10_timer_counter",
+        "name": "Timer Counter 定时计数验证",
+        "enabled": true,
+        "order": 100,
+        "tags": [
+          "demo",
+          "peripheral",
+          "com-uart",
+          "dc-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "dc_power",
+          "power_role": "power",
+          "channel": 1,
+          "off_time_ms": 500,
+          "release_confirmation": {
+            "type": "voltage_threshold",
+            "minimum_v": 3.1,
+            "stable_ms": 20,
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 2,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "TIMER_COUNTER_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "power": {
+            "kind": "dc_source",
+            "selector": {
+              "serial": "DEMO-POWER-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_com": {
+            "kind": "serial_port",
+            "selector": {
+              "port": "COM3",
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_11_watchdog.json",
+      "config_sha256": "201f246f08a0076c19bc9a6efd4619437e6465eb55b49aa36226f3762eeb86eb",
+      "input_sha256": "0e73bc1b36fa073beb4a55a11496330efc62744c9c8f5884ade0bf31bb9192c5",
+      "effective_config_sha256": "117f70957c4a920a94b4138749b901f78a163482a311c83a1779e874375a1cdc",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_11_watchdog",
+        "name": "Watchdog 看门狗超时复位验证",
+        "enabled": true,
+        "order": 110,
+        "tags": [
+          "demo",
+          "system",
+          "dongle-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 3,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "WATCHDOG_RESET_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "programmer": "project_config.instruments.programmer",
+          "scope": "project_config.instruments.scope",
+          "log_dongle": "project_config.instruments.log_dongle"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_11_watchdog",
+        "name": "Watchdog 看门狗超时复位验证",
+        "enabled": true,
+        "order": 110,
+        "tags": [
+          "demo",
+          "system",
+          "dongle-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 3,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "WATCHDOG_RESET_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "programmer": {
+            "kind": "debug_probe",
+            "selector": {
+              "serial": "DEMO-DONGLE-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_dongle": {
+            "kind": "wiparse_dongle_uart",
+            "selector": {
+              "dongle_serial": "DEMO-DONGLE-001",
+              "uart_channel": 0,
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_12_sync_fifo.json",
+      "config_sha256": "b0ebb8850fafca1727103a82890034ca7f60747559b02a674e72c46e87c69f9c",
+      "input_sha256": "769a5aa925a095a95b87175277b15914138ca316b8a68accd6cb4be86ace6988",
+      "effective_config_sha256": "57d26003846ba4928738002327cf2c6492236e37db80561776dbed469ffc9c8d",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_12_sync_fifo",
+        "name": "Sync FIFO 同步读写与满空验证",
+        "enabled": true,
+        "order": 120,
+        "tags": [
+          "demo",
+          "memory",
+          "com-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 4,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "SYNC_FIFO_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "programmer": "project_config.instruments.programmer",
+          "scope": "project_config.instruments.scope",
+          "log_com": "project_config.instruments.log_com"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_12_sync_fifo",
+        "name": "Sync FIFO 同步读写与满空验证",
+        "enabled": true,
+        "order": 120,
+        "tags": [
+          "demo",
+          "memory",
+          "com-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 4,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "SYNC_FIFO_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "programmer": {
+            "kind": "debug_probe",
+            "selector": {
+              "serial": "DEMO-DONGLE-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_com": {
+            "kind": "serial_port",
+            "selector": {
+              "port": "COM3",
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_13_async_fifo.json",
+      "config_sha256": "f255f89e960f648c7a5b30c28b9abf3d24764aaf818550f0e95dd6da83e95f0e",
+      "input_sha256": "981db6635011826ad234df68fcacfea0e8ee0aab46dafefdf7cec80f4d31e4d5",
+      "effective_config_sha256": "570e5fe2607202cba8155bc2b7550aa3fad3cf4c21b7fab9c2c583c0e9698f62",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_13_async_fifo",
+        "name": "Async FIFO 跨时钟域传输验证",
+        "enabled": true,
+        "order": 130,
+        "tags": [
+          "demo",
+          "memory",
+          "dongle-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 2,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "ASYNC_FIFO_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "programmer": "project_config.instruments.programmer",
+          "scope": "project_config.instruments.scope",
+          "log_dongle": "project_config.instruments.log_dongle"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_13_async_fifo",
+        "name": "Async FIFO 跨时钟域传输验证",
+        "enabled": true,
+        "order": 130,
+        "tags": [
+          "demo",
+          "memory",
+          "dongle-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 2,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "ASYNC_FIFO_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "programmer": {
+            "kind": "debug_probe",
+            "selector": {
+              "serial": "DEMO-DONGLE-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_dongle": {
+            "kind": "wiparse_dongle_uart",
+            "selector": {
+              "dongle_serial": "DEMO-DONGLE-001",
+              "uart_channel": 0,
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_14_block_ram.json",
+      "config_sha256": "d392a88d60a36c923dbb4e338f7968b2e5eda435ad1942742d7f7d90b5823467",
+      "input_sha256": "b1bbfe7d110eb79e2002c924c69774e83ec575d14213e321426228c6de6325f3",
+      "effective_config_sha256": "f92924c5d10bac1e476768cb90b77cf7512fef847717743074f7dbabfc8cb34a",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_14_block_ram",
+        "name": "Block RAM 存储读写验证",
+        "enabled": true,
+        "order": 140,
+        "tags": [
+          "demo",
+          "memory",
+          "com-uart",
+          "dc-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "dc_power",
+          "power_role": "power",
+          "channel": 1,
+          "off_time_ms": 500,
+          "release_confirmation": {
+            "type": "voltage_threshold",
+            "minimum_v": 3.1,
+            "stable_ms": 20,
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 3,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "BRAM_TEST_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "power": "project_config.instruments.power",
+          "scope": "project_config.instruments.scope",
+          "log_com": "project_config.instruments.log_com"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_14_block_ram",
+        "name": "Block RAM 存储读写验证",
+        "enabled": true,
+        "order": 140,
+        "tags": [
+          "demo",
+          "memory",
+          "com-uart",
+          "dc-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "dc_power",
+          "power_role": "power",
+          "channel": 1,
+          "off_time_ms": 500,
+          "release_confirmation": {
+            "type": "voltage_threshold",
+            "minimum_v": 3.1,
+            "stable_ms": 20,
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 3,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "BRAM_TEST_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "power": {
+            "kind": "dc_source",
+            "selector": {
+              "serial": "DEMO-POWER-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_com": {
+            "kind": "serial_port",
+            "selector": {
+              "port": "COM3",
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_15_ddr_controller.json",
+      "config_sha256": "fc8158c614ef0cdec78819489f583747bd8e67d37771e05353fcaec83dfb102f",
+      "input_sha256": "66c34339e01397ae695adfb30c74027048ff445ccdf2d573acb9cc0f0551129e",
+      "effective_config_sha256": "38e496d3af8f5bab4c60479ca7938c07275422bcaa4a4fb0497f996ecf78a4af",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_15_ddr_controller",
+        "name": "DDR Controller 内存训练与访问验证",
+        "enabled": true,
+        "order": 150,
+        "tags": [
+          "demo",
+          "memory",
+          "dongle-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 4,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "DDR_TRAINING_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "programmer": "project_config.instruments.programmer",
+          "scope": "project_config.instruments.scope",
+          "log_dongle": "project_config.instruments.log_dongle"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_15_ddr_controller",
+        "name": "DDR Controller 内存训练与访问验证",
+        "enabled": true,
+        "order": 150,
+        "tags": [
+          "demo",
+          "memory",
+          "dongle-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 4,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "DDR_TRAINING_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "programmer": {
+            "kind": "debug_probe",
+            "selector": {
+              "serial": "DEMO-DONGLE-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_dongle": {
+            "kind": "wiparse_dongle_uart",
+            "selector": {
+              "dongle_serial": "DEMO-DONGLE-001",
+              "uart_channel": 0,
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_16_axi_lite.json",
+      "config_sha256": "ef5cbfd84af9f0fa06b207da52808f5b9eca4b452582f4649108944202ce3529",
+      "input_sha256": "5e02222c6cfbf3ee0cbc8fa5e7abf6165b75fde612f75e5661197b8629cb5cba",
+      "effective_config_sha256": "2a8e921ed6cae0916b95316352a54102a359373f7ec2b86525f92ba80bbea777",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_16_axi_lite",
+        "name": "AXI4-Lite 寄存器接口验证",
+        "enabled": true,
+        "order": 160,
+        "tags": [
+          "demo",
+          "bus",
+          "com-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 2,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "AXI_LITE_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "programmer": "project_config.instruments.programmer",
+          "scope": "project_config.instruments.scope",
+          "log_com": "project_config.instruments.log_com"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_16_axi_lite",
+        "name": "AXI4-Lite 寄存器接口验证",
+        "enabled": true,
+        "order": 160,
+        "tags": [
+          "demo",
+          "bus",
+          "com-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 2,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "AXI_LITE_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "programmer": {
+            "kind": "debug_probe",
+            "selector": {
+              "serial": "DEMO-DONGLE-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_com": {
+            "kind": "serial_port",
+            "selector": {
+              "port": "COM3",
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_17_axi_stream.json",
+      "config_sha256": "b33bb684f521ef60056c2e72e10bdeb9949d1b7aea9f92797ef864c8b0486479",
+      "input_sha256": "39fa0b5e1716d17e9c48037080138289b1045d3335695d6bd7f2b7e64b9c294c",
+      "effective_config_sha256": "9e5e35cb430535f4931d79e148defc65c95b154706c3098e69b152bc5ee57352",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_17_axi_stream",
+        "name": "AXI4-Stream 数据流与背压验证",
+        "enabled": true,
+        "order": 170,
+        "tags": [
+          "demo",
+          "bus",
+          "dongle-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 3,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "AXI_STREAM_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "programmer": "project_config.instruments.programmer",
+          "scope": "project_config.instruments.scope",
+          "log_dongle": "project_config.instruments.log_dongle"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_17_axi_stream",
+        "name": "AXI4-Stream 数据流与背压验证",
+        "enabled": true,
+        "order": 170,
+        "tags": [
+          "demo",
+          "bus",
+          "dongle-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 3,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "AXI_STREAM_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "programmer": {
+            "kind": "debug_probe",
+            "selector": {
+              "serial": "DEMO-DONGLE-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_dongle": {
+            "kind": "wiparse_dongle_uart",
+            "selector": {
+              "dongle_serial": "DEMO-DONGLE-001",
+              "uart_channel": 0,
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_18_dma.json",
+      "config_sha256": "469f5e3fa486dd4eb0e78b927d6b9caab3581479cf0ec613a775728c109dfb61",
+      "input_sha256": "20dba68651a819537ec27a3163c57ecc1ba59dc913deacf5ad3dc7de47b0aadd",
+      "effective_config_sha256": "d2e57808224e2cc9a77a0b45855734472256460c507147878a54d3656484b785",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_18_dma",
+        "name": "DMA 数据搬运与中断验证",
+        "enabled": true,
+        "order": 180,
+        "tags": [
+          "demo",
+          "bus",
+          "com-uart",
+          "dc-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "dc_power",
+          "power_role": "power",
+          "channel": 1,
+          "off_time_ms": 500,
+          "release_confirmation": {
+            "type": "voltage_threshold",
+            "minimum_v": 3.1,
+            "stable_ms": 20,
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 4,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "DMA_TRANSFER_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "power": "project_config.instruments.power",
+          "scope": "project_config.instruments.scope",
+          "log_com": "project_config.instruments.log_com"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_18_dma",
+        "name": "DMA 数据搬运与中断验证",
+        "enabled": true,
+        "order": 180,
+        "tags": [
+          "demo",
+          "bus",
+          "com-uart",
+          "dc-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "dc_power",
+          "power_role": "power",
+          "channel": 1,
+          "off_time_ms": 500,
+          "release_confirmation": {
+            "type": "voltage_threshold",
+            "minimum_v": 3.1,
+            "stable_ms": 20,
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 4,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "DMA_TRANSFER_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "power": {
+            "kind": "dc_source",
+            "selector": {
+              "serial": "DEMO-POWER-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_com": {
+            "kind": "serial_port",
+            "selector": {
+              "port": "COM3",
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_19_ethernet_mac.json",
+      "config_sha256": "ec1dbb2977bf15ac86e4973037d82cb00d383f0fa35ad4800fcd68644255508f",
+      "input_sha256": "0583614cbc39a447115f1f6a486f06ee8243ad46bc80dfc651d02e2a7af03f41",
+      "effective_config_sha256": "db840e68c6545e0e9c98ab94e4f1ed8e996c537044f5ad483351f0e34943bfee",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_19_ethernet_mac",
+        "name": "Ethernet MAC 帧收发与校验验证",
+        "enabled": true,
+        "order": 190,
+        "tags": [
+          "demo",
+          "communication",
+          "dongle-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 2,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "ETH_MAC_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "programmer": "project_config.instruments.programmer",
+          "scope": "project_config.instruments.scope",
+          "log_dongle": "project_config.instruments.log_dongle"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_19_ethernet_mac",
+        "name": "Ethernet MAC 帧收发与校验验证",
+        "enabled": true,
+        "order": 190,
+        "tags": [
+          "demo",
+          "communication",
+          "dongle-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_dongle"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 2,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "ETH_MAC_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "programmer": {
+            "kind": "debug_probe",
+            "selector": {
+              "serial": "DEMO-DONGLE-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_dongle": {
+            "kind": "wiparse_dongle_uart",
+            "selector": {
+              "dongle_serial": "DEMO-DONGLE-001",
+              "uart_channel": 0,
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    },
+    {
+      "file": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases\\fpga_20_crc32.json",
+      "config_sha256": "47940f621ef38e08e6f15b4ad6229661b83d8358e3706142e6ecc19b33c087f2",
+      "input_sha256": "3ae81ec6edd33f76eb5ddb2b1d4033f1b880a4943467a94dab1851ae3d67fa93",
+      "effective_config_sha256": "cb7b29fc9783dd19b83a1ff75de3efd0045603224788340d989026d5940b7406",
+      "raw_config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_20_crc32",
+        "name": "CRC32 数据校验计算验证",
+        "enabled": true,
+        "order": 200,
+        "tags": [
+          "demo",
+          "compute",
+          "com-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 3,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "CRC32_TEST_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        }
+      },
+      "sources": {
+        "dut": "project_config",
+        "instruments": {
+          "programmer": "project_config.instruments.programmer",
+          "scope": "project_config.instruments.scope",
+          "log_com": "project_config.instruments.log_com"
+        },
+        "item": "case",
+        "identity": "run_parameters"
+      },
+      "config": {
+        "schema_version": "wiparse.fpga-test-case/2",
+        "editor_revision": 2,
+        "updated_at": "2026-10-18T09:53:33.193Z",
+        "id": "fpga_20_crc32",
+        "name": "CRC32 数据校验计算验证",
+        "enabled": true,
+        "order": 200,
+        "tags": [
+          "demo",
+          "compute",
+          "com-uart",
+          "dongle-reset",
+          "log-selftest"
+        ],
+        "timeout_s": 120,
+        "firmware": {
+          "download": false,
+          "implementation": "reserved",
+          "path": "../firmware/demo-ip-suite.bin",
+          "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+          "target": "DEMO-FPGA",
+          "format": "bin",
+          "base_address": 0,
+          "verify": false
+        },
+        "reset": {
+          "method": "wiparse_dongle",
+          "dongle_role": "programmer",
+          "hardware": true,
+          "release_confirmation": {
+            "type": "command_complete",
+            "timeout_ms": 2000
+          }
+        },
+        "timing": {
+          "anchor": "after_reset_release"
+        },
+        "log_capture": {
+          "enabled": true,
+          "start_at_s": 0,
+          "duration_s": 15,
+          "max_lines": 20000,
+          "encoding": "utf-8",
+          "resource_role": "log_com"
+        },
+        "waveform_captures": [
+          {
+            "id": "ip_output",
+            "at_s": 3,
+            "kind": "screenshot",
+            "channels": [
+              "CH1",
+              "CH2"
+            ],
+            "source_waveform": {
+              "enabled": false,
+              "format": "instrument_native"
+            },
+            "timeout_s": 30
+          }
+        ],
+        "verdict": {
+          "mode": "all",
+          "rules": [
+            {
+              "id": "functional_success",
+              "type": "log_contains",
+              "text": "CRC32_TEST_OK",
+              "required": true
+            },
+            {
+              "id": "no_fatal_errors",
+              "type": "log_not_regex",
+              "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+              "required": true
+            }
+          ],
+          "ai_assist": {
+            "enabled": false,
+            "policy": "advisory_only",
+            "provider_profile": "local-default",
+            "inputs": [
+              "rule_results",
+              "waveform_metrics"
+            ],
+            "required": false
+          }
+        },
+        "dut": {
+          "model": "DEMO-FPGA-BOARD",
+          "serial_required": true,
+          "board_revision": "DEMO-REV-A",
+          "fpga_model": "DEMO-FPGA",
+          "fixture_id": "DEMO-FIXTURE-01",
+          "station_id": "DEMO-STATION-01"
+        },
+        "instruments": {
+          "programmer": {
+            "kind": "debug_probe",
+            "selector": {
+              "serial": "DEMO-DONGLE-001"
+            },
+            "required": true
+          },
+          "scope": {
+            "kind": "oscilloscope",
+            "selector": {
+              "serial": "DEMO-SCOPE-001"
+            },
+            "required": true
+          },
+          "log_com": {
+            "kind": "serial_port",
+            "selector": {
+              "port": "COM3",
+              "baud": 115200
+            },
+            "required": true
+          }
+        }
+      },
+      "firmware": {
+        "download": false,
+        "implementation": "reserved",
+        "path": "../firmware/demo-ip-suite.bin",
+        "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+        "target": "DEMO-FPGA",
+        "format": "bin",
+        "base_address": 0,
+        "verify": false,
+        "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+        "identity_verified": false
+      },
+      "selected": false
+    }
+  ],
+  "errors": [],
+  "project_config": {
+    "revision": 1,
+    "sha256": "e3c937182ae96661b0787a3b4a10447a4c01ab0eacdb23a8d701ef74bd45a1f9",
+    "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "project_config_snapshot": {
+    "schema_version": "wiparse.project-config/1",
+    "project_id": "demo",
+    "test_id": "fpga-repro",
+    "plugin_id": "fpga-firmware-test",
+    "revision": 1,
+    "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "value": {
+      "schema_version": "wiparse.fpga-project/1",
+      "name": "MT58xx验证",
+      "description": "",
+      "dut": {
+        "model": "DEMO-FPGA-BOARD",
+        "serial_required": true,
+        "board_revision": "DEMO-REV-A",
+        "fpga_model": "DEMO-FPGA",
+        "fixture_id": "DEMO-FIXTURE-01",
+        "station_id": "DEMO-STATION-01"
+      },
+      "instruments": {
+        "programmer": {
+          "kind": "debug_probe",
+          "selector": {
+            "serial": "DEMO-DONGLE-001"
+          },
+          "required": true
+        },
+        "scope": {
+          "kind": "oscilloscope",
+          "selector": {
+            "serial": "DEMO-SCOPE-001"
+          },
+          "required": true
+        },
+        "log_dongle": {
+          "kind": "wiparse_dongle_uart",
+          "selector": {
+            "dongle_serial": "DEMO-DONGLE-001",
+            "uart_channel": 0,
+            "baud": 115200
+          },
+          "required": true
+        },
+        "log_com": {
+          "kind": "serial_port",
+          "selector": {
+            "port": "COM3",
+            "baud": 115200
+          },
+          "required": true
+        },
+        "power": {
+          "kind": "dc_source",
+          "selector": {
+            "serial": "DEMO-POWER-001"
+          },
+          "required": true
+        }
+      }
+    },
+    "sha256": "e3c937182ae96661b0787a3b4a10447a4c01ab0eacdb23a8d701ef74bd45a1f9"
+  },
+  "identity": {
+    "identity_source": "simulation",
+    "operator": "demo",
+    "input_at": "2026-11-08T04:22:59.660Z",
+    "field_sources": {
+      "operator": "run_parameters",
+      "dut_serial": "run_parameters",
+      "board_revision": "run_parameters",
+      "fpga_model": "run_parameters",
+      "fixture_id": "run_parameters",
+      "station_id": "run_parameters"
+    },
+    "dut_serial": "DEMO-SN-0001",
+    "board_revision": "DEMO-REV-A",
+    "fpga_model": "DEMO-FPGA",
+    "fixture_id": "DEMO-FIXTURE-01",
+    "station_id": "DEMO-STATION-01"
+  },
+  "options": {
+    "execution_mode": "simulation",
+    "simulation_scenario": "pass",
+    "config_dir": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\cases",
+    "resume_mode": "fresh",
+    "dut_serial": "DEMO-SN-0001",
+    "board_revision": "DEMO-REV-A",
+    "fpga_model": "DEMO-FPGA",
+    "fixture_id": "DEMO-FIXTURE-01",
+    "station_id": "DEMO-STATION-01",
+    "operator": "demo",
+    "selected_ids": "fpga_01_pll_clock"
+  },
+  "station": {},
+  "estimate": {
+    "minimum_s": 15,
+    "maximum_s": 120
+  },
+  "created_at": "2026-11-08T04:22:59.693Z",
+  "content_sha256": "919ec7f32ddb38411873e84997b6b239f288723299852af359f22a9f7a9460b7",
+  "sha256": "4cd5de5d512eff98ab8dc268a03d15797514fc972ea0f9a25609740c27b41cf3"
+}

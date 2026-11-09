@@ -1,0 +1,21 @@
+{
+  "kind":"wiparse_next_partial_desktop_validation",
+  "date":"2026-11-08",
+  "candidate":"r16",
+  "source":"Windows Computer Use screenshots and accessibility",
+  "pixels":[1443,931],
+  "theme":"light",
+  "observations":[
+    {"check":"isolated release cold startup and companion readiness","result":"passed"},
+    {"check":"synthetic 2048 point two-channel CSV display","result":"passed"},
+    {"check":"zoom button then actual left-button pan","result":"passed","before_s":[0.000051175,0.000153525],"after_s":[0.00003300636,0.0001353564]},
+    {"check":"cursor mode click and actual cursor drag","result":"passed: one cursor identity retained","before_s":0.0000656,"after_s":0.0000793},
+    {"check":"open synthetic 120 line file and go to row 40","result":"passed: row highlighted and centered with context"},
+    {"check":"find timeout in retained log","result":"passed: row 81 highlighted with context"},
+    {"check":"Ctrl+G with document focus","result":"failed: WebView built-in find bar; fixed in r17, requires desktop retest"}
+  ],
+  "not_executed":["real serial or physical devices","real AI provider","right-button box drag","actual Ctrl+wheel and middle-button input","full old feature equivalence","DPI/window matrix","multi-hour stability","five formal acceptance rounds"],
+  "hardware_commands_sent":false,
+  "formal_rounds_passed":0,
+  "industrial_approved":false
+}

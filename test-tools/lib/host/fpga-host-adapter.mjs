@@ -8,7 +8,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
-import { createHttpClient } from '../wiparse-sdk.mjs';
+import { createHttpClient, localApiHeaders } from '../wiparse-sdk.mjs';
+import {atomicWrite} from '../hub/common.mjs';
 
 export const FPGA_HOST_VERSION = 'wiparse.fpga-host/1';
 export const FPGA_HOST_CAPABILITIES = ['resource_lease', 'serial_handoff_raw_cursor', 'timed_capture', 'safe_cleanup', 'storage_check'];
@@ -87,7 +88,9 @@ function channelMatches(reading, channel) {
   if (channel == null || channel === '') return true;
   const want = String(channel).toUpperCase();
   const got = String(reading?.channel ?? '').toUpperCase();
-  return got === want || got === `CH${want}` || got.endsWith(want);
+  const expected=/^(?:CH)?(\d+)$/.exec(want);
+  const actual=/^CH(\d+)(?:\s|$)/.exec(got);
+  return got === want || (expected && actual && expected[1]===actual[1]);
 }
 
 function safeStem(value, ext) {
@@ -145,6 +148,7 @@ function createHttpEvents(url) {
   let seq = 0;
   let started = false;
   let stopped = false;
+  let controller = null;
   const publish = event => {
     for (const fn of [...listeners]) fn(event);
   };
@@ -154,7 +158,8 @@ function createHttpEvents(url) {
     while (!stopped) {
       try {
         if (!base) throw coded('IO.UNCONFIRMED', 'WIPARSE_URL is not set');
-        const response = await fetch(`${base}/v1/events?since_seq=${seq}`);
+        controller = new AbortController();
+        const response = await fetch(`${base}/v1/events?since_seq=${seq}`,{signal:controller.signal,headers:localApiHeaders(base)});
         if (!response.ok || !response.body) throw coded('IO.UNCONFIRMED', `event stream HTTP ${response.status}`);
         failures = 0;
         const reader = response.body.getReader();
@@ -176,6 +181,7 @@ function createHttpEvents(url) {
           }
         }
       } catch (error) {
+        if(stopped) break;
         failures += 1;
         if (failures >= 3) {
           publish({ type: 'events.error', error });
@@ -189,7 +195,7 @@ function createHttpEvents(url) {
     get seq() { return seq; },
     on(fn) { listeners.add(fn); if (!started) { started = true; loop(); } },
     off(fn) { listeners.delete(fn); },
-    stop() { stopped = true; },
+    stop() { stopped = true; controller?.abort(); },
   };
 }
 
@@ -263,6 +269,7 @@ export function createFpgaHostAdapter(ctx) {
 
   function mapDevice(device) {
     const identity = device.identity && typeof device.identity === 'object' ? device.identity : {};
+    if(String(device.resource||'').startsWith('DEMO::')||String(identity.firmware||'').toLowerCase()==='demo')return null;
     const row = { kind: String(device.kind || '') };
     if (device.device_id != null) row.device_id = device.device_id;
     const serial = device.serial || identity.serial || '';
@@ -286,10 +293,21 @@ export function createFpgaHostAdapter(ctx) {
     return row;
   }
 
+  function mapDongleUart(port) {
+    // The WinUSB enumeration exposes one UART interface and a physical USB
+    // serial in this exact URI. Do not infer an identity from a generic COM,
+    // Wi-Fi name, or a USB entry without a stable serial.
+    const name=String(port.device||port.port||'');
+    const match=/^winusb:\/\/wiparse\/uart\?serial=([A-Za-z0-9._-]{1,128})$/i.exec(name);
+    if(!match)return null;
+    return {kind:'wiparse_dongle_uart',port:name,resource:name,dongle_serial:match[1],uart_channel:0};
+  }
+
   async function devices() {
     const instruments = payload(await call('instrument.list', {}, null));
     const ports = payload(await call('serial.ports', {}, null));
-    return [...asList(instruments, 'devices').map(mapDevice), ...asList(ports, 'ports').map(mapPort)].filter(Boolean);
+    const portRows=asList(ports,'ports');
+    return [...asList(instruments, 'devices').map(mapDevice),...portRows.map(mapPort),...portRows.map(mapDongleUart)].filter(Boolean);
   }
 
   function lockPath(stationId) {
@@ -307,6 +325,7 @@ export function createFpgaHostAdapter(ctx) {
         if (error.code !== 'EEXIST') throw error;
         let existing = null;
         try { existing = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { existing = null; }
+        if(existing?.manual_recovery_required===true) throw coded('STATION.RECOVERY_REQUIRED','设备状态未知，需要人工确认');
         if (Number.isInteger(existing?.pid) && existing.pid === process.pid) throw coded('STATION.LOCKED', 'this process already holds the station');
         if (Number.isInteger(existing?.pid) && pidAlive(existing.pid)) throw coded('STATION.LOCKED', `held by pid ${existing.pid}`);
         try { fs.unlinkSync(file); } catch (unlinkError) { if (unlinkError.code !== 'ENOENT') throw unlinkError; }
@@ -353,6 +372,7 @@ export function createFpgaHostAdapter(ctx) {
   }
 
   function isSerial(resource) {
+    if(resource?.kind==='wiparse_dongle' && resource?.purpose==='i2c') return false;
     return SERIAL_KINDS.has(resource?.kind) || Boolean(resource?.port);
   }
 
@@ -459,7 +479,7 @@ export function createFpgaHostAdapter(ctx) {
     }, control, isJob);
   }
 
-  async function readMeasurement(resource, channel, control) {
+  async function readMeasurement(resource, channel, control, expectedUnit) {
     const id = deviceIdOf(resource);
     const ms = budgetMs(control);
     const operation = track(control, 'instrument.measure');
@@ -489,7 +509,8 @@ export function createFpgaHostAdapter(ctx) {
         new Promise((_, reject) => { timer = setTimeout(() => reject(coded('IO.TIMEOUT', 'instrument.measure')), ms); }),
       ]);
       const readings = Array.isArray(event.data?.readings) ? event.data.readings : [];
-      const reading = readings.find(item => channelMatches(item, channel)) || (channel == null ? readings[0] : null);
+      const candidates=readings.filter(item=>channelMatches(item,channel) && (!expectedUnit || item?.unit===expectedUnit));
+      const reading = candidates.length===1 ? candidates[0] : null;
       if (!reading || !Number.isFinite(Number(reading.value)) || !reading.unit) {
         const error = coded('MEASURE.EMPTY', 'instrument.measure returned no reading');
         error.quiescent = true;
@@ -541,10 +562,11 @@ export function createFpgaHostAdapter(ctx) {
     },
     async acquire({ station_id, run_id, resources } = {}) {
       if (!station_id) throw coded('STATION.ID_REQUIRED', 'station_id');
+      if(ctx.dataRoot && fs.existsSync(path.join(ctx.dataRoot,'.station-recovery.json')))throw coded('STATION.RECOVERY_REQUIRED','工位状态未知，需要人工确认');
       const file = lockPath(station_id);
       const flat = flattenResources(resources);
       claim(file, { pid: process.pid, station_id, run_id, resources: flat.map(resourceKey).filter(Boolean).sort(), at: new Date().toISOString() });
-      const lease = { station_id, run_id, pid: process.pid, lock_path: file, cursors: {}, rows: {}, dropped: {}, handoffs: [] };
+      const lease = { station_id, run_id, pid: process.pid, lock_path: file, resources: flat.map(resourceKey), devices:flat.filter(r=>r.device_id!=null).map(r=>({key:resourceKey(r),device_id:String(r.device_id),kind:r.kind})), i2c_devices:flat.filter(r=>['wiparse_dongle','usb_bridge','bridge'].includes(r.kind)&&r.device_id!=null).map(r=>({key:resourceKey(r),device_id:String(r.device_id),kind:r.kind})), cursors: {}, rows: {}, dropped: {}, handoffs: [] };
       try {
         for (const resource of flat) {
           if (!isSerial(resource)) continue;
@@ -567,6 +589,7 @@ export function createFpgaHostAdapter(ctx) {
       let current = null;
       try { current = JSON.parse(fs.readFileSync(lease.lock_path, 'utf8')); } catch { throw coded('LEASE.MISSING', lease.lock_path); }
       if (current.pid !== process.pid) throw coded('LEASE.PID_MISMATCH', `lock pid ${current.pid}`);
+      if (current.manual_recovery_required===true) throw coded('STATION.RECOVERY_REQUIRED');
       for (const handoff of lease.handoffs || []) {
         if (handoff.started) await call('serial.monitor.stop', { port: handoff.port }, { timeout_s: 15 });
       }
@@ -574,8 +597,98 @@ export function createFpgaHostAdapter(ctx) {
       if (activeLease === lease) activeLease = null;
     },
     sourceOutput,
+    closeEvents() { if (!ctx.events) events.stop(); },
+    async markLeaseUncertain(lease, reason='I2C_STATE_UNKNOWN') {
+      if(!lease?.lock_path || activeLease!==lease)throw coded('LEASE.REQUIRED');
+      const current=JSON.parse(fs.readFileSync(lease.lock_path,'utf8'));
+      if(current.pid!==process.pid || current.run_id!==lease.run_id)throw coded('LEASE.LOST');
+      if(!ctx.dataRoot)throw coded('STATION.RECOVERY_PATH_REQUIRED');
+      const recovery=path.join(ctx.dataRoot,'.station-recovery.json');
+      if(fs.existsSync(recovery))throw coded('STATION.RECOVERY_REQUIRED');
+      // Survives runner cleanup and blocks projects using the same data root.
+      atomicWrite(recovery,JSON.stringify({station_id:lease.station_id,run_id:lease.run_id,reason,at:new Date().toISOString(),manual_recovery_required:true}));
+      atomicWrite(lease.lock_path,JSON.stringify({...current,manual_recovery_required:true,recovery_reason:reason}));
+    },
+    async assertI2cLease(resource) {
+      if(!activeLease?.lock_path || !activeLease.i2c_devices?.some(d=>d.key===resourceKey(resource)&&d.device_id===String(resource?.device_id))) throw coded('LEASE.REQUIRED','I2C resource is not leased');
+      let current;
+      try { current=JSON.parse(fs.readFileSync(activeLease.lock_path,'utf8')); } catch { throw coded('LEASE.MISSING'); }
+      if(current.pid!==process.pid || current.run_id!==activeLease.run_id || !current.resources?.includes(resourceKey(resource))) throw coded('LEASE.LOST');
+      return true;
+    },
+    async assertInstrumentLease(resource) {
+      if(!activeLease?.lock_path || !activeLease.devices?.some(d=>d.key===resourceKey(resource)&&d.device_id===String(resource?.device_id)))throw coded('LEASE.REQUIRED','instrument is not leased');
+      let current;try{current=JSON.parse(fs.readFileSync(activeLease.lock_path,'utf8'));}catch{throw coded('LEASE.MISSING');}
+      if(current.pid!==process.pid || current.run_id!==activeLease.run_id || !current.resources?.includes(resourceKey(resource)))throw coded('LEASE.LOST');
+      return true;
+    },
+    async i2cCommand(request = {}) {
+      await adapter.assertI2cLease(request.resource);
+      const command=request.command;
+      const kind=request.resource?.kind, allowed=kind==='wiparse_dongle'?['DongleI2cRead','DongleI2cWrite']:['usb_bridge','bridge'].includes(kind)?['BridgeI2c']:[];
+      if(!command || typeof command!=='object' || Array.isArray(command) || Object.keys(command).length!==1 || !allowed.includes(Object.keys(command)[0])) throw coded('I2C.COMMAND_UNSUPPORTED');
+      return confirmedCall('instrument.command',{device_id:deviceIdOf(request.resource),command},request,isJob);
+    },
+    async loadCommand(request = {}) {
+      await adapter.assertInstrumentLease(request.resource);
+      if(request.resource?.kind!=='electronic_load')throw coded('LOAD.RESOURCE_INVALID');
+      const command=request.command;
+      if(!command || typeof command!=='object' || Array.isArray(command) || Object.keys(command).length!==1)throw coded('LOAD.COMMAND_INVALID');
+      if(Object.hasOwn(command,'LoadInput')) {
+        if(typeof command.LoadInput!=='boolean')throw coded('LOAD.COMMAND_INVALID');
+      } else if(Object.hasOwn(command,'LoadMode')) {
+        if(command.LoadMode!=='CC')throw coded('LOAD.COMMAND_INVALID');
+      } else if(Object.hasOwn(command,'LoadLevel')) {
+        const level=command.LoadLevel;
+        if(!level || level.mode!=='CC' || !Number.isFinite(level.value) || level.value<0)throw coded('LOAD.COMMAND_INVALID');
+      } else throw coded('LOAD.COMMAND_INVALID');
+      return confirmedCall('instrument.command',{device_id:deviceIdOf(request.resource),command},request,isJob);
+    },
+    async waitSerialSequence({resource,markers,active_marker,timeout_ms,stopped=()=>false}={}) {
+      const lease=activeLease,key=resourceKey(resource),handoff=lease?.handoffs?.find(h=>h.key===key);
+      if(!lease || !handoff)throw coded('LEASE.REQUIRED','serial resource not leased');
+      if(!Array.isArray(markers)||!markers.length||markers.some(m=>typeof m!=='string'||!m.trim()||m.length>128))throw coded('LOG.MARKERS_INVALID');
+      if(active_marker!=null && (typeof active_marker!=='string'||!active_marker.trim()||active_marker.length>128))throw coded('LOG.MARKERS_INVALID');
+      if(!Number.isInteger(timeout_ms)||timeout_ms<1||timeout_ms>300000)throw coded('LOG.TIMEOUT_INVALID');
+      const deadline=performance.now()+timeout_ms,found=[];
+      // Protocol identifiers are tokens: ASK 31 must not match ASK 310 or ASK 31A.
+      // Other user-defined markers retain their literal substring semantics.
+      const matchesMarker=(line,marker)=>{
+        if(!/^ASK\s+[0-9a-f]+$/i.test(marker))return line.includes(marker);
+        const escaped=marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+        return new RegExp(`(^|[^A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`).test(line);
+      };
+      let row=lease.rows[key],dropped=lease.dropped[key],index=0;
+      while(performance.now()<deadline) {
+        if(stopped())throw coded('RUN.ABORTED');
+        const remain=Math.max(1,Math.floor(deadline-performance.now()));
+        const page=payload(await call('log.lines.get',logQuery(handoff,row),{timeout_s:Math.min(remain,2000)/1000}));
+        const nowDropped=Number(page.dropped??dropped);
+        if(!Number.isFinite(nowDropped)||nowDropped!==dropped)throw coded('LOG.DROPPED','无法确认协议顺序');
+        dropped=nowDropped;
+        if(!Array.isArray(page.lines))throw coded('LOG.RESPONSE_INVALID');
+        const lines=page.lines.map(String);
+        for(const line of lines) {
+          if(active_marker && matchesMarker(line,active_marker)) {
+            found.push({marker:active_marker,line:line.slice(0,1024),observed_mono_ms:performance.now(),time_source:'host_poll'});
+            index=markers.length;break;
+          }
+          if(matchesMarker(line,markers[index])) {
+            found.push({marker:markers[index],line:line.slice(0,1024),observed_mono_ms:performance.now(),time_source:'host_poll'});
+            index++;
+            if(index===markers.length)break;
+          }
+        }
+        const next=Number(page.next_row??row+lines.length);
+        if(!Number.isSafeInteger(next)||next<row)throw coded('LOG.CURSOR_INVALID');
+        row=next;lease.rows[key]=row;lease.dropped[key]=dropped;
+        if(index===markers.length)return {events:found,complete_raw:false};
+        await new Promise(resolve=>setTimeout(resolve,Math.min(50,Math.max(1,deadline-performance.now()))));
+      }
+      throw coded('RX.READY_TIMEOUT','未观察到新的 RX 建链事件，请重新建立充电');
+    },
     async voltage(resource, channel, extra) {
-      const reading = await readMeasurement(resource, channel, extra || controlFrom(arguments));
+      const reading = await readMeasurement(resource, channel, extra || controlFrom(arguments),'V');
       return Number(reading.value);
     },
     async probeReset(resource, options = {}) {
@@ -632,8 +745,10 @@ export function createFpgaHostAdapter(ctx) {
       lease.cursors[key] = endCursor;
       lease.rows[key] = row;
       lease.dropped[key] = droppedSeen;
-      const complete = covered && droppedLines === 0 && !stopped();
-      return { raw_base64: raw.toString('base64'), lines, start_cursor: start, end_cursor: endCursor, dropped_lines: droppedLines, window_covered: covered, complete };
+      // log.lines.get supplies decoded lines, not the received byte stream or
+      // device timestamps. Preserve the text for diagnosis but never certify it
+      // as complete raw evidence, even when every polled line was returned.
+      return { raw_base64: raw.toString('base64'), lines, start_cursor: start, end_cursor: endCursor, dropped_lines: droppedLines, window_covered: covered, complete: false, provenance:'reconstructed_text', timestamp_source:'host_poll', quality_issues:['LOG.RAW_BYTES_UNAVAILABLE','LOG.EVENT_TIME_UNAVAILABLE'] };
     },
     async capture(request = {}) {
       const destName = safeStem(request.config?.id, '.png');
@@ -686,7 +801,7 @@ export function createFpgaHostAdapter(ctx) {
     },
     async measure(request = {}) {
       const resource = request.resources?.[request.rule?.resource_role] ?? request.resource;
-      const reading = await readMeasurement(resource, request.rule?.channel ?? request.channel, request);
+      const reading = await readMeasurement(resource, request.rule?.channel ?? request.channel, request,request.rule?.unit ?? request.unit);
       return { value: Number(reading.value), unit: String(reading.unit), quality: 'good' };
     },
   };

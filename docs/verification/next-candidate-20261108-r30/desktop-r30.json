@@ -1,0 +1,17 @@
+{
+  "status": "deferred_by_user",
+  "user_instruction": "我先操作软件，稍后再验收",
+  "reason": "Computer-use input guard reported continuing human input; no further UI input after user deferral",
+  "runtime": "dist/WiParse-Next-20261108-QA-R30",
+  "mode": "isolated demo sessions; AI disabled",
+  "final_desktop_acceptance_passed": false,
+  "earlier_observations": "docs/verification/migration-implementation-2026-11-08/desktop-r25.json",
+  "not_executed": [
+    "final waveform containment screenshot",
+    "final probe checkbox screenshot",
+    "final GUI smoke-test execution",
+    "isolated browser fixture (created but not executed)",
+    "real hardware or AI"
+  ],
+  "clean_delivery": "dist/WiParse-Next-20261108-Preview-R30"
+}

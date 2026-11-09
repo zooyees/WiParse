@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false,
+  "required": ["name", "product", "station"],
+  "properties": {
+    "name": {"type":"string", "minLength":1, "maxLength":128, "title":"Project", "x-title-zh":"工程名称", "default":"无线充电研发"},
+    "product": {"type":"object", "title":"Product", "x-title-zh":"产品信息", "additionalProperties":false, "required":["model","board_revision"], "properties": {
+      "model":{"type":"string","title":"Model","x-title-zh":"产品型号","default":""},
+      "receiver_model":{"type":"string","title":"Receiver model","x-title-zh":"接收端型号","default":""},
+      "board_revision":{"type":"string","title":"Board revision","x-title-zh":"板卡版本","default":""},
+      "firmware_build":{"type":"string","title":"Firmware build","x-title-zh":"固件版本约束","default":""},
+      "telemetry_dictionary":{"type":"string","title":"Telemetry dictionary","x-title-zh":"遥测字典版本","default":""}
+    }},
+    "station": {"type":"object", "title":"Station", "x-title-zh":"工位信息", "additionalProperties":false, "required":["station_id","scope","power","log_source"], "properties": {
+      "station_id":{"type":"string","title":"Station ID","x-title-zh":"工位编号","default":""},
+      "scope":{"type":"string","title":"Scope","x-title-zh":"示波器标识","default":""},
+      "power":{"type":"string","title":"Power source","x-title-zh":"电源标识","default":""},
+      "scope_resource":{"type":"string","title":"Scope VISA resource","x-title-zh":"示波器 VISA 资源","default":""},
+      "scope_capture_enabled":{"type":"boolean","title":"Capture scope screenshot","x-title-zh":"读取 RX 后保存示波器截图","default":false},
+      "scope_source_enabled":{"type":"boolean","title":"Capture scope source waveform","x-title-zh":"同时读取示波器源波形","default":false},
+      "power_resource":{"type":"string","title":"Power VISA resource","x-title-zh":"电源 VISA 资源","default":""},
+      "rx_i2c_interface":{"type":"string","title":"RX I2C interface","x-title-zh":"RX I2C 接口标识","default":""},
+      "rx_i2c_clock_hz":{"type":"integer","title":"FT4222 I2C frequency","x-title-zh":"FT4222 I2C 频率 (Hz)","minimum":1,"maximum":1000000,"default":100000},
+      "electronic_load":{"type":"string","title":"Electronic load","x-title-zh":"电子负载标识","default":""},
+      "load_resource":{"type":"string","title":"Electronic load VISA resource","x-title-zh":"电子负载 VISA 资源","default":""},
+      "log_source":{"type":"string","title":"UART","x-title-zh":"日志串口或 Dongle","default":""},
+      "log_baud":{"type":"integer","title":"UART baud","x-title-zh":"日志串口波特率","minimum":1,"maximum":10000000,"default":115200},
+      "rx_start_marker":{"type":"string","title":"Charge start marker","x-title-zh":"TX 日志充电启动标记","minLength":1,"default":"Start CHG"},
+      "rx_identification_marker":{"type":"string","title":"Receiver identification marker","x-title-zh":"RX 协议识别标记","minLength":1,"default":"ASK 71"},
+      "rx_running_marker":{"type":"string","title":"Receiver active message","x-title-zh":"RX 运行中报文标记","minLength":1,"default":"ASK 31"},
+      "rx_ready_timeout_s":{"type":"integer","title":"RX ready timeout","x-title-zh":"等待 RX 启动超时 (秒)","minimum":1,"maximum":300,"default":30},
+      "receiver":{"type":"string","title":"Receiver","x-title-zh":"接收器或负载标识","default":""}
+    }}
+  }
+}

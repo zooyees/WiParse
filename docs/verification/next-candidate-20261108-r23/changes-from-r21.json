@@ -1,0 +1,62 @@
+[
+  {
+    "path": "apps/wiparse-next/src-tauri/src/commit_file.rs",
+    "previous_sha256": null,
+    "current_sha256": "7e9f8057ab0de1e0f65f16cf99a336bcc6934f2598417c83850f5b7b644f57ce"
+  },
+  {
+    "path": "apps/wiparse-next/src-tauri/src/data_view.rs",
+    "previous_sha256": "375fece8577636cc897685e4ad8c3e11d6b304706fe7ce75548965fa8f80904a",
+    "current_sha256": "66fdb4baf02d0a7b3217d0d25df3d075ba8e92a48d0367701f765d48655ab190"
+  },
+  {
+    "path": "apps/wiparse-next/src-tauri/src/main.rs",
+    "previous_sha256": "b4368f166d5489c1fc5db618e4d8e94b85e7fce55f22846d93dae0ce1a02a03d",
+    "current_sha256": "5653f285e4d2a2dc752c502effc8c458bce6a45fedc4ae6028a6b5af51f1a79c"
+  },
+  {
+    "path": "apps/wiparse-next/src-tauri/src/wave_view.rs",
+    "previous_sha256": "9098fc71c9272dbb830eead9252e26cb36c74f85f0d89aafb45e2a1ff50d8646",
+    "current_sha256": "86de54cf6ab7cf4355b7ecef10fd7b4a12a1a29a39172479f11499e09c3b34da"
+  },
+  {
+    "path": "apps/wiparse-next/src/dataLive.ts",
+    "previous_sha256": "efc8d13333ca5600412301c35e76304d827774c42b8e73937b34287896458322",
+    "current_sha256": "9e30a502284da5cc1e8167e07f8a7c8557cca29cf489e621b8486f009f40c03a"
+  },
+  {
+    "path": "apps/wiparse-next/src/DataWorkspace.tsx",
+    "previous_sha256": "87b1150cca2cd34c1bd98ac97963c3b29ea16d266b12f749bf6ddb4956756964",
+    "current_sha256": "9528f5cf640316d0d85cbb8b271089d5656d1be04447ded6014a45e902e001a9"
+  },
+  {
+    "path": "apps/wiparse-next/src/localization.en.json",
+    "previous_sha256": "278a407be7a5531da0d2fcf5aaf59fa6b46222ea262813d9d2a89a5521442228",
+    "current_sha256": "4d26c3aa12cec2d91d0e2aec03f7b05acf4c808ed1c599759e0e6a92407f643d"
+  },
+  {
+    "path": "apps/wiparse-next/src/reportImageLoader.ts",
+    "previous_sha256": null,
+    "current_sha256": "e09749298b717d48acb6cb1eec4c80fc93fe560b86f957849440ba7222be54a7"
+  },
+  {
+    "path": "apps/wiparse-next/src/ReportWorkspace.tsx",
+    "previous_sha256": "adf3c645f078e0ba681809eec29faa9ace7a1dcd3d17215e3f1fde836192346d",
+    "current_sha256": "bd390eb8fd5b99000b42db309d7f220886d37c4215e84b71600844c5fda19997"
+  },
+  {
+    "path": "apps/wiparse-next/tests/data-live.test.mjs",
+    "previous_sha256": "86157d7e008bf97054d006242a839c0d99106b60f5ef61d0d20a2a53693b49f0",
+    "current_sha256": "a8f3d4f990824c129bf4c810a539586b3aabf261cbf70a0ff99925544c7c4cb8"
+  },
+  {
+    "path": "apps/wiparse-next/tests/report-image-loader.test.mjs",
+    "previous_sha256": null,
+    "current_sha256": "80204220ee191e3759b1a7a46d94a20216be9e7154139d68d7df5ada59c74bee"
+  },
+  {
+    "path": "crates/wiparse-core/src/waveform_file.rs",
+    "previous_sha256": "be8330521c22fa27d7342bc1c5a4c12efd38668b0f748dca363e74d8ee0b0656",
+    "current_sha256": "ae74f51edf6ddd8b21fcf99078fec09c0da31ded4bf59a9a05c0753d7f2ebb96"
+  }
+]

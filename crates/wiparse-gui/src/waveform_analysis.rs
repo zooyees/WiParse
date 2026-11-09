@@ -1,4 +1,5 @@
 //! Offline waveform analysis — folder browser, open scope sources, zoom/pan, measure.
+use wiparse_core::waveform_protocol_html::{decimate_series,thin_columns,detail_windows,detail_columns};
 
 use crate::plot::{
     bus_lane_from_screen_y, bus_stack_packet_screen_y, PlotTextLabel, ScopeEnvelopePlotItem,
@@ -40,10 +41,10 @@ use wiparse_core::waveform_file::{
     WaveformMeasurements,
 };
 
-fn toolbar_height(width: f32) -> f32 {
-    if width < 480.0 { 172.0 } else if width < 720.0 { 108.0 } else if width < 1080.0 { 76.0 } else { 44.0 }
+fn toolbar_height(_width: f32) -> f32 {
+    36.0
 }
-const PANEL_GAP: f32 = 12.0;
+const PANEL_GAP: f32 = ui_theme::PANEL_GAP;
 const SIDE_W: f32 = ui_theme::SIDEBAR_W;
 /// Compact Y-axis strip width (scope-style, right of plot).
 const CHANNEL_AXIS_COL_W: f32 = 28.0;
@@ -51,7 +52,7 @@ const AXIS_HANDLE_RADIUS: f32 = 5.5;
 const AXIS_TICK_LEN: f32 = 4.0;
 const BTN: egui::Vec2 = egui::vec2(108.0, 28.0);
 const BTN_SM: egui::Vec2 = egui::vec2(72.0, 28.0);
-const CARD_MARGIN_X: i8 = 12;
+const CARD_MARGIN_X: i8 = 8;
 /// Cursor grab distance as a fraction of visible axis span.
 const CURSOR_GRAB_FRAC: f64 = 0.012;
 /// Max zoom-out: view may extend this factor beyond full data extent (X axis).
@@ -256,6 +257,11 @@ pub struct WaveformAnalysisPanel {
     uart_baud_text: String,
     /// Optional manual DDSSS FOP in Hz (empty = auto).
     ddsss_fop_text: String,
+    /// Transaction list filter. Empty matches every decoded frame.
+    bus_query: String,
+    bus_errors_only: bool,
+    /// Full measurement table, tucked under the waveform toolbar.
+    measures_open: bool,
 }
 
 impl WaveformAnalysisPanel {
@@ -322,6 +328,9 @@ impl WaveformAnalysisPanel {
             bus_decode_dirty: false,
             uart_baud_text: String::new(),
             ddsss_fop_text: String::new(),
+            bus_query: String::new(),
+            bus_errors_only: false,
+            measures_open: false,
         };
         panel.refresh_wave_browser();
         panel
@@ -350,67 +359,62 @@ impl WaveformAnalysisPanel {
             return;
         }
 
-        let body_top = full.min.y;
+        if !typing && self.bus_result.as_ref().is_some_and(|result| !result.frames.is_empty()) {
+            let down = ui.input(|i| i.key_pressed(egui::Key::ArrowDown));
+            let up = ui.input(|i| i.key_pressed(egui::Key::ArrowUp));
+            if down {
+                self.step_bus_frame(1);
+            } else if up {
+                self.step_bus_frame(-1);
+            }
+        }
+
         let body_h = full.height().max(1.0);
-        let right_w = protocol_column_width(full.width());
-        let right_rect = egui::Rect::from_min_max(
-            egui::pos2(full.max.x - right_w, full.min.y),
+        let rail = analysis_rail_width(full.width());
+        let side_w = ui_theme::resizable_sidebar_width(
+            ui,
+            "waveform_analysis",
+            full,
+            rail,
+            200.0,
+            480.0,
+            PANEL_GAP,
+            tokens,
+        );
+        let side_rect = egui::Rect::from_min_size(full.min, egui::vec2(side_w, body_h));
+        let main = egui::Rect::from_min_max(
+            egui::pos2((side_rect.right() + PANEL_GAP).min(full.right()), full.top()),
             full.max,
         );
-        let center = egui::Rect::from_min_max(
-            full.min,
-            egui::pos2(right_rect.min.x - PANEL_GAP, full.max.y),
+        let files_h = (side_rect.height() * 0.40).clamp(120.0, 260.0);
+        let settings_top = (side_rect.top() + files_h + PANEL_GAP).min(side_rect.bottom());
+        let files_rect = egui::Rect::from_min_size(side_rect.min, egui::vec2(side_w, files_h));
+        let settings_rect = egui::Rect::from_min_max(
+            egui::pos2(side_rect.left(), settings_top),
+            side_rect.max,
         );
-        let side_w = ui_theme::resizable_sidebar_width(ui, "waveform_analysis", center,
-            SIDE_W, ui_theme::SIDEBAR_MIN_W, 180.0, PANEL_GAP, tokens);
-        let mid_left = center.min.x + side_w + PANEL_GAP;
-        let mid_right = center.max.x;
-        let plot_w = (mid_right - mid_left).max(1.0);
-        let side_rect = egui::Rect::from_min_size(center.min, egui::vec2(side_w, body_h));
-        let toolbar_h = toolbar_height(plot_w).min(body_h);
-        let toolbar_rect = egui::Rect::from_min_size(egui::pos2(mid_left, body_top), egui::vec2(plot_w, toolbar_h));
-        let plot_top = (toolbar_rect.bottom() + PANEL_GAP).min(full.bottom());
-        let plot_rect = egui::Rect::from_min_max(
-            egui::pos2(mid_left, plot_top),
-            egui::pos2(mid_right, full.max.y.max(plot_top + 80.0)),
+        let bottom_h = (main.height() * 0.34).clamp(150.0, 280.0).min((main.height() - 160.0).max(96.0));
+        let plot_h = (main.height() - bottom_h - PANEL_GAP).max(80.0);
+        let plot_rect = egui::Rect::from_min_size(main.min, egui::vec2(main.width(), plot_h));
+        let bottom = egui::Rect::from_min_max(
+            egui::pos2(main.left(), plot_rect.bottom() + PANEL_GAP),
+            main.max,
         );
-
-        panel_in_rect(ui, toolbar_rect, |ui| {
-            self.toolbar(ui, lang, tokens);
-        });
-
-        let body_inner = (body_h - PANEL_GAP).max(1.0);
-        let browser_h = body_inner * 0.58;
-        let meas_h = (body_inner - browser_h).max(1.0);
-        let browser_rect =
-            egui::Rect::from_min_size(side_rect.min, egui::vec2(side_w, browser_h));
-        let meas_rect = egui::Rect::from_min_size(
-            egui::pos2(side_rect.min.x, side_rect.min.y + browser_h + PANEL_GAP),
-            egui::vec2(side_w, meas_h),
+        let list_w = (bottom.width() * 0.58).clamp(180.0, (bottom.width() - 160.0).max(180.0));
+        let list_rect = egui::Rect::from_min_size(bottom.min, egui::vec2(list_w, bottom.height()));
+        let detail_rect = egui::Rect::from_min_max(
+            egui::pos2((list_rect.right() + PANEL_GAP).min(bottom.right()), bottom.top()),
+            bottom.max,
         );
 
-        panel_in_rect(ui, browser_rect, |ui| {
+        panel_in_rect(ui, files_rect, |ui| {
             self.browser_panel(ui, lang, tokens);
         });
         card_in_rect(
             ui,
-            meas_rect,
+            settings_rect,
             tokens,
-            &t(lang, "测量", "Measurements"),
-            |ui| self.measures_panel(ui, lang, tokens),
-        );
-        card_in_rect(
-            ui,
-            plot_rect,
-            tokens,
-            &t(lang, "波形图", "Plot"),
-            |ui| self.plot_area(ui, lang, tokens),
-        );
-        card_in_rect(
-            ui,
-            right_rect,
-            tokens,
-            &t(lang, "协议分析", "Bus Decode"),
+            &t(lang, "解码设置", "Decode"),
             |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt("waveform-bus-settings")
@@ -421,6 +425,37 @@ impl WaveformAnalysisPanel {
                     });
             },
         );
+        card_in_rect(ui, plot_rect, tokens, &t(lang, "波形与协议", "Waveform"), |ui| {
+            let tools_h = toolbar_height(ui.available_width()).min(ui.available_height());
+            let (tools, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), tools_h), egui::Sense::hover());
+            let left = ui.max_rect().left();
+            let width = ui.max_rect().width();
+            let mut y = tools.bottom() + 4.0;
+            let strip = egui::Rect::from_min_size(egui::pos2(left, y), egui::vec2(width, 28.0));
+            y = strip.bottom() + 4.0;
+            let measures = if self.measures_open {
+                let room = (ui.max_rect().bottom() - y - 96.0).max(72.0);
+                let h = 148.0_f32.min(room);
+                let rect = egui::Rect::from_min_size(egui::pos2(left, y), egui::vec2(width, h));
+                y = rect.bottom() + 4.0;
+                Some(rect)
+            } else {
+                None
+            };
+            let plot = egui::Rect::from_min_max(egui::pos2(left, y), ui.max_rect().max);
+            panel_in_rect(ui, tools, |ui| self.toolbar(ui, lang, tokens));
+            panel_in_rect(ui, strip, |ui| self.measure_strip(ui, lang, tokens));
+            if let Some(measures) = measures {
+                panel_in_rect(ui, measures, |ui| self.measures_panel(ui, lang, tokens));
+            }
+            panel_in_rect(ui, plot, |ui| self.plot_area(ui, lang, tokens));
+        });
+        card_in_rect(ui, list_rect, tokens, &t(lang, "通信事务", "Transactions"), |ui| {
+            self.bus_frame_list(ui, lang, tokens);
+        });
+        card_in_rect(ui, detail_rect, tokens, &t(lang, "事务详情", "Detail"), |ui| {
+            self.bus_frame_detail(ui, lang, tokens);
+        });
     }
 
     /// Plot + toolbar + measurements for the Test Report right pane (no file browser).
@@ -473,11 +508,13 @@ impl WaveformAnalysisPanel {
             .fill(tokens.surface_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-            .inner_margin(Margin::symmetric(10, 6))
+            .inner_margin(Margin::symmetric(8, 3))
             .show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
-                ui.set_max_width(ui.available_width());
-                ui.horizontal_wrapped(|ui| {
+                egui::ScrollArea::horizontal()
+                    .id_salt("wave-toolbar")
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                    .show(ui, |ui| {
+                ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(ui_theme::SPACE_SM, 4.0);
                     if ui_theme::primary_btn_sized(
                         ui,
@@ -679,6 +716,7 @@ impl WaveformAnalysisPanel {
 
 
                 });
+                    });
             }).response.on_hover_text(t(lang,
                 "Ctrl+滚轮=X · Ctrl+Shift+滚轮=Y",
                 "Ctrl+wheel=X · Ctrl+Shift+wheel=Y"));
@@ -1014,7 +1052,7 @@ impl WaveformAnalysisPanel {
                     ui.spacing_mut().item_spacing.x = gap;
                     if ui
                         .add_sized(
-                            egui::vec2(btn_w, 26.0),
+                            egui::vec2(btn_w, ui_theme::CTRL_H),
                             egui::Button::new(tr(lang, "btn.browse_dir")),
                         )
                         .clicked()
@@ -1023,7 +1061,7 @@ impl WaveformAnalysisPanel {
                     }
                     if ui
                         .add_sized(
-                            egui::vec2(btn_w, 26.0),
+                            egui::vec2(btn_w, ui_theme::CTRL_H),
                             egui::Button::new(tr(lang, "btn.refresh_browser")),
                         )
                         .clicked()
@@ -2341,83 +2379,244 @@ impl WaveformAnalysisPanel {
             if !result.info.is_empty() {
                 ui.label(RichText::new(&result.info).small().color(tokens.text_muted));
             }
-            if let Some(i) = self.selected_bus_frame {
-                if let Some(frame) = result.frames.get(i) {
-                    let hex = frame
-                        .bytes
-                        .iter()
-                        .map(|b| format!("{b:02X}"))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    if let Some(desc) = describe_ask_bytes(&frame.bytes).filter(|_| self.bus_settings.kind == BusKind::Ddsss) {
-                        ui.label(
-                            RichText::new(format!("{desc}  [{hex}]"))
-                                .small()
-                                .color(if frame.has_error() {
-                                    tokens.stop_bg
-                                } else {
-                                    tokens.text_primary
-                                }),
-                        );
-                    } else if !hex.is_empty() {
-                        ui.label(
-                            RichText::new(format!("{}  [{hex}]", frame.plot_label()))
-                                .small()
-                                .color(if frame.has_error() {
-                                    tokens.stop_bg
-                                } else {
-                                    tokens.text_primary
-                                }),
-                        );
-                    }
+            let nerr = result.frames.iter().filter(|f| f.has_error()).count();
+            ui.label(
+                RichText::new(t(
+                    lang,
+                    &format!("事务 {} · 异常 {nerr}", result.frames.len()),
+                    &format!("{} transactions · {nerr} issues", result.frames.len()),
+                ))
+                .small()
+                .color(if nerr == 0 { tokens.text_muted } else { tokens.stop_bg }),
+            );
+        }
+    }
+
+    fn step_bus_frame(&mut self, delta: isize) {
+        let rows = self.bus_list_rows();
+        if rows.is_empty() {
+            return;
+        }
+        let next = match self
+            .selected_bus_frame
+            .and_then(|cur| rows.iter().position(|(index, _, _)| *index == cur))
+        {
+            Some(pos) => (pos as isize + delta).clamp(0, rows.len() as isize - 1) as usize,
+            None => {
+                if delta < 0 {
+                    rows.len() - 1
+                } else {
+                    0
                 }
             }
-            if result.frames.is_empty() && result.error.is_none() {
-                ui.label(
-                    RichText::new(t(lang, "无解码帧", "No decoded frames"))
-                        .small()
-                        .color(tokens.text_muted),
-                );
-            } else if !result.frames.is_empty() || !result.byte_spans.is_empty() {
-                let nerr = result.frames.iter().filter(|f| f.has_error()).count();
-                let nchip_err = result.chips.iter().filter(|c| c.error).count();
-                let err_zh = match (nerr, nchip_err) {
-                    (0, 0) => String::new(),
-                    (n, 0) => format!(" · 误码 {n}"),
-                    (0, c) => format!(" · chip误 {c}"),
-                    (n, c) => format!(" · 误码 {n} · chip误 {c}"),
-                };
-                let err_en = match (nerr, nchip_err) {
-                    (0, 0) => String::new(),
-                    (n, 0) => format!(" · {n} errors"),
-                    (0, c) => format!(" · {c} chip errors"),
-                    (n, c) => format!(" · {n} errors · {c} chip errors"),
-                };
-                ui.label(
-                    RichText::new(t(
+        };
+        self.open_bus_frame(rows[next].0);
+    }
+
+    fn bus_list_rows(&self) -> Vec<(usize, String, bool)> {
+        let Some(result) = self.bus_result.as_ref() else {
+            return Vec::new();
+        };
+        let query = self.bus_query.trim().to_lowercase();
+        result
+            .frames
+            .iter()
+            .enumerate()
+            .filter_map(|(index, frame)| {
+                if self.bus_errors_only && !frame.has_error() {
+                    return None;
+                }
+                let label = format!("{}   {}", format_bus_time(frame.t_start), frame.plot_label());
+                if !query.is_empty() && !label.to_lowercase().contains(&query) {
+                    return None;
+                }
+                Some((index, label, frame.has_error()))
+            })
+            .collect()
+    }
+
+    fn bus_frame_list(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        let has_frames = self.bus_result.as_ref().is_some_and(|result| !result.frames.is_empty());
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let search_w = (ui.available_width() - 168.0).clamp(72.0, 220.0);
+            ui.add(
+                egui::TextEdit::singleline(&mut self.bus_query)
+                    .hint_text(t(lang, "搜索事务", "Search"))
+                    .desired_width(search_w),
+            );
+            if ui
+                .selectable_label(self.bus_errors_only, t(lang, "异常", "Issues"))
+                .clicked()
+            {
+                self.bus_errors_only = !self.bus_errors_only;
+            }
+            let n = self.bus_list_rows().len();
+            ui.label(
+                RichText::new(t(lang, &format!("{n} 条"), &format!("{n}")))
+                    .small()
+                    .color(tokens.text_muted),
+            );
+            if ui.small_button("↑").clicked() {
+                self.step_bus_frame(-1);
+            }
+            if ui.small_button("↓").clicked() {
+                self.step_bus_frame(1);
+            }
+        });
+        let rows = self.bus_list_rows();
+        if rows.is_empty() {
+            ui.label(
+                RichText::new(if has_frames {
+                    t(lang, "没有匹配的事务。", "No matching transactions.")
+                } else {
+                    t(
                         lang,
-                        &format!(
-                            "包 {}{err_zh} · 字节 {} · chip {}（点击标注可定位）",
-                            result.frames.len(),
-                            result.byte_spans.len(),
-                            result.chips.len()
-                        ),
-                        &format!(
-                            "{} packets{err_en} · {} bytes · {} chips (click a label to zoom)",
-                            result.frames.len(),
-                            result.byte_spans.len(),
-                            result.chips.len()
-                        ),
+                        "选择协议并映射通道后，事务列在这里。↑↓ 切换。",
+                        "Transactions appear here after a protocol and channels are set. ↑↓ moves the selection.",
+                    )
+                })
+                .small()
+                .color(tokens.text_muted),
+            );
+            return;
+        }
+        let selected = self.selected_bus_frame;
+        let mut pick = None;
+        egui::ScrollArea::vertical()
+            .id_salt("bus-frame-list")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for (index, label, error) in &rows {
+                    let on = selected == Some(*index);
+                    let color = if *error { tokens.stop_bg } else { tokens.text_primary };
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 22.0),
+                        egui::Sense::click(),
+                    );
+                    if on {
+                        ui.painter().rect_filled(rect, 3.0, tokens.accent_soft);
+                    }
+                    ui.painter().text(
+                        egui::pos2(rect.left() + 6.0, rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        label,
+                        egui::FontId::monospace(12.0),
+                        color,
+                    );
+                    if on && ui.ctx().data(|data| data.get_temp::<usize>(egui::Id::new("bus-frame-scrolled"))) != Some(*index) {
+                        ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                        let index = *index;
+                        ui.ctx().data_mut(|data| data.insert_temp(egui::Id::new("bus-frame-scrolled"), index));
+                    }
+                    if response.clicked() {
+                        pick = Some(*index);
+                    }
+                }
+            });
+        if let Some(index) = pick {
+            self.open_bus_frame(index);
+        }
+    }
+
+    fn bus_frame_detail(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        let zh = matches!(lang, Lang::Zh);
+        let kind = self.bus_settings.kind;
+        let index = self.selected_bus_frame;
+        let explained = self.bus_result.as_ref().and_then(|result| {
+            let index = index?;
+            let frame = result.frames.get(index)?.clone();
+            let lines = explain_frame(kind, &result.frames, index, zh);
+            Some((frame, lines))
+        });
+        egui::ScrollArea::vertical()
+            .id_salt("bus-frame-detail")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let Some((frame, lines)) = explained else {
+                    ui.label(
+                        RichText::new(t(lang, "选择一条事务，查看字段和校验。", "Select a transaction to read its fields."))
+                            .small()
+                            .color(tokens.text_muted),
+                    );
+                    return;
+                };
+                let color = if frame.has_error() { tokens.stop_bg } else { tokens.text_primary };
+                ui.label(RichText::new(frame.plot_label()).strong().color(color));
+                ui.label(
+                    RichText::new(format!(
+                        "{} → {}",
+                        format_bus_time(frame.t_start),
+                        format_bus_time(frame.t_end)
                     ))
                     .small()
-                    .color(if nerr + nchip_err == 0 {
-                        tokens.text_muted
-                    } else {
-                        tokens.stop_bg
-                    }),
+                    .monospace()
+                    .color(tokens.text_muted),
                 );
+                if !frame.bytes.is_empty() {
+                    let hex = frame.bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ");
+                    let text = if kind == BusKind::Ddsss {
+                        describe_ask_bytes(&frame.bytes)
+                            .map(|desc| format!("{desc}  [{hex}]"))
+                            .unwrap_or(hex)
+                    } else {
+                        hex
+                    };
+                    ui.label(RichText::new(text).small().monospace().color(color));
+                }
+                for line in lines {
+                    ui.label(RichText::new(line).small().color(tokens.text_primary));
+                }
+            });
+    }
+
+    fn measure_strip(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        let summary = self.measure_summary_line(lang);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let label = if self.measures_open {
+                t(lang, "收起", "Hide")
+            } else {
+                t(lang, "测量", "Measure")
+            };
+            if ui_theme::ghost_btn_sized(ui, tokens, label, egui::vec2(56.0, 22.0), self.measures_open).clicked()
+            {
+                self.measures_open = !self.measures_open;
             }
+            ui.label(RichText::new(summary).small().monospace().color(tokens.text_primary));
+        });
+    }
+
+    fn measure_summary_line(&mut self, lang: Lang) -> String {
+        let Some(index) = self.selected else {
+            return t(lang, "未打开波形", "No waveform");
+        };
+        let gated = self.cached_gated_measures(index);
+        let Some(wave) = self.waves.get(index) else {
+            return String::new();
+        };
+        let measures = gated.as_ref().unwrap_or(&wave.measures);
+        let name: String = wave.label.chars().take(18).collect();
+        let name = if wave.label.chars().count() > 18 {
+            format!("{name}…")
+        } else {
+            name
+        };
+        let y_unit = wave.trace.y_unit.as_str();
+        let x_unit = wave.trace.x_unit.as_str();
+        let mut line = format!(
+            "{name}   min {}   max {}   pp {}",
+            format_eng(measures.min, y_unit),
+            format_eng(measures.max, y_unit),
+            format_eng(measures.pp, y_unit),
+        );
+        if let (Some(a), Some(b)) = (self.x1, self.x2) {
+            line.push_str(&format!("   ΔX {}", format_eng(b - a, x_unit)));
         }
+        if let (Some(a), Some(b)) = (self.y1, self.y2) {
+            line.push_str(&format!("   ΔY {}", format_eng(b - a, y_unit)));
+        }
+        line
     }
 
     fn open_bus_frame(&mut self, index: usize) {
@@ -2995,11 +3194,17 @@ impl WaveformAnalysisPanel {
                 egui::Layout::centered_and_justified(egui::Direction::TopDown),
                 |ui| {
                     ui.label(
-                        RichText::new(t(
-                            lang,
-                            "从左侧目录打开示波器源文件（CSV / ISF / WFM）",
-                            "Open a scope source from the left browser (CSV / ISF / WFM)",
-                        ))
+                        RichText::new(if self.status.contains("无法打开")
+                            || self.status.to_ascii_lowercase().contains("could not")
+                        {
+                            self.status.clone()
+                        } else {
+                            t(
+                                lang,
+                                "从左侧目录打开示波器源文件（CSV / ISF / WFM）",
+                                "Open a scope source from the left browser (CSV / ISF / WFM)",
+                            )
+                        })
                         .color(tokens.text_muted),
                     );
                 },
@@ -5099,13 +5304,22 @@ fn card_in_rect(
     });
 }
 
-/// Right-hand protocol column. The plot keeps at least 360 px; the column stays between 220 and 360.
-fn protocol_column_width(total: f32) -> f32 {
-    let room = total - 200.0 - 360.0 - PANEL_GAP * 2.0;
-    if room >= 220.0 {
-        room.clamp(240.0, 360.0)
+/// Left rail for files and decode settings. The plot keeps the wide pane.
+fn analysis_rail_width(total: f32) -> f32 {
+    (total * 0.22).clamp(220.0, 268.0)
+}
+
+fn format_bus_time(seconds: f64) -> String {
+    let sign = if seconds < 0.0 { "-" } else { "" };
+    let a = seconds.abs();
+    if a >= 1.0 {
+        format!("{sign}{a:.3} s")
+    } else if a >= 1e-3 {
+        format!("{sign}{:.3} ms", a * 1e3)
+    } else if a >= 1e-6 {
+        format!("{sign}{:.3} µs", a * 1e6)
     } else {
-        (total * 0.34).clamp(200.0, 280.0)
+        format!("{sign}{:.1} ns", a * 1e9)
     }
 }
 
@@ -5317,60 +5531,6 @@ fn lane_wave_index(settings: &BusDecodeSettings) -> Option<usize> {
     })
 }
 
-fn decimate_series(x: &[f64], y: &[f64], max_cols: usize) -> Vec<[f64; 4]> {
-    let n = x.len().min(y.len());
-    if n == 0 || max_cols == 0 {
-        return Vec::new();
-    }
-    if n <= max_cols {
-        return (0..n).map(|index| {
-            let end = if index + 1 < n { x[index + 1] } else { x[index] };
-            [x[index], end.max(x[index]), y[index], y[index]]
-        }).collect();
-    }
-    let mut out = Vec::with_capacity(max_cols);
-    for bucket in 0..max_cols {
-        let start = bucket * n / max_cols;
-        let end = ((bucket + 1) * n / max_cols).max(start + 1).min(n);
-        let mut ymin = f64::INFINITY;
-        let mut ymax = f64::NEG_INFINITY;
-        for index in start..end {
-            ymin = ymin.min(y[index]);
-            ymax = ymax.max(y[index]);
-        }
-        out.push([x[start], x[end - 1].max(x[start]), ymin, ymax]);
-    }
-    out
-}
-
-fn thin_columns(columns: &[[f64; 4]], max_cols: usize) -> Vec<[f64; 4]> {
-    if columns.len() <= max_cols || max_cols == 0 {
-        return columns.iter().copied().filter(|col| col.iter().all(|value| value.is_finite())).collect();
-    }
-    let mut out = Vec::with_capacity(max_cols);
-    for bucket in 0..max_cols {
-        let start = bucket * columns.len() / max_cols;
-        let end = ((bucket + 1) * columns.len() / max_cols).max(start + 1).min(columns.len());
-        let mut x0 = f64::INFINITY;
-        let mut x1 = f64::NEG_INFINITY;
-        let mut ymin = f64::INFINITY;
-        let mut ymax = f64::NEG_INFINITY;
-        for col in &columns[start..end] {
-            if !col.iter().all(|value| value.is_finite()) {
-                continue;
-            }
-            x0 = x0.min(col[0]);
-            x1 = x1.max(col[1]);
-            ymin = ymin.min(col[2]);
-            ymax = ymax.max(col[3]);
-        }
-        if x0.is_finite() {
-            out.push([x0, x1.max(x0), ymin, ymax]);
-        }
-    }
-    out
-}
-
 fn wave_overview_columns(wave: &LoadedWave) -> Vec<[f64; 4]> {
     const MAX_COLS: usize = 4800;
     if !wave.overview.is_empty() {
@@ -5381,99 +5541,6 @@ fn wave_overview_columns(wave: &LoadedWave) -> Vec<[f64; 4]> {
 }
 
 /// Time spans that need sample-level edges: each decoded frame, plus one frame of context.
-fn detail_windows(lanes: &[ProtocolReportLane]) -> Vec<(f64, f64)> {
-    let mut spans: Vec<(f64, f64)> = lanes.iter().flat_map(|lane| lane.frames.iter()).filter_map(|frame| {
-        if frame.t0.is_finite() && frame.t1.is_finite() {
-            Some((frame.t0.min(frame.t1), frame.t0.max(frame.t1)))
-        } else {
-            None
-        }
-    }).collect();
-    if spans.is_empty() {
-        return spans;
-    }
-    spans.sort_by(|left, right| left.0.total_cmp(&right.0));
-    let mut widths: Vec<f64> = spans.iter().map(|(start, end)| end - start).filter(|width| *width > 0.0).collect();
-    widths.sort_by(|left, right| left.total_cmp(right));
-    let typical = widths.get(widths.len() / 2).copied().unwrap_or(0.0);
-    let pad = (typical * 2.0).max(1e-12);
-    let mut merged = Vec::<(f64, f64)>::new();
-    for (start, end) in spans {
-        let start = start - pad;
-        let end = end + pad;
-        if let Some(last) = merged.last_mut() {
-            if start <= last.1 {
-                last.1 = last.1.max(end);
-                continue;
-            }
-        }
-        merged.push((start, end));
-    }
-    merged
-}
-
-/// High-resolution min/max columns around decoded frames. The overview stays coarse.
-fn detail_columns(x: &[f64], y: &[f64], windows: &[(f64, f64)], budget: usize) -> Vec<[f64; 4]> {
-    let n = x.len().min(y.len());
-    if n == 0 || budget == 0 {
-        return Vec::new();
-    }
-    if windows.is_empty() || n <= budget {
-        return decimate_series(&x[..n], &y[..n], budget.min(n));
-    }
-    let mut ranges = Vec::<(usize, usize)>::new();
-    let mut covered = 0usize;
-    for (start_t, end_t) in windows {
-        let start = x[..n].partition_point(|time| *time < *start_t);
-        let end = x[..n].partition_point(|time| *time <= *end_t).max(start).min(n);
-        if start < end {
-            covered += end - start;
-            ranges.push((start, end));
-        }
-    }
-    if ranges.is_empty() {
-        return decimate_series(&x[..n], &y[..n], budget.min(n));
-    }
-    if covered <= budget {
-        let mut out = Vec::with_capacity(covered);
-        for (start, end) in ranges {
-            out.extend(decimate_series(&x[start..end], &y[start..end], end - start));
-        }
-        return out;
-    }
-    let lengths: Vec<usize> = ranges.iter().map(|(start, end)| end - start).collect();
-    let shares = share_columns(&lengths, budget);
-    let mut out = Vec::new();
-    for ((start, end), share) in ranges.iter().zip(shares) {
-        if share == 0 {
-            continue;
-        }
-        out.extend(decimate_series(&x[*start..*end], &y[*start..*end], share));
-    }
-    if out.is_empty() { decimate_series(&x[..n], &y[..n], budget.min(n)) } else { out }
-}
-
-/// Split a sample budget across frame windows without dropping a later frame to zero.
-fn share_columns(lengths: &[usize], budget: usize) -> Vec<usize> {
-    let covered: usize = lengths.iter().sum();
-    if covered == 0 || budget == 0 {
-        return vec![0; lengths.len()];
-    }
-    let mut shares: Vec<usize> = lengths.iter().map(|len| {
-        let raw = ((budget as f64) * (*len as f64) / (covered as f64)).round() as usize;
-        raw.clamp(1, *len)
-    }).collect();
-    let mut sum: usize = shares.iter().sum();
-    while sum > budget {
-        let Some((index, _)) = shares.iter().enumerate().filter(|(_, share)| **share > 1).max_by_key(|(_, share)| *share) else {
-            break;
-        };
-        shares[index] -= 1;
-        sum -= 1;
-    }
-    shares
-}
-
 fn report_field(fields: &mut Vec<ProtocolReportField>, name: &str, value: String, raw: bool, zh: bool) {
     let (code, value) = split_code_value(&value);
     fields.push(ProtocolReportField { name: name.to_string(), value, code, raw, note: field_note(name, zh) });
@@ -5662,6 +5729,14 @@ fn t(lang: Lang, zh: &str, en: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn analysis_rail_leaves_the_plot_the_wide_pane() {
+        let rail = analysis_rail_width(1100.0);
+        assert!((220.0..=268.0).contains(&rail));
+        assert!(1100.0 - rail - PANEL_GAP >= 800.0);
+        assert!((220.0..=268.0).contains(&analysis_rail_width(1920.0)));
+    }
 
     #[test]
     fn ctrl_wheel_zoom_never_passes_collapsed_bounds_to_plot() {

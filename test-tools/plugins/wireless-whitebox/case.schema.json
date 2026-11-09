@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false,
+  "required": ["id", "name", "enabled", "order", "objective", "stimulus", "internal_evidence", "physical_evidence", "judgment"],
+  "properties": {
+    "editor_revision": {"type": "integer", "minimum": 0, "title": "Revision", "readOnly": true},
+    "updated_at": {"type": "string", "title": "Updated", "readOnly": true},
+    "id": {"type": "string", "title": "标识", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"},
+    "name": {"type": "string", "title": "测试项名称", "minLength": 1},
+    "enabled": {"type": "boolean", "title": "启用", "default": true},
+    "order": {"type": "integer", "title": "排序", "minimum": 0},
+    "tags": {"type": "array", "title": "标签", "items": {"type": "string"}, "default": []},
+    "objective": {"type": "string", "title": "测试目的", "minLength": 1},
+    "stimulus": {"type": "string", "title": "测试条件与刺激", "minLength": 1},
+    "internal_evidence": {"type": "string", "title": "内部状态与日志", "minLength": 1},
+    "physical_evidence": {"type": "string", "title": "电气与独立证据", "minLength": 1},
+    "judgment": {"type": "string", "title": "判定要求", "minLength": 1},
+    "limit": {"type":"object", "title":"测量限值", "additionalProperties":false, "required":["metric","unit","minimum","maximum"], "properties": {
+      "metric":{"type":"string","title":"测量项目","minLength":1},
+      "unit":{"type":"string","title":"单位","minLength":1},
+      "minimum":{"type":"number","title":"下限"},
+      "maximum":{"type":"number","title":"上限"}
+    }},
+    "rx_vout_control": {"type":"object", "title":"RX 输出电压控制 (mV)", "additionalProperties":false, "required":["target_mv","minimum_mv","maximum_mv"], "properties":{
+      "target_mv":{"type":"integer","title":"目标电压 (mV)","minimum":0,"maximum":65535},
+      "minimum_mv":{"type":"integer","title":"允许下限 (mV)","minimum":0,"maximum":65535},
+      "maximum_mv":{"type":"integer","title":"允许上限 (mV)","minimum":0,"maximum":65535}
+    }},
+    "physical_vout_limit": {"type":"object","title":"负载端输出电压限值 (V)","additionalProperties":false,"required":["minimum_v","maximum_v","settle_ms"],"properties":{
+      "minimum_v":{"type":"number","title":"电压下限 (V)"},
+      "maximum_v":{"type":"number","title":"电压上限 (V)"},
+      "settle_ms":{"type":"integer","title":"测量前等待 (ms)","minimum":0,"maximum":60000}
+    }},
+    "load_cc": {"type":"object","title":"电子负载恒流刺激 (A)","additionalProperties":false,"required":["current_a","maximum_a"],"properties":{
+      "current_a":{"type":"number","title":"负载电流 (A)","minimum":0},
+      "maximum_a":{"type":"number","title":"允许电流上限 (A)","exclusiveMinimum":0}
+    }},
+    "notes": {"type": "string", "title": "备注"}
+  }
+}

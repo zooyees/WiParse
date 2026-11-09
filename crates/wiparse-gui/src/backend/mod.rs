@@ -88,6 +88,10 @@ pub struct ApiBridge {
     pub running: Arc<AtomicBool>,
     egui_ctx: Arc<Mutex<Option<egui::Context>>>,
     active_invokes: Arc<AtomicUsize>,
+    ai_token: Arc<String>,
+    ai_token_ref: Arc<String>,
+    ai_auth_ready: Arc<AtomicBool>,
+    control_auth_required: bool,
 }
 
 impl ApiBridge {
@@ -104,6 +108,10 @@ impl ApiBridge {
             running: Arc::new(AtomicBool::new(true)),
             egui_ctx: Arc::new(Mutex::new(None)),
             active_invokes: Arc::new(AtomicUsize::new(0)),
+            ai_token: Arc::new(std::env::var("WIPARSE_LOCAL_API_TOKEN").ok().filter(|value|uuid::Uuid::parse_str(value).is_ok()).unwrap_or_else(||uuid::Uuid::new_v4().to_string())),
+            ai_token_ref: Arc::new(uuid::Uuid::new_v4().to_string()),
+            ai_auth_ready: Arc::new(AtomicBool::new(false)),
+            control_auth_required: crate::companion_window(),
         }
     }
 
@@ -160,17 +168,38 @@ impl ApiBridge {
     }
 }
 
+struct AiTokenGuard {path:std::path::PathBuf,encrypted:String}
+impl Drop for AiTokenGuard {fn drop(&mut self){
+    if std::fs::symlink_metadata(&self.path).is_ok_and(|meta|meta.is_file()&&!meta.file_type().is_symlink())
+        &&std::fs::read_to_string(&self.path).is_ok_and(|value|value==self.encrypted){let _=std::fs::remove_file(&self.path);}
+}}
+fn publish_ai_token(bridge:&ApiBridge)->Result<AiTokenGuard,String>{
+    let path=wiparse_core::ai::ai_bridge_token_path(&bridge.ai_token_ref).ok_or("AI bridge token directory unavailable")?;
+    publish_ai_token_at(bridge,path)
+}
+fn publish_ai_token_at(bridge:&ApiBridge,path:std::path::PathBuf)->Result<AiTokenGuard,String>{
+    let directory=path.parent().ok_or("AI bridge token directory unavailable")?;
+    std::fs::create_dir_all(directory).map_err(|_|"AI bridge token directory unavailable")?;
+    let meta=std::fs::symlink_metadata(directory).map_err(|_|"AI bridge token directory unavailable")?;
+    if !meta.is_dir()||meta.file_type().is_symlink(){return Err("AI bridge token directory invalid".into());}
+    let encrypted=wiparse_core::ai::protect_key(&bridge.ai_token).map_err(|_|"AI bridge token protection unavailable")?;
+    let mut file=std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(|_|"AI bridge token creation failed")?;
+    if file.write_all(encrypted.as_bytes()).and_then(|_|file.sync_all()).is_err(){drop(file);let _=std::fs::remove_file(&path);return Err("AI bridge token write failed".into());}
+    Ok(AiTokenGuard{path,encrypted})
+}
+
 pub fn start(bridge: ApiBridge) -> Result<(), String> {
     let bind = std::env::var("WIPARSE_API_BIND").unwrap_or_else(|_| DEFAULT_BIND.into());
     if let Ok(mut s) = bridge.status.lock() {
         s.listening = bind.clone();
     }
     let server = Server::http(&bind).map_err(|e| format!("API bind {bind}: {e}"))?;
+    let ai_token_guard=if bind==DEFAULT_BIND {match publish_ai_token(&bridge){Ok(guard)=>{bridge.ai_auth_ready.store(true,Ordering::Release);Some(guard)},Err(error)=>{tracing::warn!("{error}; protected AI API unavailable");None}}}else{None};
     tracing::info!("WiParse API listening on http://{bind}");
     let bridge_c = bridge.clone();
     thread::Builder::new()
         .name("wiparse-api".into())
-        .spawn(move || serve_loop(server, bridge_c))
+        .spawn(move || {let _guard=ai_token_guard;serve_loop(server, bridge_c)})
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -203,11 +232,19 @@ fn handle_request(mut request: Request, bridge: &ApiBridge) -> Result<(), String
                     "health",
                     json!({
                         "version": env!("CARGO_PKG_VERSION"),
+                        "product_id": "com.wiparse.host",
+                        "bridge_protocol": 2,
+                        "control_auth_required": bridge.control_auth_required,
+                        "recovery_mode":crate::companion_detached(),
+                        "instance_id": bridge.ai_token_ref.as_str(),
+                        "process_id": std::process::id(),
+                        "features": ["companion-graceful-exit-v1","typed-control-v1","serial-ai-v1","config-document-edit-v1","project-transfer-v1","live-source-identity-v1","scope-rules-document-v1","ui-navigation-v1","serial-log-editor-v1","serial-recording-settings-v1","serial-log-lifecycle-v1","instrument-acquisition-v1","manual-connect-v1","document-origin-bindings-v1","preferences-v1","migration-complete-api-v1"],
                         "listening": status.listening,
                         "monitoring": status.monitoring,
                         "port": status.port,
                         "baud": status.baud,
                         "instrument_devices": status.instrument_devices,
+                        "ai_auth_ref": if bridge.ai_auth_ready.load(Ordering::Acquire){Some(bridge.ai_token_ref.as_str())}else{None},
                     }),
                 ),
             )
@@ -237,6 +274,8 @@ fn handle_request(mut request: Request, bridge: &ApiBridge) -> Result<(), String
             Ok(())
         }
         (Method::Get, "/v1/events") => {
+            let authorization=request.headers().iter().find(|header|header.field.equiv("Authorization")).map(|header|header.value.as_str());
+            if bridge.control_auth_required&&!ai_request_authorized(true,authorization,&bridge.ai_token){return respond_json(request,401,&envelope_err("events","API.AUTH_REQUIRED"));}
             let bridge = bridge.clone();
             thread::Builder::new()
                 .name("wiparse-api-events".into())
@@ -276,6 +315,71 @@ fn handle_request(mut request: Request, bridge: &ApiBridge) -> Result<(), String
     }
 }
 
+fn ai_request_authorized(ready:bool,authorization:Option<&str>,expected:&str)->bool{
+    ready&&authorization.and_then(|value|value.strip_prefix("Bearer ")).is_some_and(|token|token==expected)
+}
+
+#[cfg(test)]
+mod ai_auth_tests {
+    #[test]
+    fn companion_rejects_unauthorized_requests_before_dispatch(){
+        let mut bridge=super::ApiBridge::new();bridge.control_auth_required=true;
+        let token=(*bridge.ai_token).clone();
+        let server=tiny_http::Server::http("127.0.0.1:0").unwrap();let address=server.server_addr().to_ip().unwrap();
+        let worker=std::thread::spawn(move||{for _ in 0..3{let request=server.recv().unwrap();super::handle_request(request,&bridge).unwrap();}});
+        let url=format!("http://{address}/v1/invoke");
+        for supplied in [None,Some("wrong")] {
+            let mut request=ureq::post(&url).timeout(std::time::Duration::from_secs(3));if let Some(value)=supplied{request=request.set("Authorization",&format!("Bearer {value}"));}
+            let response=request.send_json(serde_json::json!({"method":"system.version","params":{}}));
+            assert!(matches!(response,Err(ureq::Error::Status(401,_))));
+        }
+        let reply:serde_json::Value=ureq::post(&url).set("Authorization",&format!("Bearer {token}")).send_json(serde_json::json!({"method":"system.version","params":{}})).unwrap().into_json().unwrap();
+        assert_eq!(reply["ok"],true);worker.join().unwrap();
+    }
+    #[test]fn migrated_endpoints_are_dispatched_to_the_gui_thread(){
+        for method in ["ui.ai.settings.get_safe","ui.ai.settings.set_safe","ui.ai.test_safe","ui.ai.chat.submit_safe","ui.ai.chat.state_safe","ui.report.tree_safe","ui.test_tool.state_safe","ui.test_tool.generic_run_safe","ui.test_tool.generic_stop_safe","ui.test_tool.scope_rule_enabled_safe","ui.test_tool.scope_rule_add_safe","ui.test_tool.scope_rule_text_safe","ui.test_tool.scope_rule_exclusion_safe","ui.test_tool.scope_rule_order_safe","ui.test_tool.scope_settings_import_safe","ui.test_tool.scope_settings_export_safe","ui.test_tool.scope_edge_mode_safe","ui.test_tool.scope_serial_settings_safe","ui.test_tool.scope_instrument_safe","ui.test_tool.scope_preflight_safe","ui.test_tool.scope_run_safe","ui.test_tool.scope_stop_safe","ui.instrument.source_action_safe","ui.instrument.load_action_safe","ui.instrument.waveform_source_safe","ui.serial.open_safe","ui.serial.close_safe","ui.serial.clear_live_safe"] {assert!(super::capabilities::is_stateful(method),"{method}");}
+    }
+    #[test]fn protected_ai_methods_reject_absent_wrong_and_unpublished_tokens(){
+        use super::ai_request_authorized;
+        assert!(!ai_request_authorized(false,Some("Bearer right"),"right"));
+        assert!(!ai_request_authorized(true,None,"right"));
+        assert!(!ai_request_authorized(true,Some("Bearer wrong"),"right"));
+        assert!(!ai_request_authorized(true,Some("right"),"right"));
+        assert!(ai_request_authorized(true,Some("Bearer right"),"right"));
+    }
+    #[test]fn http_ai_settings_rejects_a_missing_token_before_dispatch(){
+        use std::io::{Read,Write};
+        let server=tiny_http::Server::http("127.0.0.1:0").unwrap();let address=server.server_addr().to_string();
+        let bridge=super::ApiBridge::new();bridge.ai_auth_ready.store(true,std::sync::atomic::Ordering::Release);
+        let task=std::thread::spawn(move||{let request=server.recv().unwrap();super::handle_request(request,&bridge).unwrap();assert!(bridge.try_recv().is_none());});
+        let mut stream=std::net::TcpStream::connect(address).unwrap();stream.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap();
+        let body=r#"{"method":"ui.ai.settings.get_safe","params":{}}"#;
+        write!(stream,"POST /v1/invoke HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+        let mut response=String::new();stream.read_to_string(&mut response).unwrap();assert!(response.starts_with("HTTP/1.1 401"));assert!(response.contains("AI.AUTH_REQUIRED"));task.join().unwrap();
+    }
+    #[test]fn http_ai_settings_with_token_reaches_the_stateful_dispatch(){
+        use std::io::{Read,Write};use std::time::{Duration,Instant};
+        let server=tiny_http::Server::http("127.0.0.1:0").unwrap();let address=server.server_addr().to_string();
+        let bridge=super::ApiBridge::new();bridge.ai_auth_ready.store(true,std::sync::atomic::Ordering::Release);let token=bridge.ai_token.to_string();let consumer=bridge.clone();
+        let worker=std::thread::spawn(move||{let deadline=Instant::now()+Duration::from_secs(3);loop{if let Some(req)=consumer.try_recv(){assert_eq!(req.method,"ui.ai.settings.get_safe");req.reply.send(super::invoke_ok(&req.method,serde_json::json!({"fixture":true}))).unwrap();break;}assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(5));}});
+        let task=std::thread::spawn(move||{let request=server.recv().unwrap();super::handle_request(request,&bridge).unwrap();});
+        let mut stream=std::net::TcpStream::connect(address).unwrap();stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();let body=r#"{"method":"ui.ai.settings.get_safe","params":{}}"#;
+        write!(stream,"POST /v1/invoke HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",token,body.len(),body).unwrap();
+        let mut response=String::new();stream.read_to_string(&mut response).unwrap();assert!(response.starts_with("HTTP/1.1 200"));assert!(response.contains("fixture"));task.join().unwrap();worker.join().unwrap();
+    }
+    #[test]
+    #[cfg(windows)]
+    #[ignore = "requires the interactive Windows user profile for DPAPI"]
+    fn protected_ai_token_file_is_user_bound_and_removed_by_its_owner(){
+        let root=std::env::temp_dir().join(format!("wiparse-ai-token-test-{}",uuid::Uuid::new_v4()));std::fs::create_dir(&root).unwrap();
+        let path=root.join("token");let bridge=super::ApiBridge::new();let guard=super::publish_ai_token_at(&bridge,path.clone()).unwrap();
+        let encrypted=std::fs::read_to_string(&path).unwrap();assert!(!encrypted.contains(bridge.ai_token.as_str()));
+        assert_eq!(wiparse_core::ai::unprotect_bridge_token(&encrypted).unwrap(),*bridge.ai_token);
+        assert!(super::publish_ai_token_at(&bridge,path.clone()).is_err());assert_eq!(std::fs::read_to_string(&path).unwrap(),encrypted);
+        drop(guard);assert!(!path.exists());std::fs::remove_dir(root).unwrap();
+    }
+}
+
 fn handle_invoke(mut request: Request, bridge: &ApiBridge) -> Result<(), String> {
     let body = match read_body(&mut request) {
         Ok(b) => b,
@@ -299,6 +403,12 @@ fn handle_invoke(mut request: Request, bridge: &ApiBridge) -> Result<(), String>
             return respond_json(request, 400, &envelope_err("invoke", "missing method"));
         }
     };
+    if bridge.control_auth_required || method_name.starts_with("ui.ai.") {
+        let authorization=request.headers().iter().find(|header|header.field.equiv("Authorization")).map(|header|header.value.as_str());
+        if !ai_request_authorized(bridge.control_auth_required||bridge.ai_auth_ready.load(Ordering::Acquire),authorization,&bridge.ai_token){
+            return respond_json(request,401,&envelope_err("invoke",if bridge.control_auth_required{"API.AUTH_REQUIRED"}else{"AI.AUTH_REQUIRED"}));
+        }
+    }
     let params = parsed.get("params").cloned().unwrap_or_else(|| json!({}));
     let reply = dispatch::invoke(bridge, &method_name, params);
     let code = if reply.ok { 200 } else { 400 };
@@ -306,7 +416,7 @@ fn handle_invoke(mut request: Request, bridge: &ApiBridge) -> Result<(), String>
         envelope_ok(&reply.cmd, reply.data)
     } else {
         let mut error=envelope_err(&reply.cmd, reply.error.as_deref().unwrap_or("error"));
-        if reply.cmd.starts_with("ui.test_tool.config.")||matches!(reply.cmd.as_str(),"ui.test_tool.matrix.get"|"ui.test_tool.preflight.state"){
+        if reply.cmd.starts_with("ui.test_tool.config.")||reply.cmd.starts_with("ui.test_tool.project.")||matches!(reply.cmd.as_str(),"ui.test_tool.matrix.get"|"ui.test_tool.preflight.state"){
             error["error"]["code"]=json!(reply.error.as_deref().unwrap_or("CONFIG.OPERATION_FAILED"));
             if reply.data.is_object(){error["error"]["details"]=reply.data;}
         }
@@ -331,7 +441,10 @@ fn serve_events(request: Request, bridge: &ApiBridge) -> Result<(), String> {
         })
         .unwrap_or(0);
 
-    let rx = bridge.events.subscribe(since).map_err(str::to_string)?;
+    // The Next serial pane needs invalidations, not duplicated raw-line payloads.
+    // Existing unfiltered CLI/MCP clients retain their original stream.
+    let serial_only=request.url().split('?').nth(1).unwrap_or("").split('&').any(|pair|pair=="types=serial.log.changed");
+    let rx = if serial_only{bridge.events.subscribe_serial_logs(since)}else{bridge.events.subscribe(since)}.map_err(str::to_string)?;
     let mut writer = request.into_writer();
     write!(
         writer,

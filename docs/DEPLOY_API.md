@@ -1,5 +1,7 @@
 # WiParse C+E 部署说明（GUI 内嵌 API）
 
+> 2026-11-08：下方早期单界面部署方式仍适用于独立 egui。Tauri 开发版本使用 `WiParse.exe` 新壳与 `WiParse-Host.exe` 兼容宿主，不能混用旧二进制；新 companion 要求全部调用认证。统一验收尚未完成。
+
 架构：**C（GUI 单进程内嵌 localhost API）+ E（MCP/Agent 可直接 HTTP）**。
 
 - **长驻进程**：`WiParse.exe` 独占串口 / 仪器，画面走进程内通道（不经网络）。
@@ -199,3 +201,28 @@ Agent 推荐：`wiparse_ui` 切到串口页 → `wiparse_select` 选口（不打
 - [ ] `WiParse-CLI.exe ui state`（GUI 已开）
 - [ ] MCP `wiparse_brief` / `wiparse_select` / `wiparse_ui` 有返回
 - [ ] `dist` 中两个 exe 为本次 release 构建
+
+
+## Tauri companion 桥协议 2
+
+新壳验证产品 ID、桥协议、实例 UUID 和进程 ID；找不到匹配宿主时只启动同包兼容宿主，不把新壳自身作为后备宿主。设备、串口和插件运行状态继续由兼容宿主拥有。
+
+健康检查公开身份元数据，控制调用和事件要求当前实例 Bearer 凭据。Next 启动时传递进程私有凭据；CLI 在当前用户上下文读取 DPAPI 保护的凭据引用；Node SDK/MCP 只向固定的 `127.0.0.1:7878` 提交实例凭据。自定义远程端点不接收该本机凭据。普通独立 egui 保留原接口策略。
+
+客户端在网络超时、断开、无效响应或 HTTP 5xx 后报告结果未知，不得自动重放控制命令。只有明确 401 拒绝允许通过凭据感知 CLI 提交一次。任务需以返回的 `job_id` 和设备/资源上下文匹配完成结果。
+
+当前新增适配包括：
+
+- `ui.preferences.get_safe|set_safe`：受 revision 保护的外观、波特率默认值，不重启当前连接。
+- `ui.serial.recording_settings_safe`：停止全部串口后修改后续记录的文件名、目录和启用状态，不重命名旧文件；`ui.serial.new_log_safe` 需要当前实时页身份、内容代际和明确同意。
+- `ui.instrument.control_safe`：类型化手动命令及型号、通道、测试互锁检查；`ui.instrument.acquisition_safe` 控制已有采集调度；`ui.instrument.export_samples_safe` 返回异步 CSV 导出任务，已有目标不覆盖。
+- `ui.test_tool.config.edit|project.edit`：完整 Schema 编辑，工程、插件、版本、哈希和 Schema 身份检查后保留原隐藏值；来源引用随数组重排保留，不按新索引交换隐藏字段。
+- `ui.ai.serial.*_safe`：参见 [AI 接口](AI_INTERFACE.md)，复用原会话、告警和有限工具执行路径。
+
+本节是源码契约说明，不是验收通过声明。集中验证与 EXE 预览由 `scripts/verify-next-candidate.ps1`、`scripts/stage-next-preview.ps1` 管理；不自动覆盖现场安装，也不创建 ZIP。
+
+### Next 手动连接适配（2026-11-08）
+
+`ui.instrument.connect_manual_safe` 接收 `resource` 和可选的 `kind`。地址去除外部空白后限 1024 字节、禁止控制字符；类型使用现有 `InstrumentKind` 枚举，null 表示自动识别。保留 VISA 别名、TCPIP、USB、probe/bridge/dongle URI 的原驱动语义，不通过 shell 执行地址。
+
+与扫描资源连接共用原设备 worker；测试正在运行、扫描正在进行或资源已连接/等待连接时拒绝。成功回复只表示连接请求已入队，实际结果仍从 `instrument.list.resources` 的 `connecting` / `connected` / `connection_error` 查询。超时或未知结果不自动重发。新增宿主语义特性 `manual-connect-v1`，Next 要求对应宿主支持。

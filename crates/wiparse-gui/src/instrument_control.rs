@@ -16,9 +16,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use wiparse_core::bridge::Ft4222Session;
+use wiparse_core::device_session::DeviceSession as LiveSession;
 use wiparse_core::config::AppConfig;
-use wiparse_core::dongle::{self, DongleSession};
+use wiparse_core::dongle;
 use wiparse_core::i18n::Lang;
 use wiparse_core::instrument::{
     discover_resources_with_known_sessions, export_csv, humanize_scope_reading_text,
@@ -26,8 +26,7 @@ use wiparse_core::instrument::{
     InstrumentDevice, InstrumentKind, MeasureFunction, Reading, ResourceInfo, Sample,
     ScopeMeasType, WaveformTrace,
 };
-use wiparse_core::probe::ProbeSession;
-use wiparse_core::usb::{is_usb_session_address, parse_usb_resource, UsbIface};
+use wiparse_core::usb::{is_usb_session_address, parse_usb_resource};
 use wiparse_core::wave_display::{build_overview_envelope, envelope_bounds, ScopeEnvelopeColumn};
 use wiparse_core::waveform_file::{
     host_waveform_metrics, join_tek_isf_channels, load_waveform_bytes, load_waveform_bytes_all,
@@ -57,6 +56,8 @@ enum Job {
         command: ControlCommand,
         job_id: Option<u64>,
     },
+    LoadSetpoint {id:u64,mode:String,value:f64,job_id:u64},
+    ProbeOperation{id:u64,command:ControlCommand,target:String,sha256:Option<String>,staged:Option<PathBuf>,job_id:u64},
     PollRtt(u64),
     Measure(u64),
     /// Capture scope screen for in-app preview + clipboard (no save dialog).
@@ -83,6 +84,7 @@ enum Job {
 }
 
 enum Event {
+    SamplesExported {id:u64,job_id:u64,result:Result<usize,String>},
     Resources(Vec<ResourceInfo>),
     Connected {
         id: u64,
@@ -417,6 +419,7 @@ struct DeviceUi {
 pub struct InstrumentControlPanel {
     tx: Sender<Job>,
     rx: Receiver<Event>,
+    events: Sender<Event>,
     resources: Vec<ResourceInfo>,
     resource_inputs: [String; 7],
     devices: Vec<DeviceUi>,
@@ -432,6 +435,7 @@ pub struct InstrumentControlPanel {
     last_sample: Instant,
     measurement_pending: HashSet<u64>,
     samples: AcquisitionBuffer,
+    pending_exports: HashSet<u64>,
     latest: HashMap<(u64, String), Reading>,
     waveforms: HashMap<u64, WaveformTrace>,
     waveform_pipeline: Sender<PipelineJob>,
@@ -444,12 +448,18 @@ pub struct InstrumentControlPanel {
     scope_heavy_defer_frames: u8,
     logs: VecDeque<String>,
     scanning: bool,
+    scan_error: Option<String>,
+    pending_connections: HashMap<u64, String>,
+    pending_disconnections: HashSet<u64>,
+    pending_scope_actions: HashMap<u64, u64>,
+    pending_source_actions: HashMap<u64, u64>,
+    pending_screenshots: HashMap<u64, u64>,
+    completed_screenshots: HashMap<u64, u64>,
+    connection_errors: HashMap<String, String>,
     /// Left-rail "control mesh" card — shows every live session on the right.
     overview_open: bool,
     /// Optional device photos loaded from `{save_dir}/device_photos/`.
     device_photos: HashMap<u64, egui::TextureHandle>,
-    /// Device ids already probed for a photo (avoid disk I/O every frame).
-    device_photo_tried: HashSet<u64>,
     /// When set, every instrument card is shown and missing kinds use demo sessions.
     debug_mode: bool,
     /// Device id currently running Capture / WaveformSource (for status + UI busy).
@@ -474,6 +484,10 @@ fn kind_wire(kind: InstrumentKind) -> String {
 }
 
 impl InstrumentControlPanel {
+    pub fn api_operations_pending(&self)->bool {
+        !self.pending_exports.is_empty() || self.scanning || self.busy_device.is_some() || !self.pending_connections.is_empty() || !self.pending_disconnections.is_empty() || !self.pending_scope_actions.is_empty() || !self.pending_source_actions.is_empty() || !self.pending_screenshots.is_empty() || !self.measurement_pending.is_empty() || self.devices.iter().any(|device|device.acquiring && !device.paused)
+    }
+
     pub fn new(cfg: &AppConfig) -> Self {
         let (tx, jobs) = unbounded();
         let (events, rx) = unbounded();
@@ -481,6 +495,7 @@ impl InstrumentControlPanel {
         let pipeline_events = events.clone();
         thread::spawn(move || waveform_pipeline::worker(pipeline_jobs, pipeline_events));
         let worker_pipeline = waveform_pipeline.clone();
+        let background_events=events.clone();
         thread::spawn(move || worker_loop(jobs, events, worker_pipeline));
         let instrument_cfg = &cfg.apps.instruments;
         let mut resource_inputs: [String; 7] = std::array::from_fn(|_| String::new());
@@ -491,6 +506,7 @@ impl InstrumentControlPanel {
         let panel = Self {
             tx,
             rx,
+            events:background_events,
             resources: instrument_cfg
                 .known_tcpip_resources
                 .iter()
@@ -516,6 +532,7 @@ impl InstrumentControlPanel {
             last_sample: Instant::now(),
             measurement_pending: HashSet::new(),
             samples: AcquisitionBuffer::new(instrument_cfg.max_points),
+            pending_exports: HashSet::new(),
             latest: HashMap::new(),
             waveforms: HashMap::new(),
             wave_plots: HashMap::new(),
@@ -526,9 +543,16 @@ impl InstrumentControlPanel {
             scope_heavy_defer_frames: 0,
             logs: VecDeque::new(),
             scanning: false,
+            scan_error: None,
+            pending_connections: HashMap::new(),
+            pending_disconnections: HashSet::new(),
+            pending_scope_actions: HashMap::new(),
+            pending_source_actions: HashMap::new(),
+            pending_screenshots: HashMap::new(),
+            completed_screenshots: HashMap::new(),
+            connection_errors: HashMap::new(),
             overview_open: false,
             device_photos: HashMap::new(),
-            device_photo_tried: HashSet::new(),
             debug_mode: false,
             busy_device: None,
             busy_started: None,
@@ -654,7 +678,7 @@ impl InstrumentControlPanel {
             self.handle_event(ctx, event);
         }
         if !self.rx.is_empty() { ctx.request_repaint(); }
-        if self.waveform_source_job.is_some() {
+        if self.waveform_source_job.is_some() || !self.pending_exports.is_empty() {
             // A different instrument's command may clear the generic busy label.
             // Keep draining this operation independently until save/cancel/error.
             ctx.request_repaint_after(Duration::from_millis(100));
@@ -948,6 +972,8 @@ impl InstrumentControlPanel {
                     "identity": r.identity,
                     "probe_error": r.probe_error,
                     "connected": self.devices.iter().any(|d| d.resource == r.address),
+                    "connecting": self.pending_connections.values().any(|address| address == &r.address),
+                    "connection_error": self.connection_errors.get(&r.address),
                 })
             })
             .collect();
@@ -959,6 +985,7 @@ impl InstrumentControlPanel {
         serde_json::json!({
             "devices": devices,
             "scanning": self.scanning,
+            "scan_error": self.scan_error,
             "resources": resources,
             "overview_open": self.show_overview(),
             "selected_id": self.selected_id,
@@ -991,11 +1018,18 @@ impl InstrumentControlPanel {
             "kind": d.kind,
             "profile": d.profile,
             "identity": d.identity,
+            "simulated":d.resource.starts_with("DEMO::")||d.identity.firmware.eq_ignore_ascii_case("demo"),
             "capabilities": d.capabilities,
             "acquiring": d.acquiring,
             "paused": d.paused,
             "live": d.acquiring && !d.paused,
             "last_activity": d.last_activity,
+            "disconnecting": self.pending_disconnections.contains(&d.id),
+            "measurement_pending": self.measurement_pending.contains(&d.id),
+            "scope_action_pending": self.pending_scope_actions.contains_key(&d.id),
+            "source_action_pending": self.pending_source_actions.contains_key(&d.id),
+            "screenshot_pending": self.pending_screenshots.contains_key(&d.id),
+            "last_error": d.last_error,
             "status": status,
             "status_key": overview_status_key(d, self.busy_device),
             "status_color": format!(
@@ -1024,12 +1058,13 @@ impl InstrumentControlPanel {
     pub fn api_scan(&mut self, _params: &serde_json::Value) -> crate::backend::InvokeReply {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         self.scanning = true;
+        self.scan_error = None;
         match self.tx.send(Job::Scan {
             library: self.visa_library.clone(),
             timeout_ms: self.timeout_ms,
         }) {
             Ok(()) => ok("instrument.scan", serde_json::json!({ "accepted": true })),
-            Err(e) => err("instrument.scan", &e.to_string()),
+            Err(e) => { self.scanning = false; self.scan_error = Some(e.to_string()); err("instrument.scan", &e.to_string()) },
         }
     }
 
@@ -1066,6 +1101,39 @@ impl InstrumentControlPanel {
         }
     }
 
+    pub fn api_connect_discovered_safe(&mut self, params:&serde_json::Value, lang:Lang)->crate::backend::InvokeReply {
+        use crate::backend::invoke_err as err;
+        let address=params.get("resource").and_then(|v|v.as_str()).unwrap_or("");
+        if self.scanning {return err("ui.instrument.connect_safe","INSTRUMENT.SCAN_IN_PROGRESS");}
+        if self.scan_error.is_some(){return err("ui.instrument.connect_safe","INSTRUMENT.SCAN_FAILED");}
+        let Some(kind)=self.resources.iter().find(|r|r.address==address).map(|r|r.kind) else {return err("ui.instrument.connect_safe","INSTRUMENT.RESOURCE_CHANGED");};
+        if self.devices.iter().any(|d|d.resource==address)||self.pending_connections.values().any(|r|r==address){return err("ui.instrument.connect_safe","INSTRUMENT.ALREADY_CONNECTED_OR_PENDING");}
+        let id=self.next_id;
+        let reply=self.api_connect(&serde_json::json!({"resource":address,"kind":kind}),lang);
+        if reply.ok {self.pending_connections.insert(id,address.to_owned());self.connection_errors.remove(address);}
+        reply
+    }
+
+    pub fn api_connect_manual_safe(&mut self, params:&serde_json::Value, lang:Lang)->crate::backend::InvokeReply {
+        use crate::backend::invoke_err as err;
+        let method="ui.instrument.connect_manual_safe";
+        let address=params["resource"].as_str().unwrap_or("").trim();
+        if address.is_empty()||address.len()>1024||address.chars().any(char::is_control){return err(method,"INSTRUMENT.INVALID_REQUEST");}
+        let kind=match params.get("kind").filter(|value|!value.is_null()) {
+            Some(value)=>match serde_json::from_value::<InstrumentKind>(value.clone()){Ok(kind)=>Some(kind),Err(_)=>return err(method,"INSTRUMENT.INVALID_REQUEST")},
+            None=>None,
+        };
+        if self.scanning{return err(method,"INSTRUMENT.SCAN_IN_PROGRESS");}
+        if self.devices.iter().any(|device|device.resource.eq_ignore_ascii_case(address))||self.pending_connections.values().any(|resource|resource.eq_ignore_ascii_case(address)){return err(method,"INSTRUMENT.ALREADY_CONNECTED_OR_PENDING");}
+        let id=self.next_id;
+        let reply=self.api_connect(&serde_json::json!({"resource":address,"kind":kind}),lang);
+        if reply.ok {
+            self.pending_connections.insert(id,address.to_owned());self.connection_errors.remove(address);
+            if !self.resources.iter().any(|resource|resource.address==address){self.resources.push(ResourceInfo{address:address.into(),transport:"Manual".into(),kind,identity:None,probe_error:None});}
+        }
+        reply
+    }
+
     pub fn api_connect_all(&mut self, lang: Lang) -> crate::backend::InvokeReply {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let queued = self.queue_connect_all(lang);
@@ -1094,6 +1162,18 @@ impl InstrumentControlPanel {
             ),
             Err(e) => err("instrument.disconnect", &e.to_string()),
         }
+    }
+
+    pub fn api_disconnect_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::invoke_err as err;
+        let Some(id)=params.get("device_id").and_then(|v|v.as_u64()) else{return err("ui.instrument.disconnect_safe","INSTRUMENT.INVALID_REQUEST")};
+        let address=params.get("resource").and_then(|v|v.as_str()).unwrap_or("");
+        if !self.devices.iter().any(|d|d.id==id&&d.resource==address){return err("ui.instrument.disconnect_safe","INSTRUMENT.SESSION_CHANGED");}
+        if self.pending_disconnections.contains(&id){return err("ui.instrument.disconnect_safe","INSTRUMENT.DISCONNECT_PENDING");}
+        if self.pending_source_actions.contains_key(&id)||self.pending_scope_actions.contains_key(&id)||self.pending_screenshots.contains_key(&id)||self.measurement_pending.contains(&id)||self.busy_device==Some(id){return err("ui.instrument.disconnect_safe","INSTRUMENT.BUSY");}
+        let reply=self.api_disconnect(params);
+        if reply.ok {self.pending_disconnections.insert(id);}
+        reply
     }
 
     pub fn api_job_get(&self, params:&serde_json::Value)->crate::backend::InvokeReply {
@@ -1129,6 +1209,159 @@ impl InstrumentControlPanel {
         }
     }
 
+    /// Typed manual controls for the migrated workbench. Session identity and
+    /// device-level serialization are checked before entering the old worker.
+    pub fn api_acquisition_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.instrument.acquisition_safe";
+        let Some(id)=params["device_id"].as_u64() else{return err(method,"INSTRUMENT.INVALID_REQUEST")};let address=params["resource"].as_str().unwrap_or("");
+        let Some(index)=self.devices.iter().position(|device|device.id==id&&device.resource==address) else{return err(method,"INSTRUMENT.SESSION_CHANGED")};
+        let action=params["action"].as_str().unwrap_or("state");
+        if action!="state"&&(self.pending_disconnections.contains(&id)||self.pending_source_actions.contains_key(&id)||self.pending_scope_actions.contains_key(&id)||self.busy_device==Some(id)){return err(method,"INSTRUMENT.BUSY");}
+        match action {
+            "start"|"resume"=>{
+                let interval=params["interval_ms"].as_u64().unwrap_or(self.sample_interval_ms);if !(100..=60000).contains(&interval){return err(method,"INSTRUMENT.INVALID_VALUE");}
+                self.sample_interval_ms=interval;self.devices[index].acquiring=true;self.devices[index].paused=false;self.last_sample=Instant::now()-Duration::from_millis(interval);
+            },
+            "pause"=>{self.devices[index].paused=true;},
+            "stop"=>{self.devices[index].acquiring=false;self.devices[index].paused=false;},
+            "clear"=>self.clear_device_samples(id,address),
+            "state"=>{},_=>return err(method,"INSTRUMENT.INVALID_REQUEST"),
+        }
+        let total=self.samples.iter().filter(|sample|sample.resource==address).count();
+        let limit=params["limit"].as_u64().unwrap_or(2000).clamp(1,5000) as usize;
+        let start=params["from_row"].as_u64().and_then(|value|usize::try_from(value).ok()).unwrap_or(total.saturating_sub(limit)).min(total);
+        let rows=self.samples.iter().filter(|sample|sample.resource==address).skip(start).take(limit).cloned().collect::<Vec<_>>();
+        ok(method,serde_json::json!({"device_id":id,"resource":address,"acquiring":self.devices[index].acquiring,"paused":self.devices[index].paused,"interval_ms":self.sample_interval_ms,"total":total,"from_row":start,"rows":rows}))
+    }
+
+    pub fn api_export_samples_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.instrument.export_samples_safe";
+        let Some(id)=params["device_id"].as_u64() else{return err(method,"INSTRUMENT.INVALID_REQUEST")};let address=params["resource"].as_str().unwrap_or("");
+        if !self.devices.iter().any(|device|device.id==id&&device.resource==address){return err(method,"INSTRUMENT.SESSION_CHANGED");}
+        let Some(path)=params["path"].as_str().filter(|value|!value.is_empty()&&value.len()<=4096&&!value.contains(['\0','\r','\n'])) else{return err(method,"INSTRUMENT.INVALID_REQUEST")};
+        let path=PathBuf::from(path);if !path.extension().is_some_and(|value|value.eq_ignore_ascii_case("csv")){return err(method,"INSTRUMENT.INVALID_REQUEST");}
+        if self.pending_exports.len()>=2{return err(method,"INSTRUMENT.BUSY");}
+        let rows=self.samples.iter().filter(|sample|sample.resource==address).cloned().collect::<Vec<_>>();if rows.is_empty(){return err(method,"INSTRUMENT.NO_SAMPLES");}
+        let job=self.alloc_job_id();self.pending_exports.insert(job);let events=self.events.clone();
+        thread::spawn(move||{
+            let result=(||->Result<usize,String>{
+                use std::io::Write;let count=rows.len();let file=std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(|_|"目标已存在或不能创建，请选择新文件名".to_string())?;
+                let mut writer=std::io::BufWriter::new(file);let result=wiparse_core::instrument::recording::write_csv(&mut writer,rows).and_then(|_|writer.flush()).and_then(|_|writer.get_ref().sync_all());drop(writer);
+                if let Err(error)=result{let _=std::fs::remove_file(&path);return Err(error.to_string());}Ok(count)
+            })();
+            let _=events.send(Event::SamplesExported{id,job_id:job,result});
+        });
+        ok(method,serde_json::json!({"accepted":true,"device_id":id,"job_id":job}))
+    }
+
+    pub fn api_probe_operation(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply{
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.instrument.probe_operation_safe";
+        let Some(id)=params["device_id"].as_u64()else{return err(method,"INSTRUMENT.INVALID_REQUEST")};
+        if !self.devices.iter().any(|device|device.id==id&&device.kind==InstrumentKind::DebugProbe&&params["resource"].as_str()==Some(device.resource.as_str())){return err(method,"INSTRUMENT.SESSION_CHANGED");}
+        if self.pending_disconnections.contains(&id)||self.pending_source_actions.contains_key(&id)||self.pending_scope_actions.contains_key(&id)||self.busy_device==Some(id)||self.measurement_pending.contains(&id)||self.rtt_pending.contains(&id){return err(method,"INSTRUMENT.BUSY");}
+        let Some(target)=params["expected_target"].as_str().filter(|target|!target.trim().is_empty()&&target.len()<=256&&!target.chars().any(char::is_control))else{return err(method,"INSTRUMENT.INVALID_REQUEST")};
+        if params["consent"]!=true{return err(method,"INSTRUMENT.INVALID_REQUEST");}
+        let (command,staged,checksum)=match params["action"].as_str(){
+            Some("erase")=>(ControlCommand::ProbeErase,None,None),
+            Some("flash")=>{
+                let Some(path)=params["path"].as_str().filter(|path|path.len()<=4096)else{return err(method,"INSTRUMENT.INVALID_STAGING")};
+                let Ok(path)=PathBuf::from(path).canonicalize()else{return err(method,"INSTRUMENT.INVALID_STAGING")};
+                let Ok(root)=wiparse_core::paths::project_path("cache/probe-staging").canonicalize()else{return err(method,"INSTRUMENT.INVALID_STAGING")};
+                if !path.is_file()||path.parent()!=Some(root.as_path())||!path.extension().and_then(|value|value.to_str()).is_some_and(|value|["hex","bin","elf","axf"].contains(&value.to_ascii_lowercase().as_str())){return err(method,"INSTRUMENT.INVALID_STAGING");}
+                let Some(hash)=params["sha256"].as_str().filter(|hash|hash.len()==64&&hash.bytes().all(|byte|byte.is_ascii_hexdigit()))else{return err(method,"INSTRUMENT.INVALID_STAGING")};
+                if !params["base_address"].is_null()&&params["base_address"].as_u64().is_none(){return err(method,"INSTRUMENT.INVALID_REQUEST");}
+                let Some(verify)=params["verify"].as_bool()else{return err(method,"INSTRUMENT.INVALID_REQUEST")};
+                let command=ControlCommand::ProbeFlash{path:path.to_string_lossy().into_owned(),verify,base_address:params["base_address"].as_u64()};
+                (command,Some(path),Some(hash.to_owned()))
+            },_=>return err(method,"INSTRUMENT.INVALID_REQUEST")
+        };
+        let job=self.alloc_job_id();match self.tx.send(Job::ProbeOperation{id,command,target:target.to_owned(),sha256:checksum,staged,job_id:job}){Ok(())=>{self.pending_source_actions.insert(id,job);ok(method,serde_json::json!({"accepted":true,"device_id":id,"job_id":job}))},Err(error)=>err(method,&error.to_string())}
+    }
+
+    pub fn api_io_log(&mut self,method:&str,params:&serde_json::Value)->crate::backend::InvokeReply{
+        use std::hash::{Hash,Hasher};use crate::backend::{invoke_err as err,invoke_ok as ok};
+        let Some(device)=self.devices.iter_mut().find(|device|params["device_id"].as_u64()==Some(device.id)&&params["resource"].as_str()==Some(device.resource.as_str()))else{return err(method,"INSTRUMENT.SESSION_CHANGED")};
+        let revision=|text:&str|{let mut hash=std::collections::hash_map::DefaultHasher::new();text.hash(&mut hash);format!("{:016x}",hash.finish())};
+        if method=="ui.instrument.io_log.clear_safe"{if params["revision"].as_str()!=Some(revision(&device.controls.io_log).as_str()){return err(method,"INSTRUMENT.LOG_CHANGED");}device.controls.io_log.clear();}
+        ok(method,serde_json::json!({"device_id":device.id,"resource":device.resource,"revision":revision(&device.controls.io_log),"text":device.controls.io_log,"retained_bytes":device.controls.io_log.len()}))
+    }
+
+    pub fn api_control_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::invoke_err as err;
+        let method="ui.instrument.control_safe";
+        let Some(id)=params["device_id"].as_u64() else{return err(method,"INSTRUMENT.INVALID_REQUEST")};
+        let address=params["resource"].as_str().unwrap_or("");
+        let Some(device)=self.devices.iter().find(|d|d.id==id&&d.resource==address) else{return err(method,"INSTRUMENT.SESSION_CHANGED")};
+        if self.pending_disconnections.contains(&id)||self.pending_source_actions.contains_key(&id)||self.pending_scope_actions.contains_key(&id)||self.pending_screenshots.contains_key(&id)||self.measurement_pending.contains(&id)||self.busy_device==Some(id){return err(method,"INSTRUMENT.BUSY");}
+        let command=&params["command"];
+        let Some(name)=command.as_str().or_else(||command.as_object().filter(|o|o.len()==1).and_then(|o|o.keys().next().map(String::as_str))) else{return err(method,"INSTRUMENT.INVALID_REQUEST")};
+        let allowed=match device.kind {
+            InstrumentKind::Oscilloscope=>matches!(name,"ScopeRun"|"ScopeStop"|"ScopeSingle"|"ScopeAutoset"|"ScopeChannel"|"ScopeScale"|"ScopeOffset"|"ScopePosition"|"ScopeMeasure"|"ScopeTimebase"|"ScopeTrigger"),
+            InstrumentKind::Multimeter=>matches!(name,"DmmFunction"|"DmmAutoRange"|"DmmRange"|"DmmNplc"),
+            InstrumentKind::DebugProbe=>matches!(name,"ProbeStatus"|"ProbeAttach"|"ProbeHalt"|"ProbeRun"|"ProbeReset"|"ProbeMemRead"|"ProbeMemWrite"|"ProbeRttStart"|"ProbeRttStop"|"ProbeRttRead"|"ProbeRegs"|"ProbeSpeed"),
+            InstrumentKind::UsbBridge=>matches!(name,"BridgeInfo"|"BridgeSpi"|"BridgeI2c"|"BridgeGpio"),
+            InstrumentKind::WiparseDongle=>matches!(name,"DongleInfo"|"DongleSetLink"|"DongleI2cLine"|"DongleI2cScan"|"DongleI2cPing"|"DongleI2cRecover"|"DongleI2cSpeed"|"DongleI2cTimeout"|"DongleI2cWrite"|"DongleI2cRead"|"DongleI2cWriteRead"|"DongleUartOpen"|"DongleUartClose"|"DongleUartWrite"|"DongleUartRead"),
+            _=>false,
+        } || (matches!(device.kind,InstrumentKind::Oscilloscope|InstrumentKind::Multimeter|InstrumentKind::DcSource|InstrumentKind::ElectronicLoad|InstrumentKind::Generic)&&matches!(name,"RawWrite"|"RawQuery"|"Reset"|"Clear"));
+        if !allowed{return err(method,"INSTRUMENT.UNSUPPORTED");}
+        if command.get(name).and_then(|fields|fields.get("channel")).and_then(|value|value.as_u64()).is_some_and(|channel|channel==0||channel>u64::from(device.capabilities.channels)){return err(method,"INSTRUMENT.INVALID_CHANNEL");}
+        if serde_json::to_vec(command).map_or(true,|data|data.len()>16*1024)||parse_control_command(command).is_err(){return err(method,"INSTRUMENT.INVALID_VALUE");}
+        let job=self.next_job_id;let reply=self.api_command(&serde_json::json!({"device_id":id,"command":command}));
+        if reply.ok{self.pending_source_actions.insert(id,job);}reply
+    }
+
+    pub fn api_scope_action_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::invoke_err as err;
+        let Some(id)=params.get("device_id").and_then(|v|v.as_u64()) else{return err("ui.instrument.scope_action_safe","INSTRUMENT.INVALID_REQUEST")};
+        let address=params.get("resource").and_then(|v|v.as_str()).unwrap_or("");
+        let Some(device)=self.devices.iter_mut().find(|d|d.id==id&&d.resource==address&&d.kind==InstrumentKind::Oscilloscope) else{return err("ui.instrument.scope_action_safe","INSTRUMENT.SESSION_CHANGED")};
+        if self.pending_disconnections.contains(&id)||self.pending_scope_actions.contains_key(&id){return err("ui.instrument.scope_action_safe","INSTRUMENT.BUSY");}
+        let command=match params.get("action").and_then(|v|v.as_str()){Some("run")=>"ScopeRun",Some("stop")=>"ScopeStop",Some("single")=>"ScopeSingle",_=>return err("ui.instrument.scope_action_safe","INSTRUMENT.INVALID_REQUEST")};
+        device.last_error=None;
+        let job=self.next_job_id;
+        let reply=self.api_command(&serde_json::json!({"device_id":id,"command":command}));
+        if reply.ok {self.pending_scope_actions.insert(id,job);}
+        reply
+    }
+
+    pub fn api_source_action_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::invoke_err as err;let method="ui.instrument.source_action_safe";
+        let Some(id)=params.get("device_id").and_then(|v|v.as_u64()) else{return err(method,"INSTRUMENT.INVALID_REQUEST")};
+        let address=params.get("resource").and_then(|v|v.as_str()).unwrap_or("");
+        let Some(device)=self.devices.iter().find(|d|d.id==id&&d.resource==address&&d.kind==InstrumentKind::DcSource) else{return err(method,"INSTRUMENT.SESSION_CHANGED")};
+        let Some(channel)=params.get("channel").and_then(|v|v.as_u64()).filter(|ch|*ch>=1&&*ch<=u64::from(device.capabilities.channels.min(4))) else{return err(method,"INSTRUMENT.INVALID_CHANNEL")};
+        if self.pending_disconnections.contains(&id)||self.pending_source_actions.contains_key(&id)||self.measurement_pending.contains(&id)||self.busy_device==Some(id){return err(method,"INSTRUMENT.BUSY");}
+        let command=match params.get("action").and_then(|v|v.as_str()) {
+            Some("voltage")=>{let Some(value)=params.get("value").and_then(|v|v.as_f64()).filter(|v|v.is_finite()&&(0.0..=60.0).contains(v)) else{return err(method,"INSTRUMENT.INVALID_VALUE")};serde_json::json!({"SourceVoltage":{"channel":channel,"value":value}})},
+            Some("current")=>{let Some(value)=params.get("value").and_then(|v|v.as_f64()).filter(|v|v.is_finite()&&(0.0..=20.0).contains(v)) else{return err(method,"INSTRUMENT.INVALID_VALUE")};serde_json::json!({"SourceCurrent":{"channel":channel,"value":value}})},
+            Some("ovp")=>{if !device.capabilities.source_protection{return err(method,"INSTRUMENT.UNSUPPORTED");}let Some(value)=params.get("value").and_then(|v|v.as_f64()).filter(|v|v.is_finite()&&(0.0..=60.0).contains(v)) else{return err(method,"INSTRUMENT.INVALID_VALUE")};serde_json::json!({"SourceOvp":{"channel":channel,"value":value}})},
+            Some("ocp")=>{if !device.capabilities.source_protection{return err(method,"INSTRUMENT.UNSUPPORTED");}let Some(value)=params.get("value").and_then(|v|v.as_f64()).filter(|v|v.is_finite()&&(0.0..=20.0).contains(v)) else{return err(method,"INSTRUMENT.INVALID_VALUE")};serde_json::json!({"SourceOcp":{"channel":channel,"value":value}})},
+            Some("output")=>{if !device.capabilities.source_output{return err(method,"INSTRUMENT.UNSUPPORTED");}let Some(enabled)=params.get("enabled").and_then(|v|v.as_bool()) else{return err(method,"INSTRUMENT.INVALID_REQUEST")};serde_json::json!({"SourceOutput":{"channel":channel,"enabled":enabled}})},
+            _=>return err(method,"INSTRUMENT.INVALID_REQUEST"),
+        };
+        let job=self.next_job_id;let reply=self.api_command(&serde_json::json!({"device_id":id,"command":command}));
+        if reply.ok{self.pending_source_actions.insert(id,job);}reply
+    }
+
+    pub fn api_load_action_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::{invoke_err as err,invoke_ok as ok};let method="ui.instrument.load_action_safe";
+        let Some(id)=params.get("device_id").and_then(|v|v.as_u64()) else{return err(method,"INSTRUMENT.INVALID_REQUEST")};
+        let address=params.get("resource").and_then(|v|v.as_str()).unwrap_or("");
+        let Some(device)=self.devices.iter().find(|d|d.id==id&&d.resource==address&&d.kind==InstrumentKind::ElectronicLoad) else{return err(method,"INSTRUMENT.SESSION_CHANGED")};
+        if self.pending_disconnections.contains(&id)||self.pending_source_actions.contains_key(&id)||self.measurement_pending.contains(&id)||self.busy_device==Some(id){return err(method,"INSTRUMENT.BUSY");}
+        match params.get("action").and_then(|v|v.as_str()) {
+            Some("setpoint")=>{
+                let Some(mode)=params.get("mode").and_then(|v|v.as_str()).filter(|mode|["CC","CV","CR","CP"].contains(mode)&&device.capabilities.load_modes.iter().any(|available|available.eq_ignore_ascii_case(mode))) else{return err(method,"INSTRUMENT.UNSUPPORTED")};
+                let Some(value)=params.get("value").and_then(|v|v.as_f64()).filter(|v|v.is_finite()&&*v>=0.0&&*v<=1_000_000.0&&(mode!="CR"||*v>=0.001)) else{return err(method,"INSTRUMENT.INVALID_VALUE")};
+                let job=self.alloc_job_id();match self.tx.send(Job::LoadSetpoint{id,mode:mode.to_owned(),value,job_id:job}){
+                    Ok(())=>{self.pending_source_actions.insert(id,job);ok(method,serde_json::json!({"accepted":true,"device_id":id,"job_id":job}))},Err(error)=>err(method,&error.to_string()),
+                }
+            },
+            Some("input")=>{let Some(enabled)=params.get("enabled").and_then(|v|v.as_bool()) else{return err(method,"INSTRUMENT.INVALID_REQUEST")};let job=self.next_job_id;let reply=self.api_command(&serde_json::json!({"device_id":id,"command":{"LoadInput":enabled}}));if reply.ok{self.pending_source_actions.insert(id,job);}reply},
+            _=>err(method,"INSTRUMENT.INVALID_REQUEST"),
+        }
+    }
+
     pub fn api_measure(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let id = match params.get("device_id").and_then(|v| v.as_u64()) {
@@ -1141,8 +1374,18 @@ impl InstrumentControlPanel {
                 "instrument.measure",
                 serde_json::json!({ "accepted": true, "device_id": id }),
             ),
-            Err(e) => err("instrument.measure", &e.to_string()),
+            Err(e) => {self.measurement_pending.remove(&id);err("instrument.measure", &e.to_string())},
         }
+    }
+
+    pub fn api_measure_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::invoke_err as err;
+        let Some(id)=params.get("device_id").and_then(|v|v.as_u64()) else{return err("ui.instrument.measure_safe","INSTRUMENT.INVALID_REQUEST")};
+        let address=params.get("resource").and_then(|v|v.as_str()).unwrap_or("");
+        let Some(device)=self.devices.iter_mut().find(|d|d.id==id&&d.resource==address) else{return err("ui.instrument.measure_safe","INSTRUMENT.SESSION_CHANGED")};
+        if self.pending_disconnections.contains(&id) || self.measurement_pending.contains(&id)||self.pending_source_actions.contains_key(&id){return err("ui.instrument.measure_safe","INSTRUMENT.BUSY");}
+        device.last_error=None;
+        self.api_measure(params)
     }
 
     pub fn api_capture(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
@@ -1182,8 +1425,54 @@ impl InstrumentControlPanel {
                 "instrument.capture",
                 serde_json::json!({ "accepted": true, "device_id": id, "job_id": job_id }),
             ),
-            Err(e) => err("instrument.capture", &e.to_string()),
+            Err(e) => {self.clear_busy();err("instrument.capture", &e.to_string())},
         }
+    }
+
+    pub fn api_capture_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::invoke_err as err;
+        let Some(id)=params.get("device_id").and_then(|v|v.as_u64()) else{return err("ui.instrument.capture_safe","INSTRUMENT.INVALID_REQUEST")};
+        let address=params.get("resource").and_then(|v|v.as_str()).unwrap_or("");
+        let Some(device)=self.devices.iter_mut().find(|d|d.id==id&&d.resource==address&&d.kind==InstrumentKind::Oscilloscope) else{return err("ui.instrument.capture_safe","INSTRUMENT.SESSION_CHANGED")};
+        if !device.capabilities.screenshot{return err("ui.instrument.capture_safe","INSTRUMENT.CAPTURE_UNSUPPORTED");}
+        if self.busy_device.is_some()||self.pending_disconnections.contains(&id)||!self.pending_screenshots.is_empty(){return err("ui.instrument.capture_safe","INSTRUMENT.BUSY");}
+        device.last_error=None;
+        let job=self.next_job_id;
+        let reply=self.api_capture(&serde_json::json!({"device_id":id,"wait":true}));
+        if reply.ok {self.pending_screenshots.insert(id,job);}
+        reply
+    }
+
+    pub fn api_screenshot_safe(&self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use base64::Engine;
+        use crate::backend::{invoke_err as err,invoke_ok as ok};
+        let Some(id)=params.get("device_id").and_then(|v|v.as_u64()) else{return err("ui.instrument.screenshot_safe","INSTRUMENT.INVALID_REQUEST")};
+        let Some(job)=params.get("job_id").and_then(|v|v.as_u64()) else{return err("ui.instrument.screenshot_safe","INSTRUMENT.INVALID_REQUEST")};
+        let address=params.get("resource").and_then(|v|v.as_str()).unwrap_or("");
+        if !self.devices.iter().any(|d|d.id==id&&d.resource==address){return err("ui.instrument.screenshot_safe","INSTRUMENT.SESSION_CHANGED");}
+        if self.pending_screenshots.get(&id)==Some(&job){return ok("ui.instrument.screenshot_safe",serde_json::json!({"state":"pending"}));}
+        if self.completed_screenshots.get(&id)!=Some(&job){
+            if let Some(result)=self.completed_jobs.iter().find(|r|r.job_id==job&&r.device_id==Some(id)&&!r.ok){return err("ui.instrument.screenshot_safe",result.detail.get("error").and_then(|v|v.as_str()).unwrap_or("INSTRUMENT.CAPTURE_FAILED"));}
+            return err("ui.instrument.screenshot_safe","INSTRUMENT.CAPTURE_STALE");
+        }
+        let Some(bytes)=self.screenshot_png.get(&id) else{return err("ui.instrument.screenshot_safe","INSTRUMENT.CAPTURE_STALE")};
+        if bytes.len()>4*1024*1024{return err("ui.instrument.screenshot_safe","INSTRUMENT.CAPTURE_TOO_LARGE");}
+        ok("ui.instrument.screenshot_safe",serde_json::json!({"state":"completed","png_base64":base64::engine::general_purpose::STANDARD.encode(bytes)}))
+    }
+
+    pub fn api_waveform_source_safe(&mut self,params:&serde_json::Value)->crate::backend::InvokeReply {
+        use crate::backend::invoke_err as err;
+        let method="ui.instrument.waveform_source_safe";
+        let Some(id)=params.get("device_id").and_then(|v|v.as_u64()) else{return err(method,"INSTRUMENT.INVALID_REQUEST")};
+        let address=params.get("resource").and_then(|v|v.as_str()).unwrap_or("");
+        let Some(device)=self.devices.iter().find(|d|d.id==id&&d.resource==address&&d.kind==InstrumentKind::Oscilloscope) else{return err(method,"INSTRUMENT.SESSION_CHANGED")};
+        if !device.capabilities.waveform{return err(method,"INSTRUMENT.WAVEFORM_UNSUPPORTED");}
+        if self.api_operations_pending()||self.waveform_source_job.is_some(){return err(method,"INSTRUMENT.BUSY");}
+        let Some(dir)=params.get("dir").and_then(|v|v.as_str()).filter(|s|!s.is_empty()&&s.len()<=4096&&!s.chars().any(char::is_control)) else{return err(method,"INSTRUMENT.INVALID_REQUEST")};
+        let path=PathBuf::from(dir);
+        let valid_name=path.file_name().and_then(|v|v.to_str()).and_then(|s|s.strip_prefix("WiParse-wave-")).and_then(|id|uuid::Uuid::parse_str(id).ok()).is_some();
+        if !valid_name||!path.is_absolute()||!std::fs::symlink_metadata(&path).is_ok_and(|meta|meta.is_dir()&&!meta.file_type().is_symlink())||!std::fs::read_dir(&path).is_ok_and(|mut entries|entries.next().is_none()){return err(method,"INSTRUMENT.INVALID_DIRECTORY");}
+        self.api_waveform_source(&serde_json::json!({"device_id":id,"dir":dir,"overwrite":false}))
     }
 
     pub fn api_waveform_source(
@@ -1276,8 +1565,13 @@ impl InstrumentControlPanel {
 
     fn handle_event(&mut self, ctx: &egui::Context, event: Event) {
         match event {
+            Event::SamplesExported{id,job_id,result}=>{
+                self.pending_exports.remove(&job_id);
+                match result {Ok(count)=>self.complete_job(Some(job_id),true,"samples_export",Some(id),serde_json::json!({"rows":count})),Err(error)=>self.complete_job(Some(job_id),false,"samples_export",Some(id),serde_json::json!({"error":error}))};
+            },
             Event::Resources(resources) => {
                 self.scanning = false;
+                self.scan_error = None;
                 self.apply_discovered_resources(resources);
             }
             Event::Connected {
@@ -1288,6 +1582,8 @@ impl InstrumentControlPanel {
                 profile,
                 capabilities,
             } => {
+                self.pending_connections.remove(&id);
+                self.connection_errors.remove(&resource);
                 self.status = format!("Connected: {}", identity.raw);
                 self.log(format!("CONNECT {resource} — {}", identity.raw));
                 self.devices.push(DeviceUi {
@@ -1322,12 +1618,16 @@ impl InstrumentControlPanel {
                 }
             }
             Event::Disconnected(id) => {
+                self.pending_disconnections.remove(&id);
+                self.pending_scope_actions.remove(&id);
+                self.pending_source_actions.remove(&id);
+                self.pending_screenshots.remove(&id);
+                self.completed_screenshots.remove(&id);
                 if self.busy_device == Some(id) {
                     self.clear_busy();
                 }
                 self.devices.retain(|device| device.id != id);
                 self.device_photos.remove(&id);
-                self.device_photo_tried.remove(&id);
                 self.measurement_pending.remove(&id);
                 self.latest.retain(|(device_id, _), _| *device_id != id);
                 self.waveforms.remove(&id);
@@ -1352,6 +1652,8 @@ impl InstrumentControlPanel {
                 job_id,
                 response,
             } => {
+                if self.pending_scope_actions.get(&id).copied()==job_id {self.pending_scope_actions.remove(&id);}
+                if self.pending_source_actions.get(&id).copied()==job_id {self.pending_source_actions.remove(&id);}
                 self.rtt_pending.remove(&id);
                 if let Some(response) = response.clone() {
                     if let Some(device) = self.devices.iter_mut().find(|device| device.id == id) {
@@ -1418,6 +1720,13 @@ impl InstrumentControlPanel {
                 rgba,
                 png,
             } => {
+                if job_id.is_some() && self.pending_screenshots.get(&id).copied()==job_id {
+                    self.pending_screenshots.remove(&id);
+                    if let Some(job)=job_id{self.completed_screenshots.insert(id,job);}
+                } else {
+                    // A capture from another interface supersedes the bytes.
+                    self.completed_screenshots.remove(&id);
+                }
                 self.clear_busy();
                 let color = egui::ColorImage::from_rgba_unmultiplied([width, height], &rgba);
                 ctx.copy_image(color.clone());
@@ -1635,8 +1944,13 @@ impl InstrumentControlPanel {
                 job_id,
                 message,
             } => {
+                if let Some(id)=id {if self.pending_scope_actions.get(&id).copied()==job_id {self.pending_scope_actions.remove(&id);}}
+                if let Some(id)=id {if self.pending_source_actions.get(&id).copied()==job_id {self.pending_source_actions.remove(&id);}}
+                if let Some(id)=id {if self.pending_screenshots.get(&id).copied()==job_id {self.pending_screenshots.remove(&id);}}
+                if let Some(address)=id.and_then(|id|self.pending_connections.remove(&id)){self.connection_errors.insert(address,message.clone());}
                 self.clear_busy();
                 if id.is_none() {
+                    if self.scanning { self.scan_error = Some(message.clone()); }
                     self.scanning = false;
                 }
                 if let Some(id) = id {
@@ -1728,7 +2042,7 @@ impl InstrumentControlPanel {
         if !full.is_positive() {
             return;
         }
-        let gap = 8.0;
+        let gap = theme::PANEL_GAP;
         let width = theme::resizable_sidebar_width(
             ui,
             "instrument_control",
@@ -1942,6 +2256,7 @@ impl InstrumentControlPanel {
             .iter()
             .filter(|r| {
                 !r.address.trim().is_empty()
+                    && r.kind.is_some_and(|kind| kind != InstrumentKind::Generic)
                     && !self.devices.iter().any(|d| d.resource == r.address)
             })
             .map(|r| (r.kind.unwrap_or(InstrumentKind::Generic), r.address.clone()))
@@ -2078,23 +2393,27 @@ impl InstrumentControlPanel {
                                 );
                             }
                             ui.add_space(3.0);
+                            let pair = ui.available_width();
+                            let half = ((pair - 6.0) * 0.5).max(40.0);
                             ui.horizontal(|ui| {
-                                if ui
-                                    .add_sized(
-                                        [ui.available_width() * 0.48, 22.0],
-                                        egui::Button::new(text(lang, "填入", "Fill")),
-                                    )
-                                    .clicked()
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                if theme::secondary_btn_sized(
+                                    ui,
+                                    tokens,
+                                    text(lang, "填入", "Fill"),
+                                    egui::vec2(half, theme::CTRL_H),
+                                )
+                                .clicked()
                                 {
                                     fill_action = Some((target, resource.address.clone()));
                                 }
-                                if ui
-                                    .add_sized(
-                                        [ui.available_width(), 22.0],
-                                        egui::Button::new(text(lang, "连接", "Connect"))
-                                            .fill(tokens.accent),
-                                    )
-                                    .clicked()
+                                if theme::primary_btn_sized(
+                                    ui,
+                                    tokens,
+                                    text(lang, "连接", "Connect"),
+                                    egui::vec2(half, theme::CTRL_H),
+                                )
+                                .clicked()
                                 {
                                     connect_action = Some((target, resource.address.clone()));
                                 }
@@ -2128,230 +2447,6 @@ impl InstrumentControlPanel {
         self.selected_id = Some(self.devices[index].id);
         self.detail_header(ui, lang, tokens, index);
         self.industrial_workspace(ui, lang, tokens, index);
-    }
-
-    #[allow(dead_code)] // Keep the former front-panel renderer available for older audit integrations.
-    fn overview_workspace(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
-        ui.ctx().request_repaint_after(Duration::from_millis(80));
-        let t = ui.input(|i| i.time) as f32;
-        let connected = self.devices.len();
-        let live = self
-            .devices
-            .iter()
-            .filter(|d| d.acquiring && !d.paused)
-            .count();
-        let busy = self.busy_device.is_some();
-        let hud = hud_tokens(tokens);
-
-        let avail = ui.available_size();
-        let (rect, _resp) = ui.allocate_exact_size(avail, egui::Sense::hover());
-        let painter = ui.painter_at(rect);
-        paint_hud_backdrop(&painter, rect, &hud, t);
-
-        let mut child = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(rect.shrink(12.0))
-                .layout(egui::Layout::top_down(egui::Align::Min)),
-        );
-        child.set_clip_rect(rect);
-
-        child.horizontal_wrapped(|ui| {
-            ui.label(
-                RichText::new(text(lang, "设备控制总览", "DIGITAL TWIN"))
-                    .strong()
-                    .size(18.0)
-                    .color(hud.cyan),
-            );
-            ui.label(
-                RichText::new("  /  LAB BENCH")
-                    .small()
-                    .monospace()
-                    .color(hud.dim),
-            );
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(Local::now().format("%H:%M:%S").to_string())
-                        .monospace()
-                        .color(hud.cyan),
-                );
-                hud_chip(
-                    ui,
-                    &hud,
-                    format!("{connected} {}", text(lang, "会话", "SESSIONS")),
-                    hud.cyan,
-                );
-                if live > 0 {
-                    hud_chip(ui, &hud, format!("{live} LIVE"), hud.ok);
-                }
-                if busy {
-                    hud_chip(ui, &hud, "BUSY", hud.warn);
-                }
-            });
-        });
-        child.add_space(8.0);
-        paint_control_pipeline(&mut child, lang, &hud, t, connected, live, self.scanning);
-        child.add_space(10.0);
-        child.label(
-            RichText::new(text(
-                lang,
-                "数字孪生工位：面板按真实通道/功能绘制，LCD 同步实测。点击设备进入控制台。实物图可放 device_photos/{序列号或型号}.png",
-                "Digital twin bench — front panels follow real channels and live LCD readouts. Click a unit for its console. Photos: device_photos/{serial|model}.png",
-            ))
-            .small()
-            .color(hud.dim),
-        );
-        child.add_space(6.0);
-
-        let ids: Vec<u64> = self.devices.iter().map(|d| d.id).collect();
-        for id in &ids {
-            self.ensure_device_photo(*id, child.ctx());
-        }
-
-        let snaps: Vec<TwinSnap> = self
-            .devices
-            .iter()
-            .map(|device| {
-                let (status, status_color) = overview_runtime_status(
-                    lang,
-                    device,
-                    self.busy_device,
-                    self.busy_label.as_str(),
-                );
-                TwinSnap {
-                    id: device.id,
-                    kind: device.kind,
-                    name: if device.identity.model.trim().is_empty() {
-                        instrument_name(lang, device.kind).to_owned()
-                    } else {
-                        device.identity.model.clone()
-                    },
-                    manufacturer: device.identity.manufacturer.clone(),
-                    serial: if device.identity.serial.trim().is_empty() {
-                        short_resource(&device.resource)
-                    } else {
-                        format!("SN {}", device.identity.serial)
-                    },
-                    resource: short_resource(&device.resource),
-                    status,
-                    status_color,
-                    params: overview_param_lines(lang, device, &self.latest),
-                    activity: device.last_activity.clone(),
-                    live: device.acquiring && !device.paused,
-                    photo: self.device_photos.get(&device.id).cloned(),
-                    face: twin_face_of(device, &self.latest, self.waveforms.get(&device.id)),
-                }
-            })
-            .collect();
-
-        let remain = child.available_size();
-        // The orbit view requires space for full-size front panels. In smaller
-        // workspaces a scrolling grid keeps every device readable and selectable.
-        if remain.x < 900.0 || remain.y < 420.0 {
-            let mut picked = None;
-            egui::ScrollArea::vertical()
-                .id_salt("compact-instrument-overview")
-                .auto_shrink([false, false])
-                .show(&mut child, |ui| {
-                    let columns = ((ui.available_width() / 300.0).floor() as usize).max(1);
-                    let gap = ui.spacing().item_spacing.x;
-                    let tile_w = ((ui.available_width() - gap * (columns - 1) as f32)
-                        / columns as f32)
-                        .max(1.0);
-                    for row in self.devices.chunks(columns) {
-                        ui.horizontal_top(|ui| {
-                            for device in row {
-                                let opened = ui
-                                    .allocate_ui_with_layout(
-                                        egui::vec2(tile_w, 230.0),
-                                        egui::Layout::top_down(egui::Align::Min),
-                                        |ui| {
-                                            ui.set_max_width(tile_w);
-                                            overview_device_tile(
-                                                ui,
-                                                lang,
-                                                tokens,
-                                                &hud,
-                                                t,
-                                                tile_w,
-                                                230.0,
-                                                device,
-                                                self.busy_device,
-                                                &self.busy_label,
-                                                &self.latest,
-                                                self.device_photos.get(&device.id),
-                                            )
-                                        },
-                                    )
-                                    .inner;
-                                if opened {
-                                    picked = Some((device.kind, device.id));
-                                }
-                            }
-                        });
-                    }
-                });
-            if let Some((kind, id)) = picked {
-                self.select_kind(kind);
-                self.selected_id = Some(id);
-            }
-            return;
-        }
-        let (scene, _) =
-            child.allocate_exact_size(remain.max(egui::vec2(120.0, 180.0)), egui::Sense::hover());
-        if let Some(id) =
-            paint_digital_twin_lab(&child, scene, lang, tokens, &hud, t, &snaps, self.scanning)
-        {
-            if let Some(device) = self.devices.iter().find(|d| d.id == id) {
-                let kind = device.kind;
-                self.select_kind(kind);
-                self.selected_id = Some(id);
-            }
-        }
-    }
-
-    fn ensure_device_photo(&mut self, id: u64, ctx: &egui::Context) {
-        if self.device_photos.contains_key(&id) || self.device_photo_tried.contains(&id) {
-            return;
-        }
-        self.device_photo_tried.insert(id);
-        let Some(device) = self.devices.iter().find(|d| d.id == id) else {
-            return;
-        };
-        let dir = self.save_dir.join("device_photos");
-        let serial = sanitize_photo_stem(&device.identity.serial);
-        let model = sanitize_photo_stem(&device.identity.model);
-        let candidates = [
-            dir.join(format!("{serial}.png")),
-            dir.join(format!("{model}.png")),
-            dir.join(format!("{serial}.jpg")),
-            dir.join(format!("{model}.jpg")),
-        ];
-        for path in candidates {
-            let stem = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .trim();
-            if stem.is_empty() {
-                continue;
-            }
-            if path.is_file() {
-                if let Ok(bytes) = std::fs::read(&path) {
-                    if let Ok(image) = image::load_from_memory(&bytes) {
-                        let rgba = image.into_rgba8();
-                        let size = [rgba.width() as usize, rgba.height() as usize];
-                        let color = egui::ColorImage::from_rgba_unmultiplied(size, &rgba);
-                        let tex = ctx.load_texture(
-                            format!("overview-photo-{id}"),
-                            color,
-                            Default::default(),
-                        );
-                        self.device_photos.insert(id, tex);
-                        return;
-                    }
-                }
-            }
-        }
     }
 
     fn dispatch_scope_commands(&mut self, id: u64, commands: Vec<ControlCommand>) {
@@ -2987,7 +3082,7 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>, pipeline: Sender<Pipe
                     send_error(&events, Some(id), "Resource already connected; disconnect the existing session before reconnecting");
                     continue;
                 }
-                match open_live_session(
+                match LiveSession::open(
                     resource.clone(),
                     kind,
                     timeout_ms,
@@ -3001,7 +3096,7 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>, pipeline: Sender<Pipe
                     Err(error) => send_error(&events, Some(id), error),
                 }
             }
-            Job::ConnectDemo { id, kind } => match open_demo_session(kind) {
+            Job::ConnectDemo { id, kind } => match LiveSession::demo(kind) {
                 Ok(session) => {
                     let event = connected_event(id, &session);
                     devices.insert(id, session);
@@ -3033,56 +3128,55 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>, pipeline: Sender<Pipe
                     send_error_job(&events, Some(id), job_id, "device not connected");
                 }
             }
+            Job::ProbeOperation{id,command,target,sha256,staged,job_id}=>{
+                struct OwnedImage(Option<PathBuf>);impl Drop for OwnedImage{fn drop(&mut self){if let Some(path)=self.0.take(){let _=std::fs::remove_file(path);}}}
+                let owned=OwnedImage(staged);
+                let result=(||->Result<Option<String>,String>{
+                    let device=devices.get_mut(&id).ok_or("探针连接已失效")?;
+                    #[cfg(windows)]
+                    let _immutable=if let Some(path)=&owned.0{use std::os::windows::fs::OpenOptionsExt;Some(std::fs::OpenOptions::new().read(true).share_mode(1).open(path).map_err(|error|error.to_string())?)}else{None};
+                    if let (Some(path),Some(hash))=(&owned.0,&sha256){wiparse_core::update::verify_file_sha256(path,hash).map_err(|error|error.to_string())?;}
+                    let status=device.execute(ControlCommand::ProbeStatus).map_err(|error|error.to_string())?.ok_or("无法确认探针目标")?;
+                    if !status.contains(&format!("target={target} ")){return Err(format!("探针目标不匹配，期望 {target}；实际 {status}，未执行烧录/擦除"));}
+                    let _=events.send(Event::Progress{id:Some(id),message:"目标已确认，正在执行烧录/擦除…".into()});
+                    device.execute(command).map_err(|error|error.to_string())
+                })();
+                match result{Ok(response)=>{let _=events.send(Event::CommandDone{id,job_id:Some(job_id),response});},Err(error)=>send_error_job(&events,Some(id),Some(job_id),error)}
+            }
+            Job::LoadSetpoint{id,mode,value,job_id}=>{
+                if let Some(device)=devices.get_mut(&id){
+                    match device.set_load_target(mode,value) {
+                        Ok(response)=>{let _=events.send(Event::CommandDone{id,job_id:Some(job_id),response});},
+                        Err(error)=>send_error_job(&events,Some(id),Some(job_id),error),
+                    }
+                }else{send_error_job(&events,Some(id),Some(job_id),"device not connected");}
+            }
             Job::PollRtt(id) => match devices.get_mut(&id) {
-                Some(LiveSession::Probe(probe)) => {
-                    match probe.execute(ControlCommand::ProbeRttRead) {
-                        Ok(text) => {
-                            let _ = events.send(Event::SessionOutput { id, text });
-                        }
-                        Err(error) => send_error(&events, Some(id), error),
-                    }
-                }
-                Some(LiveSession::Dongle(dongle)) => {
-                    let mut chunks = Vec::new();
-                    match dongle.execute(ControlCommand::ProbeRttRead) {
-                        Ok(Some(text)) => chunks.push(text),
-                        Ok(None) => {}
-                        Err(_) => {}
-                    }
-                    match dongle.execute(ControlCommand::DongleUartRead) {
-                        Ok(Some(text)) => chunks.push(text),
-                        Ok(None) => {}
-                        Err(error) => send_error(&events, Some(id), error),
-                    }
-                    let text = if chunks.is_empty() {
-                        None
-                    } else {
-                        Some(chunks.join("\n"))
-                    };
-                    let _ = events.send(Event::SessionOutput { id, text });
-                }
+                Some(device) => match device.poll_session_output() {
+                    Ok((text,error)) => {
+                        if let Some(error)=error {send_error(&events, Some(id), error);}
+                        let _ = events.send(Event::SessionOutput { id, text });
+                    },
+                    Err(error) => send_error(&events, Some(id), error),
+                },
                 _ => {
                     let _ = events.send(Event::SessionOutput { id, text: None });
                 }
             },
             Job::Measure(id) => match devices.get_mut(&id) {
-                Some(LiveSession::Scpi(device)) => match device.read_measurements() {
-                    Ok(readings) => {
+                Some(device) => match device.read_measurements() {
+                    Ok(Some((resource,readings))) => {
                         let _ = events.send(Event::Measurements {
                             id,
-                            resource: device.resource.clone(),
+                            resource,
                             readings,
                         });
                     }
+                    Ok(None) => {
+                        let _ = events.send(Event::Measurements {id,resource:String::new(),readings:Vec::new()});
+                    }
                     Err(error) => send_error(&events, Some(id), error),
                 },
-                Some(_) => {
-                    let _ = events.send(Event::Measurements {
-                        id,
-                        resource: String::new(),
-                        readings: Vec::new(),
-                    });
-                }
                 None => send_error(&events, Some(id), "device not connected"),
             },
             Job::Capture {
@@ -3094,9 +3188,9 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>, pipeline: Sender<Pipe
                     id: Some(id),
                     message: "正在截取屏幕… / Capturing screen…".into(),
                 });
-                if let Some(LiveSession::Scpi(device)) = devices.get_mut(&id) {
+                if let Some(device) = devices.get_mut(&id) {
                     match device.capture_scope_png() {
-                        Ok(png) => {
+                        Ok(Some(png)) => {
                             let _ = events.send(Event::Progress {
                                 id: Some(id),
                                 message: format!(
@@ -3125,6 +3219,7 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>, pipeline: Sender<Pipe
                                 ),
                             }
                         }
+                        Ok(None) => send_error_job(&events, Some(id), job_id, "device not connected"),
                         Err(error) => send_error_job(&events, Some(id), job_id, error),
                     }
                 } else {
@@ -3143,14 +3238,15 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>, pipeline: Sender<Pipe
                     message: "正在查询已打开通道并读取波形（采样率×屏幕时宽）… / Querying displayed channels, reading acquisition-density screen window…"
                         .into(),
                 });
-                if let Some(LiveSession::Scpi(device)) = devices.get_mut(&id) {
-                    match device.capture_scope_waveform_sources_displayed() {
-                        Ok(parts) => {
+                if let Some(device) = devices.get_mut(&id) {
+                    match device.capture_scope_waveform_sources() {
+                        Ok(Some(parts)) => {
                             let request = SourceRequest { id, job_id, auto_dir, auto_filename, overwrite };
                             if pipeline.try_send(PipelineJob::Source { request, parts }).is_err() {
                                 send_error_job(&events, Some(id), job_id, "Waveform processing queue is busy; retry after the current task completes");
                             }
                         }
+                        Ok(None) => send_error_job(&events, Some(id), job_id, "device not connected"),
                         Err(error) => send_error_job(&events, Some(id), job_id, error),
                     }
                 } else {
@@ -3162,13 +3258,14 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>, pipeline: Sender<Pipe
                 channel,
                 points: _,
             } => {
-                if let Some(LiveSession::Scpi(device)) = devices.get_mut(&id) {
+                if let Some(device) = devices.get_mut(&id) {
                     match device.read_scope_source_waveform(channel) {
-                        Ok(trace) => {
+                        Ok(Some(trace)) => {
                             if pipeline.try_send(PipelineJob::Preview { id, trace }).is_err() {
                                 send_error(&events, Some(id), "Waveform processing queue is busy");
                             }
                         }
+                        Ok(None) => send_error(&events, Some(id), "device not connected"),
                         Err(error) => send_error(&events, Some(id), error),
                     }
                 } else {
@@ -3189,10 +3286,7 @@ fn retire_session(devices: &mut HashMap<u64, LiveSession>, events: &Sender<Event
 }
 
 fn retire_lost_sessions(devices: &mut HashMap<u64, LiveSession>, events: &Sender<Event>) {
-    let lost: Vec<_> = devices.iter().filter_map(|(id, session)| match session {
-        LiveSession::Scpi(device) if device.connection_lost() => Some(*id),
-        _ => None,
-    }).collect();
+    let lost: Vec<_> = devices.iter().filter_map(|(id, session)| session.connection_lost().then_some(*id)).collect();
     for id in lost {
         retire_session(devices, events, id, "VISA connection lost");
     }
@@ -3202,22 +3296,10 @@ fn prepare_scan(devices: &mut HashMap<u64, LiveSession>, events: &Sender<Event>)
     let mut failed = Vec::new();
     let mut known = Vec::new();
     for (id, session) in devices.iter_mut() {
-        if let LiveSession::Scpi(device) = session {
-            // A cable can be removed while idle, without producing an I/O error.
-            // Check the existing USB session, never a competing new session.
-            if device.resource.to_ascii_uppercase().starts_with("USB") {
-                if let Err(error) = device.check_connection() {
-                    failed.push((*id, error.to_string()));
-                    continue;
-                }
-            }
-            known.push(ResourceInfo {
-                address: device.resource.clone(),
-                transport: String::new(),
-                kind: Some(device.profile.kind),
-                identity: Some(device.identity.clone()),
-                probe_error: None,
-            });
+        match session.known_scpi_resource() {
+            Ok(Some(resource)) => known.push(resource),
+            Ok(None) => {},
+            Err(error) => failed.push((*id, error.to_string())),
         }
     }
     for (id, reason) in failed {
@@ -3226,110 +3308,12 @@ fn prepare_scan(devices: &mut HashMap<u64, LiveSession>, events: &Sender<Event>)
     known
 }
 
-enum LiveSession {
-    Scpi(InstrumentDevice),
-    Probe(ProbeSession),
-    Bridge(Ft4222Session),
-    Dongle(DongleSession),
-}
-
-impl LiveSession {
-    fn execute(
-        &mut self,
-        command: ControlCommand,
-    ) -> Result<Option<String>, wiparse_core::instrument::InstrumentError> {
-        match self {
-            Self::Scpi(device) => device.execute(command),
-            Self::Probe(device) => device.execute(command),
-            Self::Bridge(device) => device.execute(command),
-            Self::Dongle(device) => device.execute(command),
-        }
-    }
-}
-
-fn open_demo_session(
-    kind: InstrumentKind,
-) -> Result<LiveSession, wiparse_core::instrument::InstrumentError> {
-    match kind {
-        InstrumentKind::DebugProbe => Ok(LiveSession::Probe(ProbeSession::demo(
-            "probe://jlink/serial=DEMO",
-        ))),
-        InstrumentKind::UsbBridge => Ok(LiveSession::Bridge(Ft4222Session::demo(
-            "bridge://ft4222/serial=DEMO",
-        ))),
-        InstrumentKind::WiparseDongle => Ok(LiveSession::Dongle(DongleSession::demo(
-            "dongle://wiparse/serial=DEMO",
-        ))),
-        other => InstrumentDevice::connect_demo(other).map(LiveSession::Scpi),
-    }
-}
-
-fn open_live_session(
-    resource: String,
-    kind: Option<InstrumentKind>,
-    timeout_ms: u32,
-    library: Option<&str>,
-) -> Result<LiveSession, wiparse_core::instrument::InstrumentError> {
-    if resource.starts_with("DEMO::") {
-        return open_demo_session(kind.unwrap_or(InstrumentKind::Generic));
-    }
-    if let Some(spec) = parse_usb_resource(&resource) {
-        return match spec.iface {
-            UsbIface::Ft4222 => Ft4222Session::open(&resource).map(LiveSession::Bridge),
-            UsbIface::WiparseDongle => DongleSession::open(&resource).map(LiveSession::Dongle),
-            _ => ProbeSession::open(&resource, None).map(LiveSession::Probe),
-        };
-    }
-    match kind {
-        Some(InstrumentKind::DebugProbe) => {
-            ProbeSession::open(&resource, None).map(LiveSession::Probe)
-        }
-        Some(InstrumentKind::UsbBridge) => Ft4222Session::open(&resource).map(LiveSession::Bridge),
-        Some(InstrumentKind::WiparseDongle) => {
-            DongleSession::open(&resource).map(LiveSession::Dongle)
-        }
-        requested => {
-            InstrumentDevice::connect_with_library(resource, timeout_ms, requested, library)
-                .map(LiveSession::Scpi)
-        }
-    }
-}
+#[cfg(test)]
+fn open_demo_session(kind:InstrumentKind)->Result<LiveSession,wiparse_core::instrument::InstrumentError>{LiveSession::demo(kind)}
 
 fn connected_event(id: u64, session: &LiveSession) -> Event {
-    match session {
-        LiveSession::Scpi(device) => Event::Connected {
-            id,
-            resource: device.resource.clone(),
-            identity: device.identity.clone(),
-            kind: device.profile.kind,
-            profile: device.profile.name.clone(),
-            capabilities: device.profile.capabilities.clone(),
-        },
-        LiveSession::Probe(device) => Event::Connected {
-            id,
-            resource: device.resource.clone(),
-            identity: device.identity.clone(),
-            kind: device.kind,
-            profile: format!("{} {}", device.identity.manufacturer, device.identity.model),
-            capabilities: Capabilities::default(),
-        },
-        LiveSession::Bridge(device) => Event::Connected {
-            id,
-            resource: device.resource.clone(),
-            identity: device.identity.clone(),
-            kind: device.kind,
-            profile: format!("{} {}", device.identity.manufacturer, device.identity.model),
-            capabilities: Capabilities::default(),
-        },
-        LiveSession::Dongle(device) => Event::Connected {
-            id,
-            resource: device.resource.clone(),
-            identity: device.identity.clone(),
-            kind: device.kind,
-            profile: format!("{} {}", device.identity.manufacturer, device.identity.model),
-            capabilities: Capabilities::default(),
-        },
-    }
+    let descriptor=session.descriptor();
+    Event::Connected{id,resource:descriptor.resource,identity:descriptor.identity,kind:descriptor.kind,profile:descriptor.profile,capabilities:descriptor.capabilities}
 }
 
 fn send_error(events: &Sender<Event>, id: Option<u64>, error: impl std::fmt::Display) {
@@ -4506,7 +4490,8 @@ fn append_io_log(log: &mut String, text: &str) {
     log.push_str(text);
     const MAX: usize = 32_768;
     if log.len() > MAX {
-        let drain = log.len() - 24_576;
+        let mut drain = log.len() - 24_576;
+        while !log.is_char_boundary(drain){drain+=1;}
         log.drain(..drain);
     }
 }
@@ -4521,154 +4506,6 @@ fn note_activity(slot: &mut String, text: &str) {
     } else {
         one
     };
-}
-
-struct HudTokens {
-    cyan: Color32,
-    dim: Color32,
-    ok: Color32,
-    warn: Color32,
-    panel: Color32,
-    line: Color32,
-}
-
-fn hud_tokens(tokens: &Tokens) -> HudTokens {
-    HudTokens {
-        cyan: Color32::from_rgb(0x4A, 0xE3, 0xFF),
-        dim: Color32::from_rgba_unmultiplied(0x7A, 0xC8, 0xE0, 160),
-        ok: tokens.success,
-        warn: tokens.warning,
-        panel: Color32::from_rgb(0x07, 0x10, 0x18),
-        line: Color32::from_rgba_unmultiplied(0x4A, 0xE3, 0xFF, 55),
-    }
-}
-
-fn hud_chip(ui: &mut egui::Ui, hud: &HudTokens, label: impl Into<String>, color: Color32) {
-    Frame::NONE
-        .fill(Color32::from_rgba_unmultiplied(
-            color.r(),
-            color.g(),
-            color.b(),
-            28,
-        ))
-        .stroke(Stroke::new(1.0_f32, color))
-        .corner_radius(CornerRadius::same(3))
-        .inner_margin(Margin::symmetric(8, 3))
-        .show(ui, |ui| {
-            ui.label(RichText::new(label.into()).small().monospace().color(color));
-        });
-}
-
-fn paint_hud_backdrop(painter: &egui::Painter, rect: Rect, hud: &HudTokens, t: f32) {
-    painter.rect_filled(rect, CornerRadius::same(8), hud.panel);
-    painter.rect_stroke(
-        rect,
-        CornerRadius::same(8),
-        Stroke::new(1.0_f32, hud.line),
-        egui::StrokeKind::Inside,
-    );
-    let step = 22.0;
-    let mut x = rect.left();
-    while x < rect.right() {
-        painter.line_segment(
-            [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 12)),
-        );
-        x += step;
-    }
-    let mut y = rect.top();
-    while y < rect.bottom() {
-        painter.line_segment(
-            [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 10)),
-        );
-        y += step;
-    }
-    let scan = rect.top() + (t * 48.0).rem_euclid(rect.height().max(1.0));
-    painter.line_segment(
-        [
-            egui::pos2(rect.left(), scan),
-            egui::pos2(rect.right(), scan),
-        ],
-        Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 40)),
-    );
-}
-
-fn paint_control_pipeline(
-    ui: &mut egui::Ui,
-    lang: Lang,
-    hud: &HudTokens,
-    t: f32,
-    sessions: usize,
-    live: usize,
-    scanning: bool,
-) {
-    let nodes = [
-        (
-            text(lang, "扫描", "SCAN"),
-            if scanning { hud.warn } else { hud.cyan },
-            scanning,
-        ),
-        (text(lang, "识别", "IDENT"), hud.cyan, sessions > 0),
-        (
-            text(lang, "会话", "LINK"),
-            if sessions > 0 { hud.ok } else { hud.dim },
-            sessions > 0,
-        ),
-        (
-            text(lang, "控制", "CTRL"),
-            if live > 0 { hud.ok } else { hud.cyan },
-            live > 0,
-        ),
-    ];
-    let pulse = 0.55 + 0.45 * (t * 3.2).sin();
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        for (i, (label, color, on)) in nodes.iter().enumerate() {
-            if i > 0 {
-                let w = 28.0;
-                let (r, _) = ui.allocate_exact_size(egui::vec2(w, 28.0), egui::Sense::hover());
-                let y = r.center().y;
-                ui.painter().line_segment(
-                    [
-                        egui::pos2(r.left() + 2.0, y),
-                        egui::pos2(r.right() - 2.0, y),
-                    ],
-                    Stroke::new(1.2_f32, hud.line),
-                );
-                let dash = r.left() + (t * 40.0).rem_euclid(w);
-                ui.painter().circle_filled(
-                    egui::pos2(dash, y),
-                    2.2,
-                    Color32::from_rgba_unmultiplied(hud.cyan.r(), hud.cyan.g(), hud.cyan.b(), 180),
-                );
-            }
-            let fill = if *on {
-                Color32::from_rgba_unmultiplied(
-                    color.r(),
-                    color.g(),
-                    color.b(),
-                    (40.0 + 50.0 * pulse) as u8,
-                )
-            } else {
-                Color32::from_rgba_unmultiplied(74, 227, 255, 16)
-            };
-            Frame::NONE
-                .fill(fill)
-                .stroke(Stroke::new(1.0_f32, *color))
-                .corner_radius(CornerRadius::same(3))
-                .inner_margin(Margin::symmetric(10, 5))
-                .show(ui, |ui| {
-                    ui.label(
-                        RichText::new(*label)
-                            .small()
-                            .monospace()
-                            .strong()
-                            .color(*color),
-                    );
-                });
-        }
-    });
 }
 
 struct TwinSourceCh {
@@ -4732,22 +4569,6 @@ enum TwinFace {
     Generic {
         cmd: String,
     },
-}
-
-struct TwinSnap {
-    id: u64,
-    kind: InstrumentKind,
-    name: String,
-    manufacturer: String,
-    serial: String,
-    resource: String,
-    status: String,
-    status_color: Color32,
-    params: Vec<(String, String)>,
-    activity: String,
-    live: bool,
-    photo: Option<egui::TextureHandle>,
-    face: TwinFace,
 }
 
 fn latest_pair(
@@ -4989,1393 +4810,6 @@ fn twin_face_json(face: &TwinFace) -> serde_json::Value {
             "scpi": cmd,
         }),
     }
-}
-
-fn twin_unit_size(face: &TwinFace) -> egui::Vec2 {
-    match face {
-        TwinFace::DcSource { channels, .. } => {
-            let n = (*channels as f32).max(1.0);
-            egui::vec2(248.0, 102.0 + n * 24.0 + 26.0)
-        }
-        TwinFace::Scope { .. } => egui::vec2(244.0, 154.0),
-        TwinFace::Dmm { .. } => egui::vec2(224.0, 138.0),
-        TwinFace::Load { .. } => egui::vec2(228.0, 146.0),
-        TwinFace::Probe { .. } | TwinFace::Bridge { .. } | TwinFace::Dongle { .. } => {
-            egui::vec2(216.0, 132.0)
-        }
-        TwinFace::Generic { .. } => egui::vec2(204.0, 122.0),
-    }
-}
-
-fn paint_digital_twin_lab(
-    ui: &egui::Ui,
-    rect: Rect,
-    lang: Lang,
-    tokens: &Tokens,
-    hud: &HudTokens,
-    t: f32,
-    snaps: &[TwinSnap],
-    scanning: bool,
-) -> Option<u64> {
-    let painter = ui.painter_at(rect);
-    paint_twin_floor(&painter, rect, t);
-
-    let hub = Rect::from_center_size(
-        egui::pos2(rect.center().x, rect.bottom() - rect.height() * 0.18),
-        egui::vec2(132.0, 72.0),
-    );
-    paint_twin_hub(&painter, hub, hud, t, snaps.len(), scanning, lang);
-
-    if snaps.is_empty() {
-        painter.text(
-            egui::pos2(rect.center().x, rect.center().y - 12.0),
-            egui::Align2::CENTER_CENTER,
-            text(
-                lang,
-                "等待链路  ·  扫描并连接后，工位孪生将在此展开",
-                "AWAITING LINK  ·  scan and connect to populate the bench",
-            ),
-            egui::FontId::monospace(13.0),
-            hud.dim,
-        );
-        return None;
-    }
-
-    let n = snaps.len() as f32;
-    let scale = match snaps.len() {
-        0..=3 => 1.0,
-        4 => 0.92,
-        5 => 0.86,
-        _ => 0.78,
-    };
-    let rx = (rect.width() * 0.36).max(150.0);
-    let ry = (rect.height() * 0.30).max(96.0);
-    let origin = egui::pos2(rect.center().x, rect.center().y + rect.height() * 0.02);
-    let hub_top = egui::pos2(hub.center().x, hub.top());
-    let mut clicked = None;
-    for (i, snap) in snaps.iter().enumerate() {
-        let ang =
-            -std::f32::consts::FRAC_PI_2 + (i as f32 + 0.5) * (std::f32::consts::TAU / n.max(1.0));
-        let size = twin_unit_size(&snap.face) * scale;
-        let mut center = egui::pos2(origin.x + rx * ang.cos(), origin.y + ry * ang.sin() * 0.72);
-        center.x = center.x.clamp(
-            rect.left() + size.x * 0.5 + 10.0,
-            rect.right() - size.x * 0.5 - 10.0,
-        );
-        center.y = center
-            .y
-            .clamp(rect.top() + size.y * 0.5 + 8.0, hub.top() - size.y * 0.45);
-        let card = Rect::from_center_size(center, size);
-        let card_bottom = egui::pos2(card.center().x, card.bottom());
-        paint_twin_link(&painter, hub_top, card_bottom, hud, t, i, snap.live);
-        paint_iso_twin_unit(&painter, card, snap, hud, tokens, t);
-        let hit = ui.interact(
-            card.expand(6.0),
-            ui.id().with(("twin-unit", snap.id)),
-            egui::Sense::click(),
-        );
-        if hit.hovered() {
-            painter.rect_stroke(
-                card.expand(4.0),
-                CornerRadius::same(6),
-                Stroke::new(1.6_f32, hud.cyan),
-                egui::StrokeKind::Outside,
-            );
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
-        if hit.clicked() {
-            clicked = Some(snap.id);
-        }
-    }
-    clicked
-}
-
-fn paint_twin_floor(painter: &egui::Painter, rect: Rect, t: f32) {
-    let floor = Rect::from_min_max(
-        egui::pos2(rect.left() + 18.0, rect.top() + 8.0),
-        egui::pos2(rect.right() - 18.0, rect.bottom() - 8.0),
-    );
-    painter.rect_filled(
-        floor,
-        CornerRadius::same(10),
-        Color32::from_rgba_unmultiplied(4, 14, 22, 160),
-    );
-    let vanish = egui::pos2(floor.center().x, floor.top() + 10.0);
-    for i in 0..14 {
-        let x = floor.left() + floor.width() * (i as f32 / 13.0);
-        painter.line_segment(
-            [egui::pos2(x, floor.bottom()), vanish],
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 18)),
-        );
-    }
-    for i in 0..8 {
-        let k = i as f32 / 7.0;
-        let y = floor.bottom() - (floor.height() * 0.72) * (k * k);
-        let inset = 10.0 + k * floor.width() * 0.22;
-        painter.line_segment(
-            [
-                egui::pos2(floor.left() + inset, y),
-                egui::pos2(floor.right() - inset, y),
-            ],
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 22)),
-        );
-    }
-    let scan = floor.top() + (t * 36.0).rem_euclid(floor.height().max(1.0));
-    painter.line_segment(
-        [
-            egui::pos2(floor.left(), scan),
-            egui::pos2(floor.right(), scan),
-        ],
-        Stroke::new(1.1_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 28)),
-    );
-}
-
-fn paint_twin_hub(
-    painter: &egui::Painter,
-    rect: Rect,
-    hud: &HudTokens,
-    t: f32,
-    sessions: usize,
-    scanning: bool,
-    lang: Lang,
-) {
-    let pulse = 0.45 + 0.55 * (t * 2.6).sin().abs();
-    painter.circle_filled(
-        rect.center(),
-        46.0 + 4.0 * pulse,
-        Color32::from_rgba_unmultiplied(74, 227, 255, (18.0 + 22.0 * pulse) as u8),
-    );
-    painter.rect_filled(rect, CornerRadius::same(8), Color32::from_rgb(8, 22, 34));
-    painter.rect_stroke(
-        rect,
-        CornerRadius::same(8),
-        Stroke::new(1.4_f32, hud.cyan),
-        egui::StrokeKind::Inside,
-    );
-    painter.text(
-        egui::pos2(rect.center().x, rect.top() + 16.0),
-        egui::Align2::CENTER_CENTER,
-        "WIPARSE",
-        egui::FontId::monospace(12.0),
-        hud.cyan,
-    );
-    painter.text(
-        egui::pos2(rect.center().x, rect.center().y + 4.0),
-        egui::Align2::CENTER_CENTER,
-        text(lang, "工位核心", "STATION CORE"),
-        egui::FontId::monospace(10.0),
-        hud.dim,
-    );
-    painter.text(
-        egui::pos2(rect.center().x, rect.bottom() - 14.0),
-        egui::Align2::CENTER_CENTER,
-        if scanning {
-            text(lang, "扫描中…", "SCANNING…").to_owned()
-        } else {
-            format!("{sessions} LINK")
-        },
-        egui::FontId::monospace(10.0),
-        if scanning { hud.warn } else { hud.ok },
-    );
-}
-
-fn paint_twin_link(
-    painter: &egui::Painter,
-    from: egui::Pos2,
-    to: egui::Pos2,
-    hud: &HudTokens,
-    t: f32,
-    index: usize,
-    live: bool,
-) {
-    let mid = egui::pos2((from.x + to.x) * 0.5, (from.y + to.y) * 0.5 - 18.0);
-    painter.add(egui::Shape::line(
-        vec![from, mid, to],
-        Stroke::new(
-            1.2_f32,
-            if live {
-                Color32::from_rgba_unmultiplied(48, 209, 88, 140)
-            } else {
-                hud.line
-            },
-        ),
-    ));
-    let phase = (t * 0.55 + index as f32 * 0.17).rem_euclid(1.0);
-    let p = if phase < 0.5 {
-        from.lerp(mid, phase * 2.0)
-    } else {
-        mid.lerp(to, (phase - 0.5) * 2.0)
-    };
-    painter.circle_filled(
-        p,
-        if live { 3.4 } else { 2.2 },
-        if live { hud.ok } else { hud.cyan },
-    );
-}
-
-fn paint_iso_twin_unit(
-    painter: &egui::Painter,
-    rect: Rect,
-    snap: &TwinSnap,
-    hud: &HudTokens,
-    tokens: &Tokens,
-    t: f32,
-) {
-    let depth = 10.0;
-    let front = Rect::from_min_max(
-        egui::pos2(rect.left(), rect.top() + depth),
-        egui::pos2(rect.right() - depth, rect.bottom()),
-    );
-    let top = [
-        egui::pos2(front.left(), front.top()),
-        egui::pos2(front.left() + depth, front.top() - depth),
-        egui::pos2(front.right() + depth, front.top() - depth),
-        egui::pos2(front.right(), front.top()),
-    ];
-    let side = [
-        egui::pos2(front.right(), front.top()),
-        egui::pos2(front.right() + depth, front.top() - depth),
-        egui::pos2(front.right() + depth, front.bottom() - depth),
-        egui::pos2(front.right(), front.bottom()),
-    ];
-    let (top_fill, side_fill, face_fill) = twin_chassis_colors(snap.kind);
-    painter.add(egui::Shape::convex_polygon(
-        top.to_vec(),
-        top_fill,
-        Stroke::new(1.0_f32, hud.line),
-    ));
-    painter.add(egui::Shape::convex_polygon(
-        side.to_vec(),
-        side_fill,
-        Stroke::new(1.0_f32, hud.line),
-    ));
-    painter.rect_filled(front, CornerRadius::ZERO, face_fill);
-    painter.rect_stroke(
-        front,
-        CornerRadius::ZERO,
-        Stroke::new(1.0_f32, hud.line),
-        egui::StrokeKind::Inside,
-    );
-    if let Some(tex) = &snap.photo {
-        let stamp = Rect::from_min_size(
-            egui::pos2(top[1].x + 4.0, top[1].y + 2.0),
-            egui::vec2(28.0, 18.0),
-        );
-        painter.image(
-            tex.id(),
-            stamp,
-            Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            Color32::WHITE,
-        );
-    }
-
-    let header = Rect::from_min_size(front.min, egui::vec2(front.width(), 18.0));
-    painter.text(
-        egui::pos2(header.left() + 8.0, header.center().y),
-        egui::Align2::LEFT_CENTER,
-        format!(
-            "{}  {}",
-            kind_icon(snap.kind),
-            truncate_chars(&snap.name, 16)
-        ),
-        egui::FontId::monospace(10.0),
-        tokens.text_primary,
-    );
-    painter.text(
-        egui::pos2(header.right() - 8.0, header.center().y),
-        egui::Align2::RIGHT_CENTER,
-        &snap.status,
-        egui::FontId::monospace(9.0),
-        snap.status_color,
-    );
-
-    let body = Rect::from_min_max(
-        egui::pos2(front.left() + 6.0, front.top() + 20.0),
-        egui::pos2(front.right() - 6.0, front.bottom() - 4.0),
-    );
-    paint_twin_face(painter, body, snap, hud, t);
-
-    if snap.live {
-        let pulse = 0.4 + 0.6 * (t * 4.0).sin().abs();
-        painter.rect_filled(
-            Rect::from_min_size(front.min, egui::vec2(3.0, front.height())),
-            CornerRadius::ZERO,
-            Color32::from_rgba_unmultiplied(
-                hud.ok.r(),
-                hud.ok.g(),
-                hud.ok.b(),
-                (80.0 + 140.0 * pulse) as u8,
-            ),
-        );
-    }
-    let _ = (
-        &snap.manufacturer,
-        &snap.activity,
-        &snap.params,
-        &snap.serial,
-        &snap.resource,
-    );
-}
-
-fn twin_chassis_colors(kind: InstrumentKind) -> (Color32, Color32, Color32) {
-    match kind {
-        InstrumentKind::DcSource => (
-            Color32::from_rgb(28, 32, 36),
-            Color32::from_rgb(16, 18, 22),
-            Color32::from_rgb(18, 20, 24),
-        ),
-        InstrumentKind::Oscilloscope => (
-            Color32::from_rgb(10, 36, 52),
-            Color32::from_rgb(6, 22, 34),
-            Color32::from_rgb(5, 12, 20),
-        ),
-        InstrumentKind::ElectronicLoad => (
-            Color32::from_rgb(36, 24, 16),
-            Color32::from_rgb(22, 14, 10),
-            Color32::from_rgb(16, 12, 10),
-        ),
-        InstrumentKind::Multimeter => (
-            Color32::from_rgb(42, 36, 18),
-            Color32::from_rgb(26, 22, 12),
-            Color32::from_rgb(20, 18, 10),
-        ),
-        InstrumentKind::DebugProbe => (
-            Color32::from_rgb(18, 40, 32),
-            Color32::from_rgb(10, 24, 20),
-            Color32::from_rgb(8, 16, 14),
-        ),
-        InstrumentKind::UsbBridge => (
-            Color32::from_rgb(16, 32, 24),
-            Color32::from_rgb(10, 20, 16),
-            Color32::from_rgb(8, 14, 12),
-        ),
-        InstrumentKind::WiparseDongle => (
-            Color32::from_rgb(20, 28, 44),
-            Color32::from_rgb(12, 18, 32),
-            Color32::from_rgb(8, 12, 22),
-        ),
-        InstrumentKind::Generic => (
-            Color32::from_rgb(10, 36, 52),
-            Color32::from_rgb(6, 22, 34),
-            Color32::from_rgb(5, 12, 20),
-        ),
-    }
-}
-
-fn paint_twin_face(painter: &egui::Painter, rect: Rect, snap: &TwinSnap, hud: &HudTokens, t: f32) {
-    match &snap.face {
-        TwinFace::DcSource { channels, rows } => {
-            paint_face_dc_source(painter, rect, *channels, rows, hud, snap.live, t);
-        }
-        TwinFace::Scope {
-            channels,
-            channel_on,
-            timebase,
-            trigger,
-            wave,
-            meas,
-        } => {
-            paint_face_scope(
-                painter,
-                rect,
-                *channels,
-                *channel_on,
-                *timebase,
-                trigger,
-                wave,
-                meas.as_deref(),
-                hud,
-                snap.live,
-                t,
-            );
-        }
-        TwinFace::Load {
-            mode,
-            level,
-            input,
-            voltage,
-            current,
-            power,
-        } => {
-            paint_face_load(
-                painter,
-                rect,
-                mode,
-                *level,
-                *input,
-                voltage.as_ref(),
-                current.as_ref(),
-                power.as_ref(),
-                hud,
-                snap.live,
-                t,
-            );
-        }
-        TwinFace::Dmm {
-            function,
-            unit,
-            autorange,
-            reading,
-        } => {
-            paint_face_dmm(
-                painter,
-                rect,
-                function,
-                unit,
-                *autorange,
-                reading.as_ref(),
-                hud,
-                snap.live,
-                t,
-            );
-        }
-        TwinFace::Probe {
-            chip,
-            rtt,
-            rtt_ch,
-            speed_khz,
-        } => {
-            paint_face_probe(painter, rect, chip, *rtt, *rtt_ch, *speed_khz, hud, t);
-        }
-        TwinFace::Bridge {
-            tab,
-            spi_hz,
-            spi_mode,
-            i2c_addr,
-            gpio_pin,
-            gpio_out,
-            gpio_value,
-        } => {
-            paint_face_bridge(
-                painter,
-                rect,
-                *tab,
-                *spi_hz,
-                *spi_mode,
-                i2c_addr,
-                *gpio_pin,
-                *gpio_out,
-                *gpio_value,
-                hud,
-                t,
-            );
-        }
-        TwinFace::Dongle {
-            tab,
-            host,
-            uart_baud,
-            i2c_hz,
-            rtt,
-        } => {
-            paint_face_dongle(painter, rect, *tab, host, *uart_baud, *i2c_hz, *rtt, hud);
-        }
-        TwinFace::Generic { cmd } => {
-            paint_lcd_panel(painter, rect.shrink2(egui::vec2(0.0, 6.0)), LcdTint::Green);
-            painter.text(
-                egui::pos2(rect.left() + 8.0, rect.top() + 10.0),
-                egui::Align2::LEFT_TOP,
-                "SCPI",
-                egui::FontId::monospace(9.0),
-                lcd_dim(LcdTint::Green),
-            );
-            painter.text(
-                egui::pos2(rect.left() + 8.0, rect.center().y + 4.0),
-                egui::Align2::LEFT_CENTER,
-                truncate_chars(cmd, 22),
-                egui::FontId::monospace(11.0),
-                lcd_lit(LcdTint::Green),
-            );
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum LcdTint {
-    Amber,
-    Green,
-    Scope,
-}
-
-fn lcd_lit(tint: LcdTint) -> Color32 {
-    match tint {
-        LcdTint::Amber => Color32::from_rgb(0xFF, 0xC2, 0x4A),
-        LcdTint::Green => Color32::from_rgb(0x5C, 0xFF, 0x8A),
-        LcdTint::Scope => Color32::from_rgb(0x4A, 0xE3, 0xFF),
-    }
-}
-
-fn lcd_dim(tint: LcdTint) -> Color32 {
-    match tint {
-        LcdTint::Amber => Color32::from_rgba_unmultiplied(0xFF, 0xC2, 0x4A, 120),
-        LcdTint::Green => Color32::from_rgba_unmultiplied(0x5C, 0xFF, 0x8A, 120),
-        LcdTint::Scope => Color32::from_rgba_unmultiplied(0x4A, 0xE3, 0xFF, 120),
-    }
-}
-
-fn lcd_fill(tint: LcdTint) -> Color32 {
-    match tint {
-        LcdTint::Amber => Color32::from_rgb(18, 14, 6),
-        LcdTint::Green => Color32::from_rgb(6, 20, 12),
-        LcdTint::Scope => Color32::from_rgb(4, 16, 24),
-    }
-}
-
-fn paint_lcd_panel(painter: &egui::Painter, rect: Rect, tint: LcdTint) {
-    painter.rect_filled(rect, CornerRadius::same(2), lcd_fill(tint));
-    painter.rect_stroke(
-        rect,
-        CornerRadius::same(2),
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(20, 20, 16, 180)),
-        egui::StrokeKind::Inside,
-    );
-    let glass = Rect::from_min_max(
-        egui::pos2(rect.left() + 1.0, rect.top() + 1.0),
-        egui::pos2(rect.right() - 1.0, rect.top() + 5.0),
-    );
-    painter.rect_filled(
-        glass,
-        CornerRadius::same(1),
-        Color32::from_rgba_unmultiplied(255, 255, 255, 12),
-    );
-}
-
-fn paint_face_dc_source(
-    painter: &egui::Painter,
-    rect: Rect,
-    channels: u8,
-    rows: &[TwinSourceCh],
-    hud: &HudTokens,
-    live: bool,
-    t: f32,
-) {
-    let jack_h = 22.0;
-    let lcd = Rect::from_min_max(rect.min, egui::pos2(rect.right(), rect.bottom() - jack_h));
-    paint_lcd_panel(painter, lcd, LcdTint::Amber);
-    let n = channels.max(1) as usize;
-    let row_h = ((lcd.height() - 4.0) / n as f32).clamp(16.0, 24.0);
-    for (i, row) in rows.iter().take(n).enumerate() {
-        let y = lcd.top() + 4.0 + i as f32 * row_h;
-        let (v, i_val, measured) = match (row.meas_v.as_ref(), row.meas_i.as_ref()) {
-            (Some((v, _)), Some((a, _))) => (*v, *a, true),
-            _ => (row.set_v, row.set_i, false),
-        };
-        let watts = row.meas_w.as_ref().map(|(w, _)| *w).unwrap_or(v * i_val);
-        let tag = if measured {
-            if live {
-                "MEAS"
-            } else {
-                "HOLD"
-            }
-        } else {
-            "SET"
-        };
-        let color = if row.on {
-            lcd_lit(LcdTint::Amber)
-        } else {
-            lcd_dim(LcdTint::Amber)
-        };
-        painter.text(
-            egui::pos2(lcd.left() + 6.0, y + 2.0),
-            egui::Align2::LEFT_TOP,
-            format!("CH{}", i + 1),
-            egui::FontId::monospace(10.0),
-            color,
-        );
-        painter.text(
-            egui::pos2(lcd.left() + 34.0, y + 2.0),
-            egui::Align2::LEFT_TOP,
-            format!("{v:6.3}V  {i_val:5.3}A  {watts:5.2}W"),
-            egui::FontId::monospace(10.0),
-            color,
-        );
-        painter.text(
-            egui::pos2(lcd.right() - 6.0, y + 2.0),
-            egui::Align2::RIGHT_TOP,
-            if row.on {
-                format!("ON {tag}")
-            } else {
-                format!("OFF")
-            },
-            egui::FontId::monospace(10.0),
-            if row.on {
-                hud.ok
-            } else {
-                lcd_dim(LcdTint::Amber)
-            },
-        );
-    }
-    if live {
-        let scan = lcd.top() + (t * 22.0).rem_euclid(lcd.height().max(1.0));
-        painter.line_segment(
-            [
-                egui::pos2(lcd.left() + 2.0, scan),
-                egui::pos2(lcd.right() - 2.0, scan),
-            ],
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 194, 74, 28)),
-        );
-    }
-    let jack_area = Rect::from_min_max(egui::pos2(rect.left(), lcd.bottom() + 2.0), rect.max);
-    let slot_w = jack_area.width() / n as f32;
-    for i in 0..n {
-        let cx = jack_area.left() + slot_w * (i as f32 + 0.5);
-        let cy = jack_area.center().y;
-        let on = rows.get(i).map(|r| r.on).unwrap_or(false);
-        painter.circle_filled(
-            egui::pos2(cx - 7.0, cy),
-            4.2,
-            Color32::from_rgb(176, 42, 42),
-        );
-        painter.circle_filled(egui::pos2(cx + 7.0, cy), 4.2, Color32::from_rgb(28, 28, 30));
-        painter.circle_stroke(
-            egui::pos2(cx - 7.0, cy),
-            4.2,
-            Stroke::new(1.0_f32, Color32::from_rgb(90, 20, 20)),
-        );
-        painter.circle_stroke(
-            egui::pos2(cx + 7.0, cy),
-            4.2,
-            Stroke::new(1.0_f32, Color32::from_rgb(60, 60, 64)),
-        );
-        let led = if on {
-            hud.ok
-        } else {
-            Color32::from_rgb(32, 40, 32)
-        };
-        painter.circle_filled(egui::pos2(cx, cy - 8.0), 2.2, led);
-        painter.text(
-            egui::pos2(cx, jack_area.bottom() - 1.0),
-            egui::Align2::CENTER_BOTTOM,
-            format!("{}", i + 1),
-            egui::FontId::monospace(8.0),
-            hud.dim,
-        );
-    }
-}
-
-const SCOPE_CH_COLORS: [Color32; 4] = [
-    Color32::from_rgb(0xFF, 0xD6, 0x0A),
-    Color32::from_rgb(0x4A, 0xE3, 0xFF),
-    Color32::from_rgb(0xFF, 0x6B, 0xC9),
-    Color32::from_rgb(0x30, 0xD1, 0x58),
-];
-
-fn paint_face_scope(
-    painter: &egui::Painter,
-    rect: Rect,
-    channels: u8,
-    channel_on: [bool; 4],
-    timebase: f64,
-    trigger: &str,
-    wave: &[f32],
-    meas: Option<&str>,
-    hud: &HudTokens,
-    live: bool,
-    t: f32,
-) {
-    let n = channels.max(1).min(4) as usize;
-    let knobs_w = 28.0;
-    let screen = Rect::from_min_max(rect.min, egui::pos2(rect.right() - knobs_w, rect.bottom()));
-    paint_lcd_panel(painter, screen, LcdTint::Scope);
-    for g in 1..4 {
-        let x = screen.left() + screen.width() * (g as f32 / 4.0);
-        painter.line_segment(
-            [
-                egui::pos2(x, screen.top() + 2.0),
-                egui::pos2(x, screen.bottom() - 2.0),
-            ],
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 28)),
-        );
-        let y = screen.top() + screen.height() * (g as f32 / 4.0);
-        painter.line_segment(
-            [
-                egui::pos2(screen.left() + 2.0, y),
-                egui::pos2(screen.right() - 2.0, y),
-            ],
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(74, 227, 255, 28)),
-        );
-    }
-    let mut pts = Vec::new();
-    if wave.len() >= 2 {
-        for (i, y01) in wave.iter().enumerate() {
-            let x =
-                screen.left() + 3.0 + (screen.width() - 6.0) * (i as f32 / (wave.len() - 1) as f32);
-            let y = screen.bottom() - 4.0 - (screen.height() - 8.0) * y01;
-            pts.push(egui::pos2(x, y));
-        }
-    } else {
-        let amp = if live { 0.32 } else { 0.08 };
-        for i in 0..36 {
-            let k = i as f32 / 35.0;
-            let x = screen.left() + 3.0 + (screen.width() - 6.0) * k;
-            let y = screen.center().y + (t * 3.2 + k * 8.0).sin() * screen.height() * amp;
-            pts.push(egui::pos2(x, y));
-        }
-    }
-    let wave_color = SCOPE_CH_COLORS
-        .iter()
-        .enumerate()
-        .find(|(i, _)| *i < n && channel_on[*i])
-        .map(|(_, c)| *c)
-        .unwrap_or(lcd_lit(LcdTint::Scope));
-    painter.add(egui::Shape::line(pts, Stroke::new(1.4_f32, wave_color)));
-    painter.text(
-        egui::pos2(screen.left() + 6.0, screen.top() + 4.0),
-        egui::Align2::LEFT_TOP,
-        fmt_timebase(timebase),
-        egui::FontId::monospace(9.0),
-        lcd_dim(LcdTint::Scope),
-    );
-    painter.text(
-        egui::pos2(screen.right() - 6.0, screen.top() + 4.0),
-        egui::Align2::RIGHT_TOP,
-        truncate_chars(trigger, 10),
-        egui::FontId::monospace(9.0),
-        lcd_dim(LcdTint::Scope),
-    );
-    if let Some(meas) = meas {
-        painter.text(
-            egui::pos2(screen.left() + 6.0, screen.bottom() - 4.0),
-            egui::Align2::LEFT_BOTTOM,
-            truncate_chars(meas, 18),
-            egui::FontId::monospace(9.0),
-            lcd_lit(LcdTint::Scope),
-        );
-    }
-    let knob_col = Rect::from_min_max(egui::pos2(screen.right() + 4.0, rect.top()), rect.max);
-    for i in 0..n {
-        let y = knob_col.top() + 10.0 + i as f32 * 18.0;
-        let on = channel_on.get(i).copied().unwrap_or(false);
-        let color = if on {
-            SCOPE_CH_COLORS[i]
-        } else {
-            Color32::from_rgb(40, 48, 52)
-        };
-        painter.circle_filled(egui::pos2(knob_col.center().x, y), 5.4, color);
-        painter.circle_stroke(
-            egui::pos2(knob_col.center().x, y),
-            5.4,
-            Stroke::new(1.0_f32, hud.line),
-        );
-        painter.text(
-            egui::pos2(knob_col.center().x, y + 8.0),
-            egui::Align2::CENTER_TOP,
-            format!("{}", i + 1),
-            egui::FontId::monospace(7.0),
-            if on { SCOPE_CH_COLORS[i] } else { hud.dim },
-        );
-    }
-}
-
-fn paint_face_load(
-    painter: &egui::Painter,
-    rect: Rect,
-    mode: &str,
-    level: f64,
-    input: bool,
-    voltage: Option<&(f64, String)>,
-    current: Option<&(f64, String)>,
-    power: Option<&(f64, String)>,
-    hud: &HudTokens,
-    live: bool,
-    t: f32,
-) {
-    let lcd = Rect::from_min_max(rect.min, egui::pos2(rect.right() - 36.0, rect.bottom()));
-    paint_lcd_panel(painter, lcd, LcdTint::Amber);
-    let color = if input {
-        lcd_lit(LcdTint::Amber)
-    } else {
-        lcd_dim(LcdTint::Amber)
-    };
-    painter.text(
-        egui::pos2(lcd.left() + 8.0, lcd.top() + 6.0),
-        egui::Align2::LEFT_TOP,
-        format!(
-            "{}  LVL {:.4}  {}",
-            mode,
-            level,
-            if input { "SINK" } else { "OPEN" }
-        ),
-        egui::FontId::monospace(10.0),
-        color,
-    );
-    let v = voltage
-        .map(|(v, _)| format!("{v:7.3} V"))
-        .unwrap_or_else(|| "  —.--- V".into());
-    let a = current
-        .map(|(a, _)| format!("{a:7.3} A"))
-        .unwrap_or_else(|| "  —.--- A".into());
-    let w = power
-        .map(|(w, _)| format!("{w:7.2} W"))
-        .unwrap_or_else(|| "  —.--- W".into());
-    painter.text(
-        egui::pos2(lcd.left() + 8.0, lcd.center().y - 2.0),
-        egui::Align2::LEFT_CENTER,
-        format!("{v}   {a}"),
-        egui::FontId::monospace(13.0),
-        color,
-    );
-    painter.text(
-        egui::pos2(lcd.left() + 8.0, lcd.bottom() - 8.0),
-        egui::Align2::LEFT_BOTTOM,
-        if live { format!("{w}  MEAS") } else { w },
-        egui::FontId::monospace(11.0),
-        color,
-    );
-    if live {
-        let scan = lcd.top() + (t * 18.0).rem_euclid(lcd.height().max(1.0));
-        painter.line_segment(
-            [
-                egui::pos2(lcd.left() + 2.0, scan),
-                egui::pos2(lcd.right() - 2.0, scan),
-            ],
-            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 194, 74, 24)),
-        );
-    }
-    let sink = Rect::from_min_max(egui::pos2(lcd.right() + 4.0, rect.top() + 8.0), rect.max);
-    painter.line_segment(
-        [
-            egui::pos2(sink.center().x, sink.top()),
-            egui::pos2(sink.center().x, sink.bottom() - 10.0),
-        ],
-        Stroke::new(1.4_f32, hud.cyan),
-    );
-    painter.line_segment(
-        [
-            egui::pos2(sink.center().x - 10.0, sink.center().y),
-            egui::pos2(sink.center().x + 10.0, sink.center().y),
-        ],
-        Stroke::new(1.4_f32, hud.cyan),
-    );
-    painter.circle_filled(
-        egui::pos2(sink.center().x, sink.bottom() - 6.0),
-        4.0,
-        if input {
-            hud.ok
-        } else {
-            Color32::from_rgb(40, 40, 40)
-        },
-    );
-}
-
-fn paint_face_dmm(
-    painter: &egui::Painter,
-    rect: Rect,
-    function: &str,
-    unit: &str,
-    autorange: bool,
-    reading: Option<&(f64, String)>,
-    hud: &HudTokens,
-    live: bool,
-    t: f32,
-) {
-    let lcd = Rect::from_min_max(rect.min, egui::pos2(rect.right() - 34.0, rect.bottom()));
-    paint_lcd_panel(painter, lcd, LcdTint::Green);
-    painter.text(
-        egui::pos2(lcd.left() + 8.0, lcd.top() + 5.0),
-        egui::Align2::LEFT_TOP,
-        format!(
-            "{function}  {}  {}",
-            if autorange { "AUTO" } else { "MAN" },
-            if live { "MEAS" } else { "HOLD" }
-        ),
-        egui::FontId::monospace(9.0),
-        lcd_dim(LcdTint::Green),
-    );
-    let (digits, shown_unit) = if let Some((v, u)) = reading {
-        (fmt_dmm_digits(*v), u.clone())
-    } else {
-        ("------".into(), unit.to_owned())
-    };
-    let blink = if live {
-        0.75 + 0.25 * (t * 2.0).sin()
-    } else {
-        1.0
-    };
-    let mut color = lcd_lit(LcdTint::Green);
-    color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), (220.0 * blink) as u8);
-    painter.text(
-        egui::pos2(lcd.left() + 10.0, lcd.center().y + 6.0),
-        egui::Align2::LEFT_CENTER,
-        digits,
-        egui::FontId::monospace(22.0),
-        color,
-    );
-    painter.text(
-        egui::pos2(lcd.right() - 8.0, lcd.bottom() - 8.0),
-        egui::Align2::RIGHT_BOTTOM,
-        shown_unit,
-        egui::FontId::monospace(12.0),
-        lcd_lit(LcdTint::Green),
-    );
-    let knob_c = egui::pos2(rect.right() - 16.0, rect.center().y);
-    painter.circle_filled(knob_c, 12.0, Color32::from_rgb(28, 24, 12));
-    painter.circle_stroke(knob_c, 12.0, Stroke::new(1.2_f32, hud.line));
-    let ang: f32 = match function {
-        "DC V" => -1.2,
-        "AC V" => -0.5,
-        "DC A" => 0.2,
-        "AC A" => 0.8,
-        "Ω" => 1.4,
-        _ => 2.0,
-    };
-    painter.line_segment(
-        [
-            knob_c,
-            egui::pos2(knob_c.x + ang.cos() * 9.0, knob_c.y + ang.sin() * 9.0),
-        ],
-        Stroke::new(1.6_f32, lcd_lit(LcdTint::Amber)),
-    );
-}
-
-fn paint_face_probe(
-    painter: &egui::Painter,
-    rect: Rect,
-    chip: &str,
-    rtt: bool,
-    rtt_ch: u32,
-    speed_khz: u32,
-    hud: &HudTokens,
-    t: f32,
-) {
-    let lcd = Rect::from_min_max(rect.min, egui::pos2(rect.right() - 52.0, rect.bottom()));
-    paint_lcd_panel(painter, lcd, LcdTint::Green);
-    painter.text(
-        egui::pos2(lcd.left() + 8.0, lcd.top() + 6.0),
-        egui::Align2::LEFT_TOP,
-        format!("TGT  {}", truncate_chars(chip, 14)),
-        egui::FontId::monospace(11.0),
-        lcd_lit(LcdTint::Green),
-    );
-    painter.text(
-        egui::pos2(lcd.left() + 8.0, lcd.center().y + 4.0),
-        egui::Align2::LEFT_CENTER,
-        format!("{speed_khz} kHz"),
-        egui::FontId::monospace(12.0),
-        lcd_lit(LcdTint::Green),
-    );
-    painter.text(
-        egui::pos2(lcd.left() + 8.0, lcd.bottom() - 8.0),
-        egui::Align2::LEFT_BOTTOM,
-        if rtt {
-            format!("RTT CH{rtt_ch}")
-        } else {
-            "RTT OFF".into()
-        },
-        egui::FontId::monospace(10.0),
-        if rtt { hud.ok } else { lcd_dim(LcdTint::Green) },
-    );
-    let header = Rect::from_min_max(egui::pos2(lcd.right() + 6.0, rect.top() + 6.0), rect.max);
-    let labels = ["SWDIO", "SWCLK", "GND", "VTref"];
-    for (i, label) in labels.iter().enumerate() {
-        let y = header.top() + 8.0 + i as f32 * 16.0;
-        let pulse = if rtt {
-            0.45 + 0.55 * (t * 5.0 + i as f32).sin().abs()
-        } else {
-            0.25
-        };
-        painter.line_segment(
-            [
-                egui::pos2(header.left(), y),
-                egui::pos2(header.right() - 4.0, y),
-            ],
-            Stroke::new(
-                1.2_f32,
-                Color32::from_rgba_unmultiplied(
-                    hud.cyan.r(),
-                    hud.cyan.g(),
-                    hud.cyan.b(),
-                    (80.0 + 140.0 * pulse) as u8,
-                ),
-            ),
-        );
-        painter.circle_filled(egui::pos2(header.right() - 4.0, y), 2.4, hud.cyan);
-        painter.text(
-            egui::pos2(header.left(), y - 7.0),
-            egui::Align2::LEFT_BOTTOM,
-            *label,
-            egui::FontId::monospace(7.0),
-            hud.dim,
-        );
-    }
-}
-
-fn paint_face_dongle(
-    painter: &egui::Painter,
-    rect: Rect,
-    tab: u8,
-    host: &str,
-    uart_baud: u32,
-    i2c_hz: u32,
-    live: bool,
-    hud: &HudTokens,
-) {
-    paint_lcd_panel(painter, rect, LcdTint::Scope);
-    let ch = match tab {
-        1 => "UART",
-        2 => "I2C",
-        _ => "DAP",
-    };
-    painter.text(
-        egui::pos2(rect.left() + 8.0, rect.top() + 6.0),
-        egui::Align2::LEFT_TOP,
-        format!("WIPARSE  {ch}"),
-        egui::FontId::monospace(10.0),
-        lcd_lit(LcdTint::Scope),
-    );
-    let line = match tab {
-        1 => format!("{uart_baud} baud"),
-        2 => format!("{} kHz", i2c_hz / 1000),
-        _ => truncate_chars(host, 16).into(),
-    };
-    painter.text(
-        egui::pos2(rect.left() + 8.0, rect.center().y + 2.0),
-        egui::Align2::LEFT_CENTER,
-        line,
-        egui::FontId::monospace(12.0),
-        lcd_lit(LcdTint::Scope),
-    );
-    painter.text(
-        egui::pos2(rect.left() + 8.0, rect.bottom() - 8.0),
-        egui::Align2::LEFT_BOTTOM,
-        if live { "LIVE" } else { "IDLE" },
-        egui::FontId::monospace(10.0),
-        if live {
-            hud.ok
-        } else {
-            lcd_dim(LcdTint::Scope)
-        },
-    );
-}
-
-fn paint_face_bridge(
-    painter: &egui::Painter,
-    rect: Rect,
-    tab: u8,
-    spi_hz: u32,
-    spi_mode: u8,
-    i2c_addr: &str,
-    gpio_pin: u8,
-    gpio_out: bool,
-    gpio_value: bool,
-    hud: &HudTokens,
-    t: f32,
-) {
-    let lcd = Rect::from_min_max(rect.min, egui::pos2(rect.right(), rect.bottom() - 28.0));
-    paint_lcd_panel(painter, lcd, LcdTint::Green);
-    let bus = match tab {
-        1 => "I2C",
-        2 => "GPIO",
-        _ => "SPI",
-    };
-    painter.text(
-        egui::pos2(lcd.left() + 8.0, lcd.top() + 6.0),
-        egui::Align2::LEFT_TOP,
-        format!("FT4222  {bus}"),
-        egui::FontId::monospace(11.0),
-        lcd_lit(LcdTint::Green),
-    );
-    let detail = match tab {
-        1 => format!("ADDR 0x{i2c_addr}"),
-        2 => format!(
-            "P{gpio_pin} {} {}",
-            if gpio_out { "OUT" } else { "IN" },
-            if gpio_value { "1" } else { "0" }
-        ),
-        _ => format!("MODE {spi_mode}  {spi_hz} Hz"),
-    };
-    painter.text(
-        egui::pos2(lcd.left() + 8.0, lcd.center().y + 6.0),
-        egui::Align2::LEFT_CENTER,
-        detail,
-        egui::FontId::monospace(12.0),
-        lcd_lit(LcdTint::Green),
-    );
-    let buses = ["SPI", "I2C", "GPIO"];
-    let slot_w = rect.width() / 3.0;
-    for (i, label) in buses.iter().enumerate() {
-        let cx = rect.left() + slot_w * (i as f32 + 0.5);
-        let y = rect.bottom() - 12.0;
-        let on = tab as usize == i;
-        painter.circle_filled(
-            egui::pos2(cx - 14.0, y),
-            3.2,
-            if on {
-                hud.ok
-            } else {
-                Color32::from_rgb(40, 48, 40)
-            },
-        );
-        painter.text(
-            egui::pos2(cx - 8.0, y),
-            egui::Align2::LEFT_CENTER,
-            *label,
-            egui::FontId::monospace(9.0),
-            if on { hud.cyan } else { hud.dim },
-        );
-        if on {
-            let pulse = 0.4 + 0.6 * (t * 3.4).sin().abs();
-            painter.circle_filled(
-                egui::pos2(cx - 14.0, y),
-                3.2 + pulse,
-                Color32::from_rgba_unmultiplied(hud.ok.r(), hud.ok.g(), hud.ok.b(), 80),
-            );
-        }
-    }
-}
-
-fn fmt_timebase(s: f64) -> String {
-    if s >= 1.0 {
-        format!("{s:.3}s/div")
-    } else if s >= 1e-3 {
-        format!("{:.3}ms/div", s * 1e3)
-    } else if s >= 1e-6 {
-        format!("{:.1}µs/div", s * 1e6)
-    } else {
-        format!("{:.0}ns/div", s * 1e9)
-    }
-}
-
-fn fmt_dmm_digits(v: f64) -> String {
-    let a = v.abs();
-    let s = if a >= 1000.0 {
-        format!("{v:8.2}")
-    } else if a >= 100.0 {
-        format!("{v:8.3}")
-    } else if a >= 10.0 {
-        format!("{v:8.4}")
-    } else {
-        format!("{v:8.5}")
-    };
-    s
-}
-
-fn truncate_chars(s: &str, max: usize) -> String {
-    let count = s.chars().count();
-    if count <= max {
-        s.to_owned()
-    } else {
-        format!(
-            "{}…",
-            s.chars().take(max.saturating_sub(1)).collect::<String>()
-        )
-    }
-}
-
-fn overview_type_card(
-    ui: &mut egui::Ui,
-    lang: Lang,
-    tokens: &Tokens,
-    selected: bool,
-    sessions: usize,
-) -> bool {
-    let mut clicked = false;
-    let frame = Frame::NONE
-        .fill(if selected {
-            Color32::from_rgba_unmultiplied(0x07, 0x18, 0x24, 255)
-        } else {
-            tokens.panel_bg
-        })
-        .stroke(Stroke::new(
-            if selected { 2.0_f32 } else { 1.0_f32 },
-            if selected {
-                Color32::from_rgb(0x4A, 0xE3, 0xFF)
-            } else {
-                tokens.border
-            },
-        ))
-        .corner_radius(CornerRadius::same(7))
-        .inner_margin(Margin::symmetric(11, 9))
-        .show(ui, |ui| {
-            let content_width = ui.available_width().max(1.0);
-            ui.set_min_width(content_width);
-            ui.set_max_width(content_width);
-            ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(
-                    egui::vec2(CARD_ICON_COLUMN_WIDTH, 0.0),
-                    egui::Layout::top_down(egui::Align::Center),
-                    |ui| {
-                        let (icon_rect, _) =
-                            ui.allocate_exact_size(egui::vec2(36.0, 28.0), egui::Sense::hover());
-                        paint_mesh_icon(ui.painter(), icon_rect, selected);
-                    },
-                );
-                ui.vertical(|ui| {
-                    if ui
-                        .selectable_label(
-                            selected,
-                            RichText::new(text(lang, "设备总览", "Control Mesh")).strong(),
-                        )
-                        .clicked()
-                    {
-                        clicked = true;
-                    }
-                    ui.label(
-                        RichText::new(format!(
-                            "{} · {sessions}",
-                            text(lang, "已连接会话", "Live sessions")
-                        ))
-                        .small()
-                        .color(if sessions > 0 {
-                            Color32::from_rgb(0x4A, 0xE3, 0xFF)
-                        } else {
-                            tokens.text_muted
-                        }),
-                    );
-                    ui.label(
-                        RichText::new(text(
-                            lang,
-                            "全部设备与控制流",
-                            "All devices and control flow",
-                        ))
-                        .small()
-                        .color(tokens.text_muted),
-                    );
-                });
-            });
-        });
-    let bg = ui.interact(
-        frame.response.rect,
-        ui.id().with("overview-type-card"),
-        egui::Sense::click(),
-    );
-    if bg.clicked() {
-        clicked = true;
-    }
-    if bg.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    }
-    clicked
-}
-
-#[allow(dead_code)]
-fn overview_device_tile(
-    ui: &mut egui::Ui,
-    lang: Lang,
-    tokens: &Tokens,
-    hud: &HudTokens,
-    t: f32,
-    tile_w: f32,
-    tile_h: f32,
-    device: &DeviceUi,
-    busy_device: Option<u64>,
-    busy_label: &str,
-    latest: &HashMap<(u64, String), Reading>,
-    photo: Option<&egui::TextureHandle>,
-) -> bool {
-    let (status, status_color) = overview_runtime_status(lang, device, busy_device, busy_label);
-    let params = overview_param_lines(lang, device, latest);
-    let mut opened = false;
-    let frame = Frame::NONE
-        .fill(Color32::from_rgb(0x05, 0x0C, 0x14))
-        .stroke(Stroke::new(1.0_f32, hud.line))
-        .corner_radius(CornerRadius::same(6))
-        .inner_margin(Margin::same(10))
-        .show(ui, |ui| {
-            ui.set_width((tile_w - 22.0).max(1.0));
-            ui.set_min_height((tile_h - 22.0).max(1.0));
-            ui.horizontal(|ui| {
-                let glyph = ui.allocate_exact_size(egui::vec2(84.0, 72.0), egui::Sense::hover());
-                if let Some(tex) = photo {
-                    let img = egui::Image::from_texture(tex)
-                        .fit_to_exact_size(egui::vec2(84.0, 72.0))
-                        .corner_radius(CornerRadius::same(4));
-                    ui.put(glyph.0, img);
-                } else {
-                    paint_device_glyph(ui.painter(), glyph.0, device.kind, hud, t);
-                }
-                ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(kind_icon(device.kind))
-                                .small()
-                                .monospace()
-                                .color(hud.cyan),
-                        );
-                        hud_chip(ui, hud, status, status_color);
-                    });
-                    let name = if device.identity.model.trim().is_empty() {
-                        instrument_name(lang, device.kind).to_owned()
-                    } else {
-                        device.identity.model.clone()
-                    };
-                    ui.label(
-                        RichText::new(name)
-                            .strong()
-                            .color(tokens.text_primary)
-                            .size(14.0),
-                    );
-                    ui.label(
-                        RichText::new(&device.identity.manufacturer)
-                            .small()
-                            .color(hud.dim),
-                    );
-                });
-            });
-            ui.add_space(4.0);
-            let serial = if device.identity.serial.trim().is_empty() {
-                short_resource(&device.resource)
-            } else {
-                format!("SN {}", device.identity.serial)
-            };
-            ui.label(RichText::new(serial).small().monospace().color(hud.dim));
-            ui.label(
-                RichText::new(short_resource(&device.resource))
-                    .small()
-                    .monospace()
-                    .color(Color32::from_rgba_unmultiplied(74, 227, 255, 90)),
-            );
-            ui.add_space(6.0);
-            for (k, v) in params.iter().take(4) {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(k).small().monospace().color(hud.dim));
-                    ui.label(RichText::new(v).small().monospace().color(hud.cyan));
-                });
-            }
-            if !device.last_activity.is_empty() {
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(format!("▶ {}", device.last_activity))
-                        .small()
-                        .monospace()
-                        .color(status_color),
-                );
-            }
-        });
-    let hit = ui.interact(
-        frame.response.rect,
-        ui.id().with(("overview-tile", device.id)),
-        egui::Sense::click(),
-    );
-    if hit.hovered() {
-        ui.painter().rect_stroke(
-            frame.response.rect,
-            CornerRadius::same(6),
-            Stroke::new(1.6_f32, hud.cyan),
-            egui::StrokeKind::Outside,
-        );
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    }
-    if device.acquiring && !device.paused {
-        let pulse = 0.35 + 0.65 * (t * 4.2).sin().abs();
-        let edge = Rect::from_min_size(
-            frame.response.rect.min,
-            egui::vec2(3.0, frame.response.rect.height()),
-        );
-        ui.painter().rect_filled(
-            edge,
-            CornerRadius::ZERO,
-            Color32::from_rgba_unmultiplied(
-                hud.ok.r(),
-                hud.ok.g(),
-                hud.ok.b(),
-                (70.0 + 140.0 * pulse) as u8,
-            ),
-        );
-    }
-    if hit.clicked() {
-        opened = true;
-    }
-    opened
 }
 
 fn overview_runtime_status(
@@ -6625,241 +5059,6 @@ fn overview_param_lines(
     out
 }
 
-fn paint_device_glyph(
-    painter: &egui::Painter,
-    rect: Rect,
-    kind: InstrumentKind,
-    hud: &HudTokens,
-    t: f32,
-) {
-    let r = rect.shrink(4.0);
-    painter.rect_filled(
-        r,
-        CornerRadius::same(4),
-        Color32::from_rgba_unmultiplied(10, 28, 40, 180),
-    );
-    painter.rect_stroke(
-        r,
-        CornerRadius::same(4),
-        Stroke::new(1.0_f32, hud.line),
-        egui::StrokeKind::Inside,
-    );
-    let c = r.center();
-    let glow = 0.35 + 0.25 * (t * 2.4).sin();
-    let accent = Color32::from_rgba_unmultiplied(
-        hud.cyan.r(),
-        hud.cyan.g(),
-        hud.cyan.b(),
-        (90.0 + 120.0 * glow) as u8,
-    );
-    let stroke = Stroke::new(1.4_f32, hud.cyan);
-    match kind {
-        InstrumentKind::Oscilloscope => {
-            let screen = Rect::from_min_max(
-                egui::pos2(r.left() + 8.0, r.top() + 8.0),
-                egui::pos2(r.right() - 22.0, r.bottom() - 10.0),
-            );
-            painter.rect_filled(screen, CornerRadius::same(2), Color32::from_rgb(4, 18, 28));
-            painter.rect_stroke(
-                screen,
-                CornerRadius::same(2),
-                stroke,
-                egui::StrokeKind::Inside,
-            );
-            let mut pts = Vec::new();
-            for i in 0..24 {
-                let x = screen.left() + screen.width() * (i as f32 / 23.0);
-                let y =
-                    screen.center().y + (t * 4.0 + i as f32 * 0.45).sin() * screen.height() * 0.28;
-                pts.push(egui::pos2(x, y));
-            }
-            painter.add(egui::Shape::line(pts, Stroke::new(1.2_f32, accent)));
-            for i in 0..3 {
-                painter.circle_filled(
-                    egui::pos2(r.right() - 11.0, r.top() + 16.0 + i as f32 * 14.0),
-                    4.0,
-                    hud.line,
-                );
-            }
-        }
-        InstrumentKind::DcSource => {
-            for i in 0..3 {
-                let y = r.top() + 14.0 + i as f32 * 16.0;
-                let bar = Rect::from_min_size(
-                    egui::pos2(r.left() + 10.0, y),
-                    egui::vec2(r.width() * 0.62, 9.0),
-                );
-                painter.rect_filled(bar, CornerRadius::same(1), Color32::from_rgb(8, 32, 44));
-                painter.rect_filled(
-                    Rect::from_min_size(
-                        bar.min,
-                        egui::vec2(bar.width() * (0.35 + 0.15 * i as f32), bar.height()),
-                    ),
-                    CornerRadius::same(1),
-                    accent,
-                );
-                painter.circle_filled(egui::pos2(r.right() - 14.0, y + 4.5), 4.0, hud.ok);
-            }
-        }
-        InstrumentKind::ElectronicLoad => {
-            let top = egui::pos2(c.x, r.top() + 10.0);
-            let mid = egui::pos2(c.x, c.y + 4.0);
-            painter.line_segment([top, mid], stroke);
-            painter.line_segment(
-                [egui::pos2(c.x - 18.0, mid.y), egui::pos2(c.x + 18.0, mid.y)],
-                stroke,
-            );
-            painter.add(egui::Shape::line(
-                vec![
-                    egui::pos2(c.x - 10.0, mid.y),
-                    egui::pos2(c.x - 4.0, mid.y + 10.0),
-                    egui::pos2(c.x + 4.0, mid.y - 2.0),
-                    egui::pos2(c.x + 10.0, mid.y + 16.0),
-                ],
-                Stroke::new(1.6_f32, accent),
-            ));
-        }
-        InstrumentKind::Multimeter => {
-            let face = Rect::from_center_size(c, egui::vec2(r.width() - 18.0, 28.0));
-            painter.rect_filled(face, CornerRadius::same(2), Color32::from_rgb(4, 20, 16));
-            painter.rect_stroke(
-                face,
-                CornerRadius::same(2),
-                stroke,
-                egui::StrokeKind::Inside,
-            );
-            painter.text(
-                face.center(),
-                egui::Align2::CENTER_CENTER,
-                "3.300",
-                egui::FontId::monospace(13.0),
-                hud.ok,
-            );
-        }
-        InstrumentKind::DebugProbe => {
-            let body = Rect::from_center_size(egui::pos2(c.x - 6.0, c.y), egui::vec2(40.0, 22.0));
-            painter.rect_filled(body, CornerRadius::same(3), Color32::from_rgb(12, 36, 52));
-            painter.rect_stroke(
-                body,
-                CornerRadius::same(3),
-                stroke,
-                egui::StrokeKind::Inside,
-            );
-            for i in 0..4 {
-                let y = body.top() + 5.0 + i as f32 * 4.0;
-                painter.line_segment(
-                    [egui::pos2(body.right(), y), egui::pos2(r.right() - 8.0, y)],
-                    Stroke::new(1.0_f32, accent),
-                );
-            }
-            painter.rect_filled(
-                Rect::from_min_size(
-                    egui::pos2(body.left() - 10.0, body.top() + 4.0),
-                    egui::vec2(10.0, 14.0),
-                ),
-                CornerRadius::same(1),
-                hud.cyan,
-            );
-        }
-        InstrumentKind::UsbBridge => {
-            let chip = Rect::from_center_size(c, egui::vec2(36.0, 28.0));
-            painter.rect_filled(chip, CornerRadius::same(2), Color32::from_rgb(12, 28, 20));
-            painter.rect_stroke(
-                chip,
-                CornerRadius::same(2),
-                stroke,
-                egui::StrokeKind::Inside,
-            );
-            for i in 0..4 {
-                let y = chip.top() + 5.0 + i as f32 * 6.0;
-                painter.line_segment(
-                    [
-                        egui::pos2(chip.left() - 10.0, y),
-                        egui::pos2(chip.left(), y),
-                    ],
-                    Stroke::new(1.1_f32, accent),
-                );
-                painter.line_segment(
-                    [
-                        egui::pos2(chip.right(), y),
-                        egui::pos2(chip.right() + 10.0, y),
-                    ],
-                    Stroke::new(1.1_f32, accent),
-                );
-            }
-        }
-        InstrumentKind::WiparseDongle => {
-            let body = Rect::from_center_size(c, egui::vec2(42.0, 22.0));
-            painter.rect_filled(body, CornerRadius::same(3), Color32::from_rgb(10, 22, 40));
-            painter.rect_stroke(
-                body,
-                CornerRadius::same(3),
-                stroke,
-                egui::StrokeKind::Inside,
-            );
-            for i in 0..3 {
-                let x = body.left() + 10.0 + i as f32 * 11.0;
-                painter.line_segment(
-                    [
-                        egui::pos2(x, body.bottom()),
-                        egui::pos2(x, r.bottom() - 8.0),
-                    ],
-                    Stroke::new(1.2_f32, accent),
-                );
-            }
-            painter.rect_filled(
-                Rect::from_min_size(
-                    egui::pos2(body.right() - 8.0, body.top() + 4.0),
-                    egui::vec2(12.0, 14.0),
-                ),
-                CornerRadius::same(1),
-                hud.cyan,
-            );
-        }
-        InstrumentKind::Generic => {
-            painter.text(
-                c,
-                egui::Align2::CENTER_CENTER,
-                "SCPI",
-                egui::FontId::monospace(12.0),
-                hud.cyan,
-            );
-        }
-    }
-}
-
-fn paint_mesh_icon(painter: &egui::Painter, rect: Rect, selected: bool) {
-    let cyan = Color32::from_rgb(0x4A, 0xE3, 0xFF);
-    let dim = Color32::from_rgba_unmultiplied(0x4A, 0xE3, 0xFF, if selected { 200 } else { 110 });
-    let nodes = [
-        egui::pos2(rect.left() + 8.0, rect.center().y),
-        egui::pos2(rect.center().x + 2.0, rect.top() + 6.0),
-        egui::pos2(rect.center().x + 2.0, rect.bottom() - 6.0),
-        egui::pos2(rect.right() - 6.0, rect.center().y),
-    ];
-    for (a, b) in [(0, 1), (0, 2), (1, 3), (2, 3)] {
-        painter.line_segment([nodes[a], nodes[b]], Stroke::new(1.1_f32, dim));
-    }
-    for (i, p) in nodes.iter().enumerate() {
-        painter.circle_filled(*p, if i == 0 { 3.4 } else { 2.6 }, cyan);
-    }
-}
-
-fn sanitize_photo_stem(raw: &str) -> String {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    trimmed
-        .chars()
-        .map(|c| match c {
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
-            c if c.is_control() => '_',
-            c => c,
-        })
-        .collect()
-}
-
 fn short_resource(resource: &str) -> String {
     const MAX: usize = 34;
     if resource.chars().count() <= MAX {
@@ -6997,7 +5196,7 @@ fn publish_instrument_event(bus: &crate::backend::EventBus, event: &Event) {
                 None,
             );
         }
-        Event::WaveformSaved { .. } => {} // Published through instrument.job_done after UI bookkeeping.
+        Event::WaveformSaved { .. } | Event::SamplesExported { .. } => {} // Published through instrument.job_done after UI bookkeeping.
         Event::Error {
             id,
             job_id,
@@ -7063,6 +5262,230 @@ mod layout_audit {
     }
 
     #[test]
+    fn scan_failure_is_reported_and_a_success_clears_it() {
+        let mut panel = InstrumentControlPanel::new(&AppConfig::default());
+        let ctx = egui::Context::default();
+        assert!(!panel.api_operations_pending());
+        panel.scanning = true;
+        assert!(panel.api_operations_pending());
+        panel.handle_event(&ctx, Event::Error {id:None,job_id:None,message:"VISA unavailable".into()});
+        assert!(!panel.api_operations_pending());
+        let state = panel.api_list(Lang::En, &serde_json::json!({}));
+        assert_eq!(state["scanning"], false);
+        assert_eq!(state["scan_error"], "VISA unavailable");
+        panel.handle_event(&ctx, Event::Resources(vec![]));
+        assert!(panel.api_list(Lang::En, &serde_json::json!({}))["scan_error"].is_null());
+    }
+
+    #[test]
+    fn manual_connection_validates_and_queues_without_hardware_access() {
+        let mut panel=InstrumentControlPanel::new(&AppConfig::default());
+        let (tx,rx)=crossbeam_channel::unbounded();panel.tx=tx;
+        for params in [serde_json::json!({"resource":"\n"}),serde_json::json!({"resource":"TCPIP0::example::INSTR","kind":"invalid"}),serde_json::json!({"resource":"USB\u{0}invalid"})] {
+            assert_eq!(panel.api_connect_manual_safe(&params,Lang::En).error.as_deref(),Some("INSTRUMENT.INVALID_REQUEST"));
+        }
+        assert!(rx.try_recv().is_err());
+        let address="TCPIP0::192.0.2.1::INSTR";
+        let response=panel.api_connect_manual_safe(&serde_json::json!({"resource":format!(" {address} "),"kind":"oscilloscope"}),Lang::En);
+        assert!(response.ok,"{:?}",response.error);
+        match rx.try_recv().unwrap(){Job::Connect{resource,kind,..}=>{assert_eq!(resource,address);assert_eq!(kind,Some(InstrumentKind::Oscilloscope));},_=>panic!("unexpected job")}
+        let state=panel.api_list(Lang::En,&serde_json::json!({}));
+        let resource=state["resources"].as_array().unwrap().iter().find(|resource|resource["address"]==address).unwrap();
+        assert_eq!(resource["connecting"],true);
+        assert_eq!(panel.api_connect_manual_safe(&serde_json::json!({"resource":address.to_lowercase()}),Lang::En).error.as_deref(),Some("INSTRUMENT.ALREADY_CONNECTED_OR_PENDING"));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn guarded_connection_rejects_unknown_and_duplicate_and_reports_failure() {
+        let mut panel=InstrumentControlPanel::new(&AppConfig::default());
+        let address="TCPIP0::192.0.2.1::INSTR";
+        let unknown=panel.api_connect_discovered_safe(&serde_json::json!({"resource":address}),Lang::En);
+        assert_eq!(unknown.error.as_deref(),Some("INSTRUMENT.RESOURCE_CHANGED"));
+        panel.resources.push(ResourceInfo {address:address.into(),transport:"TCPIP".into(),kind:None,identity:None,probe_error:None});
+        panel.scan_error=Some("scan failed".into());
+        let stale=panel.api_connect_discovered_safe(&serde_json::json!({"resource":address}),Lang::En);
+        assert_eq!(stale.error.as_deref(),Some("INSTRUMENT.SCAN_FAILED"));
+        panel.scan_error=None;
+        panel.pending_connections.insert(99,address.into());
+        let duplicate=panel.api_connect_discovered_safe(&serde_json::json!({"resource":address}),Lang::En);
+        assert_eq!(duplicate.error.as_deref(),Some("INSTRUMENT.ALREADY_CONNECTED_OR_PENDING"));
+        panel.handle_event(&egui::Context::default(),Event::Error{id:Some(99),job_id:None,message:"connection refused".into()});
+        let state=panel.api_list(Lang::En,&serde_json::json!({}));
+        let resource=state["resources"].as_array().unwrap().iter().find(|r|r["address"]==address).unwrap();
+        assert_eq!(resource["connecting"],false);assert_eq!(resource["connection_error"],"connection refused");
+    }
+
+    #[test]
+    fn discovered_demo_session_connects_and_disconnects_asynchronously() {
+        let mut panel=InstrumentControlPanel::new(&AppConfig::default());
+        let address="DEMO::Oscilloscope";
+        panel.resources.push(ResourceInfo {address:address.into(),transport:"DEMO".into(),kind:Some(InstrumentKind::Oscilloscope),identity:None,probe_error:None});
+        let reply=panel.api_connect_discovered_safe(&serde_json::json!({"resource":address}),Lang::En);
+        assert!(reply.ok);assert!(panel.api_operations_pending());
+        let ctx=egui::Context::default();
+        let event=panel.rx.recv_timeout(std::time::Duration::from_secs(3)).expect("demo connection event");
+        panel.handle_event(&ctx,event);
+        let device=panel.devices.iter().find(|d|d.resource==address).expect("connected demo device");
+        assert_eq!(device.kind,InstrumentKind::Oscilloscope);
+        let id=device.id;
+        assert!(!panel.api_operations_pending());
+        let device=panel.devices.iter_mut().find(|d|d.id==id).unwrap();
+        device.acquiring=true;device.paused=false;
+        assert!(panel.api_operations_pending());
+        let device=panel.devices.iter_mut().find(|d|d.id==id).unwrap();
+        device.acquiring=false;
+        assert!(panel.api_scope_action_safe(&serde_json::json!({"device_id":id,"resource":address,"action":"single"})).ok);
+        assert!(panel.api_operations_pending());
+        let event=panel.rx.recv_timeout(std::time::Duration::from_secs(3)).expect("demo scope action event");
+        panel.handle_event(&ctx,event);
+        assert!(!panel.api_operations_pending());
+        assert!(panel.devices.iter().find(|d|d.id==id).unwrap().last_error.is_none());
+        panel.pending_screenshots.insert(id,999);
+        let request=serde_json::json!({"device_id":id,"resource":address,"job_id":999});
+        assert_eq!(panel.api_screenshot_safe(&request).data["state"],"pending");
+        panel.handle_event(&ctx,Event::Screenshot{id,job_id:Some(999),save_path:None,width:1,height:1,rgba:vec![0,0,0,255],png:vec![1,2,3]});
+        let screenshot=panel.api_screenshot_safe(&request);
+        assert!(screenshot.ok);assert_eq!(screenshot.data["png_base64"],"AQID");
+        panel.handle_event(&ctx,Event::Screenshot{id,job_id:None,save_path:None,width:1,height:1,rgba:vec![0,0,0,255],png:vec![4,5,6]});
+        assert_eq!(panel.api_screenshot_safe(&request).error.as_deref(),Some("INSTRUMENT.CAPTURE_STALE"));
+        assert!(panel.api_disconnect_safe(&serde_json::json!({"device_id":id,"resource":address})).ok);
+        assert!(panel.api_operations_pending());
+        let event=panel.rx.recv_timeout(std::time::Duration::from_secs(3)).expect("demo disconnection event");
+        panel.handle_event(&ctx,event);
+        assert!(!panel.devices.iter().any(|d|d.id==id));
+        assert!(!panel.api_operations_pending());
+    }
+
+    #[test]
+    fn guarded_disconnect_rejects_a_stale_session() {
+        let mut panel=InstrumentControlPanel::new(&AppConfig::default());
+        let response=panel.api_disconnect_safe(&serde_json::json!({"device_id":42,"resource":"TCPIP0::192.0.2.1::INSTR"}));
+        assert_eq!(response.error.as_deref(),Some("INSTRUMENT.SESSION_CHANGED"));
+        assert!(panel.pending_disconnections.is_empty());
+    }
+
+    #[test]
+    fn guarded_measurement_rejects_a_stale_session() {
+        let mut panel=InstrumentControlPanel::new(&AppConfig::default());
+        let response=panel.api_measure_safe(&serde_json::json!({"device_id":42,"resource":"TCPIP0::192.0.2.1::INSTR"}));
+        assert_eq!(response.error.as_deref(),Some("INSTRUMENT.SESSION_CHANGED"));
+        assert!(panel.measurement_pending.is_empty());
+    }
+
+    #[test]
+    fn guarded_measurement_uses_core_session_and_updates_the_snapshot() {
+        let mut panel=InstrumentControlPanel::new(&AppConfig::default());let ctx=egui::Context::default();let address="DEMO::DC Source";
+        panel.resources.push(ResourceInfo{address:address.into(),transport:"DEMO".into(),kind:Some(InstrumentKind::DcSource),identity:None,probe_error:None});
+        let connected=panel.api_connect_discovered_safe(&serde_json::json!({"resource":address}),Lang::En);assert!(connected.ok);let id=connected.data["device_id"].as_u64().unwrap();
+        let event=panel.rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap();panel.handle_event(&ctx,event);
+        assert!(panel.api_measure_safe(&serde_json::json!({"device_id":id,"resource":address})).ok);assert!(panel.measurement_pending.contains(&id));
+        let event=panel.rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap();panel.handle_event(&ctx,event);
+        assert!(!panel.measurement_pending.contains(&id));assert!(panel.latest.keys().any(|(device,_)|*device==id));
+    }
+
+    #[test]
+    fn migrated_typed_controls_are_session_bound_serialized_and_complete_on_demo(){
+        let mut panel=InstrumentControlPanel::new(&AppConfig::default());let ctx=egui::Context::default();let address="DEMO::Oscilloscope";
+        panel.resources.push(ResourceInfo{address:address.into(),transport:"DEMO".into(),kind:Some(InstrumentKind::Oscilloscope),identity:None,probe_error:None});
+        let connected=panel.api_connect_discovered_safe(&serde_json::json!({"resource":address}),Lang::En);let id=connected.data["device_id"].as_u64().unwrap();
+        let event=panel.rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap();panel.handle_event(&ctx,event);
+        let make=|resource:&str,command:serde_json::Value|serde_json::json!({"device_id":id,"resource":resource,"command":command});
+        assert_eq!(panel.api_control_safe(&make("wrong",serde_json::json!("ScopeStop"))).error.as_deref(),Some("INSTRUMENT.SESSION_CHANGED"));
+        assert_eq!(panel.api_control_safe(&make(address,serde_json::json!("ProbeErase"))).error.as_deref(),Some("INSTRUMENT.UNSUPPORTED"));
+        assert_eq!(panel.api_control_safe(&make(address,serde_json::json!({"ScopeChannel":{"channel":99,"enabled":true}}))).error.as_deref(),Some("INSTRUMENT.INVALID_CHANNEL"));
+        let accepted=panel.api_control_safe(&make(address,serde_json::json!({"ScopeScale":{"channel":1,"volts_per_div":0.5}})));assert!(accepted.ok,"{:?}",accepted.error);
+        assert_eq!(panel.api_control_safe(&make(address,serde_json::json!("ScopeStop"))).error.as_deref(),Some("INSTRUMENT.BUSY"));
+        let job=accepted.data["job_id"].as_u64().unwrap();let deadline=std::time::Instant::now()+std::time::Duration::from_secs(3);
+        while panel.api_job_get(&serde_json::json!({"job_id":job})).data["state"]!="completed"&&std::time::Instant::now()<deadline {if let Ok(event)=panel.rx.recv_timeout(std::time::Duration::from_millis(100)){panel.handle_event(&ctx,event);}}
+        assert_eq!(panel.api_job_get(&serde_json::json!({"job_id":job})).data["ok"],true);assert!(!panel.pending_source_actions.contains_key(&id));panel.on_exit();
+    }
+
+    #[test]
+    fn guarded_scope_actions_accept_only_known_commands_and_live_sessions() {
+        for command in ["ScopeRun","ScopeStop","ScopeSingle"] {
+            assert!(parse_control_command(&serde_json::json!(command)).is_ok());
+        }
+        let mut panel=InstrumentControlPanel::new(&AppConfig::default());
+        let response=panel.api_scope_action_safe(&serde_json::json!({"device_id":42,"resource":"TCPIP0::192.0.2.1::INSTR","action":"run"}));
+        assert_eq!(response.error.as_deref(),Some("INSTRUMENT.SESSION_CHANGED"));
+        assert!(panel.pending_scope_actions.is_empty());
+    }
+
+    #[test]
+    fn guarded_scope_source_requires_live_session_and_new_empty_directory() {
+        let mut panel=InstrumentControlPanel::new(&AppConfig::default());let ctx=egui::Context::default();let address="DEMO::Oscilloscope";
+        panel.resources.push(ResourceInfo{address:address.into(),transport:"DEMO".into(),kind:Some(InstrumentKind::Oscilloscope),identity:None,probe_error:None});
+        let reply=panel.api_connect_discovered_safe(&serde_json::json!({"resource":address}),Lang::En);assert!(reply.ok);let id=reply.data["device_id"].as_u64().unwrap();
+        let event=panel.rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap();panel.handle_event(&ctx,event);
+        let dir=std::env::temp_dir().join(format!("WiParse-wave-{}",uuid::Uuid::new_v4()));std::fs::create_dir(&dir).unwrap();
+        let request=serde_json::json!({"device_id":id,"resource":address,"dir":dir});
+        assert_eq!(panel.api_waveform_source_safe(&serde_json::json!({"device_id":id,"resource":"wrong","dir":dir})).error.as_deref(),Some("INSTRUMENT.SESSION_CHANGED"));
+        let marker=dir.join("existing.txt");std::fs::write(&marker,b"preserve").unwrap();
+        assert_eq!(panel.api_waveform_source_safe(&request).error.as_deref(),Some("INSTRUMENT.INVALID_DIRECTORY"));std::fs::remove_file(marker).unwrap();
+        let accepted=panel.api_waveform_source_safe(&request);assert!(accepted.ok,"{:?}",accepted.error);let job=accepted.data["job_id"].as_u64().unwrap();
+        let deadline=std::time::Instant::now()+std::time::Duration::from_secs(10);
+        while panel.api_job_get(&serde_json::json!({"job_id":job})).data["state"]!="completed"&&std::time::Instant::now()<deadline {
+            if let Ok(event)=panel.rx.recv_timeout(std::time::Duration::from_millis(200)){panel.handle_event(&ctx,event);}
+        }
+        let result=panel.api_job_get(&serde_json::json!({"job_id":job}));assert_eq!(result.data["ok"],true,"{:?}",result.data);
+        let files=result.data["detail"]["files"].as_array().unwrap();assert!(!files.is_empty());
+        for file in files {let path=PathBuf::from(file.as_str().unwrap());assert_eq!(path.parent(),Some(dir.as_path()));assert!(path.is_file());std::fs::remove_file(path).unwrap();}
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn guarded_source_commands_validate_and_wait_for_the_matching_job(){
+        let mut panel=InstrumentControlPanel::new(&AppConfig::default());let ctx=egui::Context::default();let address="DEMO::DC Source";
+        panel.resources.push(ResourceInfo{address:address.into(),transport:"DEMO".into(),kind:Some(InstrumentKind::DcSource),identity:None,probe_error:None});
+        let reply=panel.api_connect_discovered_safe(&serde_json::json!({"resource":address}),Lang::En);assert!(reply.ok);let id=reply.data["device_id"].as_u64().unwrap();
+        let event=panel.rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap();panel.handle_event(&ctx,event);
+        let invalid=panel.api_source_action_safe(&serde_json::json!({"device_id":id,"resource":address,"channel":1,"action":"voltage","value":100}));assert_eq!(invalid.error.as_deref(),Some("INSTRUMENT.INVALID_VALUE"));
+        let command=panel.api_source_action_safe(&serde_json::json!({"device_id":id,"resource":address,"channel":1,"action":"voltage","value":5.0}));assert!(command.ok);let job=command.data["job_id"].as_u64().unwrap();assert!(panel.api_operations_pending());
+        assert_eq!(panel.api_source_action_safe(&serde_json::json!({"device_id":id,"resource":address,"channel":1,"action":"output","enabled":true})).error.as_deref(),Some("INSTRUMENT.BUSY"));
+        let event=panel.rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap();panel.handle_event(&ctx,event);
+        let result=panel.api_job_get(&serde_json::json!({"job_id":job}));assert_eq!(result.data["state"],"completed");assert_eq!(result.data["ok"],true);assert!(!panel.api_operations_pending());
+        let protection=panel.api_source_action_safe(&serde_json::json!({"device_id":id,"resource":address,"channel":1,"action":"ovp","value":10.0}));assert!(protection.ok);
+        let event=panel.rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap();panel.handle_event(&ctx,event);assert_eq!(panel.api_job_get(&serde_json::json!({"job_id":protection.data["job_id"]})).data["state"],"completed");
+    }
+
+    #[test]
+    fn guarded_load_commands_validate_and_wait_for_the_matching_job() {
+        let mut panel=InstrumentControlPanel::new(&AppConfig::default());
+        let ctx=egui::Context::default();let address="DEMO::Electronic Load";
+        panel.resources.push(ResourceInfo{address:address.into(),transport:"DEMO".into(),kind:Some(InstrumentKind::ElectronicLoad),identity:None,probe_error:None});
+        let reply=panel.api_connect_discovered_safe(&serde_json::json!({"resource":address}),Lang::En);
+        assert!(reply.ok);let id=reply.data["device_id"].as_u64().unwrap();
+        let event=panel.rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap();panel.handle_event(&ctx,event);
+        let invalid=panel.api_load_action_safe(&serde_json::json!({"device_id":id,"resource":address,"action":"setpoint","mode":"CC","value":-1}));
+        assert_eq!(invalid.error.as_deref(),Some("INSTRUMENT.INVALID_VALUE"));
+        let command=panel.api_load_action_safe(&serde_json::json!({"device_id":id,"resource":address,"action":"setpoint","mode":"CC","value":1.0}));
+        assert!(command.ok,"{:?}",command.error);let job=command.data["job_id"].as_u64().unwrap();assert!(panel.api_operations_pending());
+        assert_eq!(panel.api_load_action_safe(&serde_json::json!({"device_id":id,"resource":address,"action":"input","enabled":true})).error.as_deref(),Some("INSTRUMENT.BUSY"));
+        let event=panel.rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap();panel.handle_event(&ctx,event);
+        let result=panel.api_job_get(&serde_json::json!({"job_id":job}));assert_eq!(result.data["state"],"completed");assert_eq!(result.data["ok"],true);assert!(!panel.api_operations_pending());
+        let out_of_range=panel.api_load_action_safe(&serde_json::json!({"device_id":id,"resource":address,"action":"setpoint","mode":"CC","value":1_000_000.0}));
+        assert!(out_of_range.ok);let invalid_job=out_of_range.data["job_id"].as_u64().unwrap();
+        let event=panel.rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap();panel.handle_event(&ctx,event);
+        let result=panel.api_job_get(&serde_json::json!({"job_id":invalid_job}));
+        assert_eq!(result.data["ok"],false);assert!(result.data["detail"]["error"].as_str().unwrap().contains("未改变模式"));assert!(!panel.api_operations_pending());
+    }
+
+    #[test]
+    fn scope_action_waits_for_its_own_completion_or_error() {
+        let mut panel=InstrumentControlPanel::new(&AppConfig::default());
+        let ctx=egui::Context::default();
+        panel.pending_scope_actions.insert(42,100);
+        panel.handle_event(&ctx,Event::CommandDone{id:42,job_id:Some(99),response:None});
+        assert_eq!(panel.pending_scope_actions.get(&42),Some(&100));
+        panel.handle_event(&ctx,Event::CommandDone{id:42,job_id:Some(100),response:None});
+        assert!(!panel.pending_scope_actions.contains_key(&42));
+        panel.pending_scope_actions.insert(42,101);
+        panel.handle_event(&ctx,Event::Error{id:Some(42),job_id:Some(101),message:"timeout".into()});
+        assert!(!panel.pending_scope_actions.contains_key(&42));
+    }
+
+    #[test]
     fn usb_hotplug_releases_old_session_and_scan_preserves_healthy_session() {
         use std::sync::atomic::{AtomicBool, Ordering};
         let detached = Arc::new(AtomicBool::new(false));
@@ -7107,7 +5530,7 @@ mod layout_audit {
         }), Some(InstrumentKind::Oscilloscope)).unwrap();
         let mut devices = HashMap::from([
             (1, LiveSession::Scpi(scope)),
-            (2, open_demo_session(InstrumentKind::DcSource).unwrap()),
+            (2, LiveSession::demo(InstrumentKind::DcSource).unwrap()),
         ]);
         let (tx, rx) = unbounded();
         detached.store(true, Ordering::SeqCst);
@@ -7133,7 +5556,7 @@ mod layout_audit {
         ];
         let initial = egui::Context::default();
         for (i, kind) in kinds.iter().enumerate() {
-            let session = open_demo_session(*kind).unwrap();
+            let session = LiveSession::demo(*kind).unwrap();
             panel.handle_event(&initial, connected_event(i as u64 + 1, &session));
         }
         // Presentation fixtures only; every rendered device is explicitly marked simulated.
@@ -7294,7 +5717,7 @@ mod layout_audit {
         let mut panel = InstrumentControlPanel::new(&AppConfig::default());
         let ctx = egui::Context::default();
         crate::fonts::install_cjk_fonts(&ctx);
-        let session = open_demo_session(InstrumentKind::DcSource).unwrap();
+        let session = LiveSession::demo(InstrumentKind::DcSource).unwrap();
         panel.handle_event(&ctx, connected_event(1, &session));
         panel.devices[0].controls.source_voltages[0] = 9.0;
         panel.devices[0].controls.source_currents[0] = 2.0;
@@ -7356,5 +5779,14 @@ mod layout_audit {
         );
         assert!(!panel.devices[0].controls.source_outputs[0]);
         panel.on_exit();
+    }
+}
+
+#[cfg(test)]
+mod io_log_unicode_regression{
+    #[test]
+    fn mixed_width_text_survives_ring_trimming(){
+        let mut log=String::new();super::append_io_log(&mut log,&"a😀".repeat(7000));
+        assert!(log.len()<=32768);assert!(log.ends_with("a😀"));assert!(!log.is_empty());
     }
 }

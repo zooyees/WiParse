@@ -1,0 +1,1 @@
+{"item_id":"fpga_01_pll_clock","name":"PLL 时钟锁定与输出频率验证","attempt_id":"26143986-6990-470b-a0ca-4c1102c787ee","cycle":1,"started_at":"2026-11-08T04:22:59.742Z","completed_at":"2026-11-08T04:23:14.805Z","execution_status":"completed","product_verdict":"PASS","result_ref":"../items/fpga_01_pll_clock/26143986-6990-470b-a0ca-4c1102c787ee/result.json","attempt":1}

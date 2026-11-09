@@ -24,6 +24,7 @@ use crate::log_view::{
     show_virtual_line_editor, show_virtual_log_pane, show_virtual_search_pane, LineEditorSession,
 };
 use crate::theme::Tokens;
+mod web_edit;
 
 pub(crate) const LOG_FONT_DEFAULT: f32 = 13.0;
 
@@ -380,10 +381,12 @@ impl TabBackend {
 
 pub struct LogTabPage {
     view_id: u64,
+    content_epoch: u64,
     pub live: bool,
     pub filepath: Option<String>,
     pub title: String,
     pub loading: bool,
+    pub(crate) load_error: Option<String>,
     /// Lines indexed so far (file tab index build progress).
     pub index_progress: usize,
     backend: TabBackend,
@@ -394,6 +397,7 @@ pub struct LogTabPage {
     selected_pane: usize,
     auto_scroll: bool,
     edit_mode: bool,
+    web_edit: Option<web_edit::WebEditSession>,
     edit: LineEditorSession,
     edit_dirty: bool,
     edit_status: String,
@@ -433,10 +437,12 @@ impl LogTabPage {
     fn new(live: bool, filepath: Option<String>, title: String) -> Self {
         Self {
             view_id: NEXT_LOG_VIEW_ID.fetch_add(1, Ordering::Relaxed),
+            content_epoch: 0,
             live,
             filepath,
             title,
             loading: false,
+            load_error: None,
             index_progress: 0,
             backend: TabBackend::Live(LiveLogStore::new()),
             ai_visible: false,
@@ -446,6 +452,7 @@ impl LogTabPage {
             selected_pane: 0,
             auto_scroll: true,
             edit_mode: false,
+            web_edit:None,
             edit: LineEditorSession::default(),
             edit_dirty: false,
             edit_status: String::new(),
@@ -515,6 +522,7 @@ impl LogTabPage {
     }
 
     fn exit_edit_mode(&mut self) {
+        self.web_edit=None;
         self.edit_mode = false;
         self.edit_dirty = false;
         self.edit_exit_confirm_open = false;
@@ -537,6 +545,7 @@ impl LogTabPage {
             return false;
         }
         self.edit_mode = false;
+        self.web_edit=None;
         self.edit_exit_confirm_open = false;
         self.clear_edit_ui_state();
         if let Some(path) = self.filepath.as_ref().map(PathBuf::from) {
@@ -596,6 +605,7 @@ impl LogTabPage {
 
     /// Drop mmap / in-flight file workers so Windows can truncate the log.
     fn release_mapped_file(&mut self) {
+        self.content_epoch = self.content_epoch.wrapping_add(1);
         self.backend = TabBackend::Pending;
         if let Some(rx) = self.file_reload_rx.take() {
             while let Ok(ev) = rx.try_recv() {
@@ -609,7 +619,9 @@ impl LogTabPage {
     }
 
     fn start_file_reload(&mut self, path: PathBuf) {
+        self.load_error = None;
         if !self.edit_mode {
+            self.content_epoch = self.content_epoch.wrapping_add(1);
             self.backend = TabBackend::Pending;
             self.loading = true;
             self.index_progress = 0;
@@ -640,6 +652,7 @@ impl LogTabPage {
                 }
             }
             Ok(FileBuildEvent::Err(e)) => {
+                self.load_error = Some(e.clone());
                 self.edit_status = e;
                 if !self.edit_mode {
                     self.finish_loading();
@@ -649,6 +662,7 @@ impl LogTabPage {
                 self.file_reload_rx = Some(rx);
             }
             Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                self.load_error = Some("日志读取任务异常结束".into());
                 if !self.edit_mode {
                     self.finish_loading();
                 }
@@ -665,6 +679,7 @@ impl LogTabPage {
     }
 
     pub fn clear_display(&mut self) {
+        self.content_epoch = self.content_epoch.wrapping_add(1);
         self.view_id = NEXT_LOG_VIEW_ID.fetch_add(1, Ordering::Relaxed);
         if let TabBackend::Live(s) = &mut self.backend {
             s.clear();
@@ -807,6 +822,8 @@ impl LogTabPage {
     }
 
     pub fn set_file_store(&mut self, store: Arc<FileLogStore>) {
+        self.load_error = None;
+        self.content_epoch = self.content_epoch.wrapping_add(1);
         self.backend = TabBackend::File(store);
         self.loading = false;
         self.index_progress = self.line_count();
@@ -847,7 +864,21 @@ impl LogTabPage {
             .collect()
     }
 
+    /// Bounded transfer without truncating a line or skipping the next cursor.
+    pub fn lines_slice_bounded(&self,from:usize,limit:usize,max_bytes:usize)->Result<Vec<String>,()> {
+        let start=from.min(self.line_count());let end=start.saturating_add(limit).min(self.line_count());
+        let mut lines=Vec::new();let mut bytes=0usize;
+        for index in start..end {
+            let Some(line)=self.backend.line_at(index) else{return Err(())};
+            if line.len()>max_bytes{if lines.is_empty(){return Err(())}break;}
+            if bytes.saturating_add(line.len())>max_bytes{break;}
+            bytes+=line.len();lines.push(line.to_string());
+        }
+        Ok(lines)
+    }
+
     pub(crate) fn ai_view_id(&self) -> u64 { self.view_id }
+    pub(crate) fn content_epoch(&self) -> u64 { self.content_epoch }
     pub(crate) fn set_ai_visible(&mut self, visible: bool) { self.ai_visible = visible; }
     pub(crate) fn take_ai_toggle(&mut self) -> bool { std::mem::take(&mut self.ai_toggle_requested) }
     pub(crate) fn ai_selection(&self) -> String {
@@ -2475,60 +2506,20 @@ fn find_prev_range(
         .map(|(start, end)| (*start, *end, index + 1, total))
 }
 
-fn collect_line_hits(
-    lines: &[String],
-    needle: &str,
-    case_sensitive: bool,
-) -> Vec<(usize, usize, usize)> {
-    let mut hits = Vec::new();
-    for (row, line) in lines.iter().enumerate() {
-        for (start, end) in find_match_ranges(line, needle, case_sensitive) {
-            hits.push((row, start, end));
-        }
-    }
-    hits
-}
-
 fn find_next_in_lines(
-    lines: &[String],
-    needle: &str,
-    after_row: usize,
-    after_col: usize,
-    case_sensitive: bool,
-) -> Option<(usize, usize, usize, usize, usize)> {
-    let hits = collect_line_hits(lines, needle, case_sensitive);
-    let total = hits.len();
-    if total == 0 {
-        return None;
-    }
-    let index = hits
-        .iter()
-        .position(|(row, start, _)| *row > after_row || (*row == after_row && *start >= after_col))
-        .unwrap_or(0);
-    let (row, start, end) = hits[index];
-    Some((row, start, end, index + 1, total))
+    lines:&[String],needle:&str,after_row:usize,after_col:usize,case_sensitive:bool,
+)->Option<(usize,usize,usize,usize,usize)> {
+    let mut first=None;let mut chosen=None;let mut total=0;
+    for (row,line) in lines.iter().enumerate(){for (start,end) in find_match_ranges(line,needle,case_sensitive){total+=1;let hit=(row,start,end,total);if first.is_none(){first=Some(hit);}if chosen.is_none()&&(row>after_row||(row==after_row&&start>=after_col)){chosen=Some(hit);}}}
+    chosen.or(first).map(|(row,start,end,ordinal)|(row,start,end,ordinal,total))
 }
 
 fn find_prev_in_lines(
-    lines: &[String],
-    needle: &str,
-    before_row: usize,
-    before_col: usize,
-    case_sensitive: bool,
-) -> Option<(usize, usize, usize, usize, usize)> {
-    let hits = collect_line_hits(lines, needle, case_sensitive);
-    let total = hits.len();
-    if total == 0 {
-        return None;
-    }
-    let index = hits
-        .iter()
-        .rposition(|(row, start, _)| {
-            *row < before_row || (*row == before_row && *start < before_col)
-        })
-        .unwrap_or(total.saturating_sub(1));
-    let (row, start, end) = hits[index];
-    Some((row, start, end, index + 1, total))
+    lines:&[String],needle:&str,before_row:usize,before_col:usize,case_sensitive:bool,
+)->Option<(usize,usize,usize,usize,usize)> {
+    let mut last=None;let mut chosen=None;let mut total=0;
+    for (row,line) in lines.iter().enumerate(){for (start,end) in find_match_ranges(line,needle,case_sensitive){total+=1;let hit=(row,start,end,total);last=Some(hit);if row<before_row||(row==before_row&&start<before_col){chosen=Some(hit);}}}
+    chosen.or(last).map(|(row,start,end,ordinal)|(row,start,end,ordinal,total))
 }
 
 fn current_line_match(
@@ -2579,20 +2570,54 @@ fn replace_all_matches(
     ranges.len()
 }
 
-/// Write a log file, retrying Windows sharing/access errors after mmap teardown.
+/// Publish complete bytes without first truncating the user's original log.
+/// Windows replacement preserves destination attributes/ACLs. Recovery copies
+/// are retained if the OS reports a partially completed replacement.
+/// https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew
 fn write_log_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut last = None;
+    use std::io::Write;
+    let path=match std::fs::symlink_metadata(path){
+        Ok(_)=>path.canonicalize()?,
+        Err(error) if error.kind()==io::ErrorKind::NotFound=>{
+            let parent=path.parent().filter(|value|!value.as_os_str().is_empty()).unwrap_or(Path::new("."));
+            parent.canonicalize()?.join(path.file_name().ok_or_else(||io::Error::new(io::ErrorKind::InvalidInput,"missing log filename"))?)
+        },
+        Err(error)=>return Err(error),
+    };
+    let existing=match std::fs::metadata(&path){Ok(metadata)=>Some(metadata),Err(error) if error.kind()==io::ErrorKind::NotFound=>None,Err(error)=>return Err(error)};
+    if existing.as_ref().is_some_and(|metadata|metadata.permissions().readonly()){return Err(io::Error::new(io::ErrorKind::PermissionDenied,"log file is read-only"));}
+    let parent=path.parent().ok_or_else(||io::Error::new(io::ErrorKind::InvalidInput,"missing log directory"))?;
+    let temporary=parent.join(format!(".wiparse-log-write-{}.tmp",uuid::Uuid::new_v4()));
+    let mut file=std::fs::OpenOptions::new().create_new(true).write(true).open(&temporary)?;
+    let staged=file.write_all(bytes).and_then(|_|file.flush()).and_then(|_|file.sync_all());drop(file);
+    if let Err(error)=staged{let _=std::fs::remove_file(&temporary);return Err(error);}
+    #[cfg(windows)]
+    let result=if existing.is_some(){replace_log_windows(&path,&temporary)}else{std::fs::rename(&temporary,&path)};
+    #[cfg(not(windows))]
+    let result=if let Some(metadata)=existing{std::fs::set_permissions(&temporary,metadata.permissions()).and_then(|_|std::fs::rename(&temporary,&path))}else{std::fs::rename(&temporary,&path)};
+    // On a Windows partial replacement replace_log_windows retains the staging
+    // file itself, alongside the OS backup, and returns their recovery paths.
+    if result.is_ok(){let _=std::fs::remove_file(&temporary);}
+    else if path.exists() && !result.as_ref().err().is_some_and(|error|error.to_string().contains("recovery files")){let _=std::fs::remove_file(&temporary);}
+    result
+}
+
+#[cfg(windows)]
+fn replace_log_windows(path:&Path,temporary:&Path)->io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name="kernel32")]
+    extern "system" {fn ReplaceFileW(replaced:*const u16,replacement:*const u16,backup:*const u16,flags:u32,exclude:*mut std::ffi::c_void,reserved:*mut std::ffi::c_void)->i32;}
+    let backup=path.parent().unwrap().join(format!(".wiparse-log-backup-{}.log",uuid::Uuid::new_v4()));
+    let wide=|value:&Path|value.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<_>>();
+    let target=wide(path);let source=wide(temporary);let recovery=wide(&backup);
+    let mut last=None;
     for _ in 0..12 {
-        match std::fs::write(path, bytes) {
-            Ok(()) => return Ok(()),
-            Err(e) if is_file_lock_error(&e) => {
-                last = Some(e);
-                thread::sleep(Duration::from_millis(25));
-            }
-            Err(e) => return Err(e),
-        }
+        if unsafe{ReplaceFileW(target.as_ptr(),source.as_ptr(),recovery.as_ptr(),0,std::ptr::null_mut(),std::ptr::null_mut())}!=0{let _=std::fs::remove_file(&backup);return Ok(());}
+        let error=io::Error::last_os_error();
+        if backup.exists(){return Err(io::Error::new(error.kind(),format!("Log replacement failed ({error}); recovery files: {} ; {}. No automatic retry was performed.",backup.display(),temporary.display())));}
+        if is_file_lock_error(&error)||error.raw_os_error()==Some(1224){last=Some(error);thread::sleep(Duration::from_millis(25));}else{return Err(error);}
     }
-    Err(last.unwrap_or_else(|| io::Error::from_raw_os_error(5)))
+    Err(last.unwrap_or_else(||io::Error::from_raw_os_error(5)))
 }
 
 fn is_file_lock_error(e: &io::Error) -> bool {

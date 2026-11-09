@@ -20,6 +20,8 @@ pub struct Ft4222Session {
     pub identity: Identity,
     pub kind: InstrumentKind,
     inner: BridgeInner,
+    #[cfg(windows)]
+    _resource_lease: Option<crate::resource_lock::ResourceLease>,
 }
 
 enum BridgeInner {
@@ -84,6 +86,8 @@ impl Ft4222Session {
                 gpio_dir: [true, true, true, true],
                 gpio_val: [false; 4],
             },
+            #[cfg(windows)]
+            _resource_lease: None,
         }
     }
 
@@ -96,6 +100,14 @@ impl Ft4222Session {
                 "only FT4222 USB bridges are supported here".into(),
             ));
         }
+        // A stable explicit FTDI serial can fence cooperating processes. An
+        // index-based open cannot be reliably mapped to the same physical
+        // device and deliberately remains outside this partial guarantee.
+        #[cfg(windows)]
+        let resource_lease=if spec.serial.is_empty(){None}else{
+            let root=crate::resource_lock::default_lock_root().map_err(|e|InstrumentError::Io(format!("FT4222 resource lock: {e}")))?;
+            Some(crate::resource_lock::ResourceLease::acquire(&root,&format!("FT4222::{}",spec.serial)).map_err(|e|InstrumentError::Io(format!("FT4222 resource lock: {e}")))?)
+        };
         let live = LiveBridge::open(if spec.serial.is_empty() {
             None
         } else {
@@ -106,6 +118,8 @@ impl Ft4222Session {
             identity: spec.identity(),
             kind: InstrumentKind::UsbBridge,
             inner: BridgeInner::Live(live),
+            #[cfg(windows)]
+            _resource_lease: resource_lease,
         })
     }
 

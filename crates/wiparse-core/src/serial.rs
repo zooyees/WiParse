@@ -17,7 +17,7 @@ mod serial_windows;
 #[path = "serial_winusb.rs"]
 mod serial_winusb;
 pub use serial_winusb::{
-    open_winusb_i2c, open_winusb_uart, WinUsbI2c, WinUsbUart, WINUSB_UART_PREFIX,
+    open_winusb_i2c, open_winusb_uart, parse_winusb_uart_device, WinUsbI2c, WinUsbUart, WINUSB_UART_PREFIX,
 };
 
 struct WifiUartCache {
@@ -504,6 +504,10 @@ pub struct SerialSession {
     buf: Vec<u8>,
     /// Actual transport opened (may be TCP after WinUSB fallback).
     pub device: String,
+    // Drop after the port closes, so another cooperating process cannot open
+    // the same COM device while this session still owns the OS handle.
+    #[cfg(windows)]
+    _resource_lease: Option<crate::resource_lock::ResourceLease>,
 }
 
 impl SerialSession {
@@ -518,11 +522,15 @@ impl SerialSession {
                         port: PortBackend::WinUsb(uart),
                         buf: Vec::with_capacity(4096),
                         device: device.to_string(),
+                        #[cfg(windows)]
+                        _resource_lease: None,
                     });
                 }
                 Err(usb_err) => return Err(usb_err),
             }
         }
+        #[cfg(windows)]
+        let resource_lease=crate::resource_lock::acquire_com_resource(device).map_err(|e|SerialError::Message(e.to_string()))?;
         let port = serialport::new(device, baud)
             .timeout(Duration::from_millis(50))
             .open()?;
@@ -530,6 +538,8 @@ impl SerialSession {
             port: PortBackend::Serial(port),
             buf: Vec::with_capacity(4096),
             device: device.to_string(),
+            #[cfg(windows)]
+            _resource_lease: resource_lease,
         })
     }
 
@@ -618,6 +628,8 @@ fn open_tcp_uart(
         port: PortBackend::Tcp(stream),
         buf: Vec::with_capacity(4096),
         device: device.to_string(),
+        #[cfg(windows)]
+        _resource_lease: None,
     })
 }
 

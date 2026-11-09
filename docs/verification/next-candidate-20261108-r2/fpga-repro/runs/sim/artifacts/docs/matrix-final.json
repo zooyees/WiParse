@@ -1,0 +1,452 @@
+{
+  "schema_version": "wiparse.test-matrix/1",
+  "revision": 19,
+  "run_id": "394d1280-4c78-4163-a5bb-73b7de3679a4",
+  "preflight_revision": "4cd5de5d512eff98ab8dc268a03d15797514fc972ea0f9a25609740c27b41cf3",
+  "active_item_id": null,
+  "items": [
+    {
+      "id": "fpga_01_pll_clock",
+      "name": "PLL 时钟锁定与输出频率验证",
+      "order": 10,
+      "tags": [
+        "demo",
+        "clock",
+        "dongle-uart",
+        "dongle-reset",
+        "analog-scope"
+      ],
+      "selected": true,
+      "status": "pass",
+      "phase": "finished",
+      "attempt": 1,
+      "progress": 1,
+      "elapsed_s": 15.0628343,
+      "message": "",
+      "config_sha256": "f5645b6cf80e0ec6a4a5eeab029b125e79dac87c77f647d890983ad1129b005b",
+      "result_ref": "runs/sim/artifacts/items/fpga_01_pll_clock/26143986-6990-470b-a0ca-4c1102c787ee/result.json",
+      "attempt_id": "26143986-6990-470b-a0ca-4c1102c787ee",
+      "loop_index": 1
+    },
+    {
+      "id": "fpga_02_reset_controller",
+      "name": "Reset Controller 复位时序验证",
+      "order": 20,
+      "tags": [
+        "demo",
+        "system",
+        "com-uart",
+        "dc-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "409934551db99c34225eb58ffd08b0f9c5f0fa9d208aea6d8ef6d89dbe7e611d",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_03_gpio",
+      "name": "GPIO 输入输出与中断验证",
+      "order": 30,
+      "tags": [
+        "demo",
+        "peripheral",
+        "dongle-uart",
+        "dongle-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "b8caab50cfc3eac9a804f3335e0db6346b578ea5a2258ac28dec82026cff4161",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_04_uart",
+      "name": "UART 串口收发与回环验证",
+      "order": 40,
+      "tags": [
+        "demo",
+        "communication",
+        "com-uart",
+        "dongle-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "da70b34320082c0d8cf48be4f55b75b3922c7a37d95d164777580adc1a88f206",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_05_spi_master",
+      "name": "SPI Master 主机传输验证",
+      "order": 50,
+      "tags": [
+        "demo",
+        "communication",
+        "dongle-uart",
+        "dongle-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "d1140aab9fa9b3c0547e1e2b3a777ee26870daabba090cc691b8ddbcc4e8651e",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_06_spi_slave",
+      "name": "SPI Slave 从机响应验证",
+      "order": 60,
+      "tags": [
+        "demo",
+        "communication",
+        "com-uart",
+        "dc-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "41e44d2df01004d9266e55403636c118e7c1c261ccc4d9879313de12a04a99df",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_07_i2c_master",
+      "name": "I2C Master 读写与应答验证",
+      "order": 70,
+      "tags": [
+        "demo",
+        "communication",
+        "dongle-uart",
+        "dongle-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "a50295d4a4971750d0d798969e7b05f06c789839a220df096af4663b2d97e2ff",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_08_i2c_slave",
+      "name": "I2C Slave 地址与寄存器验证",
+      "order": 80,
+      "tags": [
+        "demo",
+        "communication",
+        "com-uart",
+        "dongle-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "df6c70e9c6ddc08526c2c07a7668468f00e97552b8eae456ae3e4c2df9b36d44",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_09_pwm",
+      "name": "PWM 输出频率与占空比验证",
+      "order": 90,
+      "tags": [
+        "demo",
+        "peripheral",
+        "dongle-uart",
+        "dongle-reset",
+        "analog-scope"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "fc714779453503d4e2e3318e94264e33a1a2df08e9373eba11ad51030a1df186",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_10_timer_counter",
+      "name": "Timer Counter 定时计数验证",
+      "order": 100,
+      "tags": [
+        "demo",
+        "peripheral",
+        "com-uart",
+        "dc-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "a5e24ab22bb5da3d40a7a8d6367f4287add2e7504aa977772bed7d6a2b982782",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_11_watchdog",
+      "name": "Watchdog 看门狗超时复位验证",
+      "order": 110,
+      "tags": [
+        "demo",
+        "system",
+        "dongle-uart",
+        "dongle-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "201f246f08a0076c19bc9a6efd4619437e6465eb55b49aa36226f3762eeb86eb",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_12_sync_fifo",
+      "name": "Sync FIFO 同步读写与满空验证",
+      "order": 120,
+      "tags": [
+        "demo",
+        "memory",
+        "com-uart",
+        "dongle-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "b0ebb8850fafca1727103a82890034ca7f60747559b02a674e72c46e87c69f9c",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_13_async_fifo",
+      "name": "Async FIFO 跨时钟域传输验证",
+      "order": 130,
+      "tags": [
+        "demo",
+        "memory",
+        "dongle-uart",
+        "dongle-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "f255f89e960f648c7a5b30c28b9abf3d24764aaf818550f0e95dd6da83e95f0e",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_14_block_ram",
+      "name": "Block RAM 存储读写验证",
+      "order": 140,
+      "tags": [
+        "demo",
+        "memory",
+        "com-uart",
+        "dc-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "d392a88d60a36c923dbb4e338f7968b2e5eda435ad1942742d7f7d90b5823467",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_15_ddr_controller",
+      "name": "DDR Controller 内存训练与访问验证",
+      "order": 150,
+      "tags": [
+        "demo",
+        "memory",
+        "dongle-uart",
+        "dongle-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "fc8158c614ef0cdec78819489f583747bd8e67d37771e05353fcaec83dfb102f",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_16_axi_lite",
+      "name": "AXI4-Lite 寄存器接口验证",
+      "order": 160,
+      "tags": [
+        "demo",
+        "bus",
+        "com-uart",
+        "dongle-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "ef5cbfd84af9f0fa06b207da52808f5b9eca4b452582f4649108944202ce3529",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_17_axi_stream",
+      "name": "AXI4-Stream 数据流与背压验证",
+      "order": 170,
+      "tags": [
+        "demo",
+        "bus",
+        "dongle-uart",
+        "dongle-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "b33bb684f521ef60056c2e72e10bdeb9949d1b7aea9f92797ef864c8b0486479",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_18_dma",
+      "name": "DMA 数据搬运与中断验证",
+      "order": 180,
+      "tags": [
+        "demo",
+        "bus",
+        "com-uart",
+        "dc-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "469f5e3fa486dd4eb0e78b927d6b9caab3581479cf0ec613a775728c109dfb61",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_19_ethernet_mac",
+      "name": "Ethernet MAC 帧收发与校验验证",
+      "order": 190,
+      "tags": [
+        "demo",
+        "communication",
+        "dongle-uart",
+        "dongle-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "ec1dbb2977bf15ac86e4973037d82cb00d383f0fa35ad4800fcd68644255508f",
+      "result_ref": null
+    },
+    {
+      "id": "fpga_20_crc32",
+      "name": "CRC32 数据校验计算验证",
+      "order": 200,
+      "tags": [
+        "demo",
+        "compute",
+        "com-uart",
+        "dongle-reset",
+        "log-selftest"
+      ],
+      "selected": false,
+      "status": "skipped",
+      "phase": "preflight",
+      "attempt": 1,
+      "progress": 0,
+      "elapsed_s": 0,
+      "message": "",
+      "config_sha256": "47940f621ef38e08e6f15b4ad6229661b83d8358e3706142e6ecc19b33c087f2",
+      "result_ref": null
+    }
+  ],
+  "project_config": {
+    "revision": 1,
+    "sha256": "e3c937182ae96661b0787a3b4a10447a4c01ab0eacdb23a8d701ef74bd45a1f9",
+    "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "updated_at": "2026-11-08T04:23:14.819Z",
+  "summary": {
+    "total": 20,
+    "pending": 0,
+    "running": 0,
+    "pass": 1,
+    "fail": 0,
+    "error": 0,
+    "skipped": 19,
+    "aborted": 0,
+    "inconclusive": 0,
+    "selected": 1
+  },
+  "plugin_id": "fpga-firmware-test",
+  "cycle": 1,
+  "elapsed_s": 14.1564771
+}

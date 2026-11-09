@@ -1,0 +1,32 @@
+{
+  "candidate": "R41",
+  "passed": true,
+  "scope": "final protocol-selector and waveform workflow desktop acceptance, not full hardware parity certification",
+  "observed": [
+    "Native multi-file dialog loads UART + DDSSS: 2 files, 3 channels visible, union range 0..0.0721709 s",
+    "Closing UART source closes only in-memory traces, remaining DDSSS becomes primary",
+    "DDSSS signal displays Select channel after removed source; does not silently remap",
+    "Selecting CH1 succeeds; DDSSS SEQA ext off FOP128000 decodes 3 frames, 3069 chips, 1 intended checksum error",
+    "All 4 tracks rendered: frames, bytes, bits, chips, overview indicates sampled marks",
+    "Search full bytes 03 55 56 returns only original frame3, count1/3; clear returns3/3",
+    "Issue-only returns original frame2, count1/3; click highlights its wave band and detail says checksum mismatch 03 10 12",
+    "Seven progressive X+ zooms from full view to 0.03580353..0.03636737 s show raw carrier detail and resolved bit/chip marks without full-height protocol lines"
+  ],
+  "prior_scope_evidence": {
+    "R39": "UART 4 frames/intentional framing error/filter and transaction-sized focus, R39 overlay failure corrected in R40",
+    "R40": "double-curve rendering, Y zoom/Fit, arrangement, raw measurement, precise X cursor/gated186samples, file append verified before final selector-only revision"
+  },
+  "fixtures_sha256": {
+    "docs\\verification\\next-candidate-20261109-r39\\uart-two-channels.csv": "3d64220bc5f1ea84ead71392a0f66c1fe55ae1385ef1f694dfb42c277a7817ca",
+    "docs\\verification\\next-candidate-20261109-r39\\ddsss-analysis.csv": "68f139f05afb4ca5f95abc2f78b01aec17195bcf20279bcee797599d8229d63b"
+  },
+  "screenshots": [
+    "missing-channel-explicit.jpg",
+    "ddsss-overview.jpg",
+    "ddsss-detail.jpg"
+  ],
+  "qa_closed_normally": true,
+  "hardware": "not_executed",
+  "real_ai": "not_executed",
+  "dpi_long_run": "not_executed"
+}

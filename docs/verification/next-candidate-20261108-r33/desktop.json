@@ -1,0 +1,9 @@
+{
+  "candidate": "R33",
+  "status": "awaiting_exclusive_host",
+  "reason": "User-opened Preview-R31 owns shared localhost:7878 host; no QA-R33 window launched and no commands sent to the user instance",
+  "automated_tests": 80,
+  "desktop_checks_executed": false,
+  "hardware_executed": false,
+  "real_ai_executed": false
+}

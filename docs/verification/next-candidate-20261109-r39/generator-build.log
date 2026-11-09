@@ -1,0 +1,6 @@
+warning: linker stdout: 正在创建库 docs\verification\next-candidate-20261109-r39\generate-ddsss.lib 和对象 docs\verification\next-candidate-20261109-r39\generate-ddsss.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: 1 warning emitted
+

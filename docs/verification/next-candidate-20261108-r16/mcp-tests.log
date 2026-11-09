@@ -1,0 +1,23 @@
+
+> wiparse-mcp@1.2.2 test
+> node --test test/*.test.mjs && node test/smoke.mjs
+
+✔ instance credentials stay confined to the fixed local bridge (1.5866ms)
+✔ uncertain HTTP failures never replay a device operation (53.1538ms)
+✔ device calls never follow redirects or forward credentials to another server (10.8944ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 514.8676
+{
+  "ok": true,
+  "mcp_version": "1.2.2",
+  "tool_count": 6,
+  "report_dispatch_checks": 4,
+  "hub_dispatch_checks": 20,
+  "backend": "local mock; no hardware"
+}

@@ -1,0 +1,16 @@
+import {LocalizedLabel} from './localization';
+import {useEffect,useRef,useState} from 'react';
+import {invoke} from '@tauri-apps/api/core';
+import {object,string} from './model';
+
+export type OpenedLog={tab:number;view:number;nonce:number};
+export function SerialLogBrowser({disabled,onOpened}:{disabled:boolean;onOpened:(value:OpenedLog)=>void}) {
+  const [listing,setListing]=useState<Record<string,unknown>|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  const generation=useRef(0);
+  useEffect(()=>{if(disabled)return;let active=true;const token=++generation.current;void invoke('serial_browser_status').then(value=>{if(active&&generation.current===token&&value)setListing(object(value));}).catch(reason=>{if(active&&generation.current===token)setError(String(reason));});return()=>{active=false;};},[disabled]);
+  const pick=async()=>{generation.current++;setBusy(true);setError('');try{const value=await invoke('serial_browser_pick');if(value)setListing(object(value));}catch(reason){setError(String(reason));}finally{setBusy(false);}};
+  const navigate=async(relative:string)=>{if(!listing)return;generation.current++;setBusy(true);setError('');try{setListing(object(await invoke('serial_browser_list',{session:listing.session,relative})));}catch(reason){setError(String(reason));}finally{setBusy(false);}};
+  const open=async(relative:string)=>{if(!listing)return;setBusy(true);setError('');try{const value=object(await invoke('serial_browser_open_file',{session:listing.session,relative}));if(typeof value.tab_id!=='number'||typeof value.view_id!=='number')throw Error('打开状态未确认，请查看日志页');onOpened({tab:value.tab_id,view:value.view_id,nonce:Date.now()});}catch(reason){setError(String(reason));}finally{setBusy(false);}};
+  const entries=Array.isArray(listing?.entries)?listing.entries.map(object):[];
+  return <section className="serial-log-browser"><div className="section-heading"><strong><LocalizedLabel text={"日志目录"}/></strong></div><div className="serial-buttons"><button className="button secondary" disabled={disabled||busy} onClick={()=>void pick()}><LocalizedLabel text={"选择目录"}/></button><button className="button secondary" disabled={disabled||busy||!listing} onClick={()=>void navigate(string(listing?.relative))}><LocalizedLabel text={"刷新"}/></button></div>{listing&&<><small className="serial-browser-location" title={string(listing.relative)}>{string(listing.name)}{listing.relative?` / ${String(listing.relative)}`:''}</small>{typeof listing.parent==='string'&&<button className="button secondary" disabled={disabled||busy} onClick={()=>void navigate(String(listing.parent))}><LocalizedLabel text={"上一级"}/></button>}<ul>{entries.map(entry=><li key={string(entry.relative)}><button title={string(entry.name)} disabled={disabled||busy} onClick={()=>void (entry.directory===true?navigate(string(entry.relative)):open(string(entry.relative)))}><span aria-hidden="true">{entry.directory===true?'▸':'▤'}</span>{string(entry.name)}</button></li>)}</ul>{!entries.length&&<small><LocalizedLabel text={"当前目录没有支持的日志文件。"}/></small>}{listing.truncated===true&&<small><LocalizedLabel text={"目录较大，仅显示部分条目；可用“打开文件”直接选择。"}/></small>}</>}{error&&<div className="detail-warning" role="alert">{error}</div>}</section>;
+}

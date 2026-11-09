@@ -1,0 +1,8 @@
+{
+  "diagnostic_host_pid": 40564,
+  "parent_closed_by": "computer-use normal window close",
+  "observed_after_seconds": 2,
+  "host_process_remaining": false,
+  "forced_termination": false,
+  "scope": "isolated generated diagnostic preview; no capture, instruments or test running"
+}

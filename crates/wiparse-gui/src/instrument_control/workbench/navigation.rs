@@ -13,6 +13,19 @@ pub(super) fn scan(panel: &mut InstrumentControlPanel, lang: Lang) {
     });
 }
 
+fn fleet_rank(kind: InstrumentKind) -> u8 {
+    match kind {
+        InstrumentKind::DcSource => 0,
+        InstrumentKind::ElectronicLoad => 1,
+        InstrumentKind::Oscilloscope => 2,
+        InstrumentKind::Multimeter => 3,
+        InstrumentKind::DebugProbe => 4,
+        InstrumentKind::WiparseDongle => 5,
+        InstrumentKind::UsbBridge => 6,
+        InstrumentKind::Generic => 7,
+    }
+}
+
 pub(super) fn sidebar(
     panel: &mut InstrumentControlPanel,
     ui: &mut egui::Ui,
@@ -46,7 +59,7 @@ pub(super) fn sidebar(
                     }
                 });
             });
-            ui.add_space(16.0);
+            ui.add_space(8.0);
             if nav_row(
                 ui,
                 t,
@@ -64,7 +77,7 @@ pub(super) fn sidebar(
             {
                 panel.select_overview();
             }
-            ui.add_space(14.0);
+            ui.add_space(6.0);
             ui.label(
                 RichText::new(text(lang, "设备", "DEVICES"))
                     .size(11.0)
@@ -174,7 +187,7 @@ pub(super) fn header(
     let d = &panel.devices[index];
     let id = d.id;
     let width = ui.available_width();
-    let (r, _) = ui.allocate_exact_size(egui::vec2(width, 76.0), egui::Sense::hover());
+    let (r, _) = ui.allocate_exact_size(egui::vec2(width, 64.0), egui::Sense::hover());
     let has_tabs = d.kind != InstrumentKind::DcSource;
     let tabs_width = (width * 0.46).min(370.0);
     let tabs_left = (r.right() - 100.0 - tabs_width).max(r.left());
@@ -284,10 +297,10 @@ pub(super) fn connection(
     lang: Lang,
     t: &Tokens,
 ) {
-    ui.add_space(24.0);
+    ui.add_space(8.0);
     ui.label(
         RichText::new(instrument_name(lang, panel.selected_kind))
-            .size(24.0)
+            .size(18.0)
             .strong(),
     );
     ui.label(
@@ -298,7 +311,7 @@ pub(super) fn connection(
         ))
         .color(t.text_muted),
     );
-    ui.add_space(24.0);
+    ui.add_space(8.0);
     egui::ScrollArea::vertical().show(ui, |ui| {
         section(
             ui,
@@ -361,10 +374,9 @@ pub(super) fn overview(
     lang: Lang,
     t: &Tokens,
 ) {
-    ui.add_space(8.0);
     ui.label(
         RichText::new(text(lang, "设备总览", "All instruments"))
-            .size(24.0)
+            .size(18.0)
             .strong(),
     );
     ui.label(
@@ -375,23 +387,17 @@ pub(super) fn overview(
         ))
         .color(t.text_muted),
     );
-    ui.add_space(20.0);
-    if panel
-        .resources
-        .iter()
-        .any(|r| !panel.devices.iter().any(|d| d.resource == r.address))
-    {
-        if action(
-            ui,
-            t,
-            text(lang, "连接已发现设备", "Connect discovered devices"),
-            false,
-        )
-        .clicked()
+    ui.add_space(8.0);
+    if panel.resources.iter().any(|r| {
+        r.kind.is_some_and(|kind| kind != InstrumentKind::Generic)
+            && !panel.devices.iter().any(|d| d.resource == r.address)
+    }) {
+        if action(ui, t, text(lang, "连接已识别设备", "Connect identified devices"), false)
+            .clicked()
         {
             let _ = panel.queue_connect_all(lang);
         }
-        ui.add_space(12.0);
+        ui.add_space(8.0);
     }
     let mut picked = None;
     egui::ScrollArea::vertical()
@@ -423,7 +429,13 @@ pub(super) fn overview(
             } else {
                 1
             };
-            for row in panel.devices.chunks(cols) {
+            let mut ordered: Vec<_> = panel.devices.iter().collect();
+            ordered.sort_by(|a, b| {
+                fleet_rank(a.kind)
+                    .cmp(&fleet_rank(b.kind))
+                    .then_with(|| a.identity.model.cmp(&b.identity.model))
+            });
+            for row in ordered.chunks(cols) {
                 ui.columns(cols, |columns| {
                     for (d, ui) in row.iter().zip(columns.iter_mut()) {
                         section(
@@ -446,7 +458,7 @@ pub(super) fn overview(
                                     reading,
                                     26.0,
                                 );
-                                ui.add_space(12.0);
+                                ui.add_space(8.0);
                                 if action(ui, t, text(lang, "打开控制台", "Open console"), false)
                                     .clicked()
                                 {

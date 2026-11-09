@@ -1,0 +1,9 @@
+{
+  "kind": "inherited_desktop_evidence",
+  "successful_viewport_path_unchanged": true,
+  "inherited_from": "next-candidate-20261109-r44/desktop.json",
+  "delta": "Only primary read failure stops unstarted channel reads; already active reads still settle before next batch. Strengthened deterministic test passed.",
+  "full_r45_desktop_retest": false,
+  "hardware": "not_executed",
+  "real_ai": "not_executed"
+}

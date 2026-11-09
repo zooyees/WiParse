@@ -107,6 +107,15 @@ function runProcess(cliPath, args, { cwd, env, log, timeoutMs = DEFAULT_CLI_TIME
   });
 }
 
+/** Never forward a local host credential to a user-supplied remote endpoint. */
+export function localApiHeaders(base, env=process.env) {
+  let target;try{target=new URL(base);}catch{return {};}
+  const token=env.WIPARSE_LOCAL_API_TOKEN;
+  if(target.protocol==='http:'&&target.hostname==='127.0.0.1'&&target.port==='7878'&&target.username===''&&target.password===''
+    &&typeof token==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(token))return {Authorization:`Bearer ${token}`};
+  return {};
+}
+
 /**
  * HTTP client against running WiParse.exe (`/v1/health`, `/v1/invoke`).
  * @param {{ url?: string, log?: Function }} [opts]
@@ -136,7 +145,7 @@ export function createHttpClient(opts = {}) {
     try {
       const res = await fetch(`${base}/v1/invoke`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...localApiHeaders(base) },
         body: JSON.stringify({ method, params }),
         signal: ctrl.signal,
       });
@@ -145,7 +154,7 @@ export function createHttpClient(opts = {}) {
         const msg = `HTTP ${res.status} ${method}: ${body.slice(0, 240)}`;
         log?.("stderr", `${msg}\n`);
         if (allowFail) return { ok: false, error: msg };
-        throw new Error(msg);
+        const error=new Error(msg);error.httpStatus=res.status;throw error;
       }
       const json = await res.json();
       if (!allowFail && json && json.ok === false) {
@@ -208,8 +217,12 @@ export function createClient(opts = {}) {
       invoke: async (method, params = {}, ms) => {
         try {
           return await http.invoke(method, params, ms);
-        } catch {
-          return cli(
+        } catch (error) {
+          // Only a positively rejected unauthenticated request can be retried
+          // through the credential-aware CLI. Transport/timeouts may have
+          // already changed the device, so never replay them.
+          if(error.httpStatus!==401)throw error;
+          const result=await cli(
             [
               "api",
               "invoke",
@@ -221,6 +234,7 @@ export function createClient(opts = {}) {
             {},
             typeof ms === "number" ? ms : DEFAULT_CLI_TIMEOUT_MS
           );
+          try{return JSON.parse(result.stdout);}catch{throw new Error("credential-aware CLI returned invalid JSON; command result unknown");}
         }
       },
     },

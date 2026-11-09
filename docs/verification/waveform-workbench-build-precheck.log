@@ -1,0 +1,13 @@
+
+> wiparse-next@0.1.0 build
+> tsc --noEmit && vite build
+
+src/waveAnalysis.ts(8,239): error TS2345: Argument of type '"" | `${string}:${number}`' is not assignable to parameter of type '`${string}:${number}`'.
+  Type '""' is not assignable to type '`${string}:${number}`'.
+src/waveAnalysis.ts(8,468): error TS2345: Argument of type '"" | `${string}:${number}`' is not assignable to parameter of type '`${string}:${number}`'.
+  Type '""' is not assignable to type '`${string}:${number}`'.
+npm notice
+npm notice New major version of npm available! 11.12.1 -> 12.2.2
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.2
+npm notice To update run: npm install -g npm@12.2.2
+npm notice

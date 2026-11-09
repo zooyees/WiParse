@@ -157,7 +157,11 @@ export class ConfigStore {
       fs.unlinkSync(intent); fs.unlinkSync(intent+'.committed'); flushDir(this.transactions);
     } catch (error) {
       try { this.rollback(journal); fs.unlinkSync(intent); }
-      catch { atomicWrite(path.join(this.s.editorRoot,'recovery-required'),'true'); fail('CONFIG.RECOVERY_REQUIRED','Transaction rollback failed; repository is read-only'); }
+      catch (rollbackError) {
+        const code=value=>typeof value==='string'&&/^[A-Z0-9_.-]{1,80}$/i.test(value)?value:'UNKNOWN';
+        atomicWrite(path.join(this.s.editorRoot,'recovery-required'),'true');
+        fail('CONFIG.RECOVERY_REQUIRED','Transaction rollback failed; repository is read-only',{operation_error:code(error?.code),operation_syscall:code(error?.syscall),rollback_error:code(rollbackError?.code),rollback_syscall:code(rollbackError?.syscall)});
+      }
       throw error;
     }
     const preflight=path.join(this.s.editorRoot,'preflight.json'); if (fs.existsSync(preflight)) fs.unlinkSync(preflight);
@@ -183,6 +187,8 @@ export class ConfigStore {
     return this.withLock(()=>{
       const rows=this.scan(), old=rows.find(r=>r.id===params.config_id);
       this.expected(old,params); this.assertUnlocked([params.config_id]);
+      if(params.source_snapshot){const source=rows.find(r=>r.id===params.source_snapshot.config_id);this.expected(source,{expected_revision:params.source_snapshot.revision,expected_sha256:params.source_snapshot.sha256});}
+      if(params.project_snapshot){const project=getProject(this);if(!project?.saved||project.revision!==params.project_snapshot.revision||project.sha256!==params.project_snapshot.sha256)fail('CONFIG.REVISION_CONFLICT','Project settings changed');}
       const value=structuredClone(params.value);if(!value||typeof value!=='object'||Array.isArray(value))fail('SCHEMA.VALIDATION_FAILED','Configuration must be an object');id(value.id);this.assertUnlocked([params.config_id,value.id]);
       if(old&&old.id!==value.id&&old.id.toLowerCase()===value.id.toLowerCase())fail('CONFIG.ID_CONFLICT','Case-only rename is ambiguous on Windows; choose a distinct id');
       if (rows.some(r=>r.id.toLowerCase()===value.id.toLowerCase()&&r.id!==old?.id)) fail('CONFIG.ID_CONFLICT');

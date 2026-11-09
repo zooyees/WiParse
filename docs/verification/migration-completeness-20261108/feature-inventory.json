@@ -1,0 +1,857 @@
+{
+  "kind": "gui_migration_feature_inventory",
+  "baseline": "R23",
+  "report": "docs/reviews/gui-migration-completeness-2026-11-08.md",
+  "report_sha256": "ad6b8e7b74d3b4fcedd8501e97984f9b240204315ebd20af9c38ccb2e13cc6f4",
+  "status_meaning": {
+    "M": "代码已接入，不等于验收完成",
+    "P": "部分迁移",
+    "G": "缺少等价路径",
+    "C": "有意改变路径，需要流程确认",
+    "O": "旧版原未实现，不计迁移缺口"
+  },
+  "total_checks": 119,
+  "counts": {
+    "M": 85,
+    "P": 10,
+    "C": 3,
+    "G": 19,
+    "O": 2
+  },
+  "items": [
+    {
+      "id": "A01",
+      "feature": "七工具导航与设置入口",
+      "status": "M",
+      "assessment": "新工作台有全部一级入口；S01",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "A02",
+      "feature": "左右侧栏拖动及最小宽度",
+      "status": "M",
+      "assessment": "ResizableWorkspace、各工具布局；S01",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "A03",
+      "feature": "明暗主题",
+      "status": "M",
+      "assessment": "全局外观及画布主题已接入；S01",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "A04",
+      "feature": "中英文切换",
+      "status": "M",
+      "assessment": "localization 与设置接入；仍缺全文等价矩阵；S01",
+      "verification": "A/V"
+    },
+    {
+      "id": "A05",
+      "feature": "编辑互锁、未保存关闭确认",
+      "status": "M",
+      "assessment": "编辑所有者、关闭保护、宿主恢复路径；S01/S12",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "A06",
+      "feature": "切换工具后保留工作状态",
+      "status": "P",
+      "assessment": "条件挂载卸载页面，部分输入/规则/分析结果只在组件 state；F01",
+      "verification": "S/V"
+    },
+    {
+      "id": "A07",
+      "feature": "旧设置菜单的工具显隐",
+      "status": "C",
+      "assessment": "新固定导航替代旧面板显隐；不能称完全相同；S01",
+      "verification": "S/V"
+    },
+    {
+      "id": "A08",
+      "feature": "冷启动、宿主身份和正常退出",
+      "status": "M",
+      "assessment": "产品/桥协议/实例校验，空闲退出及活动任务保护；S12",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "S01",
+      "feature": "串口/网络源及波特率",
+      "status": "M",
+      "assessment": "沿用原串口执行器，常用和自定义波特率；S02",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "S02",
+      "feature": "主串口和附加串口并行",
+      "status": "M",
+      "assessment": "来源/独立日志页和停止入口；S02",
+      "verification": "A/V"
+    },
+    {
+      "id": "S03",
+      "feature": "文本/十六进制发送",
+      "status": "M",
+      "assessment": "原发送接口、换行选项；S02",
+      "verification": "A/V"
+    },
+    {
+      "id": "S04",
+      "feature": "记录开关、文件名、路径、记录设置",
+      "status": "M",
+      "assessment": "安全配置接口与录制状态；S02",
+      "verification": "A/V"
+    },
+    {
+      "id": "S05",
+      "feature": "新建/清空实时日志",
+      "status": "M",
+      "assessment": "停止/测试互锁、代际校验与确认；S02",
+      "verification": "A/V"
+    },
+    {
+      "id": "S06",
+      "feature": "日志目录浏览与打开",
+      "status": "M",
+      "assessment": "持久根、目录/文件列表；S02",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "S07",
+      "feature": "打开、选择、关闭日志页",
+      "status": "M",
+      "assessment": "tab/view 身份校验；S02",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "S08",
+      "feature": "历史分页与行号",
+      "status": "M",
+      "assessment": "分页读取、丢行提示，保留行数限制；S02",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "S09",
+      "feature": "过滤与区分大小写",
+      "status": "M",
+      "assessment": "单窗过滤保留，数据分窗按用户此前要求取消；S02",
+      "verification": "A/V"
+    },
+    {
+      "id": "S10",
+      "feature": "前后查找及全部匹配结果",
+      "status": "M",
+      "assessment": "循环查找、全快照计数、有界结果预览；S02",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "S11",
+      "feature": "定位行与点击结果跳转",
+      "status": "M",
+      "assessment": "Ctrl+G、定位/结果复核；S02",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "S12",
+      "feature": "上滚冻结、底部恢复跟随",
+      "status": "M",
+      "assessment": "显示冻结，不停止串口采集；S02",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "S13",
+      "feature": "日志编辑、查找替换、保存/另存",
+      "status": "M",
+      "assessment": "原行编辑器、分页缓冲及安全保存；S02",
+      "verification": "A/V"
+    },
+    {
+      "id": "S14",
+      "feature": "编辑快捷键完整等价",
+      "status": "P",
+      "assessment": "Ctrl+S 已接入；Ctrl+Shift+S 当前也走 save(false)，未等价触发另存；F14",
+      "verification": "S/V"
+    },
+    {
+      "id": "S15",
+      "feature": "日志/协议文字独立字体缩放",
+      "status": "G",
+      "assessment": "旧版 Ctrl 缩放有 font_size/proto_font_size，新日志页无对应控制；F14",
+      "verification": "S"
+    },
+    {
+      "id": "S16",
+      "feature": "Qi 报文解释",
+      "status": "M",
+      "assessment": "同一 decode_qi_message；呈现改为选择行的说明快照；S02",
+      "verification": "A/V"
+    },
+    {
+      "id": "S17",
+      "feature": "配置里的串口自动重连",
+      "status": "O",
+      "assessment": "原字段未接入原执行代码；不应以无效旧开关要求假实现；S02",
+      "verification": "S"
+    },
+    {
+      "id": "I01",
+      "feature": "全局服务/模型/地址/密钥配置",
+      "status": "M",
+      "assessment": "DeepSeek/千问/自定义兼容路径、DPAPI；S03",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "I02",
+      "feature": "固定短句连接测试",
+      "status": "M",
+      "assessment": "使用真实服务接口链；本轮未调用外部模型；S03",
+      "verification": "A/V"
+    },
+    {
+      "id": "I03",
+      "feature": "串口会话与 Markdown 展示",
+      "status": "M",
+      "assessment": "原串口 AI 引擎、多轮/复制/取消等；S03",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "I04",
+      "feature": "数据发送预览和显式控制授权",
+      "status": "M",
+      "assessment": "来源绑定、内容确认、控制互锁；S03",
+      "verification": "A/V"
+    },
+    {
+      "id": "I05",
+      "feature": "串口及设备自动化工具调用",
+      "status": "M",
+      "assessment": "仍通过原执行队列，不靠模型声称成功；S03",
+      "verification": "A/V"
+    },
+    {
+      "id": "I06",
+      "feature": "1–300 秒监控及本地告警",
+      "status": "M",
+      "assessment": "本地规则与 AI 周期分析区分；非硬实时保护；S03",
+      "verification": "A/V"
+    },
+    {
+      "id": "I07",
+      "feature": "全局工程助手手工对话",
+      "status": "M",
+      "assessment": "文字上下文、多轮、预览和受保护请求；S03",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "I08",
+      "feature": "加入当前工具页摘要",
+      "status": "G",
+      "assessment": "旧 ai_summary 和“加入当前页面摘要”有实现，新全局助手只有手工上下文；F10",
+      "verification": "S"
+    },
+    {
+      "id": "I09",
+      "feature": "全局助手会话跨页面保持",
+      "status": "P",
+      "assessment": "已完成会话仅在本地组件 turns；卸载后不恢复；F01",
+      "verification": "S/V"
+    },
+    {
+      "id": "D01",
+      "feature": "发现资源及手工连接地址",
+      "status": "M",
+      "assessment": "共用原连接队列与资源校验；S04",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "D02",
+      "feature": "状态、断开、失败/未知结果提示",
+      "status": "M",
+      "assessment": "会话/任务校验和不自动重放；USB 断插需实机；S04",
+      "verification": "A/V"
+    },
+    {
+      "id": "D03",
+      "feature": "SCPI 读写、清除、确认复位",
+      "status": "M",
+      "assessment": "类型/资源约束和确认入口；S04",
+      "verification": "A/V"
+    },
+    {
+      "id": "D04",
+      "feature": "示波器运行/停止/单次/自动设置",
+      "status": "M",
+      "assessment": "四个原命令；S04",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "D05",
+      "feature": "示波器各通道、时基、触发和测量",
+      "status": "M",
+      "assessment": "通道平铺及类型化参数；S04",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "D06",
+      "feature": "示波器截图预览和 PNG 保存",
+      "status": "M",
+      "assessment": "异步截图任务和本机保存；S04",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "D07",
+      "feature": "示波器原始源文件读取",
+      "status": "M",
+      "assessment": "原采集管线，后台交接；S04",
+      "verification": "A/V"
+    },
+    {
+      "id": "D08",
+      "feature": "直流电源各通道/输出/OVP/OCP",
+      "status": "M",
+      "assessment": "设置与开启输出分开，保护能力校验；S04",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "D09",
+      "feature": "电子负载模式/目标/输入",
+      "status": "M",
+      "assessment": "CC/CV/CR/CP 能力及原队列；S04",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "D10",
+      "feature": "DMM 功能、量程和 NPLC",
+      "status": "M",
+      "assessment": "新表单有对应类型化命令；S04",
+      "verification": "A/V"
+    },
+    {
+      "id": "D11",
+      "feature": "探针连接/内存/寄存器/运行/RTT/时钟",
+      "status": "M",
+      "assessment": "新表单及安全命令白名单；S04",
+      "verification": "A/V"
+    },
+    {
+      "id": "D12",
+      "feature": "探针烧录、校验和整片擦除",
+      "status": "G",
+      "assessment": "旧 probe.rs 有 Live 实现，新 UI 缺失且 api_control_safe 不放行；F02",
+      "verification": "S"
+    },
+    {
+      "id": "D13",
+      "feature": "USB 桥 I²C/SPI/GPIO",
+      "status": "M",
+      "assessment": "对应表单与命令；S04",
+      "verification": "A/V"
+    },
+    {
+      "id": "D14",
+      "feature": "Dongle UART/I²C/网络设置",
+      "status": "M",
+      "assessment": "现有能力命令接入；不等于拟议 IO 捕获固件已完成；S04",
+      "verification": "A/V"
+    },
+    {
+      "id": "D15",
+      "feature": "周期采集、暂停/停止、趋势/CSV",
+      "status": "M",
+      "assessment": "原采样队列和导出任务；S04",
+      "verification": "A/V"
+    },
+    {
+      "id": "D16",
+      "feature": "累积设备通信日志与清空",
+      "status": "G",
+      "assessment": "旧 device_io_log_ui，新的最近 response 不等于累计日志；F09",
+      "verification": "S"
+    },
+    {
+      "id": "W01",
+      "feature": "CSV/TXT/ISF/WFM 读取",
+      "status": "M",
+      "assessment": "原核心读取器、新壳后台会话；S05",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "W02",
+      "feature": "多文件、通道选择/叠加、逐文件关闭",
+      "status": "M",
+      "assessment": "原始数组共享和事务提交；S05",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "W03",
+      "feature": "持久目录树浏览/刷新",
+      "status": "G",
+      "assessment": "旧 browser_panel/refresh_wave_browser，新左栏仅已打开文件库；F06",
+      "verification": "S"
+    },
+    {
+      "id": "W04",
+      "feature": "缩放、平移、框选、适应",
+      "status": "M",
+      "assessment": "精确极值索引与交互范围逻辑；真实组合鼠标仍待全验；S05",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "W05",
+      "feature": "X/Y 游标、拖动、缩放到游标",
+      "status": "M",
+      "assessment": "游标及原始点查询；S05",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "W06",
+      "feature": "每通道独立幅度/偏移/地线手柄",
+      "status": "G",
+      "assessment": "旧 y_scale/y_offset 及拖动手柄，新绘图共用坐标无独立映射；F07",
+      "verification": "S"
+    },
+    {
+      "id": "W07",
+      "feature": "UART/I²C/SPI/I²S/DDSSS/PD/SCP/UFCS",
+      "status": "M",
+      "assessment": "八类原核心解码路径；不能以 SCP 样本代全部黄金报文；S05",
+      "verification": "A/V"
+    },
+    {
+      "id": "W08",
+      "feature": "协议通道映射与常用参数",
+      "status": "M",
+      "assessment": "SPI 线制/位序、I²S 格式、SCP UI、充电阈值等；S05",
+      "verification": "A/V"
+    },
+    {
+      "id": "W09",
+      "feature": "帧列表、字段说明、定位波形",
+      "status": "M",
+      "assessment": "原核心字段解释，选中帧时间带；S05",
+      "verification": "A/V"
+    },
+    {
+      "id": "W10",
+      "feature": "多条协议 lane 并存及切换",
+      "status": "G",
+      "assessment": "旧最多 16 lane，新只有一份 kind/decoded；F03",
+      "verification": "S"
+    },
+    {
+      "id": "W11",
+      "feature": "其余通道同时解析",
+      "status": "G",
+      "assessment": "旧 decode_remaining_channels，新无批量 lane 入口；F03",
+      "verification": "S"
+    },
+    {
+      "id": "W12",
+      "feature": "浏览器协议 HTML 分析报告",
+      "status": "G",
+      "assessment": "旧 open_protocol_report，新仅波形采样文件导出；F04",
+      "verification": "S"
+    },
+    {
+      "id": "W13",
+      "feature": "全波形/游标门控测量等价",
+      "status": "P",
+      "assessment": "新表以显示范围测量；旧 X1–X2 自动门控及明确全波形语义未等价；F08",
+      "verification": "A/S/V"
+    },
+    {
+      "id": "W14",
+      "feature": "CSV/ISF/WFM 原始采样导出",
+      "status": "M",
+      "assessment": "新壳复用共享编码器，正常文件量化回归；S05",
+      "verification": "A/V"
+    },
+    {
+      "id": "W15",
+      "feature": "协议帧上下键/前后切换",
+      "status": "P",
+      "assessment": "单击选择已有；旧 step_bus_frame 和方向键未接入；F14",
+      "verification": "S"
+    },
+    {
+      "id": "W16",
+      "feature": "文件/库容量等价",
+      "status": "P",
+      "assessment": "新增单文件 64 MiB、16 文件/32 通道/3200 万点限制；未达到原使用范围等价证明；F13",
+      "verification": "S/V"
+    },
+    {
+      "id": "N01",
+      "feature": "文本日志按帧头/筛选词提取",
+      "status": "M",
+      "assessment": "原取值逻辑与缓存；S06",
+      "verification": "A/V"
+    },
+    {
+      "id": "N02",
+      "feature": "串口实时来源与增量追赶",
+      "status": "M",
+      "assessment": "最近日志读取、代际隔离和缺口提示；S06",
+      "verification": "A/V"
+    },
+    {
+      "id": "N03",
+      "feature": "电压/电流/温度映射和曲线缩放/偏移",
+      "status": "M",
+      "assessment": "保留类型比例、单位刻度及图上选择；S06",
+      "verification": "A/V"
+    },
+    {
+      "id": "N04",
+      "feature": "阈值、光标/最新值与统计",
+      "status": "M",
+      "assessment": "相关视图与单位转换；S06",
+      "verification": "A/V"
+    },
+    {
+      "id": "N05",
+      "feature": "CSV 导出",
+      "status": "M",
+      "assessment": "新增/保留的本机导出路径，不等于 WIDA 保存；S06",
+      "verification": "A/V"
+    },
+    {
+      "id": "N06",
+      "feature": "打开已有 .wida 提取数据",
+      "status": "G",
+      "assessment": "旧 pick_open_file/load_wida，新仅文本；F05",
+      "verification": "S"
+    },
+    {
+      "id": "N07",
+      "feature": "规则/类型/阈值/来源持久化",
+      "status": "G",
+      "assessment": "旧 persist_rules 写配置，新初始化为空/默认，无对应读写；F01/F05",
+      "verification": "S"
+    },
+    {
+      "id": "N08",
+      "feature": "持久目录浏览",
+      "status": "G",
+      "assessment": "旧数据目录选择/刷新，新只有文件选择；F06",
+      "verification": "S"
+    },
+    {
+      "id": "N09",
+      "feature": "实时提取缓存定期保存/回放",
+      "status": "G",
+      "assessment": "旧 flush_live_cache/save_wida，新只有内存实时窗口；F05",
+      "verification": "S"
+    },
+    {
+      "id": "N10",
+      "feature": "大文件/帧数等价",
+      "status": "P",
+      "assessment": "新文本 64 MiB、离线 100 万帧等预算，原缓存方案未迁移；F13",
+      "verification": "S/V"
+    },
+    {
+      "id": "T01",
+      "feature": "工程创建和选择",
+      "status": "M",
+      "assessment": "原工程接口及上下文校验；S07",
+      "verification": "A/V"
+    },
+    {
+      "id": "T02",
+      "feature": "插件选择与通用参数/运行",
+      "status": "M",
+      "assessment": "已安装插件、通用字段/高级字段/路径选择和原执行器；S07",
+      "verification": "A/V"
+    },
+    {
+      "id": "T03",
+      "feature": "插件市场刷新/安装/卸载/渠道",
+      "status": "G",
+      "assessment": "旧市场及任务实现保留，新仅列已安装插件；F11",
+      "verification": "S"
+    },
+    {
+      "id": "T04",
+      "feature": "真实数量矩阵及最多 500 项虚拟列表",
+      "status": "M",
+      "assessment": "不造 500 空行，配置库与历史结果合并校验；S07",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "T05",
+      "feature": "测试项新建/复制/名称/启用",
+      "status": "M",
+      "assessment": "当前项与版本绑定；S07",
+      "verification": "A/V"
+    },
+    {
+      "id": "T06",
+      "feature": "完整 Schema/工程文档编辑与校验",
+      "status": "M",
+      "assessment": "DocumentEditor 复用原文档及校验，包含专用面板外字段；S07",
+      "verification": "A/V"
+    },
+    {
+      "id": "T07",
+      "feature": "DUT、仪器和串口绑定",
+      "status": "M",
+      "assessment": "工程级设置及真实资源；S07",
+      "verification": "A/V"
+    },
+    {
+      "id": "T08",
+      "feature": "限值和判定条件编辑",
+      "status": "M",
+      "assessment": "专用编辑与完整文档编辑共同覆盖；S07",
+      "verification": "A/V"
+    },
+    {
+      "id": "T09",
+      "feature": "复位、日志和波形采集配置",
+      "status": "M",
+      "assessment": "专用编辑及完整配置；S07",
+      "verification": "A/V"
+    },
+    {
+      "id": "T10",
+      "feature": "当前项/全部启用项预检、运行、停止",
+      "status": "M",
+      "assessment": "冻结预检身份、旧运行器和停止路径；S07",
+      "verification": "A/V"
+    },
+    {
+      "id": "T11",
+      "feature": "暂停/继续与安全点状态",
+      "status": "M",
+      "assessment": "运行控制接口，实际插件支持决定能力；S07",
+      "verification": "A/V"
+    },
+    {
+      "id": "T12",
+      "feature": "任意多选测试子集运行",
+      "status": "G",
+      "assessment": "新预检范围只有当前/全部启用，未迁移 selected 集合；F12",
+      "verification": "S"
+    },
+    {
+      "id": "T13",
+      "feature": "全选/反选、批量启停配置和标签",
+      "status": "G",
+      "assessment": "旧 paint_config_batch_menu/config.batch，新无入口；F12",
+      "verification": "S"
+    },
+    {
+      "id": "T14",
+      "feature": "标签搜索及名称/更新时间排序",
+      "status": "G",
+      "assessment": "新查询仅 name/id，无旧排序切换；F12",
+      "verification": "S"
+    },
+    {
+      "id": "T15",
+      "feature": "跟随当前运行项",
+      "status": "G",
+      "assessment": "旧 workspace.follow；新矩阵无对应开关/滚动同步；F12",
+      "verification": "S"
+    },
+    {
+      "id": "T16",
+      "feature": "FPGA/无线矩阵完整运行日志",
+      "status": "P",
+      "assessment": "状态/结果已有，通用与示波器插件有近期会话日志；矩阵页无等价运行日志页；F15",
+      "verification": "S/V"
+    },
+    {
+      "id": "T17",
+      "feature": "判定详情与全部证据呈现",
+      "status": "P",
+      "assessment": "ResultDetails 仅前 30 条规则/证据，无完整展开；报告可另查，不等价；F15",
+      "verification": "S/V"
+    },
+    {
+      "id": "T18",
+      "feature": "测试项/完整工程导入导出",
+      "status": "M",
+      "assessment": "文件对话框、同名策略及原传输；S07",
+      "verification": "A/V"
+    },
+    {
+      "id": "T19",
+      "feature": "示波器/串口监控插件",
+      "status": "M",
+      "assessment": "规则/排除/顺序、仪器选择、预检/运行/日志；S07",
+      "verification": "A/V"
+    },
+    {
+      "id": "T20",
+      "feature": "无线工程/限值/日志及运行入口",
+      "status": "M",
+      "assessment": "原产品插件、台站设置和 I²C/负载顺序；S07",
+      "verification": "A/V"
+    },
+    {
+      "id": "T21",
+      "feature": "FPGA 插件的预留 HEX/BIN 下载",
+      "status": "O",
+      "assessment": "本次迁移未补产品执行实现；不与 D12 探针功能混同；S07",
+      "verification": "S"
+    },
+    {
+      "id": "R01",
+      "feature": "工程/测试/运行报告层级",
+      "status": "M",
+      "assessment": "以 Markdown 为入口，其余证据不混成主列表；S08",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "R02",
+      "feature": "报告页选择/创建工程",
+      "status": "C",
+      "assessment": "改用集成测试的工程选择；报告页使用当前工程，跨页路径改变；S08",
+      "verification": "S/V"
+    },
+    {
+      "id": "R03",
+      "feature": "Markdown/GFM、表格、锚点",
+      "status": "M",
+      "assessment": "ReactMarkdown，不执行原始 HTML；S08",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "R04",
+      "feature": "截图直接显示",
+      "status": "M",
+      "assessment": "本地图片内嵌，队列有界及切换取消；S08",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "R05",
+      "feature": "波形/文档/外部证据链接及返回",
+      "status": "M",
+      "assessment": "文件白名单、路径范围、波形页/系统分流；S08",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "R06",
+      "feature": "工程添加/移出测试、定位/系统打开",
+      "status": "M",
+      "assessment": "移出保留磁盘报告；S08",
+      "verification": "A/V"
+    },
+    {
+      "id": "R07",
+      "feature": "插件运行生成报告",
+      "status": "M",
+      "assessment": "原插件/运行器生成，报告页负责展示；完整实物闭环待验；S07/S08",
+      "verification": "A/V"
+    },
+    {
+      "id": "R08",
+      "feature": "正文/图片容量和格式等价",
+      "status": "P",
+      "assessment": "旧正文按约 40 万字节预览；新按 40 万字符并增加 4 MiB 文件/单图、32 MiB 图片预算；F13",
+      "verification": "A/S/V"
+    },
+    {
+      "id": "C01",
+      "feature": "LC 谐振、单位与电流曲线",
+      "status": "M",
+      "assessment": "沿用原计算及曲线；S09",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "C02",
+      "feature": "RC 带通及电路图/公式",
+      "status": "M",
+      "assessment": "原公式、示意图；S09",
+      "verification": "A/V"
+    },
+    {
+      "id": "C03",
+      "feature": "Q 品质因数",
+      "status": "M",
+      "assessment": "原计算；S09",
+      "verification": "A/V"
+    },
+    {
+      "id": "C04",
+      "feature": "RC 时间响应及比例",
+      "status": "M",
+      "assessment": "原计算、1τ/3τ/5τ；S09",
+      "verification": "A/V"
+    },
+    {
+      "id": "C05",
+      "feature": "CRC 预设/自定义/输入模式",
+      "status": "M",
+      "assessment": "原算法和参数、逐位说明；S09",
+      "verification": "A/V"
+    },
+    {
+      "id": "C06",
+      "feature": "进制转换及 BIN/OCT/DEC/HEX",
+      "status": "M",
+      "assessment": "原算法和即时摘要；S09",
+      "verification": "A/V"
+    },
+    {
+      "id": "C07",
+      "feature": "科学表达式/角度/键盘/Enter",
+      "status": "M",
+      "assessment": "原表达式引擎与键盘规则；S09",
+      "verification": "A/V"
+    },
+    {
+      "id": "C08",
+      "feature": "文本/字节双向和十六/十进制",
+      "status": "M",
+      "assessment": "原转换逻辑；输入结果跨卡保持问题统一见 A06；S09",
+      "verification": "A/V"
+    },
+    {
+      "id": "U01",
+      "feature": "演示设备调试开关、波特率默认值",
+      "status": "M",
+      "assessment": "偏好安全配置，不重启已运行串口；S10",
+      "verification": "A/V"
+    },
+    {
+      "id": "U02",
+      "feature": "关于、软件/新壳版本与环境",
+      "status": "M",
+      "assessment": "两个版本号区分、运行前提可见；S10",
+      "verification": "A/L/V"
+    },
+    {
+      "id": "U03",
+      "feature": "检查更新/下载/应用与回滚",
+      "status": "G",
+      "assessment": "旧 UpdateController 有实现，新 About 只提示预览版，不接旧包；F16",
+      "verification": "S"
+    },
+    {
+      "id": "U04",
+      "feature": "CLI/MCP 与新宿主协作",
+      "status": "M",
+      "assessment": "受保护 companion 协议与未知结果不重放；S12",
+      "verification": "A/V"
+    },
+    {
+      "id": "U05",
+      "feature": "独立 EXE 运行目录与相对配置",
+      "status": "M",
+      "assessment": "R23 目录 4525 文件核对、匹配运行文件/PDB；S12",
+      "verification": "A/V"
+    },
+    {
+      "id": "U06",
+      "feature": "完全移除 egui 设备宿主",
+      "status": "C",
+      "assessment": "当前采用兼容宿主；独立执行服务不属于本次替换前置条件；S12",
+      "verification": "S"
+    }
+  ],
+  "not_a_weighted_completion_percentage": true
+}

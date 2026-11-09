@@ -1,0 +1,29 @@
+{
+  "baseline": "R30",
+  "desktop_checks": {
+    "waveform_containment": true,
+    "probe_checkbox_alignment": true,
+    "project_creation": true,
+    "software_smoke_preflight_and_run": true,
+    "generated_markdown_open": true,
+    "generated_json_link_open": true
+  },
+  "simulation_only": true,
+  "issues_for_r31": [
+    "Generic and scope pages still expose mixed session logs",
+    "Execution log reset/UTF-8/gap handling needs regression coverage",
+    "Report remove button wraps in narrow rail"
+  ],
+  "artifacts": [
+    {
+      "relative": "tests/ExampleSmoke/runs/20261108_222518/artifacts/logs/smoke_20261108_222518.json",
+      "bytes": 1203,
+      "sha256": "ec6fb3ffa3d75dc246e95a5a76c709a72aefd1ed80600dc8d115ef72acfd1afa"
+    },
+    {
+      "relative": "tests/ExampleSmoke/runs/20261108_222518/artifacts/reports/ExampleSmoke_20261108_222518.md",
+      "bytes": 204,
+      "sha256": "10ba8742ffb4924f3b77116e573b2266f699912279535177a123dece238a28fd"
+    }
+  ]
+}

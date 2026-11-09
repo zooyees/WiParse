@@ -1,0 +1,27 @@
+
+> wiparse-next@0.1.0 test
+> node --test tests/*.test.mjs
+
+✔ pending operation survives reopening and blocks another command until verified (2.7303ms)
+✔ a late completion cannot remove a newer recovery marker (0.2992ms)
+✔ storage errors prevent starting an untracked operation (0.2511ms)
+✔ configured items use matching results, with no fabricated pass (1.5544ms)
+✔ validation and historical phase use readable labels (0.2712ms)
+✔ status filters never count stale results as passed (0.179ms)
+✔ 500 test items render a bounded window and retain the correct scroll geometry (0.9449ms)
+✔ stale and missing results are not shown as current pass (1.012ms)
+✔ history search can distinguish case or ignore it (2.2455ms)
+✔ tracks the chosen log through reordered tabs and refuses an absent view (0.2979ms)
+✔ finds a match beyond the current page and resumes after it (2.2003ms)
+✔ continues correctly when the byte limit makes a page shorter (0.4139ms)
+✔ detects evicted rows and refuses a mixed snapshot (0.8152ms)
+✔ rejects a replaced log even when its row count is unchanged (0.4197ms)
+✔ reports previously evicted rows and honors cancellation (0.3379ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 226.3887

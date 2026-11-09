@@ -1,0 +1,51 @@
+{
+  "candidate": "R37",
+  "date": "2026-11-09",
+  "passed": true,
+  "method": "Native desktop Sky against isolated packaged QA-R37 EXE",
+  "checks": {
+    "microvolt_scaled_axes_readable": true,
+    "explicit_large_offset_axis_annotation": true,
+    "tick_labels_stay_within_plot_edges": true,
+    "ground_handle_no_longer_covers_y_labels": true,
+    "absolute_viewport_endpoints_distinguishable": true,
+    "cursor_click_maps_to_raw_source_sample": true,
+    "zoom_updates_plot_and_readout": true,
+    "normal_exit": true
+  },
+  "sample": {
+    "file": "axis-offset.csv",
+    "sha256": "5568efc65a6db15c9c06b0a60646f3be326afc92cfc0f10df90f30af25b454e1",
+    "points": 500,
+    "start_display": "1,000,000,000",
+    "end_display": "1,000,000,000.000499",
+    "cursor_x_display": "1,000,000,000.000247",
+    "cursor_y_display": "-0.0000008587451",
+    "zoom_view_samples": 250,
+    "zoom_start_display": "1,000,000,000.000125",
+    "zoom_end_display": "1,000,000,000.000374"
+  },
+  "inherited_desktop": {
+    "from": "next-candidate-20261109-r36",
+    "reason": "Calculator CSS and split pane source unchanged between R36 and R37",
+    "window_width": 1103,
+    "rail_width": 480,
+    "single_column_layout": true,
+    "lc_hz": 159154.94,
+    "evidence": "calculator-narrow-desktop.jpg"
+  },
+  "simulation_only": true,
+  "hardware_executed": false,
+  "real_ai_executed": false,
+  "system_cpu_benchmark_executed": false,
+  "screenshots": [
+    {
+      "file": "axis-and-cursor-desktop.jpg",
+      "sha256": "5370a09377cf82877c2600e75c463996b5dbe158bf5e45723952d747cf703579"
+    },
+    {
+      "file": "calculator-narrow-desktop.jpg",
+      "sha256": "7af2d77751cff4e70445656297ea6195313cbb47007b9c58e54aeed785ae5d0f"
+    }
+  ]
+}

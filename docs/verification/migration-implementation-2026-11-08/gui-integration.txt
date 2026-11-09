@@ -1,0 +1,37 @@
+    Checking winit v0.30.13 (D:\windlink\windlink\WiParse-R\third_party\winit)
+    Checking wiparse-core v1.2.2 (D:\windlink\windlink\WiParse-R\crates\wiparse-core)
+    Checking accesskit_winit v0.23.1
+    Checking glutin-winit v0.5.0
+    Checking egui-winit v0.31.1
+crates\wiparse-core\src\waveform_protocol_html.rs:5:17: warning: unused import: `Path`
+    Checking eframe v0.31.1
+crates\wiparse-core\src\protocol\decode.rs:891:17: warning: variable does not need to be mutable
+crates\wiparse-core\src\rigol_wfm.rs:481:9: warning: variable does not need to be mutable
+crates\wiparse-core\src\bus_decode\ddsss.rs:181:8: warning: function `lfsr_msequence` is never used
+crates\wiparse-core\src\instrument\drivers.rs:1361:8: warning: methods `scope_screen_point_count`, `tek_screen_point_count`, `keysight_screen_point_count`, `prepare_keysight_screen_waveform`, and `apply_tek_visible_data_window` are never used
+crates\wiparse-core\src\instrument\drivers.rs:3167:4: warning: function `parse_keysight_preamble_points` is never used
+crates\wiparse-core\src\marketplace\trust.rs:160:8: warning: function `verify_file_against_meta` is never used
+crates\wiparse-core\src\serial.rs:636:4: warning: function `open_tcp_uart_from_info` is never used
+crates\wiparse-core\src\waveform_file.rs:1026:4: warning: function `load_tek_wfm` is never used
+warning: `wiparse-core` (lib) generated 9 warnings (run `cargo fix --lib -p wiparse-core` to apply 3 suggestions)
+    Checking wiparse-gui v1.2.2 (D:\windlink\windlink\WiParse-R\crates\wiparse-gui)
+crates\wiparse-gui\src\waveform_analysis.rs:2:1: error[E0753]: expected outer doc comment
+crates\wiparse-gui\src\instrument_control.rs:26:5: warning: unused import: `InstrumentDevice`
+crates\wiparse-gui\src\waveform_analysis.rs:1:103: warning: unused import: `share_columns`
+crates\wiparse-gui\src\serial_tool\ai_chat\alerts.rs:183:41: warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied: help: explicitly specify the type as `f32`: `1.0_f32`
+crates\wiparse-gui\src\serial_tool\ai_chat\host.rs:551:41: warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied: help: explicitly specify the type as `f32`: `1.0_f32`
+crates\wiparse-gui\src\serial_tool\ai_chat.rs:393:69: warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied: help: explicitly specify the type as `f32`: `1.0_f32`
+crates\wiparse-gui\src\theme.rs:76:67: warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied: help: explicitly specify the type as `f32`: `2.0_f32`
+crates\wiparse-gui\src\theme.rs:76:80: warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied: help: explicitly specify the type as `f32`: `1.0_f32`
+crates\wiparse-gui\src\test_tool\workspace\chrome.rs:127:41: warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied: help: explicitly specify the type as `f32`: `1.0_f32`
+crates\wiparse-gui\src\test_tool\workspace\chrome.rs:274:13: warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied: help: explicitly specify the type as `f32`: `1.0_f32`
+crates\wiparse-gui\src\test_tool.rs:1216:16: warning: use of deprecated method `egui::Ui::set_enabled`: Use disable(), add_enabled_ui(), or add_enabled() instead
+crates\wiparse-gui\src\test_tool.rs:1313:12: warning: use of deprecated method `egui::Ui::set_enabled`: Use disable(), add_enabled_ui(), or add_enabled() instead
+crates\wiparse-gui\src\test_tool.rs:1904:20: warning: use of deprecated method `egui::Ui::set_enabled`: Use disable(), add_enabled_ui(), or add_enabled() instead
+crates\wiparse-gui\src\backend\mod.rs:220:19: warning: variable does not need to be mutable
+crates\wiparse-gui\src\instrument_control\workbench\flat.rs:223:9: warning: unused variable: `defer`: help: if this is intentional, prefix it with an underscore: `_defer`
+crates\wiparse-gui\src\instrument_control\workbench.rs:216:9: warning: unused variable: `defer`: help: if this is intentional, prefix it with an underscore: `_defer`
+crates\wiparse-gui\src\log_tab.rs:2385:60: warning: unused variable: `border`: help: if this is intentional, prefix it with an underscore: `_border`
+crates\wiparse-gui\src\waveform_analysis.rs:5184:10: warning: variable does not need to be mutable
+warning: `wiparse-gui` (bin "wiparse-gui") generated 17 warnings
+error: could not compile `wiparse-gui` (bin "wiparse-gui") due to 1 previous error; 17 warnings emitted

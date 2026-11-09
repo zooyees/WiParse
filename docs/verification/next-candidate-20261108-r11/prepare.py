@@ -1,0 +1,5 @@
+from pathlib import Path
+import json
+p=Path('apps/wiparse-next/src/localization.en.json');d=json.loads(p.read_text(encoding='utf-8'));d['Ctrl + 滚轮缩放；中键拖动平移；双击适应波形']='Ctrl + wheel to zoom; middle-drag to pan; double-click to fit';p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+s=Path('docs/verification/next-candidate-20261108-r10/verify-panels.ps1').read_text(encoding='utf-8');s=s.replace("$allowed=@('apps/wiparse-next/src/style.css','apps/wiparse-next/src/DeviceControls.tsx')","$allowed=@('apps/wiparse-next/src/WaveWorkspace.tsx','apps/wiparse-next/src/waveCursor.ts','apps/wiparse-next/tests/wave-cursor.test.mjs','apps/wiparse-next/src/localization.en.json')").replace('$changed.Count -ne 2','$changed.Count -ne 4').replace('../next-candidate-20261108-r9/candidate.json','../next-candidate-20261108-r10/candidate.json').replace('Only panel layout and boolean option labels changed.','Only frontend waveform navigation, its pure geometry tests and tooltip translation changed.')
+Path('docs/verification/next-candidate-20261108-r11/verify-navigation.ps1').write_text(s,encoding='utf-8',newline='')

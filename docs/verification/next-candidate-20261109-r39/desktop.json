@@ -1,0 +1,15 @@
+{
+  "candidate": "R39",
+  "passed": false,
+  "scope": "intermediate desktop acceptance",
+  "observed": [
+    "UART 115200 4 frames, one intentional framing error",
+    "Issue-only filter returns original frame 3, count 1/4",
+    "Single-click error frame selects details and focuses waveform from full 0..0.003371853 to 0..0.001128472 seconds",
+    "Measurement panel reads full 6216 samples, raw 0..3.3 V"
+  ],
+  "failure": "One-overlay request 4200 buckets exceeds native MAX_BUCKETS=2048; visible checkbox but secondary curve absent. Corrected and regressed in R40.",
+  "qa_closed_normally": true,
+  "hardware": false,
+  "real_ai": false
+}

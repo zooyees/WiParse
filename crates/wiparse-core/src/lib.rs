@@ -30,5 +30,12 @@ pub mod wave;
 pub mod wave_display;
 pub mod waveform_file;
 pub mod rigol_wfm;
+pub mod resource_lock;
+pub mod device_session;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub mod data_extract;
+
+pub mod data_extract_cache;
+pub mod waveform_protocol_html;

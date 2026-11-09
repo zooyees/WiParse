@@ -1,0 +1,7 @@
+{"schema_version":"wiparse.config-ui/1","source_view":"read_only","groups":[{"label":"Project","label_zh":"工程信息","fields":["name"]},{"label":"Product","label_zh":"产品信息","fields":["product"]},{"label":"Station","label_zh":"工位信息","fields":["station"]}],"widgets":{
+  "station.scope_resource":{"type":"instrument_selector","kind":"oscilloscope","value_field":"resource"},
+  "station.power_resource":{"type":"instrument_selector","kind":"dc_source","value_field":"resource"},
+  "station.load_resource":{"type":"instrument_selector","kind":"electronic_load","value_field":"resource"},
+  "station.rx_i2c_interface":{"type":"instrument_selector","kind":"usb_bridge","value_field":"resource"},
+  "station.log_source":{"type":"serial_port_selector"}
+}}

@@ -1,0 +1,32 @@
+[
+  {
+    "read": 1,
+    "elapsed_ms": 1385,
+    "running": false,
+    "selected_plugin": "fpga-firmware-test"
+  },
+  {
+    "read": 2,
+    "elapsed_ms": 59,
+    "running": false,
+    "selected_plugin": "fpga-firmware-test"
+  },
+  {
+    "read": 3,
+    "elapsed_ms": 63,
+    "running": false,
+    "selected_plugin": "fpga-firmware-test"
+  },
+  {
+    "read": 4,
+    "elapsed_ms": 49,
+    "running": false,
+    "selected_plugin": "fpga-firmware-test"
+  },
+  {
+    "read": 5,
+    "elapsed_ms": 57,
+    "running": false,
+    "selected_plugin": "fpga-firmware-test"
+  }
+]

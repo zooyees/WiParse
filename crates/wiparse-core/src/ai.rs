@@ -489,6 +489,14 @@ pub fn protect_key(key: &str) -> Result<String, AiError> {
         ))
     }
 }
+/// Verify a protected credential for the current user without exposing it.
+pub fn validate_protected_key(value:&str)->Result<(),AiError>{unprotect_key(value).map(|_|())}
+/// Used by the local bridge to recover its current-user-protected bearer token.
+pub fn unprotect_bridge_token(value:&str)->Result<String,AiError>{unprotect_key(value)}
+pub fn ai_bridge_token_path(reference:&str)->Option<std::path::PathBuf>{
+    let id=uuid::Uuid::parse_str(reference).ok()?;
+    (id.to_string()==reference).then(||dirs::data_local_dir().map(|root|root.join("WiParse").join("ai-bridge").join(format!("{reference}.token")))).flatten()
+}
 fn unprotect_key(value: &str) -> Result<String, AiError> {
     if value.len() % 2 != 0 || value.len() > 65536 {
         return Err(AiError::Credential);
@@ -563,6 +571,22 @@ fn dpapi(bytes: &[u8], encrypt: bool) -> Result<Vec<u8>, AiError> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires the interactive Windows user profile for DPAPI"]
+    fn protected_key_validation_accepts_current_user_ciphertext_and_rejects_corruption(){
+        let cipher=super::protect_key("test-placeholder-only").unwrap();
+        assert!(!cipher.contains("test-placeholder-only"));assert!(super::validate_protected_key(&cipher).is_ok());
+        assert!(super::validate_protected_key("0000").is_err());
+    }
+    #[test]
+    fn invalid_protected_key_is_rejected(){assert!(super::validate_protected_key("0000").is_err());}
+    #[test]
+    fn ai_token_reference_cannot_be_used_as_a_path(){
+        assert!(super::ai_bridge_token_path("../other").is_none());
+        assert!(super::ai_bridge_token_path("not-a-uuid").is_none());
+        let id=uuid::Uuid::new_v4().to_string();assert_eq!(super::ai_bridge_token_path(&id).unwrap().file_name().unwrap(),format!("{id}.token").as_str());
+    }
     use super::*;
     use std::{
         io::{Read, Write},
@@ -756,6 +780,15 @@ mod tests {
     }
     #[test]
     fn ai_provider_requests_match_deepseek_and_qwen_contracts() {
+        check_provider_contracts(false);
+    }
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires an interactive Windows user profile for DPAPI; run explicitly during desktop acceptance"]
+    fn ai_provider_authorization_uses_dpapi_credentials() {
+        check_provider_contracts(true);
+    }
+    fn check_provider_contracts(with_credentials:bool) {
         for provider in [AiProvider::DeepSeek, AiProvider::Qwen] {
             let (url, received, handle) = mock(200, "application/json", chat(), "");
             let mut cfg = config(url);
@@ -763,7 +796,7 @@ mod tests {
             cfg.thinking = Some(false);
             #[cfg(windows)]
             {
-                cfg.protected_api_key = protect_key("test-only-key").unwrap();
+                if with_credentials { cfg.protected_api_key = protect_key("test-only-key").unwrap(); }
             }
             let result = AiService::new(cfg)
                 .submit(request())
@@ -776,7 +809,7 @@ mod tests {
             let (headers, body) = received.recv().unwrap();
             assert!(headers.starts_with("POST /chat/completions HTTP/1.1"));
             #[cfg(windows)]
-            assert!(headers.contains("Bearer test-only-key"));
+            if with_credentials { assert!(headers.contains("Bearer test-only-key")); } else { assert!(!headers.to_ascii_lowercase().contains("authorization:")); }
             assert_eq!(body["messages"][1]["content"], "analyze waveform");
             assert_eq!(body["max_tokens"], 2048);
             if provider == AiProvider::Qwen {
@@ -955,6 +988,7 @@ mod tests {
     }
     #[cfg(windows)]
     #[test]
+    #[ignore = "requires an interactive Windows user profile for DPAPI; run explicitly during desktop acceptance"]
     fn ai_credentials_roundtrip_without_plaintext_config() {
         let key = "test-only-dpapi-secret";
         let sealed = protect_key(key).unwrap();
@@ -967,4 +1001,16 @@ mod tests {
         assert!(!serde_json::to_string(&cfg).unwrap().contains(key));
         assert!(unprotect_key("not-encrypted").is_err());
     }
+}
+
+/// Load only the current user's bounded, DPAPI-protected local bridge credential.
+/// The reference is a UUID resolved under the managed credential directory.
+pub fn load_local_bridge_token(reference:&str)->Result<String,String>{
+    let path=ai_bridge_token_path(reference).ok_or("本机服务身份信息无效")?;
+    let metadata=std::fs::symlink_metadata(&path).map_err(|_|"本机服务凭据不可用")?;
+    if !metadata.is_file()||metadata.file_type().is_symlink()||metadata.len()>65536{return Err("本机服务凭据无效".into());}
+    let encrypted=std::fs::read_to_string(path).map_err(|_|"本机服务凭据无法读取")?;
+    let token=unprotect_bridge_token(&encrypted).map_err(|_|"本机服务凭据无法解密，请确认 Windows 用户环境")?;
+    if uuid::Uuid::parse_str(&token).is_err(){return Err("本机服务凭据无效".into());}
+    Ok(token)
 }

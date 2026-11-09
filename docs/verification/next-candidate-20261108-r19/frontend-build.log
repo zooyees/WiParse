@@ -1,0 +1,28 @@
+
+> wiparse-next@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v5.4.21 building for production...
+transforming...
+✓ 347 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                 0.36 kB │ gzip:   0.26 kB
+dist/assets/index-WW78GO49.css                 59.21 kB │ gzip:  10.91 kB
+dist/assets/EngineeringAssistant-C7NtWLRC.js    5.52 kB │ gzip:   2.64 kB
+dist/assets/AiAssistant-BdNNeARo.js             9.14 kB │ gzip:   3.93 kB
+dist/assets/DocumentEditor-5YJfRKFb.js         10.89 kB │ gzip:   4.12 kB
+dist/assets/ReportWorkspace-DMbLzSsu.js        16.42 kB │ gzip:   6.54 kB
+dist/assets/index-DrrCGqao.js                 167.46 kB │ gzip:  50.82 kB
+dist/assets/index-2AA3sBnz.js                 523.25 kB │ gzip: 171.52 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 2.40s
+npm notice
+npm notice New major version of npm available! 11.12.1 -> 12.2.2
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.2
+npm notice To update run: npm install -g npm@12.2.2
+npm notice

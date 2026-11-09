@@ -1,0 +1,15 @@
+{
+  "candidate": "R42",
+  "scope": "DDSSS cursor gate and cursor focus desktop delta",
+  "functional_passed": true,
+  "final_layout_passed": false,
+  "observed": [
+    "DDSSS auto FOP decodes3 frames,3069chips,1 checksum error",
+    "Default gate explicitly reads Full waveform (measurement cursors only)",
+    "X1=0.03386133 s and X2=0.03600391 s, delta0.002142578 s; decoded3 frames remains valid with all timeline tracks",
+    "Zoom to cursors gives0.0337542..0.03611104 s and preserves3 frames/4 tracks"
+  ],
+  "layout_followup": "Help paragraph occupied one fieldset grid cell and displaced Decode button; R43 only adds full-row grid span and margin to this paragraph.",
+  "hardware": "not_executed",
+  "real_ai": "not_executed"
+}

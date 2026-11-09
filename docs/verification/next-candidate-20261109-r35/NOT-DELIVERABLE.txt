@@ -1,0 +1,1 @@
+Rejected: axis display precision regression failed (84/85 passed). Fixed minimum significant precision; re-frozen and reverified in R36. No R35 delivery.

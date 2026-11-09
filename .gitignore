@@ -72,3 +72,22 @@ dist/vendor/
 /docs/DDSSS_spec_input_draft5_zh.pdf
 /docs/DDSSS规范输入-草案5-中文版.pdf
 /docs/ddsss_zh_assets/
+
+# Tauri migration: local build/test outputs and workstation state
+/.npm-task-cache/
+/backup-*/
+/WiParse.exe.old
+/WiParse.exe.previous
+/PREVIEW.txt
+/preview-manifest.json
+/wifi-uart-recent.json
+/dist/WiParse-*/
+/dist/wiparse-*-preview-*/
+/apps/wiparse-next/src-tauri/gen/
+/docs/verification/**/test-config.json*
+/docs/verification/**/*.bak
+/docs/verification/**/*.exe
+/docs/verification/**/*.zip
+/docs/verification/**/*.exp
+/docs/verification/**/*.lib
+/docs/verification/**/*.stop

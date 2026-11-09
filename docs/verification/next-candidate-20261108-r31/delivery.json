@@ -1,0 +1,12 @@
+{
+  "user_installation_modified": false,
+  "passed": true,
+  "file_count": 4530,
+  "inventory_sha256": "38d91bac48ae8c50f8cef0411fdc18f0cc99e1391541b4465ac78f58e7818652",
+  "zip_created": false,
+  "candidate_sha256": "e90c8c3533ea847d62ef2b77622991fe3dd5d73f1879b59f4059474c2e081f0a",
+  "portable_defaults": true,
+  "directory": "D:\\windlink\\windlink\\WiParse-R\\dist\\WiParse-Next-20261108-Preview-R31",
+  "inventory_excludes_only_its_own_file": true,
+  "symbol_files": 4
+}

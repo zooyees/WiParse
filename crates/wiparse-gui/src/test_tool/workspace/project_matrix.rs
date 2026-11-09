@@ -483,6 +483,11 @@ impl TestToolPanel {
                 }
             }
         });
+        if self.workspace.matrix_current.is_empty() {
+            if let Some(row) = rows.first() {
+                self.workspace.matrix_current = row["id"].as_str().unwrap_or("").into();
+            }
+        }
         let wide = ui.available_width() >= 860.0;
         if wide {
             let h = ui.available_height().max(180.0);
@@ -576,6 +581,10 @@ impl TestToolPanel {
                         egui::vec2(content_w, 30.0),
                         egui::Sense::hover(),
                     );
+                    if self.workspace.matrix_current == id {
+                        ui.painter().rect_filled(row_rect.shrink2(egui::vec2(0.0, 2.0)),
+                            egui::CornerRadius::same(4), ui.visuals().selection.bg_fill);
+                    }
                     let cells = matrix_cell_rects(row_rect.min.x, row_rect.min.y + 1.0, 28.0, widths);
                     ui.push_id(id, |ui| {
                         let mut checked = self.workspace.selected.contains(id);
@@ -709,9 +718,7 @@ fn matrix_cell_rects(x: f32, y: f32, h: f32, widths: [f32; 6]) -> [egui::Rect; 6
 fn matrix_name_cell(ui: &mut egui::Ui, rect: egui::Rect, name: &str, selected: bool) -> egui::Response {
     let resp = ui.interact(rect, ui.id().with("matrix_name"), egui::Sense::click());
     let visuals = ui.visuals();
-    let fill = if selected {
-        Some(visuals.selection.bg_fill)
-    } else if resp.hovered() {
+    let fill = if resp.hovered() && !selected {
         Some(visuals.widgets.hovered.weak_bg_fill)
     } else {
         None
@@ -720,11 +727,7 @@ fn matrix_name_cell(ui: &mut egui::Ui, rect: egui::Rect, name: &str, selected: b
         ui.painter()
             .rect_filled(rect, egui::CornerRadius::same(4), fill);
     }
-    let color = if selected {
-        visuals.selection.stroke.color
-    } else {
-        visuals.text_color()
-    };
+    let color = visuals.text_color();
     let mut job = egui::text::LayoutJob::default();
     job.append(
         name,

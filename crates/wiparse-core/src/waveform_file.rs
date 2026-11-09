@@ -13,6 +13,14 @@ use crate::rigol_wfm::{load_rigol_wfm_all, looks_like_rigol_wfm};
 use std::path::Path;
 use thiserror::Error;
 
+thread_local! {static POINT_BUDGET:std::cell::Cell<Option<usize>>=const{std::cell::Cell::new(None)};}
+pub(crate) fn consume_wave_points(count:usize)->Result<(),WaveformFileError>{POINT_BUDGET.with(|budget|{if let Some(left)=budget.get(){if count>left{return Err(WaveformFileError::Parse("Waveform allocation budget exceeded; increase the memory budget or remove other files".into()))}budget.set(Some(left-count));}Ok(())})}
+pub(crate) fn check_wave_points(count:usize)->Result<(),WaveformFileError>{POINT_BUDGET.with(|budget|{if budget.get().is_some_and(|left|count>left){return Err(WaveformFileError::Parse("Waveform allocation budget exceeded".into()))}Ok(())})}
+pub fn load_waveform_file_bounded(path:impl AsRef<Path>,points:usize)->Result<Vec<WaveformTrace>,WaveformFileError>{
+ struct Reset(Option<usize>);impl Drop for Reset{fn drop(&mut self){POINT_BUDGET.with(|b|b.set(self.0));}}
+ let _reset=Reset(POINT_BUDGET.with(|b|b.replace(Some(points))));load_waveform_file_all(path)
+}
+
 /// Files larger than this are memory-mapped for parse (avoids an extra RAM copy).
 const MMAP_THRESHOLD: u64 = 16 * 1024 * 1024;
 
@@ -70,17 +78,11 @@ fn load_waveform_file_at(
     ext: &str,
     stem: &str,
 ) -> Result<Vec<WaveformTrace>, WaveformFileError> {
-    if let Ok(meta) = std::fs::metadata(path) {
-        if meta.len() >= MMAP_THRESHOLD {
-            use memmap2::Mmap;
-            let file = std::fs::File::open(path)?;
-            // SAFETY: read-only map; parsers only read bytes during this call.
-            let map = unsafe { Mmap::map(&file)? };
-            return load_waveform_bytes_all(&map, ext, stem);
-        }
-    }
-    let bytes = std::fs::read(path)?;
-    load_waveform_bytes_all(&bytes, ext, stem)
+    let mut options=std::fs::OpenOptions::new();options.read(true);
+    #[cfg(windows)]{use std::os::windows::fs::OpenOptionsExt;options.share_mode(1);}
+    let mut file=options.open(path)?;let size=file.metadata()?.len();
+    if size>=MMAP_THRESHOLD{let map=unsafe{memmap2::Mmap::map(&file)?};return load_waveform_bytes_all(&map,ext,stem)}
+    use std::io::Read;let mut bytes=Vec::new();file.read_to_end(&mut bytes)?;load_waveform_bytes_all(&bytes,ext,stem)
 }
 
 /// Load all traces from bytes (see [`load_waveform_file_all`]).
@@ -193,6 +195,17 @@ pub fn waveform_to_wiparse_csv(trace: &WaveformTrace) -> Vec<u8> {
         );
     }
     csv.into_bytes()
+}
+
+/// Stream the same WiParse CSV representation without retaining an additional
+/// full-size copy of a large waveform in memory.
+pub fn write_waveform_csv(mut writer: impl std::io::Write, trace: &WaveformTrace) -> std::io::Result<()> {
+    writeln!(writer, "channel,index,x({}),y({})", trace.x_unit, trace.y_unit)?;
+    let channel=csv_cell(&trace.channel);
+    for (i,(&x,&y)) in trace.x.iter().zip(trace.y.iter()).enumerate() {
+        writeln!(writer,"{channel},{i},{x},{y}")?;
+    }
+    Ok(())
 }
 
 /// Concatenate multiple single-channel Tek ISF blobs into one multi-curve file.
@@ -345,27 +358,35 @@ pub fn export_waveform_wfm(
     path: impl AsRef<Path>,
     trace: &WaveformTrace,
 ) -> Result<(), WaveformFileError> {
-    let n = trace.x.len().min(trace.y.len());
-    if n == 0 {
-        return Err(WaveformFileError::Parse("empty waveform".into()));
+    let n = trace.x.len();
+    if n == 0 || n != trace.y.len()
+        || trace.x.iter().chain(trace.y.iter()).any(|v| !v.is_finite()) {
+        return Err(WaveformFileError::Parse("WFM requires equal, nonempty finite X/Y arrays".into()));
     }
-    let dt = if n >= 2 {
-        (trace.x[n - 1] - trace.x[0]) / (n as f64 - 1.0)
-    } else {
-        1.0
-    };
-    let xzero = trace.x.first().copied().unwrap_or(0.0);
+    let dt = if n >= 2 { trace.x[1] - trace.x[0] } else { 1.0 };
+    let tolerance = (dt.abs() * 1e-7).max(trace.x[0].abs() * f64::EPSILON * 2.0);
+    if !dt.is_finite() || dt <= 0.0 || trace.x.windows(2).any(|w| {
+        let step = w[1] - w[0];
+        step <= 0.0 || !step.is_finite() || (step - dt).abs() > tolerance
+    }) {
+        return Err(WaveformFileError::Parse("WFM requires a uniform increasing time axis; use CSV".into()));
+    }
+    let xzero = trace.x[0];
     let (ymin, ymax) = trace.y[..n].iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &v| {
         (lo.min(v), hi.max(v))
     });
     let yrange = (ymax - ymin).max(1e-12);
     let v_scale = yrange / 65534.0;
-    let v_offset = ymin;
+    let v_offset = ymin * 0.5 + ymax * 0.5;
+    if !v_scale.is_finite() || v_scale <= 0.0 || !v_offset.is_finite() {
+        return Err(WaveformFileError::Parse("WFM amplitude range is not representable".into()));
+    }
     let pre = 16usize;
     let post = 16usize;
-    let record = n + pre + post;
+    let record = n.checked_add(pre + post).ok_or_else(|| WaveformFileError::Parse("WFM too large".into()))?;
     let bytes_per_pt = 2usize;
-    let curve_bytes = record * bytes_per_pt;
+    let curve_bytes = record.checked_mul(bytes_per_pt).filter(|v| *v < 999_999_000)
+        .ok_or_else(|| WaveformFileError::Parse("WFM too large".into()))?;
     let header_len = 820usize;
     let file_len = header_len + curve_bytes + 8;
 
@@ -373,18 +394,41 @@ pub fn export_waveform_wfm(
     // Intel byte order marker
     buf[0] = 0x0f;
     buf[1] = 0x0f;
-    buf[2..10].copy_from_slice(b"WFM#001\0");
-    buf[10] = 9; // digits in EOF count
-    buf[11..15].copy_from_slice(&(file_len as i32).to_le_bytes());
+    buf[2..10].copy_from_slice(b":WFM#001");
+    let eof_count = file_len - 11;
+    buf[10] = eof_count.to_string().len() as u8;
+    buf[11..15].copy_from_slice(&(eof_count as i32).to_le_bytes());
     buf[15] = bytes_per_pt as u8;
     buf[16..20].copy_from_slice(&(header_len as i32).to_le_bytes());
 
-    write_f64_le(&mut buf, 174, v_scale);
-    write_f64_le(&mut buf, 182, v_offset);
-    write_u32_le(&mut buf, 186, 65532);
+    write_i32_le(&mut buf, 20, 1);
+    write_f64_le(&mut buf, 28, 1.0);
+    write_wfm_string(&mut buf[40..72], &trace.channel);
+    buf[76..78].copy_from_slice(&88u16.to_le_bytes());
+    for off in [82, 110, 114, 118, 134, 138, 142] { write_u32_le(&mut buf, off, 1); }
+    write_u32_le(&mut buf, 102, 5);
+    write_u32_le(&mut buf, 106, 1);
+    write_u32_le(&mut buf, 122, 2); // VECTOR
+    write_u32_le(&mut buf, 154, 1); // YT
+    // Tek 001-1378-03: explicit scale/offset/size/units start at 166/174/182/186.
+    write_f64_le(&mut buf, 166, v_scale);
+    write_f64_le(&mut buf, 174, v_offset);
+    write_u32_le(&mut buf, 182, 65534);
+    write_wfm_string(&mut buf[186..206], &trace.y_unit);
+    write_f64_le(&mut buf, 266, 1.0);
+    write_wfm_string(&mut buf[274..294], &trace.y_unit);
+    write_u32_le(&mut buf, 302, 1);
+    write_i32_le(&mut buf, 394, 6); // unused dimension: V1 INVALID_FORMAT
     write_f64_le(&mut buf, 478, dt);
     write_f64_le(&mut buf, 486, xzero);
     write_u32_le(&mut buf, 494, record as u32);
+    write_wfm_string(&mut buf[498..518], &trace.x_unit);
+    write_f64_le(&mut buf, 554, 1.0);
+    write_wfm_string(&mut buf[562..582], &trace.x_unit);
+    write_u32_le(&mut buf, 590, 1);
+    write_u32_le(&mut buf, 742, 1);
+    write_u32_le(&mut buf, 746, 1); // sample sweep, time base
+    write_u32_le(&mut buf, 790, 81);
     write_i32_le(&mut buf, 238, 0); // EXPLICIT_INT16
 
     let data_start = pre * bytes_per_pt;
@@ -394,14 +438,25 @@ pub fn export_waveform_wfm(
     write_u32_le(&mut buf, 812, curve_bytes as u32);
     write_u32_le(&mut buf, 816, curve_bytes as u32);
 
-    for (i, &yv) in trace.y[..n].iter().enumerate() {
-        let code = ((yv - v_offset) / v_scale).round().clamp(-32768.0, 32767.0) as i16;
-        let off = header_len + (pre + i) * bytes_per_pt;
+    for i in 0..record {
+        // Repeated endpoints fill interpolation guards, never synthetic zero spikes.
+        let yv = trace.y[i.saturating_sub(pre).min(n - 1)];
+        let code = ((yv - v_offset) / v_scale).round().clamp(-32767.0, 32767.0) as i16;
+        let off = header_len + i * bytes_per_pt;
         buf[off..off + 2].copy_from_slice(&code.to_le_bytes());
     }
 
+    let checksum: u64 = buf[..file_len - 8].iter().map(|v| *v as u64).sum();
+    buf[file_len - 8..].copy_from_slice(&checksum.to_le_bytes());
     std::fs::write(path, buf)?;
     Ok(())
+}
+
+fn write_wfm_string(target: &mut [u8], value: &str) {
+    let mut len = value.len().min(target.len().saturating_sub(1));
+    if let Some(nul) = value.find('\0') { len = len.min(nul); }
+    while !value.is_char_boundary(len) { len -= 1; }
+    target[..len].copy_from_slice(&value.as_bytes()[..len]);
 }
 
 fn write_f64_le(buf: &mut [u8], off: usize, v: f64) {
@@ -678,13 +733,16 @@ fn looks_like_isf(bytes: &[u8]) -> bool {
     head.contains("WFMP") || head.contains(":CURVE")
 }
 
+fn wave_text_lines(text:&str)->Result<Vec<&str>,WaveformFileError>{
+ let mut lines=Vec::new();for line in text.lines().map(str::trim).filter(|line|!line.is_empty()){
+  POINT_BUDGET.with(|budget|{if budget.get().is_some_and(|left|lines.len()>left.saturating_mul(2).saturating_add(4096)){return Err(WaveformFileError::Parse("CSV line index exceeds allocation budget".into()))}Ok(())})?;
+  lines.try_reserve(1).map_err(|_|WaveformFileError::Parse("Cannot allocate CSV line index".into()))?;lines.push(line);
+ }Ok(lines)
+}
+
 fn load_waveform_csv_bytes(bytes: &[u8], default_channel: &str) -> Result<WaveformTrace, WaveformFileError> {
     let text = String::from_utf8_lossy(bytes);
-    let lines: Vec<&str> = text
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty())
-        .collect();
+    let lines=wave_text_lines(&text)?;
     if lines.is_empty() {
         return Err(WaveformFileError::Parse("empty CSV".into()));
     }
@@ -726,6 +784,7 @@ fn try_parse_wiparse_csv(lines: &[&str]) -> Result<Option<WaveformTrace>, Wavefo
         let yv: f64 = cols[3]
             .parse()
             .map_err(|_| WaveformFileError::Parse(format!("bad y value: {}", cols[3])))?;
+        consume_wave_points(1)?;
         x.push(xv);
         y.push(yv);
     }
@@ -840,6 +899,7 @@ fn try_parse_spreadsheet_csv(
         let Ok(yv) = cols[y_col].parse::<f64>() else {
             continue;
         };
+        consume_wave_points(1)?;
         x.push(xv);
         y.push(yv);
     }
@@ -881,6 +941,7 @@ fn try_parse_numeric_pairs(
         let Ok(yv) = cols[1].parse::<f64>() else {
             continue;
         };
+        consume_wave_points(1)?;
         x.push(xv);
         y.push(yv);
     }
@@ -984,15 +1045,12 @@ fn load_tek_wfm_all(
         return Err(WaveformFileError::Parse("not a Tektronix WFM file".into()));
     }
 
-    // Real Tek files use `:WFM#00x`. WiParse's own export uses `WFM#001\0` with
-    // fixed field offsets — prefer the legacy reader for that dialect.
+    // Real Tek files use `:WFM#00x`. Historical WiParse exports use `WFM#001\0`
+    // with fixed offsets. A malformed standard header must not be reinterpreted
+    // as that different dialect (its scale/offset fields have different meanings).
     let tek_colon_tag = bytes.get(2) == Some(&b':');
     if tek_colon_tag {
-        load_tek_wfm_structured_all(bytes, default_channel).or_else(|structured_err| {
-            load_tek_wfm_legacy_fixed(bytes, default_channel)
-                .map(|t| vec![t])
-                .map_err(|_| structured_err)
-        })
+        load_tek_wfm_structured_all(bytes, default_channel)
     } else {
         load_tek_wfm_legacy_fixed(bytes, default_channel)
             .map(|t| vec![t])
@@ -1186,6 +1244,15 @@ fn load_tek_wfm_structured_all(
     // UpdateSpecifications (primary)
     r.skip(24)?;
 
+    // Every extra frame needs a 24-byte update spec and a 30-byte curve spec.
+    // Validate against actual bytes and the curve-data offset BEFORE reserving
+    // from the untrusted u32 frame count; even a tiny file can declare u32::MAX.
+    let headers_end = nacq_ff.checked_mul(54).and_then(|n|n.checked_add(30))
+        .and_then(|n|r.off.checked_add(n))
+        .ok_or_else(||WaveformFileError::Parse("WFM FastFrame header size overflow".into()))?;
+    if curve_buf_offset >= bytes.len() || headers_end > bytes.len() || headers_end > curve_buf_offset {
+        return Err(WaveformFileError::Parse("WFM FastFrame headers exceed curve offset or file length".into()));
+    }
     let mut curve_ranges: Vec<(usize, usize)> = Vec::with_capacity(1 + nacq_ff);
     // CurveInformation (primary)
     {
@@ -1251,6 +1318,7 @@ fn load_tek_wfm_structured_all(
         if n_pts == 0 {
             return Err(WaveformFileError::Parse("WFM produced no samples".into()));
         }
+        consume_wave_points(n_pts)?;
         let mut x = Vec::with_capacity(n_pts);
         let mut y = Vec::with_capacity(n_pts);
         for i in 0..n_pts {
@@ -1505,6 +1573,8 @@ fn load_tek_wfm_legacy_fixed(
         return Err(WaveformFileError::Parse("WFM produced no samples".into()));
     }
 
+    consume_wave_points(n_pts)?;
+
     let mut x = Vec::with_capacity(n_pts);
     let mut y = Vec::with_capacity(n_pts);
     for i in 0..n_pts {
@@ -1615,11 +1685,7 @@ fn load_csv_bytes_all(
     default_channel: &str,
 ) -> Result<Vec<WaveformTrace>, WaveformFileError> {
     let text = String::from_utf8_lossy(bytes);
-    let lines: Vec<&str> = text
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty())
-        .collect();
+    let lines=wave_text_lines(&text)?;
     if let Some(traces) = try_parse_spreadsheet_csv_multi(&lines)? {
         return Ok(traces);
     }
@@ -1659,6 +1725,7 @@ fn try_parse_spreadsheet_csv_multi(
         let Ok(t) = cols[0].parse::<f64>() else {
             continue;
         };
+        consume_wave_points(ys.len())?;
         xs.push(t);
         for (i, col) in ys.iter_mut().enumerate() {
             let v = cols
@@ -1767,6 +1834,7 @@ fn load_tek_isf(bytes: &[u8], default_channel: &str) -> Result<WaveformTrace, Wa
             samples = mid;
         }
     }
+    consume_wave_points(samples.len())?;
     let mut x = Vec::with_capacity(samples.len());
     let mut y = Vec::with_capacity(samples.len());
     for (i, raw) in samples.into_iter().enumerate() {
@@ -1796,6 +1864,7 @@ fn decode_curve_samples(
 ) -> Result<Vec<f64>, WaveformFileError> {
     let msb = byt_or.contains("MSB");
     let signed = bn_fmt.contains('R'); // RI = signed, RP = unsigned
+    check_wave_points(nr_pt.min(data.len()/byt_nr.max(1)))?;
     let mut out = Vec::with_capacity(nr_pt.min(data.len() / byt_nr.max(1)));
     let mut i = 0usize;
     while i + byt_nr <= data.len() && out.len() < nr_pt {
@@ -1935,6 +2004,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn streamed_csv_matches_existing_format_and_preserves_samples() {
+        let trace=WaveformTrace{channel:"CH,1".into(),x:vec![0.0,0.5,1.0].into(),y:vec![-1.0,0.0,1.0].into(),x_unit:"s".into(),y_unit:"V".into()};
+        let mut streamed=Vec::new();write_waveform_csv(&mut streamed,&trace).unwrap();
+        assert_eq!(streamed,waveform_to_wiparse_csv(&trace));
+        let parsed=load_waveform_bytes(&streamed,"csv","CH1").unwrap();
+        assert_eq!(parsed.channel,trace.channel);assert_eq!(parsed.x.as_ref(),trace.x.as_ref());assert_eq!(parsed.y.as_ref(),trace.y.as_ref());
+    }
+
+    #[test]
     fn load_wiparse_csv_roundtrip() {
         let csv = "channel,index,x(s),y(V)\nCH1,0,0.0,0.0\nCH1,1,1e-6,1.0\nCH1,2,2e-6,-1.0\n";
         let trace = load_waveform_csv_bytes(csv.as_bytes(), "CH1").unwrap();
@@ -2052,8 +2130,91 @@ mod tests {
         export_waveform_wfm(&path, &trace).unwrap();
         let loaded = load_tek_wfm(&std::fs::read(&path).unwrap(), "CH1").unwrap();
         assert_eq!(loaded.y.len(), 4);
-        assert!((loaded.y[1] - 1.0).abs() < 0.05);
+        for (actual, expected) in loaded.y.iter().zip(trace.y.iter()) {
+            assert!((actual - expected).abs() <= 1.0 / 65534.0 + 1e-12);
+        }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn wfm_standard_header_preserves_bias_constants_and_units() {
+        let dir = std::env::temp_dir().join(format!("wiparse_wfm_standard_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (case, bias, amplitude) in [("bipolar", 0.0, 3.3), ("positive", 5.0, 1.0),
+            ("negative", -5.0, 1.0), ("constant", 2.5, 0.0)] {
+            let trace = WaveformTrace {
+                channel: "CH2".into(),
+                x: (0..128).map(|i| -0.0005 + i as f64 * 1e-6).collect::<Vec<_>>().into(),
+                y: (0..128).map(|i| bias + amplitude * (i as f64 * 0.1).sin()).collect::<Vec<_>>().into(),
+                x_unit: "s".into(), y_unit: "A".into(),
+            };
+            let path = dir.join(format!("{case}.wfm"));
+            export_waveform_wfm(&path, &trace).unwrap();
+            let bytes = std::fs::read(&path).unwrap();
+            assert_eq!(&bytes[..10], b"\x0f\x0f:WFM#001");
+            assert_eq!(u32::from_le_bytes(bytes[16..20].try_into().unwrap()), 820);
+            assert_eq!(&bytes[186..188], b"A\0");
+            assert_eq!(&bytes[498..500], b"s\0");
+            let scale = f64::from_le_bytes(bytes[166..174].try_into().unwrap());
+            let sum: u64 = bytes[..bytes.len()-8].iter().map(|b| *b as u64).sum();
+            assert_eq!(u64::from_le_bytes(bytes[bytes.len()-8..].try_into().unwrap()), sum);
+            // Use only the structured reader: legacy fallback cannot hide a malformed header.
+            let loaded = load_tek_wfm_structured_all(&bytes, "fallback").unwrap().remove(0);
+            assert_eq!(loaded.channel, "CH2");
+            assert_eq!(loaded.y_unit, "A");
+            assert_eq!(loaded.y.len(), trace.y.len());
+            for i in 0..128 {
+                assert!((loaded.y[i] - trace.y[i]).abs() <= scale * 0.5 + 1e-12, "{case} sample {i}");
+                assert!((loaded.x[i] - trace.x[i]).abs() < 1e-15);
+            }
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn wfm_export_rejects_invalid_arrays_without_creating_output() {
+        let path = std::env::temp_dir().join(format!("wiparse_wfm_invalid_{}.wfm", std::process::id()));
+        for (x, y) in [(vec![0.0], vec![]), (vec![0.0], vec![f64::NAN]),
+            (vec![0.0, 1.0, 3.0], vec![1.0; 3]), (vec![1.0, 0.0], vec![1.0; 2])] {
+            let trace = WaveformTrace { channel: "CH1".into(), x: x.into(), y: y.into(), x_unit: "s".into(), y_unit: "V".into() };
+            assert!(export_waveform_wfm(&path, &trace).is_err());
+            assert!(!path.exists());
+        }
+    }
+
+    #[test]
+    fn legacy_wiparse_wfm_fixed_header_remains_readable() {
+        let mut bytes = vec![0; 900];
+        bytes[..10].copy_from_slice(b"\x0f\x0fWFM#001\0");
+        bytes[15] = 2;
+        write_u32_le(&mut bytes, 16, 820);
+        write_f64_le(&mut bytes, 174, 0.25);
+        write_f64_le(&mut bytes, 182, -1.0);
+        write_f64_le(&mut bytes, 478, 1e-6);
+        write_u32_le(&mut bytes, 494, 3);
+        write_u32_le(&mut bytes, 808, 6);
+        bytes[820..826].copy_from_slice(&[0, 0, 4, 0, 8, 0]);
+        let loaded = load_waveform_bytes(&bytes, "wfm", "CH1").unwrap();
+        assert_eq!(&*loaded.y, &[-1.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn standard_wfm_rejects_unbacked_frame_counts_before_allocating_and_never_falls_back(){
+        // These bytes are readable by the old fixed-offset dialect. Adding a
+        // standard tag must not silently opt into those incompatible offsets.
+        let mut bytes=vec![0;900];bytes[..10].copy_from_slice(b"\x0f\x0f:WFM#001");bytes[15]=2;
+        write_u32_le(&mut bytes,16,820);write_f64_le(&mut bytes,174,0.25);
+        write_f64_le(&mut bytes,182,-1.0);write_f64_le(&mut bytes,478,1e-6);
+        write_u32_le(&mut bytes,494,3);write_u32_le(&mut bytes,808,6);
+        bytes[820..826].copy_from_slice(&[0,0,4,0,8,0]);
+        assert!(load_tek_wfm_legacy_fixed(&bytes,"CH1").is_ok());
+        for count in [1u32,1000,u32::MAX]{
+            write_u32_le(&mut bytes,150,count);
+            let error=load_waveform_bytes_all(&bytes,"wfm","CH1").unwrap_err().to_string();
+            assert!(error.contains("FastFrame"),"{error}");
+        }
+        write_u32_le(&mut bytes,150,0);write_u32_le(&mut bytes,16,800);
+        assert!(load_waveform_bytes_all(&bytes,"wfm","CH1").is_err());
     }
 
     #[test]
@@ -2177,7 +2338,7 @@ mod tests {
         let path = dir.join("legacy001.wfm");
         export_waveform_wfm(&path, &trace).unwrap();
         let bytes = std::fs::read(&path).unwrap();
-        assert!(bytes[2..10].starts_with(b"WFM#001"));
+        assert_eq!(&bytes[2..10], b":WFM#001");
         assert_eq!(sniff_waveform_ext(&bytes), Some("wfm"));
         let loaded = load_waveform_bytes(&bytes, "wfm", "CH1").unwrap();
         assert_eq!(loaded.y.len(), 256);
@@ -2237,4 +2398,17 @@ mod tests {
         assert_eq!(estimate_duty_cycle(&[1.0, 1.0, 1.0]), None);
         assert!((estimate_duty_cycle(&[0.0, 1.0, 0.0, 1.0]).unwrap() - 0.5).abs() < 1e-12);
     }
+}
+
+#[cfg(test)]mod allocation_budget_tests{
+ use super::*;
+ #[test]fn bounded_loader_stops_before_allocating_all_points_and_restores_legacy_calls(){
+  let path=std::env::temp_dir().join(format!("wiparse-budget-{}.csv",std::process::id()));std::fs::write(&path,"x,y\n0,1\n1,2\n2,3\n").unwrap();
+  assert!(load_waveform_file_bounded(&path,2).unwrap_err().to_string().contains("budget"));
+  let accepted=load_waveform_file_bounded(&path,3).unwrap();assert_eq!(&*accepted[0].y,&[1.,2.,3.]);
+  assert_eq!(load_waveform_file_all(&path).unwrap()[0].x.len(),3);std::fs::remove_file(path).unwrap();
+ }
+ #[test]fn header_point_claim_cannot_allocate_past_the_budget(){
+  let previous=POINT_BUDGET.with(|b|b.replace(Some(2)));assert!(decode_curve_samples(&[1,2,3],1,"RI","LSB",usize::MAX).is_err());POINT_BUDGET.with(|b|b.set(previous));
+ }
 }

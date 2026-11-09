@@ -1,0 +1,29 @@
+{
+  "frontend_tests": 99,
+  "real_ai_tested": false,
+  "source_files": 775,
+  "shipped_binaries": [
+    {
+      "sha256": "7d8002514a990fbc7af7783385abecb4efa326f6babbcf8abf110c80376059ba",
+      "file": "WiParse.exe"
+    },
+    {
+      "sha256": "8feb64d5f8793386ba429b677de1ff62b49abe3e477c73e71f3655bd48242ba0",
+      "file": "WiParse-Host.exe"
+    },
+    {
+      "sha256": "31040c09a9a6067e2ab98e3538c4ad739a5b5f77fdcdefd1811c10115c8ddbeb",
+      "file": "WiParse-CLI.exe"
+    },
+    {
+      "sha256": "30984d4effb3daa83e6318e703a904e393bd93a47cbd4027b41c311c3458dc44",
+      "file": "WiParse-Service.exe"
+    }
+  ],
+  "native_evidence": "R38; exact native source identity inherited",
+  "native_tests": 64,
+  "qa_processes_remaining": 0,
+  "hardware_tested": false,
+  "source_identity_matches_candidate": true,
+  "passed": true
+}

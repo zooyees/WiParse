@@ -1,0 +1,15 @@
+{
+  "source_files": 738,
+  "desktop_executed": false,
+  "code_modified": false,
+  "changed": [],
+  "hardware_executed": false,
+  "new_tests_executed": false,
+  "source_set_and_hashes_match": true,
+  "baseline_manifest_sha256": "d3ef65b17757e5ef00e18ad4aedb227498170599da986021ca502e829aa37ff6",
+  "external_ai_executed": false,
+  "created_at": "2026-11-08T11:06:12.2232975Z",
+  "baseline_candidate": "next-candidate-20261108-r23",
+  "kind": "migration_completeness_review",
+  "removed": []
+}

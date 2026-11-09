@@ -12,9 +12,11 @@ pub struct EventBus {
 #[derive(Default)]
 struct Inner {
     seq: AtomicU64,
-    subscribers: Mutex<Vec<Sender<String>>>,
-    history: Mutex<VecDeque<(u64, String)>>,
+    subscribers: Mutex<Vec<Subscriber>>,
+    history: Mutex<VecDeque<(u64, String, String)>>,
 }
+
+struct Subscriber {tx:Sender<String>,kind:Option<&'static str>}
 
 const MAX_SUBSCRIBERS: usize = 32;
 const SUBSCRIBER_CAPACITY: usize = 1024;
@@ -39,23 +41,28 @@ impl EventBus {
             Err(_) => return,
         };
         if let Ok(mut history) = self.inner.history.lock() {
-            history.push_back((seq, line.clone()));
+            history.push_back((seq, event_type.into(), line.clone()));
             while history.len() > HISTORY_CAPACITY {
                 history.pop_front();
             }
         }
         if let Ok(mut subs) = self.inner.subscribers.lock() {
             // A slow subscriber is disconnected when its bounded queue fills.
-            subs.retain(|tx| match tx.try_send(line.clone()) {
+            subs.retain(|sub| {if sub.kind.is_some_and(|kind|kind!=event_type){return true;}match sub.tx.try_send(line.clone()) {
                 Ok(()) => true,
                 Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => false,
-            });
+            }});
         }
     }
 
-    pub fn subscribe(&self, since_seq: u64) -> Result<Receiver<String>, &'static str> {
+    pub fn subscribe(&self, since_seq: u64) -> Result<Receiver<String>, &'static str> {self.subscribe_kind(since_seq,None)}
+    pub fn subscribe_serial_logs(&self,since_seq:u64)->Result<Receiver<String>,&'static str>{self.subscribe_kind(since_seq,Some("serial.log.changed"))}
+    fn subscribe_kind(&self, since_seq:u64,kind:Option<&'static str>)->Result<Receiver<String>,&'static str>{
         let (tx, rx) = bounded(SUBSCRIBER_CAPACITY);
         if let Ok(mut subs) = self.inner.subscribers.lock() {
+            // Reap closed idle streams before applying the subscriber limit.
+            // Pings are unsequenced control messages, as in the HTTP keepalive.
+            subs.retain(|sub|sub.tx.try_send(json!({"type":"ping"}).to_string()).is_ok());
             if subs.len() >= MAX_SUBSCRIBERS {
                 return Err("too many event subscribers");
             }
@@ -70,8 +77,8 @@ impl EventBus {
                     (
                         h.front().map(|x| x.0),
                         h.iter()
-                            .filter(|(n, _)| *n > since_seq)
-                            .map(|(_, s)| s.clone())
+                            .filter(|(n, event_type, _)| *n > since_seq && kind.is_none_or(|kind|kind==event_type))
+                            .map(|(_, _, s)| s.clone())
                             .collect(),
                     )
                 })
@@ -87,12 +94,15 @@ impl EventBus {
             for line in replay {
                 let _ = tx.try_send(line);
             }
-            subs.push(tx);
+            subs.push(Subscriber{tx,kind});
             return Ok(rx);
         }
         Err("event bus unavailable")
     }
 
+    pub fn has_serial_log_subscribers(&self)->bool{
+        self.inner.subscribers.lock().map(|subs|subs.iter().any(|sub|sub.kind==Some("serial.log.changed"))).unwrap_or(false)
+    }
     pub fn next_seq(&self) -> u64 {
         self.inner.seq.load(Ordering::SeqCst)
     }
@@ -112,6 +122,17 @@ pub struct EventEnvelope {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn serial_subscription_ignores_line_payloads_and_other_device_events(){
+        let bus=EventBus::new();bus.publish("serial.line",json!({"line":"older"}),None);bus.publish("serial.log.changed",json!({}),None);
+        assert!(!bus.has_serial_log_subscribers());
+        let rx=bus.subscribe_serial_logs(0).unwrap();assert!(bus.has_serial_log_subscribers());let hello:Value=serde_json::from_str(&rx.recv().unwrap()).unwrap();assert_eq!(hello["data"]["replayed"],1);
+        assert!(rx.recv().unwrap().contains("serial.log.changed"));assert!(rx.try_recv().is_err());
+        for _ in 0..2000{bus.publish("serial.line",json!({"line":"not for this consumer"}),None);}
+        assert!(rx.try_recv().is_err());bus.publish("serial.log.changed",json!({}),None);assert!(rx.recv().unwrap().contains("serial.log.changed"));
+        drop(rx);bus.publish("serial.log.changed",json!({}),None);assert!(!bus.has_serial_log_subscribers());
+    }
 
     #[test]
     fn replays_events_after_requested_sequence() {
@@ -140,6 +161,12 @@ mod tests {
         assert_eq!(hello["data"]["gap"], true);
         assert_eq!(hello["data"]["oldest_seq"], 3);
         assert_eq!(hello["data"]["replayed"], HISTORY_CAPACITY);
+    }
+
+    #[test]
+    fn closed_idle_filtered_subscriptions_do_not_exhaust_capacity(){
+        let bus=EventBus::new();for _ in 0..MAX_SUBSCRIBERS*3{let rx=bus.subscribe_serial_logs(0).unwrap();drop(rx);}
+        assert!(bus.subscribe_serial_logs(0).is_ok());
     }
 
     #[test]

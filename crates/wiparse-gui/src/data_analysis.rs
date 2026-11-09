@@ -26,11 +26,21 @@ use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wiparse_core::config::{load_config, save_config, AppConfig};
 use wiparse_core::i18n::{tr, tr_fmt, Lang};
+use wiparse_core::data_extract::extract_first_filter_value;
 use wiparse_core::paths::project_path;
 
 const TOOLBAR_H: f32 = 40.0;
 const SIDE_W: f32 = ui_theme::SIDEBAR_W;
-const PANEL_GAP: f32 = 8.0;
+const PANEL_GAP: f32 = ui_theme::PANEL_GAP;
+
+fn sidebar_section_heights(body_height: f32, live: bool) -> (f32, f32) {
+    let available = (body_height - PANEL_GAP).max(2.0);
+    let browser_min = 96.0_f32.min(available * 0.5);
+    let rules_min = 220.0_f32.min(available - browser_min);
+    let desired_rules = if live { available - 150.0 } else { available * 0.5 };
+    let rules = desired_rules.clamp(rules_min, available - browser_min);
+    (available - rules, rules)
+}
 const CARD_MARGIN_X: i8 = 10;
 const MAX_SERIES: usize = 8;
 const VIEW_MIN_SPAN_ABS: f64 = 1e-12;
@@ -510,8 +520,7 @@ impl DataAnalysisPanel {
             egui::vec2(plot_w, body_h),
         );
 
-        let browser_h = (body_h * 0.42).clamp(1.0, (body_h - PANEL_GAP).max(1.0));
-        let rules_h = (body_h - browser_h - PANEL_GAP).max(1.0);
+        let (browser_h, rules_h) = sidebar_section_heights(body_h, matches!(self.source, DataSource::SerialLive));
         let browser_rect =
             egui::Rect::from_min_size(side_rect.min, egui::vec2(side_w, browser_h));
         let rules_rect = egui::Rect::from_min_size(
@@ -543,6 +552,16 @@ impl DataAnalysisPanel {
                 ui.set_min_width(ui.available_width());
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
+                    let source = match self.source {
+                        DataSource::SerialLive => tr(lang, "data.source_live").to_string(),
+                        DataSource::File => self
+                            .last_open_path
+                            .as_ref()
+                            .and_then(|p| p.file_name())
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| tr(lang, "data.source_file").to_string()),
+                    };
+                    ui.label(RichText::new(source).color(tokens.text_muted));
                     if ui_theme::primary_btn_sized(
                         ui,
                         tokens,
@@ -634,11 +653,13 @@ impl DataAnalysisPanel {
                         .strong()
                         .color(tokens.text_primary),
                 );
-                ui.label(
-                    RichText::new(tr(lang, "data.status_live_wait"))
-                        .size(ui_theme::FONT_CAPTION)
-                        .color(tokens.text_muted),
-                );
+                if self.frame_count == 0 {
+                    ui.label(
+                        RichText::new(tr(lang, "data.status_live_wait"))
+                            .size(ui_theme::FONT_CAPTION)
+                            .color(tokens.text_muted),
+                    );
+                }
                 ui.label(
                     RichText::new(tr(lang, "data.axis_hint"))
                         .size(ui_theme::FONT_CAPTION)
@@ -695,7 +716,7 @@ impl DataAnalysisPanel {
                             ui,
                             tokens,
                             tr(lang, "data.apply"),
-                            egui::vec2(72.0, 24.0),
+                            egui::vec2(72.0, ui_theme::CTRL_H),
                         )
                         .clicked()
                         {
@@ -3083,94 +3104,6 @@ fn split_frames_progress<'a>(
     frames
 }
 
-/// First `filter` + whitespace + number in `frame`.
-/// Token boundary: filter must not be mid-identifier (prev char not alphanumeric/_).
-fn extract_first_filter_value(frame: &str, filter: &str) -> Option<f64> {
-    let mut search_from = 0;
-    while let Some(rel) = frame[search_from..].find(filter) {
-        let start = search_from + rel;
-        let abs = start + filter.len();
-        if !is_token_boundary_before(frame, start) {
-            search_from = abs;
-            continue;
-        }
-        let rest = &frame[abs..];
-        let trimmed = rest.trim_start_matches(|c: char| c == ' ' || c == '\t');
-        if trimmed.len() == rest.len() {
-            search_from = abs;
-            continue;
-        }
-        if let Some((value, _)) = parse_leading_number(trimmed) {
-            return Some(value);
-        }
-        search_from = abs;
-        if search_from >= frame.len() {
-            break;
-        }
-    }
-    None
-}
-
-fn is_token_boundary_before(text: &str, idx: usize) -> bool {
-    if idx == 0 {
-        return true;
-    }
-    let Some(prev) = text[..idx].chars().next_back() else {
-        return true;
-    };
-    !(prev.is_ascii_alphanumeric() || prev == '_')
-}
-
-fn parse_leading_number(s: &str) -> Option<(f64, usize)> {
-    let bytes = s.as_bytes();
-    if bytes.is_empty() {
-        return None;
-    }
-    let mut i = 0;
-    if bytes[0] == b'+' || bytes[0] == b'-' {
-        i = 1;
-    }
-    let start_digits = i;
-    let mut saw_digit = false;
-    let mut saw_dot = false;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'0'..=b'9' => {
-                saw_digit = true;
-                i += 1;
-            }
-            b'.' if !saw_dot => {
-                saw_dot = true;
-                i += 1;
-            }
-            b'e' | b'E' if saw_digit => {
-                i += 1;
-                if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
-                    i += 1;
-                }
-                let exp_start = i;
-                while i < bytes.len() && bytes[i].is_ascii_digit() {
-                    i += 1;
-                }
-                if i == exp_start {
-                    return None;
-                }
-                break;
-            }
-            _ => break,
-        }
-    }
-    if !saw_digit || i == start_digits {
-        return None;
-    }
-    let num = std::str::from_utf8(&bytes[..i]).ok()?;
-    let value: f64 = num.parse().ok()?;
-    if !value.is_finite() {
-        return None;
-    }
-    Some((value, i))
-}
-
 fn display_y(raw: f64, y_scale: f64, y_offset: f64, kind: DataKind) -> f64 {
     raw * (y_scale / kind.ref_span()) + y_offset
 }
@@ -3599,6 +3532,21 @@ fn card_in_rect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sidebar_shares_height_and_keeps_rules_usable() {
+        for height in [100.0, 240.0, 360.0, 660.0, 1000.0] {
+            for live in [false, true] {
+                let (browser, rules) = sidebar_section_heights(height, live);
+                assert!(browser > 0.0 && rules > 0.0);
+                assert!((browser + rules + PANEL_GAP - height).abs() < 0.01);
+            }
+        }
+        let (browser, rules) = sidebar_section_heights(660.0, false);
+        assert!(rules > 300.0 && browser > 300.0);
+        let (live_browser, live_rules) = sidebar_section_heights(660.0, true);
+        assert!(live_browser <= 150.0 && live_rules > rules);
+    }
 
     #[test]
     fn split_and_extract_basic() {

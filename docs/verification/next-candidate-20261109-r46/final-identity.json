@@ -1,0 +1,31 @@
+{
+  "native_tests": 67,
+  "real_ai_tested": false,
+  "source_files": 782,
+  "frontend_tests": 110,
+  "scp_real_file_rerun": true,
+  "desktop": "R46 paired GUI/Host; loopback serial and waveform open/append",
+  "qa_processes_remaining": 0,
+  "shipped_binaries": [
+    {
+      "sha256": "09a28ba8c5b527cda00344e7a0b1150713215bb7af52e4f6a9bed806e527fee1",
+      "file": "WiParse.exe"
+    },
+    {
+      "sha256": "e2f3dd2c913f3dde1c64b081de52f4ce167034cf73ab8dc8af3e165226e91854",
+      "file": "WiParse-Host.exe"
+    },
+    {
+      "sha256": "31040c09a9a6067e2ab98e3538c4ad739a5b5f77fdcdefd1811c10115c8ddbeb",
+      "file": "WiParse-CLI.exe"
+    },
+    {
+      "sha256": "30984d4effb3daa83e6318e703a904e393bd93a47cbd4027b41c311c3458dc44",
+      "file": "WiParse-Service.exe"
+    }
+  ],
+  "hardware_tested": false,
+  "passed": true,
+  "workspace_tests": 578,
+  "source_identity_matches_candidate": true
+}

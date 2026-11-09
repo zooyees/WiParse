@@ -1,0 +1,18 @@
+import {LocalizedLabel,localizeLabel} from './localization';
+import {useEffect,useState} from 'react';
+import {invoke} from '@tauri-apps/api/core';
+import {readLegacy} from './bridge';
+import {object,string} from './model';
+import {applyAppearance} from './appearance';
+import {applyLanguage} from './language';
+
+export function PreferencesPanel({onEditingChange}:{onEditingChange:(value:boolean)=>void}) {
+  const [base,setBase]=useState<Record<string,unknown>|null>(null),[fields,setFields]=useState<Record<string,unknown>>({}),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
+  const dirty=!!base&&JSON.stringify(fields)!==JSON.stringify(object(base.fields));
+  useEffect(()=>{onEditingChange(dirty||busy);return()=>onEditingChange(false);},[dirty,busy,onEditingChange]);
+  const load=async()=>{setBusy(true);try{const value=object(await readLegacy('ui.preferences.get_safe'));setBase(value);setFields(object(value.fields));setMessage('');}catch(reason){setMessage(String(reason));}finally{setBusy(false);}};
+  useEffect(()=>{void load();},[]);
+  const save=async()=>{if(!base)return;setBusy(true);setMessage('');try{const result=object(await invoke('preferences_save',{revision:string(base.revision),fields}));setBase(result);setFields(object(result.fields));applyAppearance(string(object(result.fields).theme));applyLanguage(string(object(result.fields).language));setMessage(localizeLabel("已保存；串口参数用于下一次启动接收，不会重启当前连接。"));}catch(reason){setMessage(`${String(reason)}；保存结果不确定时请重新读取核对，不会自动重试。`);}finally{setBusy(false);}};
+  const change=(key:string,value:unknown)=>setFields(previous=>({...previous,[key]:value}));
+  return <section className="settings-content preferences-panel"><div className="settings-title"><div><strong><LocalizedLabel text={"外观与串口默认值"}/></strong><small><LocalizedLabel text={"保留现有采集缓存和行数限制。"}/></small></div></div>{!base?<button className="button secondary" disabled={busy} onClick={()=>void load()}><LocalizedLabel text={"重新读取"}/></button>:<><div className="settings-grid"><label><LocalizedLabel text="语言"/><select value={string(fields.language,'zh')} disabled={busy} onChange={event=>change('language',event.target.value)}><option value="zh"><LocalizedLabel text={"简体中文"}/></option><option value="en">English</option></select></label><label><LocalizedLabel text={"外观"}/><select value={string(fields.theme,'light')} disabled={busy} onChange={event=>change('theme',event.target.value)}><option value="light"><LocalizedLabel text={"浅色"}/></option><option value="dark"><LocalizedLabel text={"深色"}/></option></select></label><label className="settings-check"><input type="checkbox" checked={fields.debug_mode===true} disabled={busy} onChange={event=>change('debug_mode',event.target.checked)}/><LocalizedLabel text={"显示演示设备（模拟）"}/></label><label><LocalizedLabel text={"默认波特率列表"}/><input value={Array.isArray(fields.baudrates)?fields.baudrates.join(', '):''} disabled={busy} onChange={event=>change('baudrates',event.target.value.split(',').map(value=>value.trim()))}/><small><LocalizedLabel text={"使用英文逗号分隔"}/></small></label></div><div className="settings-actions"><button className="button secondary" disabled={busy||dirty} onClick={()=>void load()}><LocalizedLabel text={"重新读取"}/></button><button className="calculator-submit" disabled={busy||!dirty} onClick={()=>void save()}><LocalizedLabel text={"保存默认值"}/></button><button className="button secondary" disabled={busy||!dirty} onClick={()=>{setFields(object(base.fields));setMessage('');}}><LocalizedLabel text={"放弃修改"}/></button></div></>}{message&&<div className="detail-help" role="status">{message}</div>}</section>;
+}

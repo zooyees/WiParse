@@ -1,0 +1,101 @@
+{
+  "schema_version": "wiparse.fpga-test-case/2",
+  "editor_revision": 2,
+  "updated_at": "2026-10-18T09:53:33.193Z",
+  "id": "fpga_01_pll_clock",
+  "name": "PLL 时钟锁定与输出频率验证",
+  "enabled": true,
+  "order": 10,
+  "tags": [
+    "demo",
+    "clock",
+    "dongle-uart",
+    "dongle-reset",
+    "analog-scope"
+  ],
+  "timeout_s": 120,
+  "firmware": {
+    "download": false,
+    "implementation": "reserved",
+    "path": "../firmware/demo-ip-suite.bin",
+    "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+    "target": "DEMO-FPGA",
+    "format": "bin",
+    "base_address": 0,
+    "verify": false
+  },
+  "reset": {
+    "method": "wiparse_dongle",
+    "dongle_role": "programmer",
+    "hardware": true,
+    "release_confirmation": {
+      "type": "command_complete",
+      "timeout_ms": 2000
+    }
+  },
+  "timing": {
+    "anchor": "after_reset_release"
+  },
+  "log_capture": {
+    "enabled": true,
+    "start_at_s": 0,
+    "duration_s": 15,
+    "max_lines": 20000,
+    "encoding": "utf-8",
+    "resource_role": "log_dongle"
+  },
+  "waveform_captures": [
+    {
+      "id": "ip_output",
+      "at_s": 2,
+      "kind": "screenshot",
+      "channels": [
+        "CH1",
+        "CH2"
+      ],
+      "source_waveform": {
+        "enabled": true,
+        "format": "instrument_native"
+      },
+      "timeout_s": 30
+    }
+  ],
+  "verdict": {
+    "mode": "all",
+    "rules": [
+      {
+        "id": "functional_success",
+        "type": "log_contains",
+        "text": "PLL_LOCK_OK",
+        "required": true
+      },
+      {
+        "id": "no_fatal_errors",
+        "type": "log_not_regex",
+        "pattern": "\\b(FATAL|ASSERT|PANIC)\\b",
+        "required": true
+      },
+      {
+        "id": "output_frequency",
+        "type": "waveform_metric_range",
+        "capture": "ip_output",
+        "channel": "CH1",
+        "metric": "frequency_hz",
+        "minimum": 99000000,
+        "maximum": 101000000,
+        "unit": "Hz",
+        "required": true
+      }
+    ],
+    "ai_assist": {
+      "enabled": false,
+      "policy": "advisory_only",
+      "provider_profile": "local-default",
+      "inputs": [
+        "rule_results",
+        "waveform_metrics"
+      ],
+      "required": false
+    }
+  }
+}

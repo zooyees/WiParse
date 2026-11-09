@@ -1,0 +1,61 @@
+{
+  "scope": "Solid color palette calculations only; not rendered desktop or full accessibility acceptance",
+  "pairs": [
+    {
+      "surface": "log text",
+      "foreground": "#dde5ee",
+      "background": "#202731",
+      "contrast_ratio": 11.83,
+      "at_least_4_5": true
+    },
+    {
+      "surface": "secondary text",
+      "foreground": "#a4b0bf",
+      "background": "#202731",
+      "contrast_ratio": 6.83,
+      "at_least_4_5": true
+    },
+    {
+      "surface": "AI user message",
+      "foreground": "#dde5ee",
+      "background": "#293e53",
+      "contrast_ratio": 8.66,
+      "at_least_4_5": true
+    },
+    {
+      "surface": "AI alert",
+      "foreground": "#f0cc86",
+      "background": "#392d1e",
+      "contrast_ratio": 8.73,
+      "at_least_4_5": true
+    },
+    {
+      "surface": "primary button",
+      "foreground": "#ffffff",
+      "background": "#316faa",
+      "contrast_ratio": 5.27,
+      "at_least_4_5": true
+    },
+    {
+      "surface": "pass status",
+      "foreground": "#9cdfbd",
+      "background": "#18392e",
+      "contrast_ratio": 8.24,
+      "at_least_4_5": true
+    },
+    {
+      "surface": "fail status",
+      "foreground": "#f2aaaa",
+      "background": "#422828",
+      "contrast_ratio": 7.09,
+      "at_least_4_5": true
+    },
+    {
+      "surface": "running status",
+      "foreground": "#afd4fa",
+      "background": "#213d58",
+      "contrast_ratio": 7.27,
+      "at_least_4_5": true
+    }
+  ]
+}

@@ -61,8 +61,14 @@ pub struct DongleSession {
 
 enum UartLink {
     Tcp(TcpStream),
-    Serial(Box<dyn serialport::SerialPort>),
+    Serial(UartSerial),
     WinUsb(WinUsbUart),
+}
+
+struct UartSerial {
+    port: Box<dyn serialport::SerialPort>,
+    #[cfg(windows)]
+    _resource_lease: Option<crate::resource_lock::ResourceLease>,
 }
 
 enum I2cLink {
@@ -371,11 +377,14 @@ impl DongleSession {
             )));
         }
         if !self.spec.uart_com.is_empty() {
+            #[cfg(windows)]
+            let resource_lease=crate::resource_lock::acquire_com_resource(&self.spec.uart_com)
+                .map_err(|e|InstrumentError::Io(format!("UART {}: {e}",self.spec.uart_com)))?;
             let port = serialport::new(&self.spec.uart_com, baud)
                 .timeout(Duration::from_millis(20))
                 .open()
                 .map_err(|e| InstrumentError::Io(format!("UART {}: {e}", self.spec.uart_com)))?;
-            self.uart = Some(UartLink::Serial(port));
+            self.uart = Some(UartLink::Serial(UartSerial {port,#[cfg(windows)] _resource_lease:resource_lease}));
             return Ok(Some(format!("UART {} @{} open", self.spec.uart_com, baud)));
         }
         if let Ok(uart) = open_winusb_uart(&self.spec.serial, baud) {
@@ -428,7 +437,7 @@ impl DongleSession {
             Some(UartLink::Tcp(stream)) => stream
                 .write_all(&bytes)
                 .map_err(|e| InstrumentError::Io(format!("UART write: {e}")))?,
-            Some(UartLink::Serial(port)) => port
+            Some(UartLink::Serial(port)) => port.port
                 .write_all(&bytes)
                 .map_err(|e| InstrumentError::Io(format!("UART write: {e}")))?,
             Some(UartLink::WinUsb(port)) => port
@@ -455,7 +464,7 @@ impl DongleSession {
                 }
                 Err(e) => return Err(InstrumentError::Io(format!("UART read: {e}"))),
             },
-            Some(UartLink::Serial(port)) => match port.read(&mut buf) {
+            Some(UartLink::Serial(port)) => match port.port.read(&mut buf) {
                 Ok(n) => n,
                 Err(e)
                     if e.kind() == std::io::ErrorKind::TimedOut

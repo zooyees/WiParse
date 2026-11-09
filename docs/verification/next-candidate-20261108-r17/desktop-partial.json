@@ -1,0 +1,7 @@
+{
+  "candidate":"r17",
+  "date":"2026-11-08",
+  "observations":[{"check":"cold startup","result":"passed"},{"check":"Ctrl+G from navigation focus","result":"passed: row input focused, no WebView find overlay"},{"check":"Ctrl+F","result":"passed: log search input focused, no WebView find overlay"}],
+  "hardware_commands_sent":false,
+  "industrial_approved":false
+}

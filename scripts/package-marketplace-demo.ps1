@@ -195,6 +195,7 @@ if (-not $FpgaRelative -or [IO.Path]::IsPathRooted($FpgaRelative) -or $FpgaRelat
 $FpgaCount=@(Get-ChildItem -LiteralPath (Join-Path $FpgaDemoRoot 'recipes/fpga-firmware-test/cases') -File -Filter '*.json').Count
 if ($FpgaCount -ne $FpgaVerification.item_count) { throw 'FPGA verified configuration count differs' }
 Copy-Tree (Join-Path $Root 'recipes/fpga-firmware-test') (Join-Path $Out 'recipes/fpga-firmware-test')
+Copy-Tree (Join-Path $Root 'recipes/wireless-whitebox') (Join-Path $Out 'recipes/wireless-whitebox')
 # This is a verified historical run, not a runtime root: its logs are report evidence.
 & robocopy (Join-Path $FpgaDemoRoot $FpgaRelative) (Join-Path $Out $FpgaRelative) /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
 if ($LASTEXITCODE -ge 8) { throw 'Copy FPGA report evidence failed' }

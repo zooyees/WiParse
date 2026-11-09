@@ -1,0 +1,224 @@
+{
+  "schema_version": "wiparse.fpga-result/2",
+  "run_id": "394d1280-4c78-4163-a5bb-73b7de3679a4",
+  "attempt_id": "26143986-6990-470b-a0ca-4c1102c787ee",
+  "item_id": "fpga_01_pll_clock",
+  "cycle": 1,
+  "identity": {
+    "identity_source": "simulation",
+    "operator": "demo",
+    "input_at": "2026-11-08T04:22:59.660Z",
+    "field_sources": {
+      "operator": "run_parameters",
+      "dut_serial": "run_parameters",
+      "board_revision": "run_parameters",
+      "fpga_model": "run_parameters",
+      "fixture_id": "run_parameters",
+      "station_id": "run_parameters"
+    },
+    "dut_serial": "DEMO-SN-0001",
+    "board_revision": "DEMO-REV-A",
+    "fpga_model": "DEMO-FPGA",
+    "fixture_id": "DEMO-FIXTURE-01",
+    "station_id": "DEMO-STATION-01"
+  },
+  "config_sha256": "f5645b6cf80e0ec6a4a5eeab029b125e79dac87c77f647d890983ad1129b005b",
+  "firmware_sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+  "limits_sha256": "660a86c42762f3a18208efec990c1f2660c354d09ad36fccfaf72d01bbcc0a66",
+  "resolved_instruments": {
+    "programmer": {
+      "kind": "debug_probe",
+      "serial": "DEMO-DONGLE-001",
+      "device_id": 1,
+      "model": "SIMULATED",
+      "simulation_only": true,
+      "selector": {
+        "serial": "DEMO-DONGLE-001"
+      }
+    },
+    "scope": {
+      "kind": "oscilloscope",
+      "serial": "DEMO-SCOPE-001",
+      "device_id": 2,
+      "model": "SIMULATED",
+      "simulation_only": true,
+      "selector": {
+        "serial": "DEMO-SCOPE-001"
+      }
+    },
+    "log_dongle": {
+      "kind": "wiparse_dongle_uart",
+      "dongle_serial": "DEMO-DONGLE-001",
+      "uart_channel": 0,
+      "baud": 115200,
+      "device_id": 3,
+      "model": "SIMULATED",
+      "simulation_only": true,
+      "selector": {
+        "dongle_serial": "DEMO-DONGLE-001",
+        "uart_channel": 0,
+        "baud": 115200
+      }
+    }
+  },
+  "suite_t0": 229.1624,
+  "item_t0": 259.4173,
+  "started_at": "2026-11-08T04:22:59.742Z",
+  "industrial_approved": false,
+  "validation_verdict": "PASS",
+  "execution_status": "completed",
+  "errors": [],
+  "attempt": 1,
+  "loop_index": 1,
+  "project_config": {
+    "revision": 1,
+    "sha256": "e3c937182ae96661b0787a3b4a10447a4c01ab0eacdb23a8d701ef74bd45a1f9",
+    "schema_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "scope": {
+    "project_id": "demo",
+    "test_id": "fpga-repro",
+    "plugin_id": "fpga-firmware-test"
+  },
+  "config_sources": {
+    "dut": "project_config",
+    "instruments": {
+      "programmer": "project_config.instruments.programmer",
+      "scope": "project_config.instruments.scope",
+      "log_dongle": "project_config.instruments.log_dongle"
+    },
+    "item": "case",
+    "identity": {
+      "operator": "run_parameters",
+      "dut_serial": "run_parameters",
+      "board_revision": "run_parameters",
+      "fpga_model": "run_parameters",
+      "fixture_id": "run_parameters",
+      "station_id": "run_parameters"
+    }
+  },
+  "effective_config_sha256": "30f6b10c278072ee7b34d4dd1241083742289c4c4dc1ef243e27e90b07b0346f",
+  "capture_t0": 271.9486,
+  "cleanup": {
+    "ok": true,
+    "simulation_only": true
+  },
+  "results": [
+    {
+      "id": "functional_success",
+      "type": "log_contains",
+      "required": true,
+      "verdict": "PASS",
+      "measured": 1,
+      "evidence_refs": [
+        "logs/serial.jsonl"
+      ],
+      "reason": "satisfied"
+    },
+    {
+      "id": "no_fatal_errors",
+      "type": "log_not_regex",
+      "required": true,
+      "verdict": "PASS",
+      "measured": 0,
+      "evidence_refs": [
+        "logs/serial.jsonl"
+      ],
+      "reason": "satisfied"
+    },
+    {
+      "id": "output_frequency",
+      "type": "waveform_metric_range",
+      "required": true,
+      "verdict": "PASS",
+      "measured": 100000000,
+      "minimum": 99000000,
+      "maximum": 101000000,
+      "unit": "Hz",
+      "source": "inline",
+      "limit_sha256": "2647d2b908e0ed2e6643db045d65ee276cb9a23d8b2917108d47ce8b703358f3",
+      "evidence_refs": [
+        "ip_output"
+      ],
+      "reason": "satisfied"
+    }
+  ],
+  "product_verdict": "PASS",
+  "evidence": {
+    "metrics": {
+      "ip_output": {
+        "CH1": {
+          "frequency_hz": {
+            "value": 100000000,
+            "unit": "Hz",
+            "quality": "good"
+          },
+          "duty_cycle": {
+            "value": 0.5,
+            "unit": "ratio",
+            "quality": "good"
+          }
+        },
+        "CH2": {
+          "frequency_hz": {
+            "value": 100000000,
+            "unit": "Hz",
+            "quality": "good"
+          },
+          "duty_cycle": {
+            "value": 0.5,
+            "unit": "ratio",
+            "quality": "good"
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "ip_output": {
+        "path": "shots/ip_output-SIMULATION.png",
+        "sha256": "5f660afa1ee6e3716f7aac231dfe6d2c9ff170c530369044b43b421ee4a974ea"
+      },
+      "ip_output.source": {
+        "path": "waves/ip_output-SIMULATION.csv",
+        "sha256": "6cc043c018de21edfb1722aa9aef558ce9950bfb06ac01bc9c2a6e717a552d43"
+      }
+    },
+    "capture_events": [
+      {
+        "id": "ip_output",
+        "planned_mono_ms": 2271.9486,
+        "actual_mono_ms": 2279.3815,
+        "completed_mono_ms": 2291.5336,
+        "lateness_ms": 7.4328999999997905
+      }
+    ],
+    "log": {
+      "start_cursor": 0,
+      "end_cursor": 24,
+      "dropped_lines": 0,
+      "window_covered": true,
+      "complete": true,
+      "simulation_only": true,
+      "decoded": true,
+      "truncated": false,
+      "line_count": 1,
+      "preview": [
+        {
+          "mono_ms": 271.9486,
+          "utc": "2026-11-08T04:23:14.759Z",
+          "text": "SIMULATION: PLL_LOCK_OK"
+        }
+      ]
+    }
+  },
+  "completed_at": "2026-11-08T04:23:14.805Z",
+  "elapsed_s": 15.0628343,
+  "first_error_id": null,
+  "diagnostics": {
+    "first_error": null,
+    "first_rule_issue": null,
+    "rule_issue_count": 0,
+    "recovery_hint": null,
+    "automatic_retry": false
+  }
+}

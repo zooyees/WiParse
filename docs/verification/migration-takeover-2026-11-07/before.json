@@ -1,0 +1,123 @@
+{
+  "date": "2026-11-07",
+  "head": "fa62efe71f7ee3b9927597df5209b60daaf6604b",
+  "files": [
+    {
+      "path": "apps/wiparse-next/ACCEPTANCE-PLAN.md",
+      "sha256": "220152291052a0261285c468d95d53d9380022cae796cb6c67424b66dd5f65c9"
+    },
+    {
+      "path": "apps/wiparse-next/MIGRATION-STATUS.md",
+      "sha256": "df20afb78ab5c61f0179357743e81b3d96878cbed8664dbee301787ae270c8bf"
+    },
+    {
+      "path": "apps/wiparse-next/README.md",
+      "sha256": "7e8b73f316d965d5b2c9871c69845b2c4b10d76fc161e319d1d328e9b6714e4e"
+    },
+    {
+      "path": "apps/wiparse-next/REVIEW.md",
+      "sha256": "e2872f9c63ddcaf5fde3bfe0f4131308482260e7251356091ecd6da8d3c348d0"
+    },
+    {
+      "path": "apps/wiparse-next/src/AiAssistant.tsx",
+      "sha256": "84cb42aae084b31a3a84d8d3ec0c3ad49e3b872bf2be17b1b7b083bf568181d8"
+    },
+    {
+      "path": "apps/wiparse-next/src/App.tsx",
+      "sha256": "bd71afa64dc8265c7f7320b880a6a6c070f36e922b24efee78b6d8ba96cec8bb"
+    },
+    {
+      "path": "apps/wiparse-next/src/bridge.ts",
+      "sha256": "2189345ced92cd50a291661865ef2f7ab74e6ae2e64490bcb5e5c47edfe8052f"
+    },
+    {
+      "path": "apps/wiparse-next/src/DataWorkspace.tsx",
+      "sha256": "e8b7c30281520123e76f43dbfb7baa37cac409ab329c88628072f0327254c583"
+    },
+    {
+      "path": "apps/wiparse-next/src/deviceInterlock.ts",
+      "sha256": "541f1ac10a1b7dfe94a2d306267c741a114c194dce84afdf44e1d30f732c7e4f"
+    },
+    {
+      "path": "apps/wiparse-next/src/GenericPluginWorkspace.tsx",
+      "sha256": "30d1134348d182eb40be20782103149b4c9524d6f36d9c0f2c9657453c44e30f"
+    },
+    {
+      "path": "apps/wiparse-next/src/LoadControl.tsx",
+      "sha256": "316dfafeeb9f6bd13fde29ec857cfb795550a86e6976a14c2864d42791299797"
+    },
+    {
+      "path": "apps/wiparse-next/src/main.tsx",
+      "sha256": "47bbb595a850847154dcb069ad195c21151fa6393059c1a0b7c25d9e46fd8498"
+    },
+    {
+      "path": "apps/wiparse-next/src/model.ts",
+      "sha256": "4ddc55d30711166797f3ece2d88ce60485ed7126c13add240c737f16e17ac2ea"
+    },
+    {
+      "path": "apps/wiparse-next/src/ReportWorkspace.tsx",
+      "sha256": "31542c5558a506a391a8fca03fa7a070fdc4acb861d4c819637fbe6514fad22e"
+    },
+    {
+      "path": "apps/wiparse-next/src/ScopeSerialWorkspace.tsx",
+      "sha256": "c11b8093a836b9c7dc697dc3655f1d6d2876e732da5ddfe06e853d0a09a8f917"
+    },
+    {
+      "path": "apps/wiparse-next/src/serialSearch.ts",
+      "sha256": "a5477f96ea48bf6a1f384de7e868bc4d4b3e079fc181b8cdec5962336d3e5c80"
+    },
+    {
+      "path": "apps/wiparse-next/src/SettingsWorkspace.tsx",
+      "sha256": "1c5785a98050724ff97fa1fa752ccab264ce783e04ea6b50081569702f31f77b"
+    },
+    {
+      "path": "apps/wiparse-next/src/SourceControl.tsx",
+      "sha256": "3d93f9a03aa841a01ab2b139ef1f72c8635ff5bee8636e91d5296b223f09cc6c"
+    },
+    {
+      "path": "apps/wiparse-next/src/style.css",
+      "sha256": "5f4057aa6d35ac3458369a92db4d543a705565993d3b6e01ae75f60ec556ac9e"
+    },
+    {
+      "path": "apps/wiparse-next/src/useDeviceInterlock.ts",
+      "sha256": "91f37bb9547a59337b977b266cb0ffd9131e946c23798205c72f926d3d28e0f4"
+    },
+    {
+      "path": "apps/wiparse-next/src/WaveSourceControl.tsx",
+      "sha256": "3ae330216ae5ffd658f996703d400fde6bc9926e3176ec4752701eaea3970822"
+    },
+    {
+      "path": "apps/wiparse-next/src/WaveWorkspace.tsx",
+      "sha256": "59e508adfda9f7c9b85a562b2ab12a0eb974ccd692e7cde1039377e946db5b06"
+    },
+    {
+      "path": "apps/wiparse-next/src-tauri/src/data_view.rs",
+      "sha256": "d4359b28df64d589cd651eae8603ed5feea3c768a39b8225e9c2bbf06e01d45d"
+    },
+    {
+      "path": "apps/wiparse-next/src-tauri/src/main.rs",
+      "sha256": "7ff62bc6e7fbcd9ce712c0349aab61e9dec44415fdefd5136a0e2cc8dce2e61d"
+    },
+    {
+      "path": "apps/wiparse-next/src-tauri/src/report_view.rs",
+      "sha256": "52893fbf402e8c116e5ab87b1df07b4507975051b402ef95fae849e3b15ba0d2"
+    },
+    {
+      "path": "apps/wiparse-next/src-tauri/src/wave_view.rs",
+      "sha256": "e6de26a0ce3b40326d4db40e8ae7f966d47484f3b1732fa3d56e32045ec5ee53"
+    },
+    {
+      "path": "apps/wiparse-next/src-tauri/tauri.conf.json",
+      "sha256": "d1a6a61081fb326fde205fec6fd2236d75de46dc133688d6e4461e8e425d7463"
+    },
+    {
+      "path": "docs/plans/wiparse-tauri-migration-handoff-2026-11-07.md",
+      "sha256": "f7cde595be5b6a2f7dcf4903f83c61f8c94e756d612fcb45efc2d0c9156d7df6"
+    },
+    {
+      "path": "docs/plans/wiparse-tauri-react-refactor-plan.md",
+      "sha256": "302cda5d8ff46e347c80594cc726851793a90ac013ab6d7a4d4e773bfc728a67"
+    }
+  ],
+  "status": " M Cargo.lock\n M crates/wiparse-core/src/ai.rs\n M crates/wiparse-core/src/bridge.rs\n M crates/wiparse-core/src/dongle.rs\n M crates/wiparse-core/src/i18n.rs\n M crates/wiparse-core/src/lib.rs\n M crates/wiparse-core/src/log/file.rs\n M crates/wiparse-core/src/project.rs\n M crates/wiparse-core/src/scope/visa.rs\n M crates/wiparse-core/src/scope/visa_hotplug_tests.rs\n M crates/wiparse-core/src/serial.rs\n M crates/wiparse-core/src/usb.rs\n M crates/wiparse-core/src/waveform_file.rs\n M crates/wiparse-gui/Cargo.toml\n M crates/wiparse-gui/src/ai.rs\n M crates/wiparse-gui/src/app.rs\n M crates/wiparse-gui/src/backend/capabilities.rs\n M crates/wiparse-gui/src/backend/mod.rs\n M crates/wiparse-gui/src/backend/stateful.rs\n M crates/wiparse-gui/src/backend/ui.rs\n M crates/wiparse-gui/src/calculator.rs\n M crates/wiparse-gui/src/converter.rs\n M crates/wiparse-gui/src/data_analysis.rs\n M crates/wiparse-gui/src/instrument_control.rs\n M crates/wiparse-gui/src/instrument_control/workbench.rs\n M crates/wiparse-gui/src/instrument_control/workbench/channels.rs\n M crates/wiparse-gui/src/instrument_control/workbench/controls.rs\n M crates/wiparse-gui/src/instrument_control/workbench/design.rs\n M crates/wiparse-gui/src/instrument_control/workbench/flat.rs\n M crates/wiparse-gui/src/instrument_control/workbench/navigation.rs\n M crates/wiparse-gui/src/instrument_control/workbench/ports.rs\n M crates/wiparse-gui/src/instrument_control/workbench/scope_layout.rs\n M crates/wiparse-gui/src/log_tab.rs\n M crates/wiparse-gui/src/log_view.rs\n M crates/wiparse-gui/src/serial_tool.rs\n M crates/wiparse-gui/src/test_report.rs\n M crates/wiparse-gui/src/test_report/chat_text.rs\n M crates/wiparse-gui/src/test_tool.rs\n M crates/wiparse-gui/src/test_tool/workspace.rs\n M crates/wiparse-gui/src/test_tool/workspace/project_matrix.rs\n M crates/wiparse-gui/src/theme.rs\n M crates/wiparse-gui/src/waveform_analysis.rs\n M crates/wiparse-service/src/jobs.rs\n M dist/WiParse-CLI.exe\n M dist/WiParse-Service.exe\n M dist/WiParse.exe\n M scripts/package-marketplace-demo.ps1\n M scripts/stage-exe-preview.ps1\n M test-tools/hub-workspace.mjs\n M test-tools/lib/host/fpga-host-adapter.mjs\n M test-tools/lib/hub/common.mjs\n M test-tools/lib/hub/config-store.mjs\n M test-tools/lib/hub/run-binding.mjs\n M test-tools/plugins/fpga-firmware-test/README.md\n M test-tools/plugins/fpga-firmware-test/lib/log-capture.mjs\n M test-tools/plugins/fpga-firmware-test/lib/resource-resolver.mjs\n M test-tools/plugins/fpga-firmware-test/test/project-hub.test.mjs\n M test-tools/plugins/fpga-firmware-test/test/upgrade.test.mjs\n M test-tools/plugins/scope-serial-monitor/loop.mjs\n M test-tools/test/fpga-host-adapter.test.mjs\n?? .npm-task-cache/\n?? PREVIEW.txt\n?? WiParse.exe.old\n?? WiParse.exe.previous\n?? apps/\n?? backup-spacing-20261106-221219/\n?? crates/wiparse-core/src/data_extract.rs\n?? crates/wiparse-core/src/device_session.rs\n?? crates/wiparse-core/src/resource_lock.rs\n?? dist/WiParse-1.2.2-Current-20261106/\n?? dist/WiParse-1.2.2-Spacing-20261106/\n?? dist/WiParse-1.2.2-UI-20261106/\n?? dist/WiParse-1.2.2-UI-Redesign-20261106/\n?? dist/WiParse-1.2.2-Windows-x64-20261025-Full/\n?? dist/WiParse-1.2.2-Windows-x64-20261103-Full/\n?? dist/WiParse-1.2.2-Windows-x64-20261104-2-Full/\n?? dist/WiParse-1.2.2-Windows-x64-20261104-3-Full/\n?? dist/WiParse-1.2.2-Windows-x64-20261104-Full/\n?? dist/WiParse-1.2.2-Windows-x64-20261105-2-Full/\n?? dist/WiParse-1.2.2-Windows-x64-20261105-3-Full/\n?? dist/WiParse-1.2.2-Windows-x64-20261105-4-Full/\n?? dist/WiParse-1.2.2-Windows-x64-20261105-5-Full/\n?? dist/WiParse-1.2.2-Windows-x64-20261105-Full/\n?? dist/WiParse-1.2.2-WirelessWhitebox-20261105/\n?? dist/WiParse-1.2.2-WirelessWhitebox-FT4222-20261105/\n?? dist/WiParse-1.2.2-WirelessWhitebox-FT4222-GUI-20261105/\n?? dist/wiparse-1.2.2-intelligent-serial-ai-20261025-preview-r2/\n?? docs/plans/\n?? docs/reviews/gui-framework-architecture-review-2026-11-07.md\n?? docs/reviews/gui-framework-progress-assessment-2026-11-07.md\n?? docs/reviews/mt5820-executable-test-plan.md\n?? docs/reviews/wiparse-ui-ue-review-2026-11-06.md\n?? docs/reviews/wiparse-wireless-whitebox-assessment-2026-11-05.md\n?? docs/ui-ue-assessment-2026-11-05.md\n?? docs/ui-ue-remediation-2026-11-05.md\n?? docs/verification/gui-framework-review-2026-11-07/\n?? preview-manifest.json\n?? recipes/wireless-whitebox/\n?? scripts/deploy-wireless-interim.ps1\n?? scripts/deploy-workspace-gui.ps1\n?? scripts/package-current-release.py\n?? scripts/package-ui-review.py\n?? scripts/package-wireless-interim.py\n?? test-tools/plugins/wireless-whitebox/\n?? test-tools/test/ft4222-i2c-bus.test.mjs\n?? test-tools/test/hub-atomic-write.test.mjs\n?? test-tools/test/mt5788.test.mjs\n?? test-tools/test/mt5820-log.test.mjs\n?? test-tools/test/scope-preflight-safety.test.mjs\n?? test-tools/test/wireless-i2c-bus.test.mjs\n?? test-tools/test/wireless-load-sequence.test.mjs\n?? test-tools/test/wireless-rx-observe.test.mjs\n?? test-tools/test/wireless-station-readiness.test.mjs\n?? test-tools/test/wireless-whitebox.test.mjs\n?? wifi-uart-recent.json\n"
+}

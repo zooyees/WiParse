@@ -116,7 +116,7 @@ pub(crate) fn dongle_actions(
                 });
             }
         });
-        ui.add_space(12.0);
+        ui.add_space(8.0);
         ui.label(RichText::new(text(lang, "总线操作", "Bus tools")).strong());
         ui.scope(|ui| {
             action_group(ui, 2, |ui| {
@@ -261,7 +261,7 @@ pub(crate) fn probe_actions(
         }
     });
     if d.controls.probe_page <= 1 {
-        ui.add_space(12.0);
+        ui.add_space(8.0);
         egui::CollapsingHeader::new(text(lang, "复位与擦除", "Reset & erase"))
             .id_salt(("probe-maintenance", d.id, d.controls.probe_page))
             .show(ui, |ui| {
@@ -345,7 +345,7 @@ pub(super) fn source_channel(
             value: d.controls.source_currents[i],
         });
     }
-    ui.add_space(12.0);
+    ui.add_space(8.0);
     ui.label(RichText::new(text(lang, "输出控制", "Output")).strong());
     ui.add_space(8.0);
     action_group(ui, 2, |ui| {
@@ -421,7 +421,7 @@ pub(super) fn protection_channel(
                 .suffix(" A"),
         );
     });
-    ui.add_space(12.0);
+    ui.add_space(8.0);
     if action(ui, t, text(lang, "应用保护", "Apply protection"), false).clicked() {
         out.push(ControlCommand::SourceOvp {
             channel: ch,
@@ -474,7 +474,7 @@ pub(crate) fn load(
             value: d.controls.load_level,
         });
     }
-    ui.add_space(12.0);
+    ui.add_space(8.0);
     ui.label(RichText::new(text(lang, "负载输入", "Load input")).strong());
     ui.add_space(8.0);
     action_group(ui, 2, |ui| {
@@ -595,7 +595,7 @@ pub(crate) fn scope(
                     .suffix(" div"),
             );
         });
-        ui.add_space(12.0);
+        ui.add_space(8.0);
         if action(ui, t, text(lang, "应用通道", "Apply channel"), true).clicked() {
             out.push(ControlCommand::ScopeScale {
                 channel: ch,
@@ -648,7 +648,7 @@ pub(crate) fn scope(
             );
             d.controls.trigger_slope = if slope == 0 { "RISE" } else { "FALL" }.into();
         });
-        ui.add_space(12.0);
+        ui.add_space(8.0);
         if action(ui, t, text(lang, "应用触发", "Apply trigger"), false).clicked() {
             out.push(ControlCommand::ScopeTimebase(d.controls.scope_timebase));
             out.push(ControlCommand::ScopeTrigger {

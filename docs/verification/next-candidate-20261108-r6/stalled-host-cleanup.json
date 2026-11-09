@@ -1,0 +1,7 @@
+{
+  "process_id": 22496,
+  "monitoring": false,
+  "instrument_devices": 0,
+  "test_actions": "Only plugin selection was submitted; no test start, serial start or instrument command was submitted",
+  "reason": "Idle generated R6 host cannot process redraw or normal parent-exit cleanup; terminate only the exact generated preview host after closing its parent"
+}

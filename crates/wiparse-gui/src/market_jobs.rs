@@ -29,7 +29,7 @@ pub enum HubMode {
     Market,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CatalogRow {
     pub id: String,
     pub name: String,

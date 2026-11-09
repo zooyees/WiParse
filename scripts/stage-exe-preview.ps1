@@ -22,6 +22,7 @@ foreach($pair in @(@('wiparse-gui.exe','WiParse.exe'),@('wiparse.exe','WiParse-C
 Copy-PreviewTree (Join-Path $repo 'test-tools') (Join-Path $output 'test-tools')
 Copy-PreviewTree (Join-Path $repo 'mcp/wiparse') (Join-Path $output 'mcp/wiparse')
 Copy-PreviewTree (Join-Path $repo 'recipes/fpga-firmware-test') (Join-Path $output 'recipes/fpga-firmware-test')
+Copy-PreviewTree (Join-Path $repo 'recipes/wireless-whitebox') (Join-Path $output 'recipes/wireless-whitebox')
 if(Test-Path -LiteralPath (Join-Path $repo 'docs/specs/wireless-test')){Copy-PreviewTree (Join-Path $repo 'docs/specs/wireless-test') (Join-Path $output 'docs/specs/wireless-test')}
 Copy-Item -LiteralPath (Join-Path $repo 'config.default.json') -Destination (Join-Path $output 'config.default.json')
 $config=@{ui=@{language='zh';theme='dark'};apps=@{test_tool=@{plugins_dir='test-tools/plugins';cli_path='bin/WiParse-CLI.exe';node_path='node';data_root='.';marketplace=@{enabled=$false;install_dir='marketplace'}}}}

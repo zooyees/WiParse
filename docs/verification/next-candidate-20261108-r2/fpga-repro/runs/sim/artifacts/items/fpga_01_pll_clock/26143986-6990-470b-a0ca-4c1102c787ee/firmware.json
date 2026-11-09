@@ -1,0 +1,12 @@
+{
+  "download": false,
+  "implementation": "reserved",
+  "path": "../firmware/demo-ip-suite.bin",
+  "sha256": "cf00c425237c4de646240689972543dddb218834717dbe0ce0f41a60ae65880d",
+  "target": "DEMO-FPGA",
+  "format": "bin",
+  "base_address": 0,
+  "verify": false,
+  "absolute": "D:\\windlink\\windlink\\WiParse-R\\recipes\\fpga-firmware-test\\firmware\\demo-ip-suite.bin",
+  "identity_verified": false
+}

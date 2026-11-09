@@ -1,0 +1,26 @@
+[package]
+name = "wiparse-next"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", default-features = false, features = ["json", "tls"] }
+wiparse-core = { path = "../../../crates/wiparse-core" }
+rfd = "0.15.4"
+sha2 = "0.10"
+base64 = "0.22"
+percent-encoding = "2.3"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+uuid = { version = "1", features = ["v4"] }

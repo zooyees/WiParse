@@ -1,0 +1,92 @@
+{
+  "date": "2026-11-08",
+  "scope": "Read-only source progress assessment, automated validation and new report/evidence; no functional source edits",
+  "head": "fa62efe71f7ee3b9927597df5209b60daaf6604b",
+  "frontend_tests": {
+    "tests": 32,
+    "pass": 32,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "frontend_build": {
+    "passed": true,
+    "log": "frontend-build.log",
+    "release_desktop_build": false
+  },
+  "tauri_tests": {
+    "passed": 40,
+    "failed": 0,
+    "ignored": 0,
+    "exit_code": 0,
+    "log": "tauri-tests.log"
+  },
+  "compat_host_tests": {
+    "passed": 268,
+    "failed": 1,
+    "ignored": 4,
+    "exit_code": 101,
+    "failed_test": "ai::tests::ai_key_editor_preserves_replaces_and_clears_encrypted_secret",
+    "failure": "Credential while protecting the built-in test key; interactive Windows user context not verified",
+    "log": "compat-host-tests.log"
+  },
+  "resource_lock_tests": {
+    "passed": 9,
+    "failed": 0,
+    "exit_code": 0,
+    "log": "resource-lock-tests.log"
+  },
+  "plugin_tests_npm_prefix": {
+    "tests": 348,
+    "pass": 336,
+    "fail": 12,
+    "cancelled": 0,
+    "skipped": 0,
+    "exit_code": 1,
+    "cwd": "test-tools",
+    "log": "plugin-tests.log",
+    "failure_categories": {
+      "relative_fixture_path": 11,
+      "stale_plugin_version_assertion": 1
+    }
+  },
+  "plugin_tests_repo_root": {
+    "tests": 348,
+    "pass": 347,
+    "fail": 1,
+    "cancelled": 0,
+    "skipped": 0,
+    "exit_code": 1,
+    "cwd": "repository root",
+    "log": "plugin-tests-root.log",
+    "failure_categories": {
+      "stale_plugin_version_assertion": 1
+    }
+  },
+  "registered_tauri_commands": 97,
+  "snapshot_source_changes_during_review": [],
+  "physical_hardware_accessed": false,
+  "real_ai_request_sent": false,
+  "current_next_desktop_interaction_verified": false,
+  "performance_comparison_executed": false,
+  "cli_mcp_end_to_end_verified": false,
+  "formal_acceptance_rounds_verified": 0,
+  "packaged": false,
+  "deployed": false,
+  "sample_environment_variable_present": false,
+  "limitations": [
+    "Next source snapshot is not a complete workspace backup",
+    "Git does not provide authorship for the uncommitted migration files",
+    "Optional actual sample tests may return without executing when sample environment is absent",
+    "Unit and mocked integration results are not physical hardware or current desktop acceptance"
+  ],
+  "logs_sha256": {
+    "compat-host-tests.log": "451bee73a985950ee341df7b39b92ed15deed0b6b5b48800d580c95a16bcaeae",
+    "frontend-build.log": "9a3a20f2c5ca6e6a2fa55077876e4f02b7f8a189e7cf85cb2128c841e653bc77",
+    "frontend-tests.log": "54c7dedc602a7791e49fe78b95b669a3fa96bb62483b3d51aedd74e0f7c46769",
+    "plugin-tests-root.log": "a3ae6356d21b8c282028d01e7f378409f68b4a4462cde11c5ad8564311cc6b00",
+    "plugin-tests.log": "e420abea8ccdde3a44a6b3e2f17c133703d1d9373c5c2a8f3efb4138e70f4c23",
+    "resource-lock-tests.log": "bf22ef5560f129bc182bca0e51c986f69a76ae7f3322221386b9b7fd323e166a",
+    "tauri-tests.log": "78a647099f7bf40587e3a9486b6ba77150dbaf8aaa3fe48b40e1f81ae5c3d76a"
+  }
+}

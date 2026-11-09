@@ -1055,6 +1055,25 @@ impl CalculatorPanel {
         }
     }
 
+    pub fn status_line(&self, lang: Lang) -> String {
+        if let Some(error) = self.lc.error {
+            return error_text(lang, error).to_string();
+        }
+        if let Some(error) = self.bandpass.error {
+            return error_text(lang, error).to_string();
+        }
+        if let Some(error) = self.q.error {
+            return error_text(lang, error).to_string();
+        }
+        if let Some(error) = self.rc.error {
+            return error.to_string();
+        }
+        if let Some(error) = self.crc.error {
+            return crc_error_text(lang, error).to_string();
+        }
+        wiparse_core::i18n::tr(lang, "status.ready").to_string()
+    }
+
     /// On-screen inputs and scalar results. Resonance curves stay on this page.
     pub(crate) fn ai_summary(&self) -> Value {
         let clip = |text: &str, limit: usize| text.chars().take(limit).collect::<String>();
@@ -1113,13 +1132,42 @@ impl CalculatorPanel {
             .show(ui, |ui| {
                 let available = ui.available_rect_before_wrap();
                 let gap = 8.0;
-                let (columns, rows) = calculator_grid_shape(available.width());
+                let short = viewport_height < 720.0;
+                let (columns, rows) = if short {
+                    (1usize, 6usize)
+                } else {
+                    calculator_grid_shape(available.width())
+                };
                 let cell_width = ((available.width() - gap * (columns.saturating_sub(1) as f32))
                     / columns as f32)
                     .max(1.0);
-                let cell_height = ((viewport_height - gap * (rows.saturating_sub(1) as f32))
-                    / rows as f32)
-                    .max(340.0);
+                let cell_height = if short {
+                    0.0
+                } else {
+                    ((viewport_height - gap * (rows.saturating_sub(1) as f32)) / rows as f32)
+                        .max(340.0)
+                };
+
+                if short {
+                    for index in 0..6 {
+                        Frame::NONE
+                            .fill(t.panel_bg)
+                            .stroke(Stroke::new(1.0_f32, t.border))
+                            .corner_radius(CornerRadius::same(6))
+                            .inner_margin(Margin::same(10))
+                            .show(ui, |ui| match index {
+                                0 => self.lc_ui(ui, lang, t),
+                                1 => self.bandpass_ui(ui, lang, t),
+                                2 => self.q_ui(ui, lang, t),
+                                3 => self.rc_ui(ui, lang, t),
+                                4 => self.crc_ui(ui, lang, t),
+                                5 => self.converter.ui(ui, lang, t),
+                                _ => placeholder_ui(ui, lang, t, index + 1),
+                            });
+                        ui.add_space(gap);
+                    }
+                    return;
+                }
 
                 for index in 0..6 {
                     let row = index / columns;
@@ -1179,26 +1227,56 @@ impl CalculatorPanel {
                 "inductance_unit": self.lc.inductance_unit.label(),
                 "capacitance": self.lc.capacitance,
                 "capacitance_unit": self.lc.capacitance_unit.label(),
+                "inductor_esr": self.lc.inductor_esr,
+                "inductor_esr_unit": self.lc.inductor_esr_unit.label(),
+                "capacitor_esr": self.lc.capacitor_esr,
+                "capacitor_esr_unit": self.lc.capacitor_esr_unit.label(),
                 "frequency_hz": self.lc.result.as_ref().map(|r| r.frequency_hz),
+                "current_curve": self.lc.result.as_ref().map(|r| r.curve.clone()),
                 "error": self.lc.error.map(|e| format!("{e:?}")),
             },
             "bandpass": {
                 "r_hp": self.bandpass.r_hp,
+                "r_hp_unit": self.bandpass.r_hp_unit.label(),
                 "c_hp": self.bandpass.c_hp,
+                "c_hp_unit": self.bandpass.c_hp_unit.label(),
                 "r_lp": self.bandpass.r_lp,
+                "r_lp_unit": self.bandpass.r_lp_unit.label(),
                 "c_lp": self.bandpass.c_lp,
+                "c_lp_unit": self.bandpass.c_lp_unit.label(),
                 "f_low_hz": self.bandpass.result.as_ref().map(|r| r.f_low_hz),
                 "f_high_hz": self.bandpass.result.as_ref().map(|r| r.f_high_hz),
+                "bandwidth_hz": self.bandpass.result.as_ref().map(|r| r.bandwidth_hz),
+                "center_hz": self.bandpass.result.as_ref().map(|r| r.center_hz),
+                "quality_factor": self.bandpass.result.as_ref().map(|r| r.q),
                 "error": self.bandpass.error.map(|e| format!("{e:?}")),
             },
             "q": {
                 "v1": self.q.v1, "v2": self.q.v2, "bias": self.q.bias, "intervals": self.q.intervals,
+                "decrement": self.q.result.as_ref().map(|r| r.decrement),
+                "damping_ratio": self.q.result.as_ref().map(|r| r.damping_ratio),
+                "exact_q": self.q.result.as_ref().map(|r| r.exact_q),
+                "approx_q": self.q.result.as_ref().map(|r| r.approx_q),
+                "error": self.q.error.map(|e| format!("{e:?}")),
             },
             "rc": {
                 "resistance": self.rc.resistance,
+                "resistance_unit": self.rc.resistance_unit.label(),
                 "capacitance": self.rc.capacitance,
+                "capacitance_unit": self.rc.capacitance_unit.label(),
+                "initial_voltage": self.rc.initial_voltage,
+                "final_voltage": self.rc.final_voltage,
+                "time": self.rc.time,
+                "time_unit": self.rc.time_unit.label(),
+                "tau_s": self.rc.result.as_ref().map(|r| r.tau_s),
+                "capacitor_voltage_v": self.rc.result.as_ref().map(|r| r.capacitor_voltage_v),
+                "error": self.rc.error,
             },
-            "crc": { "data": self.crc.data, "result": self.crc.result },
+            "crc": { "data": self.crc.data, "result": self.crc.result, "preset":self.crc.preset.name(),
+                "input_mode":match self.crc.input_mode {CrcInputMode::Hex=>"hex",CrcInputMode::Text=>"text"},
+                "custom_width":self.crc.custom_width,"custom_poly":self.crc.custom_poly,"custom_init":self.crc.custom_init,
+                "custom_xorout":self.crc.custom_xorout,"custom_refin":self.crc.custom_refin,"custom_refout":self.crc.custom_refout,
+                "error":self.crc.error.map(|e|format!("{e:?}")) },
             "converter": self.converter.api_get(),
         })
     }
@@ -1223,6 +1301,50 @@ impl CalculatorPanel {
                     .or_else(|| x.as_u64().map(|n| n.to_string()))
             })
         }
+        // Reject invalid unit sets before changing any calculator fields.
+        if card == "lc" {
+            for key in ["inductor_esr_unit", "capacitor_esr_unit"] {
+                if let Some(value) = s(&fields, key) {
+                    if !ResistanceUnit::ESR_UNITS.iter().any(|unit| unit.label() == value) {
+                        return err("ui.calc.set", "invalid resistance unit");
+                    }
+                }
+            }
+        }
+        if card == "bandpass" || card == "bpf" || card == "rc" {
+            let resistance_keys: &[&str] = if card == "rc" { &["resistance_unit"] } else { &["r_hp_unit", "r_lp_unit"] };
+            let capacitance_keys: &[&str] = if card == "rc" { &["capacitance_unit"] } else { &["c_hp_unit", "c_lp_unit"] };
+            for key in resistance_keys {
+                if let Some(value)=s(&fields,key) {
+                    let choices: &[ResistanceUnit] = if card == "rc" { &ResistanceUnit::ALL } else { &ResistanceUnit::FILTER_UNITS };
+                    if !choices.iter().any(|unit| unit.label()==value) { return err("ui.calc.set", "invalid resistance unit"); }
+                }
+            }
+            for key in capacitance_keys {
+                if let Some(value)=s(&fields,key) {
+                    if !CapacitanceUnit::FILTER_UNITS.iter().any(|unit| unit.label()==value) { return err("ui.calc.set", "invalid capacitance unit"); }
+                }
+            }
+            if card == "rc" {
+                if let Some(value)=s(&fields,"time_unit") {
+                    if !TimeUnit::ALL.iter().any(|unit| unit.label()==value) { return err("ui.calc.set", "invalid time unit"); }
+                }
+            }
+        }
+        if card == "crc" {
+            if let Some(value)=s(&fields,"preset") {
+                if !CrcPreset::ALL.iter().any(|preset|preset.name()==value) {return err("ui.calc.set","invalid CRC preset");}
+            }
+            if let Some(value)=s(&fields,"input_mode") {
+                if value!="hex"&&value!="text" {return err("ui.calc.set","invalid CRC input mode");}
+            }
+            if let Some(value)=fields.get("custom_width") {
+                if !value.as_u64().is_some_and(|v| matches!(v,8|16|32)) {return err("ui.calc.set","invalid CRC width");}
+            }
+            for key in ["custom_refin","custom_refout"] {
+                if fields.get(key).is_some_and(|value|!value.is_boolean()) {return err("ui.calc.set","invalid CRC reflection flag");}
+            }
+        }
         match card.as_str() {
             "lc" => {
                 if let Some(v) = s(&fields, "inductance") {
@@ -1236,6 +1358,16 @@ impl CalculatorPanel {
                 }
                 if let Some(v) = s(&fields, "capacitor_esr") {
                     self.lc.capacitor_esr = v;
+                }
+                if let Some(value) = s(&fields, "inductor_esr_unit") {
+                    if let Some(unit) = ResistanceUnit::ESR_UNITS.iter().copied().find(|unit| unit.label() == value) {
+                        self.lc.inductor_esr_unit = unit;
+                    }
+                }
+                if let Some(value) = s(&fields, "capacitor_esr_unit") {
+                    if let Some(unit) = ResistanceUnit::ESR_UNITS.iter().copied().find(|unit| unit.label() == value) {
+                        self.lc.capacitor_esr_unit = unit;
+                    }
                 }
                 if let Some(u) = s(&fields, "inductance_unit") {
                     if let Some(unit) = InductanceUnit::ALL
@@ -1270,6 +1402,16 @@ impl CalculatorPanel {
                 if let Some(v) = s(&fields, "c_lp") {
                     self.bandpass.c_lp = v;
                 }
+                for (key, unit) in [("r_hp_unit", &mut self.bandpass.r_hp_unit), ("r_lp_unit", &mut self.bandpass.r_lp_unit)] {
+                    if let Some(value) = s(&fields, key) {
+                        if let Some(parsed)=ResistanceUnit::FILTER_UNITS.iter().copied().find(|u| u.label() == value) { *unit=parsed; } else { return err("ui.calc.set", "invalid resistance unit"); }
+                    }
+                }
+                for (key, unit) in [("c_hp_unit", &mut self.bandpass.c_hp_unit), ("c_lp_unit", &mut self.bandpass.c_lp_unit)] {
+                    if let Some(value) = s(&fields, key) {
+                        if let Some(parsed)=CapacitanceUnit::FILTER_UNITS.iter().copied().find(|u| u.label() == value) { *unit=parsed; } else { return err("ui.calc.set", "invalid capacitance unit"); }
+                    }
+                }
                 self.bandpass.calculate();
             }
             "q" => {
@@ -1297,12 +1439,31 @@ impl CalculatorPanel {
                 if let Some(v) = s(&fields, "time") {
                     self.rc.time = v;
                 }
+                if let Some(v) = s(&fields, "initial_voltage") { self.rc.initial_voltage = v; }
+                if let Some(v) = s(&fields, "final_voltage") { self.rc.final_voltage = v; }
+                if let Some(v) = s(&fields, "resistance_unit") {
+                    if let Some(unit)=ResistanceUnit::ALL.iter().copied().find(|u| u.label() == v) { self.rc.resistance_unit=unit; } else { return err("ui.calc.set", "invalid resistance unit"); }
+                }
+                if let Some(v) = s(&fields, "capacitance_unit") {
+                    if let Some(unit)=CapacitanceUnit::FILTER_UNITS.iter().copied().find(|u| u.label() == v) { self.rc.capacitance_unit=unit; } else { return err("ui.calc.set", "invalid capacitance unit"); }
+                }
+                if let Some(v) = s(&fields, "time_unit") {
+                    if let Some(unit)=TimeUnit::ALL.iter().copied().find(|u| u.label() == v) { self.rc.time_unit=unit; } else { return err("ui.calc.set", "invalid time unit"); }
+                }
                 self.rc.calculate();
             }
             "crc" => {
                 if let Some(v) = s(&fields, "data") {
                     self.crc.data = v;
                 }
+                if let Some(v) = s(&fields, "preset") { self.crc.preset = CrcPreset::ALL.iter().copied().find(|p|p.name()==v).unwrap(); }
+                if let Some(v) = s(&fields, "input_mode") { self.crc.input_mode=if v=="hex" {CrcInputMode::Hex}else{CrcInputMode::Text}; }
+                if let Some(v) = fields.get("custom_width").and_then(Value::as_u64) { self.crc.custom_width=v as u8; }
+                if let Some(v) = s(&fields, "custom_poly") { self.crc.custom_poly=v; }
+                if let Some(v) = s(&fields, "custom_init") { self.crc.custom_init=v; }
+                if let Some(v) = s(&fields, "custom_xorout") { self.crc.custom_xorout=v; }
+                if let Some(v) = fields.get("custom_refin").and_then(Value::as_bool) { self.crc.custom_refin=v; }
+                if let Some(v) = fields.get("custom_refout").and_then(Value::as_bool) { self.crc.custom_refout=v; }
                 self.crc.calculate();
             }
             "convert" | "converter" => {
@@ -2132,18 +2293,13 @@ fn result_table(ui: &mut egui::Ui, t: &Tokens, rows: &[(&str, String)]) {
 }
 
 fn error_slot(ui: &mut egui::Ui, error: Option<&str>) {
-    ui.allocate_ui_with_layout(
-        Vec2::new(ui.available_width(), 34.0),
-        egui::Layout::top_down(egui::Align::Min),
-        |ui| {
-            if let Some(error) = error {
-                ui.label(
-                    egui::RichText::new(error)
-                        .small()
-                        .color(Color32::from_rgb(239, 68, 68)),
-                );
-            }
-        },
+    let Some(error) = error else {
+        return;
+    };
+    ui.label(
+        egui::RichText::new(error)
+            .small()
+            .color(Color32::from_rgb(239, 68, 68)),
     );
 }
 
@@ -2484,6 +2640,56 @@ fn format_axis_frequency(hz: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lc_api_returns_esr_and_the_existing_current_curve() {
+        let mut panel = CalculatorPanel::new();
+        let rejected = panel.api_set(&json!({"card":"lc","fields":{"inductor_esr_unit":"GΩ"}}));
+        assert!(!rejected.ok);
+        assert!(panel.api_get()["lc"]["current_curve"].is_null());
+        assert_eq!(panel.api_get()["lc"]["inductor_esr_unit"], "mΩ");
+        let accepted = panel.api_set(&json!({
+            "card":"lc",
+            "fields":{
+                "inductance":"10","inductance_unit":"uH","inductor_esr":"50","inductor_esr_unit":"mΩ",
+                "capacitance":"100","capacitance_unit":"nF","capacitor_esr":"50","capacitor_esr_unit":"Ω"
+            }
+        }));
+        assert!(accepted.ok);
+        let lc = &panel.api_get()["lc"];
+        assert_eq!(lc["capacitor_esr_unit"], "Ω");
+        let frequency = lc["frequency_hz"].as_f64().unwrap();
+        let curve = lc["current_curve"].as_array().unwrap();
+        assert!(curve.len() >= 801);
+        let peak = curve.iter().filter_map(|point| point.get(1).and_then(|value| value.as_f64())).fold(f64::MIN, f64::max);
+        let at_resonance = curve.iter().find_map(|point| {
+            let pair = point.as_array()?;
+            let hz = pair.first()?.as_f64()?;
+            let current = pair.get(1)?.as_f64()?;
+            ((hz - frequency).abs() <= 1.0).then_some(current)
+        }).unwrap();
+        assert!(at_resonance.is_finite() && (at_resonance - peak).abs() < 1e-9);
+    }
+
+    #[test]
+    fn calculator_api_exposes_results_and_rejects_units_before_mutation() {
+        let mut panel=CalculatorPanel::new();
+        let response=panel.api_set(&json!({"card":"q","fields":{"v1":"10","v2":"8","bias":"0","intervals":"1"}}));
+        assert!(response.ok);
+        assert!(panel.api_get()["q"]["exact_q"].as_f64().unwrap()>0.0);
+        let response=panel.api_set(&json!({"card":"rc","fields":{"resistance":"10","resistance_unit":"kΩ","capacitance":"100","capacitance_unit":"uF","initial_voltage":"0","final_voltage":"5","time":"1","time_unit":"s"}}));
+        assert!(response.ok);
+        let snapshot=panel.api_get();
+        assert!((snapshot["rc"]["tau_s"].as_f64().unwrap()-1.0).abs()<1e-9);
+        let failure=panel.api_set(&json!({"card":"rc","fields":{"resistance":"999","time_unit":"invalid"}}));
+        assert!(!failure.ok);
+        assert_eq!(panel.api_get()["rc"],snapshot["rc"]);
+        let crc=panel.api_set(&json!({"card":"crc","fields":{"data":"123456789","preset":"CRC-32/ISO-HDLC","input_mode":"text"}}));
+        assert!(crc.ok);assert_eq!(panel.api_get()["crc"]["result"].as_u64(),Some(0xcbf43926));
+        let snapshot=panel.api_get();
+        let failure=panel.api_set(&json!({"card":"crc","fields":{"data":"changed","preset":"unknown"}}));
+        assert!(!failure.ok);assert_eq!(panel.api_get()["crc"],snapshot["crc"]);
+    }
 
     #[test]
     fn parse_number_accepts_hex_literals() {

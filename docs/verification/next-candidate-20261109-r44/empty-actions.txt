@@ -1,0 +1,160 @@
+Window: "WiParse", App: WiParse.exe.
+	0 window WiParse Secondary Actions: Raise
+		1 pane
+			2 pane WiParse
+				3 pane (disabled)
+				4 region WiParse - Web content
+					5 region
+						6 region
+						7 region
+							8 region
+								9 document WiParse Value: http://tauri.localhost/ ID: RootWebArea
+									10 group ID: root
+										11 header
+											12 text W
+											13 text WiParse
+											14 navigation 工具
+												15 button 集成测试
+												16 button 仪器控制
+												17 button 串口工具
+												18 button 波形分析
+												19 button 数据分析
+												20 button 测试报告
+												21 button 计算器
+											22 text 11:24:15
+											23 text 本地文件
+											24 button 刷新 Description: 刷新
+											25 button 设置
+										72 text 文件目录
+										73 button 刷新
+										74 button 选择目录
+										75 heading 波形文件
+										76 button 打开文件
+										77 button 添加文件
+										78 thumb 调整左侧栏宽度 Description: 拖动调整宽度；双击恢复200；方向键微调 Value: 200
+										79 heading 波形分析
+										80 text 打开 CSV、TXT、ISF 或 WFM 文件查看原始波形
+										81 toggle button 通道
+										82 toggle button 测量与光标
+										83 toggle button 协议分析
+										84 group 波形交互模式
+											85 toggle button 平移
+											86 toggle button 光标
+										87 button (disabled) 导出波形
+										88 combo box (settable, string) 波形导出格式 Value: CSV
+										89 button (disabled) X+
+										90 button (disabled) X−
+										91 button (disabled) Y+ Description: 纵向放大
+										92 button (disabled) Y− Description: 纵向缩小
+										93 button (disabled) 适应
+										94 button (disabled) 纵轴游标 Description: 空格键切换横轴和纵轴游标
+										95 button (disabled) 缩放到光标
+										96 button (disabled) 清除游标
+										97 text ∿
+										98 text 尚未打开波形
+										99 text 选择本地波形文件后显示。不会连接仪器。
+										100 heading 协议分析
+										101 button 收起分析设置
+										102 region 协议分析
+											103 tab 协议通道
+												104 tab item (selectable) 1 · DDSSS
+											105 button (disabled) 添加协议通道
+											106 button (disabled) 移除当前
+											107 button (disabled) 其余通道同时解析
+											108 button (disabled) 解析全部通道
+											109 button (disabled) 协议分析报告…
+											110 text 协议
+											111 combo box (settable, string) 协议 Value: DDSSS
+											126 text 信号
+											127 combo box (settable, string) 信号 Value: 请选择通道
+											128 text 序列
+											129 combo box (settable, string) DDSSS 序列 Value: SEQA
+											130 text 扩展码
+											131 combo box (settable, string) DDSSS 扩展码 Value: 关
+											132 text FOP Hz
+											133 edit (settable, string) FOP Hz Description: 自动
+											134 check box (settable, string) 解码门控 全波形（光标仅测量）
+											135 text 解码门控
+											136 combo box (settable, string) Value: 全波形（光标仅测量）
+											137 text DDSSS 保留完整信号用于相关锁定；需要截取解码时请选择当前视口。
+											112 button (disabled) 解码
+											138 text 打开波形文件后才能解码。
+										62 footer
+											63 text 本地文件。这一页不检查设备服务是否在运行。
+											64 text WiParse Next
+								65 region
+		66 title bar (settable, string) Value: WiParse
+			67 menu bar System ID: MenuBar
+				68 menu item System
+			69 button Minimize
+			70 button Maximize
+			71 button Close
+
+Document text: ```
+W
+WiParse
+集成测试
+仪器控制
+串口工具
+波形分析
+数据分析
+测试报告
+计算器
+11:24:15
+本地文件
+↻
+设置
+文件目录
+刷新
+选择目录
+波形文件
+打开文件
+添加文件
+调整左侧栏宽度
+波形分析
+打开 CSV、TXT、ISF 或 WFM 文件查看原始波形
+通道
+测量与光标
+协议分析
+平移
+光标
+导出波形
+波形导出格式
+X+
+X−
+Y+
+Y−
+适应
+纵轴游标
+缩放到光标
+清除游标
+∿
+尚未打开波形
+选择本地波形文件后显示。不会连接仪器。
+协议分析
+×
+1 · DDSSS
+添加协议通道
+移除当前
+其余通道同时解析
+解析全部通道
+协议分析报告…
+协议
+协议
+信号
+信号
+序列
+DDSSS 序列
+扩展码
+DDSSS 扩展码
+FOP Hz
+FOP Hz
+￼
+解码门控
+￼
+DDSSS 保留完整信号用于相关锁定；需要截取解码时请选择当前视口。
+解码
+打开波形文件后才能解码。
+本地文件。这一页不检查设备服务是否在运行。
+WiParse Next
+```

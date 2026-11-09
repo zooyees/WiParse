@@ -1,0 +1,9 @@
+{
+  "schema_version": "wiparse.config-ui/1",
+  "groups": [
+    {"label": "Basic", "label_zh": "基本信息", "fields": ["id", "name", "enabled", "order", "tags"]},
+    {"label": "Test", "label_zh": "测试内容", "fields": ["objective", "stimulus", "internal_evidence", "physical_evidence", "judgment", "limit", "rx_vout_control", "physical_vout_limit", "load_cc", "notes"]}
+  ],
+  "widgets": {"tags": "tags"},
+  "source_view": "read_only"
+}

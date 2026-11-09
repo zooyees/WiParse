@@ -1,0 +1,66 @@
+{
+  "candidate": "R34",
+  "date": "2026-11-08",
+  "method": "Native Sky UI against isolated packaged QA-R34 EXE; no real device operations or AI requests",
+  "passed": true,
+  "calculator": {
+    "all_eight_pages_rendered_and_calculated": true,
+    "lc_hz": 159154.94,
+    "bandpass_low_hz": 159.15494,
+    "q_exact": 14.087672,
+    "rc_tau_s": 1,
+    "rc_voltage": 3.1606028,
+    "crc32_123456789": "0xCBF43926",
+    "decimal_255_to_hex": "FF",
+    "sin_pi_over_two": "1",
+    "hello_utf8_hex": "48 65 6C 6C 6F",
+    "return_to_lc_retains_result": true
+  },
+  "waveform": {
+    "fixture": "docs/verification/migration-implementation-2026-11-08/ui-fixtures/two-channels.csv",
+    "points_per_channel": 1200,
+    "default_inspector_collapsed": true,
+    "plot_owns_available_height": true,
+    "inspector_side_by_side": true,
+    "scp_parameters_visible": true,
+    "zoom_range_s": [
+      0.29975,
+      0.89925
+    ],
+    "measurement_completed": true,
+    "measurement_uses_original_full_range_by_default": true
+  },
+  "report": {
+    "project_a": "execution-log-qa",
+    "project_b": "z-isolation-qa",
+    "project_a_cases": 1,
+    "project_b_cases": 0,
+    "confirmation_displays_original_project": true,
+    "confirmation_cancelled_no_removal_executed": true,
+    "project_switch_reindexes_without_old_rows_or_modal": true,
+    "open_document_retained": true,
+    "out_of_order_and_aba_responses": "automated regression; not artificially injected through desktop"
+  },
+  "normal_exit_qa_instance": true,
+  "hardware_executed": false,
+  "real_ai_executed": false,
+  "user_installation_modified": false,
+  "screenshots": [
+    {
+      "file": "calculator-desktop.jpg",
+      "sha256": "b4feaf0943746206b55a2cc9c4cdaf8062994f102e69d4f2e66703eda6184e97"
+    },
+    {
+      "file": "report-project-isolation-desktop.jpg",
+      "sha256": "9377d2fb13f722e7072212066ff3612bf1eb66dca181e72d69310cbcf301fb76"
+    },
+    {
+      "file": "waveform-inspector-desktop.jpg",
+      "sha256": "95abedd79f3c24feedca07df775ae4eb95e9c725b0def1dbef1eaa9a17b4027c"
+    },
+    {
+      "file": "waveform-main-desktop.jpg",
+      "sha256": "b2f8d87334bdddb7e8892857165c16182fe9332034528fef10b4a7743118b245"
+    }
+  ]
+}

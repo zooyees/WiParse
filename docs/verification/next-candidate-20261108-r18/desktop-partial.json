@@ -1,0 +1,22 @@
+{
+  "kind":"wiparse_next_partial_desktop_validation",
+  "date":"2026-11-08",
+  "candidate":"r18",
+  "source":"Windows Computer Use screenshots and accessibility",
+  "pixels":[1443,931],
+  "theme":"light",
+  "observations":[
+    {"check":"cold startup and companion readiness","result":"passed"},
+    {"check":"multi-select two synthetic CSV files","result":"passed: two file groups and four channels"},
+    {"check":"cross-file overlay","result":"passed: original 0–5 V and comparison 0.35–5.35 V drawn together"},
+    {"check":"remove first source file","result":"passed: comparison remains, channels reindexed and correct 0.35–5.35 V retained"},
+    {"check":"About runtime information","result":"passed: core 1.2.2, shell 0.1.0, windows x86_64, runtime and preview-update explanation"},
+    {"check":"find-all synthetic retained log","result":"passed: 100 CHARGING matching rows counted and listed"},
+    {"check":"click search result row 24","result":"passed: source log row 24 centered and highlighted with context"},
+    {"check":"same channel names in cross-file legend","result":"ambiguity observed; source-qualified labels fixed and regression extended in r19"}
+  ],
+  "hardware_commands_sent":false,
+  "real_ai_called":false,
+  "formal_rounds_passed":0,
+  "industrial_approved":false
+}
