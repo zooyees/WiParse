@@ -19,17 +19,17 @@ impl InstrumentControlPanel {
             .show(ui, |ui| {
                 let width = ui.available_width().min(1680.0);
                 ui.set_width(width);
-                ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
                 if width >= 1100.0 {
-                    let column = (width - 16.0) * 0.5;
+                    let column = (width - 6.0) * 0.5;
                     ui.horizontal_top(|ui| {
-                        ui.spacing_mut().item_spacing.x = 16.0;
+                        ui.spacing_mut().item_spacing.x = 6.0;
                         let controls = ui.allocate_ui_with_layout(
                             egui::vec2(column, 0.0),
                             egui::Layout::top_down(egui::Align::Min),
                             |ui| {
                                 ui.set_width(column);
-                                ui.spacing_mut().item_spacing = egui::vec2(12.0, 8.0);
+                                ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
                                 self.console_toolbar(ui, lang, t, index);
                                 ui.add_space(4.0);
                                 self.scope_channel_grid(ui, lang, t, index, 2);
@@ -47,7 +47,7 @@ impl InstrumentControlPanel {
                                     t,
                                     index,
                                     defer,
-                                    (controls.response.rect.height() - 24.0).max(320.0),
+                                    controls.response.rect.height().max(320.0),
                                 );
                             },
                         );
@@ -56,11 +56,11 @@ impl InstrumentControlPanel {
                     self.console_toolbar(ui, lang, t, index);
                     ui.add_space(4.0);
                     let count = self.devices[index].capabilities.channels.clamp(1, 4) as usize;
-                    let columns = (((width + 12.0) / 202.0).floor() as usize).clamp(1, count);
+                    let columns = (((width + 6.0) / 196.0).floor() as usize).clamp(1, count);
                     self.scope_channel_grid(ui, lang, t, index, columns);
                     self.scope_trigger_bar(ui, lang, t, index);
                     // Reserve a display-shaped viewport even before an image arrives.
-                    let preview_height = ((width - 24.0).max(1.0) / 1.6 + 76.0).max(260.0);
+                    let preview_height = ((width - 12.0).max(1.0) / 1.6 + 76.0).max(260.0);
                     self.scope_preview_panel(ui, lang, t, index, defer, preview_height);
                 }
             });
@@ -84,7 +84,7 @@ impl InstrumentControlPanel {
         theme::scope_in_allocated_rect(
             ui,
             egui::UiBuilder::new()
-                .max_rect(rect.shrink(10.0))
+                .max_rect(rect.shrink(6.0))
                 .layout(egui::Layout::top_down(egui::Align::Min)),
             |ui| {
                 ui.set_clip_rect(rect.intersect(ui.clip_rect()));
@@ -97,7 +97,7 @@ impl InstrumentControlPanel {
                 self.scope_screenshot_ui(ui, lang, t, self.devices[index].id, index, defer);
             },
         );
-        ui.add_space(16.0);
+        ui.add_space(4.0);
     }
 
     fn scope_channel_grid(
@@ -111,7 +111,7 @@ impl InstrumentControlPanel {
         let count = self.devices[index].capabilities.channels.clamp(1, 4) as usize;
         let id = self.devices[index].id;
         let columns = columns.min(count);
-        ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
         for start in (0..count).step_by(columns) {
             ui.columns(columns, |uis| {
                 for (offset, ui) in uis.iter_mut().enumerate() {
@@ -124,9 +124,9 @@ impl InstrumentControlPanel {
                         Frame::NONE
                             .fill(t.surface_bg)
                             .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
-                            .inner_margin(Margin::same(10))
+                            .inner_margin(Margin::same(6))
                             .show(ui, |ui| {
-                                ui.set_width((width - 20.0).max(1.0));
+                                ui.set_width((width - 12.0).max(1.0));
                                 ui.spacing_mut().item_spacing.y = 5.0;
                                 let mut commands = Vec::new();
                                 ui.horizontal(|ui| {

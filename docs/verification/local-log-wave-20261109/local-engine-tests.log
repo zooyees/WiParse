@@ -1,0 +1,71 @@
+   Compiling wiparse-core v1.2.2 (D:\windlink\windlink\WiParse-R\crates\wiparse-core)
+warning: variable does not need to be mutable
+   --> crates\wiparse-core\src\protocol\decode.rs:891:17
+    |
+891 |             let mut fields = vec![field("pattern", name, "", Some(format!("0x{header:02X}")))];
+    |                 ----^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `scope_screen_point_count`, `tek_screen_point_count`, `keysight_screen_point_count`, `prepare_keysight_screen_waveform`, and `apply_tek_visible_data_window` are never used
+    --> crates\wiparse-core\src\instrument\drivers.rs:1361:8
+     |
+ 882 | impl InstrumentDevice {
+     | --------------------- methods in this implementation
+...
+1361 |     fn scope_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1399 |     fn tek_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^
+...
+1406 |     fn keysight_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1449 |     fn prepare_keysight_screen_waveform(&mut self, channel: u8) -> Result<(), InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2018 |     fn apply_tek_visible_data_window(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `parse_keysight_preamble_points` is never used
+    --> crates\wiparse-core\src\instrument\drivers.rs:3167:4
+     |
+3167 | fn parse_keysight_preamble_points(pre: &str) -> Option<usize> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `open_tcp_uart_from_info` is never used
+   --> crates\wiparse-core\src\serial.rs:624:4
+    |
+624 | fn open_tcp_uart_from_info(info: &PortInfo, baud: u32) -> Result<SerialSession, SerialError> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: linker stdout: 正在创建库 D:\windlink\windlink\WiParse-R\target\debug\deps\wiparse_core-753eb4cf0269426a.lib 和对象 D:\windlink\windlink\WiParse-R\target\debug\deps\wiparse_core-753eb4cf0269426a.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `wiparse-core` (lib test) generated 5 warnings (run `cargo fix --lib -p wiparse-core --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.98s
+     Running unittests src\lib.rs (target\debug\deps\wiparse_core-753eb4cf0269426a.exe)
+
+running 13 tests
+test log_analysis::tests::invalid_regex_and_unregistered_sources_are_rejected ... ok
+test log_analysis::tests::row_scope_never_leaks_outside_context_into_evidence ... ok
+test log_analysis::tests::growing_log_uses_initial_range_without_treating_partial_tail_as_a_measurement ... ok
+test log_analysis::tests::oversized_and_invalid_utf8_never_claim_complete ... ok
+test log_analysis::tests::regex_and_ranges_and_selected_ids_are_respected ... ok
+test log_analysis::tests::byte_chunks_resume_in_middle_of_utf8_and_do_not_recount_lines ... ok
+test log_analysis::tests::bomless_utf16_like_input_is_not_reported_as_clean_utf8_text ... ok
+test log_analysis::tests::changed_sources_and_cancellation_are_explicit ... ok
+test log_analysis::tests::retained_live_snapshot_scans_every_row_resumes_and_preserves_absolute_line_numbers ... ok
+test log_analysis::tests::full_directory_filters_numeric_thresholds_and_exact_source_rows ... ok
+test log_analysis::tests::grouping_memory_overflow_is_disclosed_without_losing_match_counts ... ok
+test log_analysis::tests::full_file_analysis_finds_evidence_outside_recent_display_and_bounds_output ... ok
+test log_analysis::tests::duplicate_sources_are_not_counted_twice_and_response_is_bounded ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 265 filtered out; finished in 0.39s
+

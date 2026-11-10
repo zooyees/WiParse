@@ -382,3 +382,33 @@ fn serial_ai_pane_renders_responsively_with_markdown_and_no_split_controls() {
         }
     }
 }
+
+#[test]
+fn ai_local_log_tool_scans_full_files_and_sends_only_one_bounded_summary(){
+    let _serial=library::LOCAL_TEST_LOCK.lock().unwrap();
+    use std::io::{Read,Write};
+    let root=std::env::temp_dir().join(format!("wiparse-ai-full-log-{}",uuid::Uuid::new_v4()));std::fs::create_dir(&root).unwrap();
+    let raw=format!("ERROR first\n{}ERROR last\n",(0..10000).map(|i|format!("UNSENT_BULK_{i} normal value=5.0\n")).collect::<String>());std::fs::write(root.join("complete.log"),&raw).unwrap();
+    let listener=std::net::TcpListener::bind("127.0.0.1:0").unwrap();listener.set_nonblocking(true).unwrap();
+    let config=AiConfig{enabled:true,base_url:format!("http://{}",listener.local_addr().unwrap()),model:"local-log-fixture".into(),..Default::default()};
+    let (sent,received)=std::sync::mpsc::channel();
+    let server=thread::spawn(move||{
+        for round in 0..2{
+            let until=Instant::now()+Duration::from_secs(15);let mut socket=loop{match listener.accept(){Ok((socket,_))=>break socket,Err(_) if Instant::now()<until=>thread::sleep(Duration::from_millis(2)),Err(error)=>panic!("{error}")}};
+            socket.set_nonblocking(false).unwrap();socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();let mut header=vec![];let mut byte=[0];
+            while !header.ends_with(b"\r\n\r\n"){socket.read_exact(&mut byte).unwrap();header.push(byte[0]);assert!(header.len()<32768);}
+            let length=String::from_utf8(header).unwrap().lines().find_map(|line|line.to_ascii_lowercase().strip_prefix("content-length:").and_then(|s|s.trim().parse::<usize>().ok())).unwrap();let mut body=vec![0;length];socket.read_exact(&mut body).unwrap();sent.send(serde_json::from_slice::<serde_json::Value>(&body).unwrap()).unwrap();
+            let answer=if round==0{json!({"reply":"先在本地扫描全部日志。","actions":[{"type":"platform.call","method":"log.analyze","params":{"contains":["ERROR"],"samples":2,"context":0}}]})}else{json!({"reply":"已读取10002行，找到首尾两处错误线索。","actions":[]})};
+            let body=json!({"model":"local-log-fixture","choices":[{"message":{"content":answer.to_string()},"finish_reason":"stop"}]}).to_string();write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+        }
+    });
+    let ctx=egui::Context::default();crate::ai::AiPanel::new(&config).install(&ctx);let mut p=fixture();p.ai_chat.set_context("serial-ai-test".into(),&config);p.ai_chat.scope=DataScope::Library;p.ai_chat.library.directory=Some(root.clone());
+    let state=p.ai_state("serial-ai-test",false);let data=p.ai_scoped_observation(DataScope::Library).unwrap();p.ai_chat.submit(&ctx,&state,data,"分析全部日志中的错误".into(),false).unwrap();
+    let until=Instant::now()+Duration::from_secs(15);while (p.ai_chat.pending.is_some()||p.ai_chat.tool.is_some())&&Instant::now()<until{p.tick_ai(&ctx,Lang::Zh,"serial-ai-test".into(),&config,false);thread::sleep(Duration::from_millis(2));}
+    assert!(p.ai_chat.pending.is_none()&&p.ai_chat.tool.is_none());assert_eq!(p.ai_chat.entries.iter().filter(|entry|entry.role=="user").count(),1);
+    let first=received.recv_timeout(Duration::from_secs(2)).unwrap();let second=received.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(!first.to_string().contains("UNSENT_BULK"));assert!(!second.to_string().contains("UNSENT_BULK"));
+    let message=second["messages"].as_array().unwrap().last().unwrap()["content"].as_str().unwrap();let envelope:serde_json::Value=serde_json::from_str(message).unwrap();let report=&envelope["observation"]["platform_results"][0]["result"]["data"];
+    assert_eq!(report["coverage"]["complete"],true);assert_eq!(report["coverage"]["lines_read"],10002);assert_eq!(report["coverage"]["matched_lines"],2);assert!(envelope["observation"]["local_log_library"]["last_analysis"].is_null());assert!(message.len()<16000);assert!(raw.len()>message.len()*10);
+    server.join().unwrap();std::fs::remove_dir_all(root).unwrap();
+}

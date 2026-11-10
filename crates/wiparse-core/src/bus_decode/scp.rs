@@ -29,8 +29,8 @@ pub fn decode_scp(
     }
     // SCP shares a wire between 1.8 V / 3.3 V transmitters. A midpoint
     // inferred from the largest swing can completely hide the 1.8 V sender.
-    // Receiver limits in B.4.1 are VIL=0.9 V and VIH=1.3 V.
-    let mid = threshold.filter(|t| t.is_finite()).unwrap_or(1.1);
+    // Use the configured 1.0 V midpoint by default, keeping 0.2 V hysteresis.
+    let mid = threshold.filter(|t| t.is_finite()).unwrap_or(super::SCP_DEFAULT_THRESHOLD_V);
     let wave = LogicWave::with_levels(trace, LogicLevels { vil: mid - 0.2, vih: mid + 0.2 });
     let edges = wave.edges();
     let mut ui = cfg.ui_us * 1e-6;

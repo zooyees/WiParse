@@ -190,10 +190,13 @@ pub struct AiService {
 pub struct AiTask {
     pub result: Receiver<Result<AiReply, AiError>>,
     cancelled: Arc<AtomicBool>,
+    socket: Arc<std::sync::Mutex<Option<std::net::TcpStream>>>,
 }
 impl AiTask {
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
+        if let Ok(socket)=self.socket.lock(){if let Some(socket)=socket.as_ref(){let _=socket.shutdown(std::net::Shutdown::Both);}}
+
     }
 }
 struct Slot(Arc<AtomicUsize>);
@@ -280,6 +283,7 @@ impl AiService {
         let slot = Slot(self.running.clone());
         let cancelled = Arc::new(AtomicBool::new(false));
         let flag = cancelled.clone();
+        let socket=Arc::new(std::sync::Mutex::new(None));let worker_socket=socket.clone();
         let (tx, result) = bounded(1);
         std::thread::Builder::new()
             .name("wiparse-ai".into())
@@ -288,7 +292,7 @@ impl AiService {
                 let reply = if flag.load(Ordering::Acquire) {
                     Err(AiError::Cancelled)
                 } else {
-                    complete(&config, &request, &history)
+                    complete(&config, &request, &history,flag.clone(),worker_socket)
                 };
                 let _ = tx.send(if flag.load(Ordering::Acquire) {
                     Err(AiError::Cancelled)
@@ -297,13 +301,15 @@ impl AiService {
                 });
             })
             .map_err(|_| AiError::Busy)?;
-        Ok(AiTask { result, cancelled })
+        Ok(AiTask { result, cancelled, socket })
     }
 }
 fn complete(
     config: &AiConfig,
     request: &AiRequest,
     history: &[AiMessage],
+    cancelled:Arc<AtomicBool>,
+    socket:Arc<std::sync::Mutex<Option<std::net::TcpStream>>>,
 ) -> Result<AiReply, AiError> {
     let endpoint = config.endpoint()?;
     let key = config.key()?;
@@ -341,7 +347,9 @@ fn complete(
         }
     }
     // Do not forward credentials to redirects and never retry a potentially billable POST.
+    let connector=CancelConnector{cancelled,socket};
     let agent = ureq::AgentBuilder::new()
+        .tls_connector(Arc::new(connector))
         .redirects(0)
         .timeout_connect(Duration::from_secs(10).min(Duration::from_secs(config.timeout_sec)))
         .timeout(Duration::from_secs(config.timeout_sec))
@@ -967,4 +975,29 @@ mod tests {
         assert!(!serde_json::to_string(&cfg).unwrap().contains(key));
         assert!(unprotect_key("not-encrypted").is_err());
     }
+}
+
+/// Registers the actual HTTPS socket before TLS handshake; cancelling shuts it down,
+/// waking a blocked send/read without detaching a billable request or releasing capacity early.
+struct CancelConnector {cancelled:Arc<AtomicBool>,socket:Arc<std::sync::Mutex<Option<std::net::TcpStream>>>}
+impl ureq::TlsConnector for CancelConnector {
+ fn connect(&self,name:&str,io:Box<dyn ureq::ReadWrite>)->Result<Box<dyn ureq::ReadWrite>,ureq::Error>{
+  if let Some(socket)=io.socket(){
+   if let Ok(clone)=socket.try_clone(){if let Ok(mut slot)=self.socket.lock(){*slot=Some(clone);}}
+   if self.cancelled.load(Ordering::Acquire){let _=socket.shutdown(std::net::Shutdown::Both);}
+  }
+  static CONFIG:std::sync::OnceLock<Arc<ureq::rustls::ClientConfig>>=std::sync::OnceLock::new();
+  let config=CONFIG.get_or_init(||Arc::new(ureq::rustls::ClientConfig::builder_with_provider(ureq::rustls::crypto::ring::default_provider().into()).with_protocol_versions(&[&ureq::rustls::version::TLS12,&ureq::rustls::version::TLS13]).expect("default TLS versions").with_root_certificates(ureq::rustls::RootCertStore{roots:webpki_roots::TLS_SERVER_ROOTS.to_vec()}).with_no_client_auth()));
+  ureq::TlsConnector::connect(config,name,io)
+ }
+}
+
+#[cfg(test)]mod cancellation_regressions{
+ use super::*;
+ use std::io::Read;
+ #[test]fn https_cancel_interrupts_a_stalled_handshake_and_releases_the_slot(){
+  let listener=std::net::TcpListener::bind("127.0.0.1:0").unwrap();let endpoint=format!("https://{}",listener.local_addr().unwrap());let(tx,rx)=bounded(1);
+  let server=std::thread::spawn(move||{let(mut socket,_)=listener.accept().unwrap();socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();let mut buf=[0;4096];let _=socket.read(&mut buf);tx.send(()).unwrap();let _=socket.read(&mut buf);});
+  let service=AiService::new(AiConfig{enabled:true,base_url:endpoint,model:"mock".into(),timeout_sec:60,..Default::default()});let task=service.submit(AiRequest{purpose:"test".into(),text:"synthetic".into()}).unwrap();rx.recv_timeout(Duration::from_secs(5)).unwrap();let at=std::time::Instant::now();task.cancel();assert_eq!(task.result.recv_timeout(Duration::from_secs(2)).unwrap().unwrap_err(),AiError::Cancelled);assert!(at.elapsed()<Duration::from_secs(2));server.join().unwrap();for _ in 0..100{if service.running.load(Ordering::Acquire)==0{break;}std::thread::sleep(Duration::from_millis(5));}assert_eq!(service.running.load(Ordering::Acquire),0);
+ }
 }

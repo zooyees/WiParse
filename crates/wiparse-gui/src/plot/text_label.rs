@@ -87,20 +87,21 @@ impl PlotTextLabel {
 
 impl PlotItem for PlotTextLabel {
     fn shapes(&self, ui: &egui::Ui, transform: &PlotTransform, shapes: &mut Vec<Shape>) {
+        let color = crate::theme::readable_on(self.color, ui.visuals().extreme_bg_color);
         let font_id = FontId::monospace(self.font_size);
-        let galley = ui.fonts(|f| f.layout_no_wrap(self.text.clone(), font_id, self.color));
+        let galley = ui.fonts(|f| f.layout_no_wrap(self.text.clone(), font_id, color));
         let x = transform.position_from_point_x(self.x);
         let wave_top_sy = transform.position_from_point_y(self.wave_top_plot);
         let packet_sy = bus_stack_packet_screen_y(wave_top_sy, *transform.frame());
         let y = bus_lane_screen_y(packet_sy, self.lane);
         let pos = Pos2::new(x, y);
         let rect = Align2::CENTER_TOP.anchor_size(pos, galley.size());
-        shapes.push(egui::epaint::TextShape::new(rect.min, galley, self.color).into());
+        shapes.push(egui::epaint::TextShape::new(rect.min, galley, color).into());
         if self.highlighted {
             shapes.push(Shape::rect_stroke(
                 rect.expand(2.0),
                 2.0,
-                Stroke::new(1.2_f32, self.color),
+                Stroke::new(1.2_f32, color),
                 egui::StrokeKind::Outside,
             ));
         }
@@ -163,4 +164,9 @@ mod tests {
             Some(LANE_CHIP)
         );
     }
+}
+
+#[cfg(test)]mod theme_tests{
+ use super::*;
+ #[test]fn chip_label_is_readable_on_both_actual_plot_canvases(){for light in [false,true]{let ctx=egui::Context::default();let t=crate::theme::apply_theme(&ctx,light);let output=ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(480.,240.))),..Default::default()},|ctx|{egui::CentralPanel::default().show(ctx,|ui|{crate::theme::with_plot_well_visuals(ui,&t,|ui|{egui_plot::Plot::new("chip-theme").height(200.).show(ui,|plot|{plot.add(PlotTextLabel::lane(0.,LANE_CHIP,"CHIP-VALUE",Color32::YELLOW,12.,1.));});});});});let mut colors=Vec::new();fn collect(shape:&Shape,out:&mut Vec<Color32>){match shape{Shape::Text(text)if text.galley.job.text=="CHIP-VALUE"=>out.push(text.galley.job.sections[0].format.color),Shape::Vec(shapes)=>for s in shapes{collect(s,out)},_=>{}}}for shape in &output.shapes{collect(&shape.shape,&mut colors);}assert!(!colors.is_empty());for c in colors{assert!(crate::theme::contrast_ratio(c,t.plot_bg)>=4.5,"{light}: {c:?}");}}}
 }

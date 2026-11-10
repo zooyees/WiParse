@@ -22,7 +22,7 @@ pub(super) fn sidebar(
     Frame::NONE
         .fill(t.panel_bg)
         .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
-        .inner_margin(Margin::same(10))
+        .inner_margin(Margin::same(6))
         .show(ui, |ui| {
             ui.set_min_height(ui.available_height());
             ui.horizontal(|ui| {
@@ -46,7 +46,7 @@ pub(super) fn sidebar(
                     }
                 });
             });
-            ui.add_space(16.0);
+            ui.add_space(4.0);
             if nav_row(
                 ui,
                 t,
@@ -64,7 +64,7 @@ pub(super) fn sidebar(
             {
                 panel.select_overview();
             }
-            ui.add_space(14.0);
+            ui.add_space(4.0);
             ui.label(
                 RichText::new(text(lang, "设备", "DEVICES"))
                     .size(11.0)
@@ -146,7 +146,7 @@ pub(super) fn sidebar(
                     panel.selected_id = id;
                 }
             }
-            ui.add_space(8.0);
+            ui.add_space(4.0);
             ui.label(
                 RichText::new(format!("WiParse · {}", env!("CARGO_PKG_VERSION")))
                     .size(11.0)
@@ -284,7 +284,7 @@ pub(super) fn connection(
     lang: Lang,
     t: &Tokens,
 ) {
-    ui.add_space(24.0);
+    ui.add_space(4.0);
     ui.label(
         RichText::new(instrument_name(lang, panel.selected_kind))
             .size(24.0)
@@ -298,7 +298,7 @@ pub(super) fn connection(
         ))
         .color(t.text_muted),
     );
-    ui.add_space(24.0);
+    ui.add_space(4.0);
     egui::ScrollArea::vertical().show(ui, |ui| {
         section(
             ui,
@@ -314,7 +314,7 @@ pub(super) fn connection(
                         "USB / TCPIP / probe:// …",
                     );
                 });
-                ui.add_space(8.0);
+                ui.add_space(4.0);
                 action_group(ui, 2, |ui| {
                     if action(ui, t, text(lang, "连接", "Connect"), true).clicked() {
                         panel.begin_connect(panel.selected_kind, lang);
@@ -361,7 +361,7 @@ pub(super) fn overview(
     lang: Lang,
     t: &Tokens,
 ) {
-    ui.add_space(8.0);
+    ui.add_space(4.0);
     ui.label(
         RichText::new(text(lang, "设备总览", "All instruments"))
             .size(24.0)
@@ -375,7 +375,7 @@ pub(super) fn overview(
         ))
         .color(t.text_muted),
     );
-    ui.add_space(20.0);
+    ui.add_space(4.0);
     if panel
         .resources
         .iter()
@@ -391,7 +391,7 @@ pub(super) fn overview(
         {
             let _ = panel.queue_connect_all(lang);
         }
-        ui.add_space(12.0);
+        ui.add_space(4.0);
     }
     let mut picked = None;
     egui::ScrollArea::vertical()
@@ -446,7 +446,7 @@ pub(super) fn overview(
                                     reading,
                                     26.0,
                                 );
-                                ui.add_space(12.0);
+                                ui.add_space(4.0);
                                 if action(ui, t, text(lang, "打开控制台", "Open console"), false)
                                     .clicked()
                                 {

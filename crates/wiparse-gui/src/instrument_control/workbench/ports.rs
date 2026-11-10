@@ -13,7 +13,7 @@ pub(super) fn probe(ui: &mut egui::Ui, lang: Lang, t: &Tokens, d: &mut DeviceUi)
             property(ui, t, text(lang, "写后校验", "Verify"), |ui| {
                 toggle(ui, t, &mut d.controls.probe_flash_verify);
             });
-            ui.add_space(12.0);
+            ui.add_space(4.0);
             if action(ui, t, text(lang, "选择文件…", "Choose file…"), false).clicked() {
                 if let Some(path) = rfd::FileDialog::new()
                     .add_filter("Firmware", &["hex", "ihex", "bin", "elf"])
@@ -55,7 +55,7 @@ pub(super) fn probe(ui: &mut egui::Ui, lang: Lang, t: &Tokens, d: &mut DeviceUi)
                         .suffix(" kHz"),
                 );
             });
-            ui.add_space(8.0);
+            ui.add_space(4.0);
             ui.label(
                 RichText::new(text(
                     lang,
@@ -138,7 +138,7 @@ pub(super) fn dongle(ui: &mut egui::Ui, lang: Lang, t: &Tokens, d: &mut DeviceUi
             };
             ui.add(egui::DragValue::new(port).range(1..=65535));
         });
-        ui.add_space(8.0);
+        ui.add_space(4.0);
     }
     match d.controls.dongle_tab {
         1 => {

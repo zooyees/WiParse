@@ -1,0 +1,30 @@
+{
+  "date": "2026-11-09",
+  "branch": "cursor/four-job-shell-and-marketplace",
+  "base": "fa62efe",
+  "framework": "egui",
+  "workspace": {
+    "passed": 526,
+    "failed": 0,
+    "ignored": 5
+  },
+  "reference_capture": {
+    "name": "Normal.isf",
+    "core_regression_passed": true,
+    "native_gui_regression_passed": true,
+    "decoder_records": 278,
+    "data_frames": 60,
+    "ping_timing_records": 218
+  },
+  "real_ai_requests": false,
+  "real_device_control": false,
+  "release_build": "passed",
+  "binary_sha256": {
+    "WiParse.pdb": "ccbe722f80807c8ae7d72ec184a24b5e97bc9e7cc2c9f10b5a99c71edcaffe67",
+    "WiParse.exe": "e759aa6c0d583c19185fe48da1afd67a8f17816ea8ff360eeb2e4da55d3b06d6",
+    "WiParse-CLI.exe": "edff2dc18aadd98acf2ef809ef1ced163bc2a8c3f8c4c4b1ee9a267f7627a2ce",
+    "WiParse-Service.exe": "9724f0823efbd1c9847723b78c1ee3dc5c058c3bbd1064f16f0792ad1567c2a6"
+  },
+  "preview": "dist/WiParse-1.2.2-LocalLog-NativeProtocol-20261109-Preview",
+  "zip_created": false
+}

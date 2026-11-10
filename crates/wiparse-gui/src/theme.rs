@@ -9,13 +9,15 @@ pub const RADIUS_CTRL: u8 = 6;
 pub const RADIUS_CARD: u8 = 8;
 pub const RADIUS_DIALOG: u8 = 10;
 
-/// Spacing grid: 4 / 8 / 12 / 16.
+/// Compact spacing: 4 px between panels, 6 px card padding, 8/12 px section rhythm.
 pub const SPACE_XS: f32 = 4.0;
-pub const SPACE_SM: f32 = 8.0;
-pub const SPACE_MD: f32 = 12.0;
-pub const SPACE_LG: f32 = 16.0;
+pub const SPACE_SM: f32 = 6.0;
+pub const SPACE_MD: f32 = 8.0;
+pub const SPACE_LG: f32 = 12.0;
 
 /// Unified control height.
+pub const PANEL_GAP: f32 = 4.0;
+pub const CARD_PADDING: i8 = 6;
 pub const CTRL_H: f32 = 28.0;
 pub const SIDEBAR_W: f32 = 200.0;
 pub const SIDEBAR_MIN_W: f32 = 200.0;
@@ -94,6 +96,8 @@ pub struct Tokens {
     pub divider: Color32,
     pub accent: Color32,
     pub accent_text: Color32,
+    pub accent_fill: Color32,
+    pub stop_fill: Color32,
     pub accent_soft: Color32,
     pub button_bg: Color32,
     pub button_hover: Color32,
@@ -123,25 +127,27 @@ impl Tokens {
             panel_bg: Color32::WHITE,
             surface_bg: Color32::WHITE,
             header_bg: Color32::from_rgb(0xFA, 0xFA, 0xFC),
-            border: Color32::from_rgb(0xD2, 0xD2, 0xD7),
+            border: Color32::from_rgb(0x86, 0x86, 0x8B),
             divider: Color32::from_rgb(0xE8, 0xE8, 0xED),
             // Slightly quieter than pure systemBlue — still clear as CTA.
             accent: Color32::from_rgb(0x00, 0x66, 0xD0),
             accent_text: Color32::WHITE,
+            accent_fill: Color32::from_rgb(0x00,0x66,0xD0),
+            stop_fill: Color32::from_rgb(0xB4,0x23,0x18),
             accent_soft: Color32::from_rgba_unmultiplied(0x00, 0x66, 0xD0, 28),
             button_bg: Color32::from_rgb(0xF2, 0xF2, 0xF7),
             button_hover: Color32::from_rgb(0xE5, 0xE5, 0xEA),
             tab_inactive_bg: Color32::TRANSPARENT,
             tab_inactive_text: Color32::from_rgb(0x6E, 0x6E, 0x73),
-            stop_bg: Color32::from_rgb(0xFF, 0x3B, 0x30),
-            success: Color32::from_rgb(0x34, 0xC7, 0x59),
-            warning: Color32::from_rgb(0xFF, 0x9F, 0x0A),
+            stop_bg: Color32::from_rgb(0xB4, 0x23, 0x18),
+            success: Color32::from_rgb(0x13, 0x73, 0x33),
+            warning: Color32::from_rgb(0x8A, 0x4B, 0x00),
             input_bg: Color32::from_rgb(0xF2, 0xF2, 0xF7),
             focus_ring: Color32::from_rgba_unmultiplied(0x00, 0x66, 0xD0, 90),
-            // Soft charcoal well so Tek channel colors stay readable in light chrome.
-            plot_bg: Color32::from_rgb(0x2C, 0x2C, 0x2E),
+            // Light canvas; plotted channel hues are adapted at the display boundary.
+            plot_bg: Color32::from_rgb(0xF8, 0xFA, 0xFC),
             plot_border: Color32::from_rgb(0xC7, 0xC7, 0xCC),
-            plot_fg: Color32::from_rgb(0xE5, 0xE5, 0xEA),
+            plot_fg: Color32::from_rgb(0x37, 0x41, 0x51),
             scope_dark: false,
         }
     }
@@ -164,14 +170,16 @@ impl Tokens {
             border: Color32::from_rgb(0x3A, 0x3A, 0x3C),
             divider: Color32::from_rgb(0x2C, 0x2C, 0x2E),
             // Desaturated mid-blue — readable CTA without neon glare on near-black.
-            accent: Color32::from_rgb(0x3D, 0x7E, 0xC8),
+            accent: Color32::from_rgb(0x69, 0xAB, 0xF7),
             accent_text: Color32::WHITE,
+            accent_fill: Color32::from_rgb(0x36,0x78,0xC2),
+            stop_fill: Color32::from_rgb(0xC9,0x36,0x3D),
             accent_soft: Color32::from_rgba_unmultiplied(0x3D, 0x7E, 0xC8, 40),
             button_bg: Color32::from_rgb(0x2C, 0x2C, 0x2E),
             button_hover: Color32::from_rgb(0x3A, 0x3A, 0x3C),
             tab_inactive_bg: Color32::TRANSPARENT,
             tab_inactive_text: Color32::from_rgb(0xC7, 0xC7, 0xCC),
-            stop_bg: Color32::from_rgb(0xFF, 0x45, 0x3A),
+            stop_bg: Color32::from_rgb(0xFF, 0x6B, 0x6B),
             success: Color32::from_rgb(0x30, 0xD1, 0x58),
             warning: Color32::from_rgb(0xFF, 0xD6, 0x0A),
             input_bg: Color32::from_rgb(0x1C, 0x1C, 0x1E),
@@ -195,9 +203,8 @@ pub fn with_plot_well_visuals<R>(
         let v = ui.visuals_mut();
         v.extreme_bg_color = t.plot_bg;
         v.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, t.plot_border);
-        if !t.scope_dark {
-            v.override_text_color = Some(t.plot_fg);
-        }
+        // Axes live outside the plot frame; retain chrome text there.
+        // Inset annotations explicitly use plot_fg on their own background.
     }
     let out = add(ui);
     *ui.visuals_mut() = prev;
@@ -229,6 +236,9 @@ pub fn apply_tokens(ctx: &egui::Context, t: Tokens) -> Tokens {
     visuals.widgets.active.weak_bg_fill = t.button_hover;
     visuals.widgets.open.bg_fill = t.button_hover;
     visuals.widgets.open.weak_bg_fill = t.button_hover;
+    visuals.hyperlink_color=t.accent;
+    visuals.warn_fg_color=t.warning;
+    visuals.error_fg_color=t.stop_bg;
     visuals.selection.bg_fill = t.accent_soft;
     visuals.selection.stroke = Stroke::new(1.0_f32, t.accent);
     // IMPORTANT: `RichText::strong()` and CollapsingHeader titles resolve via
@@ -253,7 +263,8 @@ pub fn apply_tokens(ctx: &egui::Context, t: Tokens) -> Tokens {
     visuals.widgets.active.corner_radius = CornerRadius::same(RADIUS_CTRL);
 
     let mut style = (*ctx.style()).clone();
-    style.spacing.item_spacing = egui::vec2(SPACE_SM, SPACE_XS + 1.0);
+    for (kind,font) in [(egui::TextStyle::Body,FontId::proportional(FONT_BODY)),(egui::TextStyle::Button,FontId::proportional(FONT_BODY)),(egui::TextStyle::Small,FontId::proportional(FONT_CAPTION)),(egui::TextStyle::Heading,FontId::proportional(FONT_SECTION)),(egui::TextStyle::Monospace,FontId::monospace(FONT_BODY))]{style.text_styles.insert(kind,font);}
+    style.spacing.item_spacing = egui::vec2(SPACE_SM, SPACE_XS);
     // Vertical pad must not push a CTRL_H button past 28.
     style.spacing.button_padding = egui::vec2(8.0, 4.0);
     style.spacing.window_margin = egui::Margin::same(SPACE_SM as i8);
@@ -302,7 +313,7 @@ pub fn primary_button(ui: &mut egui::Ui, t: &Tokens, label: impl Into<String>) -
                 .color(t.accent_text)
                 .strong(),
         )
-        .fill(t.accent)
+        .fill(t.accent_fill)
         .stroke(Stroke::NONE)
         .corner_radius(btn_radius()),
     );
@@ -359,7 +370,7 @@ pub fn stop_button(ui: &mut egui::Ui, t: &Tokens, label: impl Into<String>) -> e
                 .color(t.accent_text)
                 .strong(),
         )
-        .fill(t.stop_bg)
+        .fill(t.stop_fill)
         .stroke(Stroke::NONE)
         .corner_radius(btn_radius()),
     );
@@ -382,7 +393,7 @@ pub fn primary_btn_sized(
                 .color(t.accent_text)
                 .strong(),
         )
-        .fill(t.accent)
+        .fill(t.accent_fill)
         .stroke(Stroke::NONE)
         .corner_radius(btn_radius()),
     );
@@ -415,7 +426,7 @@ pub fn stop_btn_sized(
                 .color(t.accent_text)
                 .strong(),
         )
-        .fill(t.stop_bg)
+        .fill(t.stop_fill)
         .stroke(Stroke::NONE)
         .corner_radius(btn_radius()),
     );
@@ -845,3 +856,26 @@ mod tests {
     }
 }
 
+
+/// Semantic error text on the current chrome, not a fixed light red.
+pub fn error_color(ui:&egui::Ui)->Color32 {if ui.visuals().dark_mode {Tokens::scope().stop_bg}else{Tokens::light().stop_bg}}
+
+pub fn contrast_ratio(a:Color32,b:Color32)->f32{fn lum(c:Color32)->f32{let cv=|n:u8|{let v=n as f32/255.;if v<=0.04045{v/12.92}else{((v+0.055)/1.055).powf(2.4)}};0.2126*cv(c.r())+0.7152*cv(c.g())+0.0722*cv(c.b())}let a=lum(a);let b=lum(b);(a.max(b)+0.05)/(a.min(b)+0.05)}
+/// Preserve the identity of a channel hue while making its chrome label readable.
+pub fn readable_on(color:Color32,background:Color32)->Color32{let mut c=color;let toward=if contrast_ratio(Color32::BLACK,background)>contrast_ratio(Color32::WHITE,background){0.0}else{255.0};for _ in 0..32{if contrast_ratio(c,background)>=4.5{break;}let mix=|v:u8|(v as f32*0.88+toward*0.12).round() as u8;c=Color32::from_rgb(mix(c.r()),mix(c.g()),mix(c.b()));}c}
+/// A shared label column and full-width control column, including narrow sidebars.
+pub fn form_row<R>(ui:&mut egui::Ui,label:&str,body:impl FnOnce(&mut egui::Ui)->R)->egui::InnerResponse<R>{
+    let width=ui.available_width().max(1.);let label_w=(width*0.29).clamp(48.,80.).min(width*0.42);
+    let(row,_)=ui.allocate_exact_size(egui::vec2(width,CTRL_H),Sense::hover());
+    let caption=Rect::from_min_max(row.min,egui::pos2(row.left()+label_w,row.bottom()));
+    scope_in_allocated_rect(ui,egui::UiBuilder::new().max_rect(caption).layout(egui::Layout::left_to_right(egui::Align::Center)),|ui|{ui.add(egui::Label::new(label).truncate()).on_hover_text(label);});
+    let controls=Rect::from_min_max(egui::pos2(caption.right()+6.,row.top()),row.max);
+    scope_in_allocated_rect(ui,egui::UiBuilder::new().max_rect(controls).layout(egui::Layout::left_to_right(egui::Align::Center)),|ui|{ui.spacing_mut().interact_size.y=CTRL_H;body(ui)})
+}
+
+#[cfg(test)]mod contrast_tests{
+ use super::*;
+ #[test]fn semantic_text_and_ctas_have_readable_contrast(){for t in [Tokens::light(),Tokens::scope()]{for bg in [t.panel_bg,t.surface_bg,t.canvas_bg,t.input_bg,t.button_bg]{for (name,c)in [("body",t.text_primary),("muted",t.text_muted),("success",t.success),("warning",t.warning),("error",t.stop_bg),("link",t.accent)]{assert!(contrast_ratio(c,bg)>=4.5,"{name} {c:?} on {bg:?}: {}",contrast_ratio(c,bg));}}for bg in [t.accent_fill,t.stop_fill]{assert!(contrast_ratio(t.accent_text,bg)>=4.5,"CTA {}",contrast_ratio(t.accent_text,bg));}}}
+ #[test]fn light_input_outline_and_colored_labels_remain_visible(){let t=Tokens::light();assert!(contrast_ratio(t.border,t.input_bg)>=3.);for c in [Color32::YELLOW,Color32::LIGHT_RED,Color32::from_rgb(0,212,255)]{let adjusted=readable_on(c,t.surface_bg);assert!(contrast_ratio(adjusted,t.surface_bg)>=4.5);}}
+ #[test]fn form_controls_share_both_edges_at_narrow_widths(){for width in [160.,200.,248.,340.]{let ctx=egui::Context::default();let _=apply_theme(&ctx,false);let mut rects=Vec::new();let _=ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(width+16.,400.))),..Default::default()},|ctx|{egui::CentralPanel::default().show(ctx,|ui|{for label in ["Source","Frames","Threshold"]{form_row(ui,label,|ui|{rects.push(ui.add_sized([ui.available_width(),CTRL_H],egui::TextEdit::singleline(&mut String::new())).rect);});}});});for r in &rects{assert!((r.left()-rects[0].left()).abs()<0.1);assert!((r.right()-rects[0].right()).abs()<0.1);assert!(r.right()<=width+8.1);}}}
+}

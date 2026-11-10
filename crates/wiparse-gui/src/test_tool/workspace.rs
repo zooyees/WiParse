@@ -13,10 +13,11 @@ const HUB_CONTENT_MAX_W: f32 = 1680.0;
 const HUB_WIDE_MIN_W: f32 = 1120.0;
 const HUB_LIST_W: f32 = 320.0;
 const HUB_CHECKS_W: f32 = 320.0;
-const HUB_PANEL_GAP: f32 = 12.0;
+const HUB_PANEL_GAP: f32 = 4.0;
 #[derive(Default)]
 pub(super) struct Workspace {
     key: String,
+    agent_draft: Option<AgentDraft>,
     snapshot: Value,
     document: Value,
     original: Value,
@@ -72,6 +73,7 @@ pub(super) struct Workspace {
     project_migration: Value,
     select_enabled_on_open: bool,
 }
+struct AgentDraft {id:String,binding:String,config:String,revision:u64,sha:String,candidate:Value,changes:Value,validation:std::sync::Arc<std::sync::Mutex<Value>>}
 impl Workspace {
     pub(super) fn dirty(&self) -> bool {
         (!self.current.is_empty() && self.document != self.original)
@@ -254,7 +256,7 @@ impl TestToolPanel {
         .resizable(false)
         .show(ctx, |ui| {
             if !self.workspace.error.is_empty() {
-                ui.colored_label(egui::Color32::LIGHT_RED, &self.workspace.error);
+                ui.colored_label(crate::theme::error_color(ui), &self.workspace.error);
             }
             ui.horizontal(|ui| {
                 if ui
@@ -754,14 +756,14 @@ impl TestToolPanel {
                         });
                     }
                     if !self.workspace.error.is_empty() {
-                        ui.colored_label(egui::Color32::LIGHT_RED, &self.workspace.error);
+                        ui.colored_label(crate::theme::error_color(ui), &self.workspace.error);
                     }
                     if let Some(errors) = self.workspace.errors.as_array() {
                         for error in errors.iter().take(4) {
                             let path = error["path"].as_str().unwrap_or("/");
                             let message = error["message"].as_str().unwrap_or("");
                             ui.colored_label(
-                                egui::Color32::LIGHT_RED,
+                                crate::theme::error_color(ui),
                                 if message.is_empty() {
                                     path.to_owned()
                                 } else {
@@ -891,7 +893,7 @@ impl TestToolPanel {
         self.paint_workspace_command_band(ui, lang, tokens);
         ui.add_space(ui_theme::SPACE_MD);
         if !self.workspace.error.is_empty() {
-            ui.colored_label(egui::Color32::LIGHT_RED, &self.workspace.error);
+            ui.colored_label(crate::theme::error_color(ui), &self.workspace.error);
         }
         if self.workspace.tab == 2 {
             if self.workspace.dirty() {
@@ -1051,7 +1053,7 @@ impl TestToolPanel {
                                 RichText::new(text("▶ 启动测试", "▶ Start test"))
                                     .color(tokens.accent_text),
                             )
-                            .fill(tokens.accent),
+                            .fill(tokens.accent_fill),
                         )
                         .on_hover_text(text(
                             "先保存配置并完成预检，再启动所选测试项",
@@ -1089,7 +1091,7 @@ impl TestToolPanel {
                             running,
                             egui::Button::new(
                                 RichText::new(text("■ 停止", "■ Stop"))
-                                    .color(egui::Color32::LIGHT_RED),
+                                    .color(crate::theme::error_color(ui)),
                             ),
                         )
                         .clicked()
@@ -1227,7 +1229,7 @@ impl TestToolPanel {
             Frame::NONE
                 .fill(tokens.surface_bg)
                 .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-                .inner_margin(Margin::same(10))
+                .inner_margin(Margin::same(6))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         if ui
@@ -1321,7 +1323,7 @@ impl TestToolPanel {
                                         .color(tokens.accent_text)
                                         .strong(),
                                 )
-                                .fill(tokens.accent)
+                                .fill(tokens.accent_fill)
                                 .stroke(Stroke::NONE)
                                 .min_size(egui::vec2(96.0, ui_theme::CTRL_H)),
                             );
@@ -2404,7 +2406,7 @@ fn form(
         if schema.get("const").is_some() {
             if value != &schema["const"] {
                 ui.colored_label(
-                    egui::Color32::LIGHT_RED,
+                    crate::theme::error_color(ui),
                     if zh {
                         "固定参数不合法，请查看校验结果"
                     } else {
@@ -2606,7 +2608,7 @@ fn form(
         if ["tags", "tag_input"].contains(&widget) && schema["type"] == "array" {
             if !value.is_array() {
                 ui.colored_label(
-                    egui::Color32::LIGHT_RED,
+                    crate::theme::error_color(ui),
                     if zh {
                         "标签应为列表，请修复配置"
                     } else {
@@ -2688,7 +2690,7 @@ fn form(
                 "object" => {
                     if !value.is_object() {
                         ui.colored_label(
-                            egui::Color32::LIGHT_RED,
+                            crate::theme::error_color(ui),
                             if zh {
                                 "此处应为对象，请修复配置"
                             } else {
@@ -2726,7 +2728,7 @@ fn form(
                         for key in unknown {
                             ui.horizontal(|ui| {
                                 ui.colored_label(
-                                    egui::Color32::LIGHT_RED,
+                                    crate::theme::error_color(ui),
                                     format!("Unknown field: {key}"),
                                 );
                                 if ui
@@ -2803,7 +2805,7 @@ fn form(
                 "array" => {
                     if !value.is_array() {
                         ui.colored_label(
-                            egui::Color32::LIGHT_RED,
+                            crate::theme::error_color(ui),
                             if zh {
                                 "此处应为列表，请修复配置"
                             } else {
@@ -2914,7 +2916,7 @@ fn form(
                             .is_some_and(|id| has_reference(&layout["_root"], id, &items[i]))
                         {
                             ui.colored_label(
-                                egui::Color32::LIGHT_RED,
+                                crate::theme::error_color(ui),
                                 if zh {
                                     "该项仍被引用，请先解除引用。"
                                 } else {
@@ -3036,7 +3038,7 @@ fn form(
             }
         }
         if let Some(message) = local_field_error(value, &schema, ui.ctx(), zh) {
-            ui.colored_label(egui::Color32::LIGHT_RED, message);
+            ui.colored_label(crate::theme::error_color(ui), message);
         }
         if let Some(help) = (if zh {
             field_spec["description_zh"]
@@ -3057,7 +3059,7 @@ fn form(
             .filter(|e| e["path"] == pointer)
         {
             ui.colored_label(
-                egui::Color32::LIGHT_RED,
+                crate::theme::error_color(ui),
                 friendly_error(error["message"].as_str().unwrap_or("Invalid"), zh),
             );
         }
@@ -3885,4 +3887,58 @@ fn workspace_typed_sections_and_variant_changes_preserve_common_fields() {
         friendly_error("Filename and id differ", true),
         "文件名与配置标识不一致，请使用上方修复按钮"
     );
+}
+
+impl Workspace{
+ pub(super) fn agent_identity(&self)->String{let mut selected:Vec<_>=self.selected.iter().cloned().collect();selected.sort();format!("{}:{}:{}:{:?}",self.key,self.original_revision,self.dirty(),selected)}
+ pub(super) fn agent_cases(&self,offset:usize,limit:usize)->Value{let items=self.snapshot["items"].as_array();let total=items.map_or(0,Vec::len);json!({"total":total,"selected_count":self.selected.len(),"dirty":self.dirty(),"next_offset":if offset+limit<total{Some(offset+limit)}else{None},"items":items.into_iter().flatten().skip(offset).take(limit).map(|item|json!({"id":item["id"],"name":item["name"],"enabled":item["enabled"],"status":item["status"],"revision":item["revision"]})).collect::<Vec<_>>()})}
+}
+
+impl TestToolPanel {
+ pub(crate) fn agent_propose(&mut self,p:&Value,ctx:&egui::Context)->crate::ai::agent::HostReply {
+  let fail=|e:&str|crate::ai::agent::HostReply::value(crate::ai::agent::failure(e));
+  if self.workspace.dirty()||self.workspace.rx.is_some()||self.job.is_some()||self.workspace.current.is_empty(){return fail("TEST.DRAFT_REQUIRES_CLEAN_OPEN_CONFIGURATION_AND_IDLE_WORKSPACE");}
+  let Some(plugin)=self.selected_plugin().cloned()else{return fail("TEST.NO_PLUGIN")};
+  let mut candidate=self.workspace.document.clone();let Some(changes)=p["changes"].as_array().filter(|v|!v.is_empty()&&v.len()<=32)else{return fail("TEST.INVALID_CHANGES")};
+  let mut diff=Vec::new();
+  for change in changes {
+   let Some(pointer)=change["pointer"].as_str().filter(|s|!s.is_empty()&&s.len()<=256)else{return fail("TEST.INVALID_POINTER")};
+   let Some(target)=candidate.pointer_mut(pointer)else{return fail("TEST.POINTER_NOT_IN_CURRENT_CONFIGURATION")};
+   diff.push(json!({"pointer":pointer,"before":target.clone(),"after":change["value"]}));*target=change["value"].clone();
+  }
+  let node=resolve_command(self.node_path.trim());let request=self.workspace_request(&plugin,"config.validate",json!({"value":candidate}),true);
+  let id=uuid::Uuid::new_v4().to_string();let validation=std::sync::Arc::new(std::sync::Mutex::new(Value::Null));
+  self.workspace.agent_draft=Some(AgentDraft{id:id.clone(),binding:self.agent_identity(),config:self.workspace.current.clone(),revision:self.workspace.original_revision,sha:self.workspace.original_sha.clone(),candidate,changes:json!(diff),validation:validation.clone()});
+  crate::ai::agent::spawn_work(ctx,move||{
+   let result=match run_worker(node,request){Ok(v)=>v,Err(e)=>json!({"ok":false,"error":e})};
+   if let Ok(mut state)=validation.lock(){*state=result.clone();}
+   json!({"ok":result["ok"]==true&&result["data"]["valid"]==true,"data":{"draft_id":id,"changes":diff,"schema_validation":result,"saved":false,"next":"testing.apply requires explicit confirmation; applies an unsaved UI draft only. Operator must review and save before preflight/run."}})
+  })
+ }
+ pub(crate) fn agent_apply_draft(&mut self,p:&Value)->Value {
+  let Some(draft)=self.workspace.agent_draft.as_ref()else{return crate::ai::agent::failure("TEST.DRAFT_EXPIRED")};
+  let valid=draft.validation.lock().ok().is_some_and(|v|v["ok"]==true&&v["data"]["valid"]==true);
+  if p["draft_id"]!=draft.id||!valid||draft.binding!=self.agent_identity()||draft.config!=self.workspace.current||draft.revision!=self.workspace.original_revision||draft.sha!=self.workspace.original_sha||self.workspace.dirty()||self.job.is_some()||self.workspace.rx.is_some(){return crate::ai::agent::failure("TEST.DRAFT_STALE_OR_NOT_VALIDATED");}
+  let draft=self.workspace.agent_draft.take().unwrap();self.workspace.document=draft.candidate;self.workspace.last_edit=Some(Instant::now());self.workspace.snapshot["preflight"]["valid"]=json!(false);self.workspace.api_binding=None;
+  json!({"ok":true,"data":{"applied_to_editor":true,"saved":false,"changes":draft.changes,"requires_operator_review_save_and_new_preflight":true}})
+ }
+ pub(crate) fn agent_select_cases(&mut self,p:&Value)->Value {
+  if self.job.is_some()||self.workspace.rx.is_some()||self.workspace.dirty(){return crate::ai::agent::failure("TEST.WORKSPACE_BUSY_OR_DIRTY");}
+  let Some(ids)=p["ids"].as_array().filter(|ids|!ids.is_empty()&&ids.len()<=500)else{return crate::ai::agent::failure("TEST.INVALID_SELECTION")};
+  let available=self.workspace.snapshot["items"].as_array().cloned().unwrap_or_default();let mut selected=HashSet::new();
+  for id in ids {let Some(id)=id.as_str()else{return crate::ai::agent::failure("TEST.INVALID_ID")};if !available.iter().any(|v|v["id"]==id&&v["enabled"]==true){return crate::ai::agent::failure("TEST.UNKNOWN_OR_DISABLED_CASE");}selected.insert(id.into());}
+  self.workspace.selected=selected;self.workspace.snapshot["preflight"]["valid"]=json!(false);self.workspace.api_binding=None;
+  json!({"ok":true,"data":{"selection":self.workspace.binding(),"requires_new_preflight":true}})
+ }
+ pub(crate) fn agent_run_control(&mut self,action:&str)->Value {
+  if self.job.is_none()||self.preflight_only||self.workspace.rx.is_some()||self.workspace.snapshot["ui"]["execution_controls"]["pause_mode"]!="between_items"{return crate::ai::agent::failure("TEST.CONTROL_UNSUPPORTED_OR_BUSY");}
+  let run=self.workspace.snapshot["matrix"]["run_id"].clone();if run.is_null(){return crate::ai::agent::failure("TEST.NO_MATRIX_RUN_ID");}
+  self.workspace_send("run.control",json!({"action":action,"run_id":run}));
+  json!({"ok":true,"data":{"state":"requested","action":action,"run_id":run,"completed":false,"note":"Pause occurs between test items; inspect actual matrix control state before claiming paused."}})
+ }
+}
+
+#[cfg(test)]mod agent_draft_regressions{
+ use super::*;
+ #[test]fn validated_draft_cannot_apply_after_revision_change(){let mut panel=TestToolPanel::new(&AppConfig::default());panel.workspace.current="case1".into();panel.workspace.document=json!({"limit":5});panel.workspace.original=panel.workspace.document.clone();let id=uuid::Uuid::new_v4().to_string();panel.workspace.agent_draft=Some(AgentDraft{id:id.clone(),binding:panel.agent_identity(),config:"case1".into(),revision:0,sha:String::new(),candidate:json!({"limit":6}),changes:json!([]),validation:std::sync::Arc::new(std::sync::Mutex::new(json!({"ok":true,"data":{"valid":true}})))});panel.workspace.original_revision=1;assert_eq!(panel.agent_apply_draft(&json!({"draft_id":id}))["ok"],false);assert_eq!(panel.workspace.document["limit"],5);}
 }

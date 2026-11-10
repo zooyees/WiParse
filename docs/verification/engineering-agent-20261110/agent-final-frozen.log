@@ -1,0 +1,15 @@
+
+running 10 tests
+test ai::agent::tests::device_approval_is_required_and_rechecked_at_dispatch ... ok
+test ai::agent::tests::evidence_payload_is_bounded_and_partial_is_explicit ... ok
+test ai::agent::tests::only_owned_test_identity_can_be_stopped ... ok
+test ai::agent::tests::queue_ack_is_not_evidence_and_internal_completion_keeps_origin ... ok
+test ai::agent::tests::stale_source_cross_tool_and_forged_internal_requests_are_rejected ... ok
+test ai::agent::tests::task_chat_renders_at_narrow_widths ... ok
+test ai::agent::workflow_test::mock_provider_uses_local_evidence_then_finishes_without_uploading_raw_log ... ok
+test calculator::agent_tests::agent_uses_the_existing_numeric_engines ... ok
+test data_analysis::agent_statistics_tests::all_points_are_reduced_once_and_missing_values_are_explicit ... ok
+test data_analysis::agent_statistics_tests::incremental_statistics_reject_replaced_sources ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 248 filtered out; finished in 0.67s
+

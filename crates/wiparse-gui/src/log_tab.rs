@@ -847,13 +847,16 @@ impl LogTabPage {
             .collect()
     }
 
+    pub(crate) fn ai_shared_lines(&self) -> Vec<Arc<str>> {
+        (0..self.line_count()).filter_map(|i|self.backend.line_at(i)).collect()
+    }
     pub(crate) fn ai_view_id(&self) -> u64 { self.view_id }
     pub(crate) fn set_ai_visible(&mut self, visible: bool) { self.ai_visible = visible; }
     pub(crate) fn take_ai_toggle(&mut self) -> bool { std::mem::take(&mut self.ai_toggle_requested) }
-    pub(crate) fn ai_selection(&self) -> String {
+    pub(crate) fn ai_selection(&self) -> &str {
         self.panes.first().map(|pane| {
             let text = if pane.search_selection.last_selected_text.is_empty() { &pane.last_selected_text } else { &pane.search_selection.last_selected_text };
-            text.chars().take(8000).collect()
+            text.as_str()
         }).unwrap_or_default()
     }
 
@@ -2355,11 +2358,11 @@ fn show_qi_tip_ui(ui: &mut egui::Ui, lines: &[QiTipLine], light: bool, font_size
         (
             Color32::from_rgb(0x03, 0x69, 0xA1),
             Color32::from_rgb(0xB4, 0x53, 0x09),
-            Color32::from_rgb(0xF5, 0x9E, 0x0B),
+            Color32::from_rgb(0x8A, 0x4B, 0x00),
             Color32::from_rgb(0x64, 0x74, 0x8B),
-            Color32::from_rgb(0x16, 0xA3, 0x4A),
+            Color32::from_rgb(0x13, 0x73, 0x33),
             Color32::from_rgb(0xDC, 0x26, 0x26),
-            Color32::from_rgb(0xD9, 0x77, 0x06),
+            Color32::from_rgb(0x8A, 0x4B, 0x00),
             Color32::from_rgb(0x0F, 0x17, 0x2A),
             Color32::from_rgb(0x64, 0x74, 0x8B),
             Color32::from_rgb(0x94, 0xA3, 0xB8),
@@ -2904,5 +2907,15 @@ mod tests {
         assert!(page.panes[0].find_current.is_none());
         assert!(page.panes[0].highlight_master.is_none());
         assert!(page.panes[0].find_hits.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod ai_scope_tests {
+    use super::*;
+    #[test]
+    fn selected_text_for_local_processing_is_not_truncated_to_a_prompt_budget() {
+        let mut page=LogTabPage::live_tab(Lang::Zh);let text=format!("{}END_OF_SELECTION","full selected text\n".repeat(2000));page.panes[0].last_selected_text=text.clone();assert_eq!(page.ai_selection(),text);
+        page.append_lines((0..200).map(|i|format!("row {i}")),false);let snapshot=page.ai_shared_lines();page.append_lines(["later".into()],false);assert_eq!(snapshot.len(),200);assert_eq!(snapshot[0].as_ref(),"row 0");
     }
 }

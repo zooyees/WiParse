@@ -13,6 +13,7 @@ pub mod evidence;
 pub mod i18n;
 pub mod instrument;
 pub mod log;
+pub mod log_analysis;
 pub mod marketplace;
 pub mod mdns_browse;
 pub mod metrics;
@@ -32,3 +33,6 @@ pub mod waveform_file;
 pub mod rigol_wfm;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub mod engineering_agent;
+pub mod engineering_wave;

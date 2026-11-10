@@ -52,11 +52,7 @@ impl SerialAiChat {
         let short = full.height() < 520.0;
         let header_h = 100.0_f32.min(full.height() * 0.30);
         let bottom_h = (if self.mode == Mode::Analyse {
-            if short {
-                132.0
-            } else {
-                148.0
-            }
+            (if short {132.0} else {148.0}) + if self.scope!=DataScope::None{34.0}else{0.0}
         } else {
             32.0_f32
         })
@@ -492,6 +488,32 @@ impl SerialAiChat {
         }
     }
 
+    fn library_controls(&mut self, ui:&mut egui::Ui, lang:Lang, actions:&mut Vec<UiAction>) {
+        let busy=self.pending.is_some()||self.tool.is_some();
+        ui.spacing_mut().item_spacing=egui::vec2(6.,6.);
+        let width=ui.available_width();
+        ui.add_enabled_ui(!busy,|ui|{
+            if self.scope==DataScope::Range {
+                let old=(self.range_first,self.range_last);
+                ui.label(label(lang,"行范围（含首尾）","Rows (inclusive)"));
+                ui.horizontal(|ui|{ui.add(egui::DragValue::new(&mut self.range_first).range(1..=u64::MAX));ui.label("–");ui.add(egui::DragValue::new(&mut self.range_last).range(self.range_first..=u64::MAX));});
+                if old!=(self.range_first,self.range_last){self.library.reset();self.tool_results.clear();self.history.clear();}
+            }
+            let root=if self.scope==DataScope::Library{self.library.directory.as_ref().map(|path|path.display().to_string()).unwrap_or_else(||label(lang,"已打开文件与已落盘记录","Opened files and saved capture").into())}else{label(lang,"当前日志或选区，在本地处理","Current log or selection, processed locally").into()};
+            ui.add_sized([width,20.],egui::Label::new(&root).truncate()).on_hover_text(&root);
+            if ui.add_sized([width,26.],egui::Button::new(label(lang,"选择日志目录…","Choose log directory…"))).clicked(){actions.push(UiAction::ChooseLogDirectory);ui.close_menu();}
+            if self.library.directory.is_some()&&self.scope==DataScope::Library&&ui.add_sized([width,24.],egui::Button::new(label(lang,"清除所选目录","Clear selected directory"))).clicked(){actions.push(UiAction::ClearLogDirectory);ui.close_menu();}
+            ui.separator();
+            ui.horizontal(|ui|{
+                ui.label(label(lang,"每批扫描","Scan budget"));
+                egui::ComboBox::from_id_salt("serial-ai-local-budget").selected_text(format!("{} MiB",self.library.budget_mib)).width(90.).show_ui(ui,|ui|{for mib in [64,256,1024,4096]{ui.selectable_value(&mut self.library.budget_mib,mib,format!("{mib} MiB"));}});
+            });
+            let continuing=self.library.preview_params().get("cursor").is_some();
+            if ui.add_sized([width,28.],egui::Button::new(if continuing{label(lang,"继续本地扫描","Continue local scan")}else{label(lang,"本地预分析","Local preview")})).clicked(){actions.push(UiAction::PreviewLogs);ui.close_menu();}
+        });
+        ui.add(egui::Label::new(egui::RichText::new(label(lang,"本地处理全范围，仅发送统计与证据。预分析不消耗token。实时历史全量请选落盘文件；不含未保存编辑。","Full scope stays local; AI receives statistics and evidence. Preview uses no tokens. For full live history select the recorded file. Unsaved edits excluded.")).size(ui_theme::FONT_CAPTION)).wrap());
+    }
+
     fn composer(
         &mut self,
         ui: &mut egui::Ui,
@@ -540,24 +562,29 @@ impl SerialAiChat {
             .show(ui, |ui| {
                 ui.set_width((frame_width - 20.0).max(1.0));
                 ui.horizontal(|ui| {
+                    let old_scope=self.scope;
                     egui::ComboBox::from_id_salt("serial-ai-data-scope")
                         .width((ui.available_width() - 62.0).clamp(80.0, 150.0))
                         .truncate()
                         .selected_text(match self.scope {
-                            DataScope::Recent => label(lang, "最近100行", "Recent 100 lines"),
+                            DataScope::Current => label(lang, "当前日志 · 全范围", "Current log · all rows"),
+                            DataScope::Range => label(lang,"指定行范围","Row range"),
                             DataScope::Selection => label(lang, "选中内容", "Selected text"),
                             DataScope::None => label(lang, "仅提问", "Question only"),
+                            DataScope::Library => label(lang,"本地日志库","Local logs"),
                         })
                         .show_ui(ui, |ui| {
                             for (scope, name) in [
                                 (
-                                    DataScope::Recent,
-                                    label(lang, "最近100行", "Recent 100 lines"),
+                                    DataScope::Current,
+                                    label(lang, "当前日志 · 全范围", "Current log · all rows"),
                                 ),
                                 (
                                     DataScope::Selection,
                                     label(lang, "选中内容", "Selected text"),
                                 ),
+                                (DataScope::Range,label(lang,"指定行范围（本地处理）","Row range (local)")),
+                                (DataScope::Library,label(lang,"本地日志库（本地扫描）","Local logs (local scan)")),
                                 (
                                     DataScope::None,
                                     label(lang, "仅提问，不附日志", "Question only, no log"),
@@ -566,16 +593,19 @@ impl SerialAiChat {
                                 ui.selectable_value(&mut self.scope, scope, name);
                             }
                         });
+                    if old_scope!=self.scope{self.cancel();self.library.reset();self.tool_results.clear();self.history.clear();}
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(match self.scope {
-                                DataScope::Recent => format!(
+                                DataScope::Current => format!(
                                     "{} {}",
-                                    state.absolute_lines.min(100),
+                                    state.retained_lines,
                                     label(lang, "行", "lines")
                                 ),
+                                DataScope::Range => format!("{}–{}",self.range_first,self.range_last),
                                 DataScope::Selection => format!("{} B", state.selected_bytes),
                                 DataScope::None => String::new(),
+                                DataScope::Library => label(lang,"统计优先","Summary first").into(),
                             })
                             .size(12.0)
                             .color(t.text_muted),
@@ -598,6 +628,9 @@ impl SerialAiChat {
                         .on_hover_text(&status);
                     });
                 });
+                if self.scope!=DataScope::None{
+                    ui.menu_button(label(lang,"本地日志：设置与预分析…","Local logs: settings and preview…"),|ui|{ui.set_width((frame_width-20.0).clamp(180.0,280.0));self.library_controls(ui,lang,actions);});
+                }
                 let id = ui.make_persistent_id("serial-ai-question");
                 let shortcut = ui.memory(|m| m.has_focus(id))
                     && ui.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::Enter));
@@ -642,9 +675,9 @@ impl SerialAiChat {
                             if ui
                                 .add_enabled(
                                     send,
-                                    egui::Button::new(label(lang, "发送", "Send"))
+                                    egui::Button::new(egui::RichText::new(label(lang, "发送", "Send")).color(t.accent_text))
                                         .min_size(egui::vec2(60.0, 28.0))
-                                        .fill(t.accent),
+                                        .fill(t.accent_fill),
                                 )
                                 .clicked()
                                 || (shortcut && send)

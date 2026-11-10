@@ -185,3 +185,29 @@ fn serial_and_wave_workbench_previews() {
         }
     }
 }
+
+/// Rendering fixture only: no hardware operations or functional regression suite.
+#[test]
+#[ignore = "visual capture on request"]
+fn compact_page_style_previews(){
+    let root=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tmp/compact-ui-20261109");std::fs::create_dir_all(&root).unwrap();
+    let mut cfg=AppConfig::default();cfg.log_monitor.save_live_to_disk=false;cfg.log_monitor.open_log_files.clear();cfg.apps.test_tool.data_root=root.display().to_string();cfg.apps.test_tool.plugins_dir=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-tools/plugins").display().to_string();
+    let mut calculator=crate::calculator::CalculatorPanel::new();let mut serial=crate::serial_tool::SerialToolPanel::new(&cfg,Lang::Zh);let mut data=crate::data_analysis::DataAnalysisPanel::new(&cfg);let mut report=crate::test_report::TestReportPanel::new(&cfg);let mut hub=crate::test_tool::TestToolPanel::new(&cfg);hub.prepare_layout_audit();
+    for page in ["calculator","serial","data","report","testing","scope","dc"]{
+        let ctx=egui::Context::default();crate::fonts::install_cjk_fonts(&ctx);let tokens=crate::theme::apply_theme(&ctx,false);let mut instrument=crate::instrument_control::InstrumentControlPanel::new(&cfg);
+        if matches!(page,"scope"|"dc"){instrument.prepare_compact_ui_preview(&ctx,if page=="scope"{wiparse_core::instrument::InstrumentKind::Oscilloscope}else{wiparse_core::instrument::InstrumentKind::DcSource});}
+        let size=Vec2::new(1600.,1000.);let mut output=egui::FullOutput::default();
+        for _ in 0..3{output=ctx.run(RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,size)),..Default::default()},|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE.fill(tokens.canvas_bg).inner_margin(4)).show(ctx,|ui|{match page{
+            "calculator"=>calculator.ui(ui,Lang::Zh,&tokens),"serial"=>serial.ui(ui,Lang::Zh,&tokens),"data"=>data.ui(ui,Lang::Zh,&tokens),"report"=>{report.ui(ui,Lang::Zh,&tokens,&root,&[],None,"default",0,None);},"testing"=>hub.ui(ui,Lang::Zh,&tokens,&[]),_=>instrument.ui(ui,Lang::Zh,&tokens),
+        }});});}
+        output.textures_delta.set.retain(|(id,_)|*id!=egui::TextureId::Managed(0));output.textures_delta.set.push((egui::TextureId::Managed(0),egui::epaint::ImageDelta::full(ctx.fonts(|fonts|fonts.image()),egui::TextureOptions::LINEAR)));export_frame(&ctx,output,&root,page,size);
+    }
+}
+
+#[test]#[ignore="style gallery on request"]fn light_and_sidebar_style_gallery(){
+ let root=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tmp/ui-light-review-20261110/gallery");std::fs::create_dir_all(&root).unwrap();let mut cfg=AppConfig::default();cfg.log_monitor.save_live_to_disk=false;cfg.log_monitor.open_log_files.clear();cfg.apps.test_tool.data_root=root.display().to_string();cfg.apps.test_tool.plugins_dir=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-tools/plugins").display().to_string();
+ let report_file=root.join("visual-report.md");std::fs::write(&report_file,"# 适配器兼容性测试\n\n## 测试结果\n\n**测试夹具：不代表真实硬件结论**\n\n| 检查项 | 结果 |\n| --- | --- |\n| 输入电压 | 5.02 V |\n| 通信质量 | 需检查超时 |\n\n### 后续检查\n\n1. 核对原始日志与波形。\n2. 复测超时阶段。\n").unwrap();
+ for light in [false,true]{for width in [640.,1100.,1600.]{for page in ["data","report","calculator","testing","serial"]{
+ let ctx=egui::Context::default();crate::fonts::install_cjk_fonts(&ctx);let t=crate::theme::apply_theme(&ctx,light);let mut data=crate::data_analysis::DataAnalysisPanel::new(&cfg);data.prepare_style_audit();let mut report=crate::test_report::TestReportPanel::new(&cfg);report.open_markdown(report_file.clone(),Lang::Zh);let mut calc=crate::calculator::CalculatorPanel::new();let mut hub=crate::test_tool::TestToolPanel::new(&cfg);hub.prepare_layout_audit();let mut serial=crate::serial_tool::SerialToolPanel::new(&cfg,Lang::Zh);let size=Vec2::new(width,940.);let mut output=egui::FullOutput::default();for _ in 0..3{output=ctx.run(RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,size)),..Default::default()},|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas_bg).inner_margin(4)).show(ctx,|ui|match page{"data"=>data.ui(ui,Lang::Zh,&t),"report"=>{report.ui(ui,Lang::Zh,&t,&root,&[],None,"default",0,None);},"calculator"=>calc.ui(ui,Lang::Zh,&t),"testing"=>hub.ui(ui,Lang::Zh,&t,&[]),_=>serial.ui(ui,Lang::Zh,&t)});});}output.textures_delta.set.retain(|(id,_)|*id!=egui::TextureId::Managed(0));output.textures_delta.set.push((egui::TextureId::Managed(0),egui::epaint::ImageDelta::full(ctx.fonts(|f|f.image()),egui::TextureOptions::LINEAR)));export_frame(&ctx,output,&root,&format!("{page}-{width:.0}-{}",if light{"light"}else{"dark"}),size);serial.on_exit();
+ }}}
+}

@@ -10,6 +10,8 @@ pub(super) struct ToolPending {
     params: Value,
     question: String,
     pub(super) automatic: bool,
+    pub(super) local_only: bool,
+    local_scope: String,
     deadline: Instant,
     job: Option<u64>,
     next_poll: Instant,
@@ -36,6 +38,7 @@ fn keys(params: &Value, allowed: &[&str]) -> bool {
 }
 
 pub(super) fn validate(method: &str, params: &Value) -> Result<bool, String> {
+    if library::is_local(method){library::validate(method,params)?;return Ok(false);}
     let invalid = || "AI.TOOL_INVALID: unsupported platform method or parameters".to_string();
     match method {
         "serial.monitor.status"
@@ -206,10 +209,15 @@ impl SerialToolPanel {
                 == Some(guard.binding.as_str())
             && (!guard.controls
                 || (self.ai_chat.allow_automation
-                    && !self.ai_test_locked
-                    && self.live_test.is_none()))
+                    && !self.ai_controls_locked(self.ai_test_locked)))
     }
 
+    pub(super) fn local_log_scope_key(&self,chat:&SerialAiChat)->String {
+        use std::hash::{Hash,Hasher};
+        let mut hash=std::collections::hash_map::DefaultHasher::new();
+        if chat.scope==DataScope::Selection{self.tabs.get(self.active_tab).map(|tab|tab.ai_selection()).hash(&mut hash);}
+        format!("{:?}:{}:{}:{}:{}",chat.scope,chat.range_first,chat.range_last,self.tabs.get(self.active_tab).map_or(0,LogTabPage::ai_view_id),hash.finish())
+    }
     pub(super) fn begin_platform_call(
         &mut self,
         ctx: &egui::Context,
@@ -220,10 +228,11 @@ impl SerialToolPanel {
         automatic: bool,
     ) -> Result<(), String> {
         let controls = validate(&method, &params)?;
+        if library::is_local(&method)&&(automatic||chat.scope==DataScope::None){return Err("LOG.DATA_SCOPE: choose a manual log scope first".into());}
         if chat.tool.is_some() || chat.tool_round >= 6 {
             return Err("AI.TOOL_LIMIT: tool loop is busy or reached six calls".into());
         }
-        if controls && (!chat.allow_automation || self.ai_test_locked || self.live_test.is_some()) {
+        if controls && (!chat.allow_automation || self.ai_controls_locked(self.ai_test_locked)) {
             return Err(
                 "AI.CONTROL_LOCKED: platform device control is disabled or test running".into(),
             );
@@ -278,7 +287,24 @@ impl SerialToolPanel {
             controls,
             cancelled: Arc::new(AtomicBool::new(false)),
         };
-        let reply = if method.starts_with("serial.monitor.") {
+        let reply = if library::is_local(&method){
+            let key=self.local_log_scope_key(chat);
+            chat.library.bind_scope(key);
+            let mut files=Vec::new();let mut memory=None;
+            if chat.scope==DataScope::Library {
+                files=self.tabs.iter().filter_map(|tab|tab.filepath.as_ref().map(PathBuf::from)).collect();
+                if self.save_live_to_disk {if let Some(path)=&self.live_file{files.push(path.clone());}}
+            }else{
+                let tab=self.tabs.get(self.active_tab).ok_or("LOG.NO_CURRENT_LOG")?;
+                if chat.scope==DataScope::Selection {
+                    let text=tab.ai_selection();if text.is_empty(){return Err("LOG.EMPTY_SELECTION".into());}
+                    memory=Some(wiparse_core::log_analysis::Source::memory("选中内容（相对行号）",text.lines().map(Arc::<str>::from).collect(),1,0));
+                }else if !tab.live && tab.filepath.is_some(){files.push(PathBuf::from(tab.filepath.as_ref().unwrap()));}
+                else{memory=Some(wiparse_core::log_analysis::Source::memory(&tab.display_title(),tab.ai_shared_lines(),tab.dropped() as u64+1,tab.dropped() as u64));}
+            }
+            let range=if chat.scope==DataScope::Range{Some((chat.range_first.max(1),chat.range_last.max(chat.range_first.max(1))))}else{None};
+            Some(chat.library.start_scoped(&method,params.clone(),files,memory,range,chat.scope==DataScope::Library,guard.cancelled.clone(),ctx.clone())?)
+        } else if method.starts_with("serial.monitor.") {
             None
         } else {
             let api = bridge(ctx).ok_or("AI.PLATFORM_UNAVAILABLE")?;
@@ -309,6 +335,8 @@ impl SerialToolPanel {
             params,
             question,
             automatic,
+            local_only:false,
+            local_scope:self.local_log_scope_key(chat),
             deadline,
             job: None,
             next_poll: Instant::now(),
@@ -327,7 +355,7 @@ impl SerialToolPanel {
         };
         let current = self.ai_state(&chat.project, self.ai_test_locked);
         let changed = serde_json::to_string(&current.binding).ok().as_deref()
-            != Some(tool.guard.binding.as_str());
+            != Some(tool.guard.binding.as_str()) || (library::is_local(&tool.method)&&self.local_log_scope_key(chat)!=tool.local_scope);
         let result = if changed || tool.guard.cancelled.load(Ordering::Acquire) {
             Some(
                 json!({"ok":false,"error":"AI.CANCELLED_OR_STALE","unknown_if_already_dispatched":true}),
@@ -363,7 +391,7 @@ impl SerialToolPanel {
                     Some(json!({"ok":false,"error":reply.error}))
                 } else if tool.job.is_some() {
                     if reply.data["state"] == "completed" {
-                        Some(reply.data)
+                        Some(json!({"ok":reply.data["ok"],"data":reply.data,"command_completed":true,"physical_verified":false,"verification":"Device API job completion only; use actual measurements and explicit tolerances before a physical verdict"}))
                     } else {
                         tool.next_poll = Instant::now() + Duration::from_millis(250);
                         None
@@ -381,15 +409,13 @@ impl SerialToolPanel {
         if let Some(result) = result {
             tool.guard.cancelled.store(true, Ordering::Release);
             let serialized = result.to_string();
-            let result = if serialized.len() > 8000 {
-                json!({"truncated":true,"preview":bounded(&serialized,8000)})
-            } else {
-                result
-            };
-            let record = json!({"method":tool.method,"params":tool.params,"result":result});
+            let result = if serialized.len() > 8000 {crate::ai::agent::bounded_evidence(result,0)}else{result};
+            let local=library::is_local(&tool.method);
+            let parameters=if local{json!({"query_id":result["data"]["query_id"],"offset":tool.params["offset"]})}else{tool.params.clone()};
+            let record = json!({"method":tool.method,"params":parameters,"result":result});
             chat.entry(
                 "tool",
-                format!(
+                if local {library::readable(&result,lang)}else{format!(
                     "{}\n\n```json\n{}\n```",
                     format!(
                         "{} · {}",
@@ -401,19 +427,23 @@ impl SerialToolPanel {
                         tool.method
                     ),
                     record
-                ),
+                )},
             );
             if let Some(entry) = chat.entries.last_mut() {
                 entry.automatic = tool.automatic;
                 entry.error = result["ok"] == false;
             }
-            if !tool.automatic {
+            if !tool.automatic && !local {
                 chat.history.push(AiMessage::User(bounded(
                     &format!("Verified platform result: {record}"),
                     8000,
                 )));
             }
+            if local{chat.tool_results.retain(|record|!record["method"].as_str().is_some_and(library::is_local));}
             chat.tool_results.push(record);
+            if tool.local_only{
+                chat.status=label(lang,"本批本地处理结束（未调用AI）","Local analysis complete (no AI request)").into();chat.status_error=result["ok"]==false;return;
+            }
             if changed {
                 chat.status = label(
                     lang,
@@ -430,7 +460,7 @@ impl SerialToolPanel {
             }
             let mut data = self
                 .ai_scoped_observation(if tool.automatic {
-                    DataScope::Recent
+                    DataScope::Current
                 } else {
                     chat.scope
                 })

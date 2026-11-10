@@ -1058,7 +1058,8 @@ impl CalculatorPanel {
     /// On-screen inputs and scalar results. Resonance curves stay on this page.
     pub(crate) fn ai_summary(&self) -> Value {
         let clip = |text: &str, limit: usize| text.chars().take(limit).collect::<String>();
-        json!({
+        let si=|s:&str,scale:f64|s.trim().parse::<f64>().ok().filter(|v|v.is_finite()).map(|v|v*scale).filter(|v|v.is_finite());
+        json!({"input_si":{"lc":{"inductance_h":si(&self.lc.inductance,self.lc.inductance_unit.scale()),"capacitance_f":si(&self.lc.capacitance,self.lc.capacitance_unit.scale())},"bandpass":{"r_hp_ohm":si(&self.bandpass.r_hp,self.bandpass.r_hp_unit.scale()),"c_hp_f":si(&self.bandpass.c_hp,self.bandpass.c_hp_unit.scale()),"r_lp_ohm":si(&self.bandpass.r_lp,self.bandpass.r_lp_unit.scale()),"c_lp_f":si(&self.bandpass.c_lp,self.bandpass.c_lp_unit.scale())},"rc":{"resistance_ohm":si(&self.rc.resistance,self.rc.resistance_unit.scale()),"capacitance_f":si(&self.rc.capacitance,self.rc.capacitance_unit.scale()),"time_s":si(&self.rc.time,self.rc.time_unit.scale())}},"result_quality":"cached results may predate input edits; use calc.evaluate with input_si for a fresh calculation; null means unavailable; not a physical measurement",
             "lc": {
                 "inductance": format!("{} {}", self.lc.inductance, self.lc.inductance_unit.label()),
                 "inductor_esr": format!("{} {}", self.lc.inductor_esr, self.lc.inductor_esr_unit.label()),
@@ -1077,6 +1078,7 @@ impl CalculatorPanel {
                 "error": self.bandpass.error.map(|error| format!("{error:?}")),
             },
             "q_factor": {
+                "voltage_unit":"V",
                 "v1": self.q.v1.as_str(),
                 "v2": self.q.v2.as_str(),
                 "bias": self.q.bias.as_str(),
@@ -1112,7 +1114,7 @@ impl CalculatorPanel {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let available = ui.available_rect_before_wrap();
-                let gap = 8.0;
+                let gap = 4.0;
                 let (columns, rows) = calculator_grid_shape(available.width());
                 let cell_width = ((available.width() - gap * (columns.saturating_sub(1) as f32))
                     / columns as f32)
@@ -1137,14 +1139,15 @@ impl CalculatorPanel {
                                 .fill(t.panel_bg)
                                 .stroke(Stroke::new(1.0_f32, t.border))
                                 .corner_radius(CornerRadius::same(6))
-                                .inner_margin(Margin::same(10))
+                                .inner_margin(Margin::same(6))
                                 .show(ui, |ui| {
                                     ui.set_min_size(Vec2::new(
-                                        (cell_width - 20.0).max(1.0),
-                                        (cell_height - 20.0).max(1.0),
+                                        (cell_width - 12.0).max(1.0),
+                                        (cell_height - 12.0).max(1.0),
                                     ));
                                     egui::ScrollArea::vertical()
                                         .id_salt(("calculator_tool", index))
+                                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                                         .auto_shrink([false, false])
                                         .show(ui, |ui| match index {
                                             0 => self.lc_ui(ui, lang, t),
@@ -2100,7 +2103,7 @@ fn compact_calculate_button(
         ui.add_sized(
             [metrics.value_width + metrics.unit_width + metrics.gap, 30.0],
             egui::Button::new(egui::RichText::new(label).color(t.accent_text).strong())
-                .fill(t.accent)
+                .fill(t.accent_fill)
                 .stroke(Stroke::NONE)
                 .corner_radius(CornerRadius::same(5)),
         )
@@ -2113,7 +2116,7 @@ fn result_table(ui: &mut egui::Ui, t: &Tokens, rows: &[(&str, String)]) {
     Frame::NONE
         .fill(t.surface_bg)
         .corner_radius(CornerRadius::same(4))
-        .inner_margin(Margin::symmetric(8, 5))
+        .inner_margin(Margin::symmetric(6, 5))
         .show(ui, |ui| {
             egui::Grid::new(ui.next_auto_id())
                 .num_columns(2)
@@ -2140,7 +2143,7 @@ fn error_slot(ui: &mut egui::Ui, error: Option<&str>) {
                 ui.label(
                     egui::RichText::new(error)
                         .small()
-                        .color(Color32::from_rgb(239, 68, 68)),
+                        .color(crate::theme::error_color(ui)),
                 );
             }
         },
@@ -2152,7 +2155,7 @@ fn formula_box(ui: &mut egui::Ui, t: &Tokens, lines: &[&str]) {
         .fill(t.surface_bg)
         .stroke(Stroke::new(1.0_f32, t.border.gamma_multiply(0.45)))
         .corner_radius(CornerRadius::same(4))
-        .inner_margin(Margin::same(8))
+        .inner_margin(Margin::same(6))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             for line in lines {
@@ -2859,4 +2862,24 @@ mod tests {
             assert!(m.value_width > 0.0);
         }
     }
+}
+
+impl CalculatorPanel{
+ pub(crate) fn agent_calculate(&mut self,params:&Value)->Value{
+  let card=params["card"].as_str().unwrap_or("");let f=&params["fields"];let number=|key:&str|f[key].as_f64().or_else(||f[key].as_str().and_then(|s|s.parse::<f64>().ok())).unwrap_or(f64::NAN);
+  let result=match card{
+   "lc"=>{self.lc.inductance=number("inductance_h").to_string();self.lc.inductance_unit=InductanceUnit::Henry;self.lc.capacitance=number("capacitance_f").to_string();self.lc.capacitance_unit=CapacitanceUnit::Farad;self.lc.calculate();json!({"frequency_hz":self.lc.result.as_ref().map(|r|r.frequency_hz),"error":self.lc.error.map(|e|format!("{e:?}"))})},
+   "bandpass"=>{self.bandpass.r_hp=number("r_hp_ohm").to_string();self.bandpass.r_hp_unit=ResistanceUnit::Ohm;self.bandpass.c_hp=number("c_hp_f").to_string();self.bandpass.c_hp_unit=CapacitanceUnit::Farad;self.bandpass.r_lp=number("r_lp_ohm").to_string();self.bandpass.r_lp_unit=ResistanceUnit::Ohm;self.bandpass.c_lp=number("c_lp_f").to_string();self.bandpass.c_lp_unit=CapacitanceUnit::Farad;self.bandpass.calculate();json!({"f_low_hz":self.bandpass.result.as_ref().map(|r|r.f_low_hz),"f_high_hz":self.bandpass.result.as_ref().map(|r|r.f_high_hz),"error":self.bandpass.error.map(|e|format!("{e:?}"))})},
+   "q"=>{self.q.v1=number("v1_v").to_string();self.q.v2=number("v2_v").to_string();self.q.bias=number("bias_v").to_string();self.q.intervals=number("cycles").to_string();self.q.calculate();json!({"logarithmic_decrement":self.q.result.as_ref().map(|r|r.decrement),"damping_ratio":self.q.result.as_ref().map(|r|r.damping_ratio),"exact_q":self.q.result.as_ref().map(|r|r.exact_q),"approx_q":self.q.result.as_ref().map(|r|r.approx_q),"error":self.q.error.map(|e|format!("{e:?}"))})},
+   "rc"=>{self.rc.resistance=number("resistance_ohm").to_string();self.rc.resistance_unit=ResistanceUnit::Ohm;self.rc.capacitance=number("capacitance_f").to_string();self.rc.capacitance_unit=CapacitanceUnit::Farad;self.rc.initial_voltage=number("initial_voltage_v").to_string();self.rc.final_voltage=number("final_voltage_v").to_string();self.rc.time=number("time_s").to_string();self.rc.time_unit=TimeUnit::Second;self.rc.calculate();json!({"time_constant_s":self.rc.result.as_ref().map(|r|r.tau_s),"capacitor_voltage_v":self.rc.result.as_ref().map(|r|r.capacitor_voltage_v),"error":self.rc.error})},
+   "crc"=>{let preset=f["preset"].as_str().unwrap_or("");let Some(preset)=CrcPreset::ALL.into_iter().find(|p|p.name()==preset)else{return json!({"ok":false,"error":"不支持的CRC预设"})};self.crc.preset=preset;self.crc.data=f["data"].as_str().unwrap_or("").into();self.crc.input_mode=if f["input_mode"]=="hex"{CrcInputMode::Hex}else{CrcInputMode::Text};self.crc.calculate();json!({"preset":preset.name(),"result_decimal":self.crc.result,"result_hex":self.crc.result.map(|r|format!("{r:X}")),"error":self.crc.error.map(|e|format!("{e:?}"))})},
+   "converter"=>return self.converter.agent_calculate(f),_=>return json!({"ok":false,"error":"未知计算器"})
+  };
+  json!({"ok":result["error"].is_null(),"data":{"card":card,"input_si":f,"result":result,"calculation_only":true,"measurement":false,"assumptions":"Uses the existing WiParse calculator; LC frequency is the ideal 1/(2π√LC), not an impedance or physical capture result."}})
+ }
+}
+
+#[cfg(test)]mod agent_tests{
+ use super::*;
+ #[test]fn agent_uses_the_existing_numeric_engines(){let mut c=CalculatorPanel::new();let lc=c.agent_calculate(&json!({"card":"lc","fields":{"inductance_h":1e-5,"capacitance_f":1e-7}}));assert_eq!(lc["ok"],true);assert!((lc["data"]["result"]["frequency_hz"].as_f64().unwrap()-159154.943091895).abs()<0.001);let rc=c.agent_calculate(&json!({"card":"rc","fields":{"resistance_ohm":1000,"capacitance_f":1e-6,"initial_voltage_v":0,"final_voltage_v":5,"time_s":0.001}}));assert_eq!(rc["ok"],true);assert!((rc["data"]["result"]["time_constant_s"].as_f64().unwrap()-0.001).abs()<1e-12);let crc=c.agent_calculate(&json!({"card":"crc","fields":{"data":"123456789","preset":"CRC-32/ISO-HDLC","input_mode":"utf8"}}));assert_eq!(crc["data"]["result"]["result_decimal"],0xCBF43926u64);let result=c.agent_calculate(&json!({"card":"converter","fields":{"tab":"scientific","expression":"sin(90)","angle_mode":"degrees"}}));assert_eq!(result["data"]["result"],"1");}
 }

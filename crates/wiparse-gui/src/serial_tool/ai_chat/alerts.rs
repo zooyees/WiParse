@@ -120,10 +120,11 @@ impl SerialAiChat {
         let now = Instant::now();
         let mut shown = 0;
         for line in lines {
-            let sample = bounded(line, 600);
-            let Some((key, reason)) = self.rules.check(&sample) else {
+            let Some((key, reason)) = self.rules.check(line) else {
                 continue;
             };
+            let matched = key.split_once(':').map_or("", |(_, text)| text);
+            let sample = wiparse_core::engineering_agent::match_excerpt(line, matched, 600);
             self.alert_count = self.alert_count.saturating_add(1);
             let recent = self
                 .alert_last
@@ -218,4 +219,9 @@ impl SerialToolPanel {
         ctx.request_repaint_after(until.saturating_duration_since(Instant::now()));
         open
     }
+}
+
+#[cfg(test)]mod long_line_regressions{
+ use super::*;
+ #[test]fn numeric_and_keyword_alerts_at_long_line_tail_are_evaluated_before_excerpting(){let line=format!("{} TEMP=85 ERROR", "normal ".repeat(500));let rules=Rules{contains:vec!["ERROR".into()],limits:vec![Limit{key:"TEMP".into(),min:None,max:Some(60.)}]};let(key,_)=rules.check(&line).unwrap();assert_eq!(key,"limit:TEMP");assert!(wiparse_core::engineering_agent::match_excerpt(&line,"TEMP",600).contains("TEMP=85"));assert_eq!(Rules::default().check(&line).unwrap().0,"text:ERROR");}
 }

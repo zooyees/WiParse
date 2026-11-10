@@ -2053,7 +2053,7 @@ impl SerialToolPanel {
         // Independent left sidebar + content (must force top-down
         // layouts). Independent max_rects so ComboBox selected_text cannot leak
         // width into the parent and open a gap beside the card.
-        const SIDE_MAIN_GAP: f32 = 16.0;
+        const SIDE_MAIN_GAP: f32 = 4.0;
 
         let overall = ui.available_rect_before_wrap();
         let _ = ui.allocate_exact_size(overall.size(), egui::Sense::hover());
@@ -2095,14 +2095,14 @@ impl SerialToolPanel {
                     ui.set_clip_rect(side_rect.intersect(ui.clip_rect()));
                     egui::ScrollArea::vertical().id_salt("serial-controls-scroll").max_height(side_inner.height()).auto_shrink([false, false]).show(ui, |ui| {
                     let card_w = ui.available_width();
-                    const CARD_MARGIN_X: i8 = 12;
+                    const CARD_MARGIN_X: i8 = 6;
                     let inner_w = (card_w - f32::from(CARD_MARGIN_X) * 2.0).max(1.0);
 
                     // Group 1: serial port controls — fill + Inside stroke (no Frame stroke clip).
                     ui.set_width(card_w);
                     let g1 = Frame::NONE
                         .fill(t.surface_bg)
-                        .inner_margin(Margin::symmetric(CARD_MARGIN_X, 12))
+                        .inner_margin(Margin::symmetric(CARD_MARGIN_X, 6))
                         .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
                         .show(ui, |ui| {
                             ui.set_width(inner_w);
@@ -2526,7 +2526,7 @@ impl SerialToolPanel {
                     ui.set_clip_rect(content_rect.intersect(ui.clip_rect()));
                     Frame::NONE
                         .fill(t.surface_bg)
-                        .inner_margin(Margin::same(12))
+                        .inner_margin(Margin::same(6))
                         .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
                         .stroke(Stroke::new(1.0_f32, t.border))
                         .show(ui, |ui| {

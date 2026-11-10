@@ -23,9 +23,9 @@ use wiparse_core::project::{
     IndexedFile, IndexedProject, IndexedResult, PluginMeta, ProjectDoc,
 };
 
-const SIDE_W: f32 = ui_theme::SIDEBAR_W;
-const PANEL_GAP: f32 = 8.0;
-const CARD_MARGIN_X: i8 = 10;
+const SIDE_W: f32 = 248.0;
+const PANEL_GAP: f32 = ui_theme::PANEL_GAP;
+const CARD_MARGIN_X: i8 = 6;
 const TREE_ROW_H: f32 = 24.0;
 const TREE_PAD: f32 = 6.0;
 const TREE_INDENT: f32 = 16.0;
@@ -156,24 +156,24 @@ impl TextMarkdown {
     pub(crate) fn ui(&self, ui: &mut egui::Ui, tokens: &Tokens) {
         for (index, block) in self.0.blocks.iter().enumerate() {
             ui.push_id(index, |ui| {
-                ui.add_space(5.0);
+                ui.add_space(3.0);
                 match block {
                     MdBlock::Heading { level, text } => {
-                        ui.add_space(7.0);
+                        ui.add_space(4.0);
                         text_markdown_inline(
                             ui,
                             text,
                             match level {
-                                1 => 22.0,
-                                2 => 19.0,
-                                _ => 16.0,
+                                1 => 17.0,
+                                2 => 16.0,
+                                _ => 14.0,
                             },
                             true,
                             tokens,
                         );
                     }
                     MdBlock::Paragraph { text } => {
-                        text_markdown_inline(ui, text, 15.0, false, tokens)
+                        text_markdown_inline(ui, text, 13.0, false, tokens)
                     }
                     MdBlock::Bullet { depth, text }
                     | MdBlock::Ordered { depth, text, .. }
@@ -188,7 +188,7 @@ impl TextMarkdown {
                         ui.horizontal_top(|ui| {
                             ui.add_space(f32::from(*depth) * 12.0);
                             ui.label(RichText::new(marker).size(15.0));
-                            text_markdown_inline(ui, text, 15.0, false, tokens);
+                            text_markdown_inline(ui, text, 13.0, false, tokens);
                         });
                     }
                     MdBlock::Quote { text } => {
@@ -196,7 +196,7 @@ impl TextMarkdown {
                             .fill(tokens.input_bg)
                             .inner_margin(10)
                             .show(ui, |ui| {
-                                text_markdown_inline(ui, text, 15.0, false, tokens);
+                                text_markdown_inline(ui, text, 13.0, false, tokens);
                             });
                     }
                     MdBlock::Code { lang, body } => {
@@ -711,43 +711,20 @@ impl TestReportPanel {
             .fill(tokens.surface_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-            .inner_margin(Margin::symmetric(CARD_MARGIN_X, 10))
+            .inner_margin(Margin::symmetric(CARD_MARGIN_X, 6))
             .show(ui, |ui| {
                 ui.set_min_width(inner_w);
                 ui.set_max_width(inner_w);
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
                 let ctrl_w = inner_w;
 
+                ui.set_min_height(ui.available_height());
                 let cap = tr(lang, "report.project");
-                let cap_w = ui.fonts(|f| {
-                    f.layout_no_wrap(
-                        cap.clone(),
-                        FontId::proportional(ui_theme::FONT_CAPTION),
-                        tokens.text_muted,
-                    )
-                    .size()
-                    .x
-                }) + 8.0;
-                let (prow, _) = ui.allocate_exact_size(
-                    egui::vec2(ctrl_w, ui_theme::CTRL_H),
-                    egui::Sense::hover(),
-                );
-                ui.painter_at(prow).text(
-                    egui::pos2(prow.min.x, prow.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    &cap,
-                    FontId::proportional(ui_theme::FONT_CAPTION),
-                    tokens.text_muted,
-                );
-                let refresh_w = ui_theme::CTRL_H;
-                let combo_rect = egui::Rect::from_min_max(
-                    egui::pos2(prow.min.x + cap_w, prow.min.y),
-                    egui::pos2(
-                        (prow.max.x - refresh_w - ui_theme::SPACE_SM).max(prow.min.x + cap_w),
-                        prow.max.y,
-                    ),
-                );
-
+                ui.horizontal(|ui|{
+                    ui.label(RichText::new(&cap).size(ui_theme::FONT_TITLE).strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{if ui_theme::secondary_btn_sized(ui,tokens,"⟳",egui::vec2(28.,28.)).on_hover_text(tr(lang,"btn.refresh_browser")).clicked(){self.index_dirty=true;self.rebuild_index(data_root,plugins);}});
+                });
+                let (combo_rect,_)=ui.allocate_exact_size(egui::vec2(ctrl_w,ui_theme::CTRL_H),egui::Sense::hover());
                 let current_label = self
                     .projects
                     .iter()
@@ -792,30 +769,6 @@ impl TestReportPanel {
                             });
                     },
                 );
-                let refresh_rect = egui::Rect::from_min_max(
-                    egui::pos2(prow.max.x - refresh_w, prow.min.y),
-                    prow.max,
-                );
-                let refresh_clicked = crate::theme::scope_in_allocated_rect(ui,
-                        egui::UiBuilder::new()
-                            .max_rect(refresh_rect)
-                            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                        |ui| {
-                            ui_theme::secondary_btn_sized(
-                                ui,
-                                tokens,
-                                "⟳",
-                                egui::vec2(refresh_w, ui_theme::CTRL_H),
-                            )
-                            .on_hover_text(tr(lang, "btn.refresh_browser"))
-                            .clicked()
-                        },
-                    )
-                    .inner;
-                if refresh_clicked {
-                    self.index_dirty = true;
-                    self.rebuild_index(data_root, plugins);
-                }
                 if open_new_project {
                     self.new_project_open = true;
                 }
@@ -827,9 +780,9 @@ impl TestReportPanel {
                 }
 
                 if self.new_project_open {
-                    ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
-                        let edit_w = (ctrl_w - 70.0).max(80.0);
+                        let edit_w = ctrl_w;
                         ui.add(
                             egui::TextEdit::singleline(&mut self.new_project_id)
                                 .desired_width(edit_w)
@@ -840,7 +793,7 @@ impl TestReportPanel {
                             ui,
                             tokens,
                             tr(lang, "report.project_new"),
-                            egui::vec2(64.0, ui_theme::CTRL_H),
+                            egui::vec2(ctrl_w, ui_theme::CTRL_H),
                         )
                         .clicked()
                         {
@@ -864,7 +817,7 @@ impl TestReportPanel {
                     ui,
                     tokens,
                     tr(lang, "report.add_test"),
-                    egui::vec2((ctrl_w * 0.46).max(96.0), ui_theme::CTRL_H),
+                    egui::vec2(ctrl_w, ui_theme::CTRL_H),
                 )
                 .clicked()
                 {
@@ -919,11 +872,8 @@ impl TestReportPanel {
                     }
                 }
 
-                ui.label(RichText::new(if lang == Lang::Zh {
-                    "测试项目 → 运行批次 → MD 报告"
-                } else { "Test → Run → Markdown report" })
-                    .size(ui_theme::FONT_CAPTION).color(tokens.text_muted));
-
+                ui.add_space(2.);ui.separator();
+                ui.label(RichText::new(if lang==Lang::Zh{"测试记录"}else{"Test records"}).strong());
                 let results_n: usize = self.index.tests.iter().map(|t| t.results.len()).sum();
                 ui.label(
                     RichText::new(format!(
@@ -939,7 +889,7 @@ impl TestReportPanel {
 
                 if self.index.tests.is_empty() {
                     ui.label(
-                        RichText::new(tr(lang, "report.empty_tests"))
+                        RichText::new(if lang==Lang::Zh{"尚无测试记录。添加测试项目，或先运行集成测试。"}else{"No records yet. Add a test or run it in Testing Hub."})
                             .size(ui_theme::FONT_CAPTION)
                             .color(tokens.text_muted),
                     );
@@ -1150,7 +1100,7 @@ impl TestReportPanel {
             .fill(tokens.surface_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-            .inner_margin(Margin::symmetric(12, 10))
+            .inner_margin(Margin::symmetric(6, 6))
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
                 let title = if self.preview_title.is_empty() {
@@ -1265,7 +1215,7 @@ impl TestReportPanel {
                         .fill(tokens.canvas_bg)
                         .stroke(Stroke::new(1.0_f32, tokens.divider))
                         .corner_radius(CornerRadius::same(6))
-                        .inner_margin(Margin::symmetric(14, 12))
+                        .inner_margin(Margin::symmetric(6, 6))
                         .show(ui, |ui| {
                             ui.set_min_height(ui.available_height().max(1.0));
                             ui.set_min_width(ui.available_width());
@@ -2417,7 +2367,7 @@ fn paint_md_doc(
                     .fill(tokens.surface_bg)
                     .stroke(Stroke::new(1.0_f32, tokens.divider))
                     .corner_radius(CornerRadius::same(5))
-                    .inner_margin(Margin::symmetric(10, 8))
+                    .inner_margin(Margin::symmetric(6, 6))
                     .show(ui, |ui| {
                         ui.set_min_width(ui.available_width());
                         if !lang.is_empty() {
@@ -3933,4 +3883,52 @@ mod tests {
             assert_eq!(got.canonicalize().unwrap(), png.canonicalize().unwrap());
         });
     }
+}
+
+impl TestReportPanel {
+ pub(crate) fn agent_identity(&self)->String{format!("{}:{:?}",self.project_id,self.selected)}
+ pub(crate) fn agent_index(&self,params:&serde_json::Value)->serde_json::Value{let offset=params["offset"].as_u64().unwrap_or(0) as usize;let limit=params["limit"].as_u64().unwrap_or(10).min(20) as usize;serde_json::json!({"ok":true,"data":{"project_id":self.project_id,"reports":self.agent_report_files().iter().skip(offset).take(limit).map(|(id,p)|serde_json::json!({"report_id":id,"source_id":wiparse_core::log_analysis::source_id_for_path(p).ok(),"name":p.file_name().map(|s|s.to_string_lossy())})).collect::<Vec<_>>(),"next_report_offset":if offset+limit<self.agent_report_files().len(){Some(offset+limit)}else{None},"total_reports":self.agent_report_files().len(),"total":self.index.tests.len(),"next_offset":if offset+limit<self.index.tests.len(){Some(offset+limit)}else{None},"tests":self.index.tests.iter().skip(offset).take(limit).map(|test|serde_json::json!({"id":test.id,"name":if test.name_zh.is_empty(){&test.name}else{&test.name_zh},"run_count":test.results.len(),"latest_ok":test.results.last().and_then(|r|r.ok),"latest_stamp":test.results.last().map(|r|&r.stamp)})).collect::<Vec<_>>()}})}
+ pub(crate) fn agent_search(&self,params:&serde_json::Value,ctx:&egui::Context,cancel:std::sync::Arc<std::sync::atomic::AtomicBool>)->crate::ai::agent::HostReply{
+  let preview=self.preview.clone();let path=self.selected.clone();let query=params["contains"].as_str().unwrap_or("").to_lowercase();let offset=params["offset"].as_u64().unwrap_or(0) as usize;let limit=params["limit"].as_u64().unwrap_or(6).min(12) as usize;
+  crate::ai::agent::spawn_work(ctx,move||{
+   let mut total=0;let mut examples=Vec::new();let mut inspect=|locator:String,text:&str|{if text.to_lowercase().contains(&query){if total>=offset&&examples.len()<limit{examples.push(serde_json::json!({"locator":locator,"text":wiparse_core::engineering_agent::match_excerpt(text,&query,700)}));}total+=1;}};
+   match preview{
+    Some(PreviewKind::Markdown(doc))=>{for (i,block)in doc.blocks.iter().enumerate(){if cancel.load(std::sync::atomic::Ordering::Acquire){return crate::ai::agent::failure("AGENT.CANCELLED");}match block{MdBlock::Heading{text,..}|MdBlock::Paragraph{text}|MdBlock::Bullet{text,..}|MdBlock::Ordered{text,..}|MdBlock::Task{text,..}|MdBlock::Quote{text}=>inspect(format!("block:{}",i+1),text),MdBlock::Code{body,..}=>{for (line,text)in body.lines().enumerate(){inspect(format!("block:{}:line:{}",i+1,line+1),text);}},MdBlock::Table{rows}=>{for (row,cells)in rows.iter().enumerate(){inspect(format!("block:{}:row:{}",i+1,row+1),&cells.join(" | "));}},_=>{}}}},
+    Some(PreviewKind::Text(text))=>{for (line,text)in text.lines().enumerate(){inspect(format!("line:{}",line+1),text);}},
+    _=>return crate::ai::agent::failure("请先在测试报告工具中打开Markdown或文本报告")
+   }
+   let source_bytes=path.as_ref().and_then(|p|std::fs::metadata(p).ok()).map(|m|m.len());
+   serde_json::json!({"ok":true,"data":{"file":path.as_ref().and_then(|p|p.file_name()).map(|n|n.to_string_lossy().into_owned()),"scope":"cached open report preview, block locators are not original line numbers","preview_byte_limit":MAX_PREVIEW_CHARS,"entire_file_covered":source_bytes.is_some_and(|bytes|bytes<=MAX_PREVIEW_CHARS as u64),"matches":total,"next_offset":if offset+limit<total{Some(offset+limit)}else{None},"evidence":examples}})
+  })
+ }
+}
+
+impl TestReportPanel {
+ fn agent_report_files(&self)->Vec<(String,PathBuf)> {
+  use std::hash::{Hash,Hasher};
+  self.index.tests.iter().flat_map(|t|t.results.iter()).flat_map(|r|r.markdown_reports()).map(|f|{
+   let mut hash=std::collections::hash_map::DefaultHasher::new();self.project_id.hash(&mut hash);f.path.hash(&mut hash);
+   (format!("report-{:016x}",hash.finish()),f.path.clone())
+  }).collect()
+ }
+ pub(crate) fn agent_search_input(&self,p:&serde_json::Value,data_root:&Path)->Result<(wiparse_core::log_analysis::LibrarySpec,serde_json::Value),String> {
+  if let Some(cursor)=p["cursor"].as_str(){return Ok((Default::default(),serde_json::json!({"cursor":cursor})));}
+  let files=if let Some(ids)=p["report_ids"].as_array(){
+   let inventory=self.agent_report_files();let mut files=Vec::new();
+   for id in ids{let path=inventory.iter().find(|(key,_)|Some(key.as_str())==id.as_str()).ok_or("REPORT.UNKNOWN_OR_EXPIRED_ID")?;files.push(path.1.clone());}files
+  }else{vec![self.selected.clone().filter(|p|p.extension().and_then(|e|e.to_str()).is_some_and(|e|matches!(e.to_lowercase().as_str(),"md"|"markdown"|"txt"|"log"))).ok_or("请先打开文本报告，或从report.inspect获取报告ID")?]};
+  if files.is_empty(){return Err("REPORT.EMPTY_SCOPE".into());}
+  let files=files.into_iter().map(|p|if path_in_project_jail(data_root,&self.project_id,&p){p.canonicalize().map_err(|_|"REPORT.SOURCE_UNAVAILABLE".to_owned())}else{Err("REPORT.PATH_OUTSIDE_PROJECT".into())}).collect::<Result<Vec<_>,String>>()?;
+  let mut query=serde_json::json!({"contains":[p["contains"].as_str().unwrap_or("")],"samples":p["limit"].as_u64().unwrap_or(6).min(8),"context":1,"group":false});
+  if p["contains"].as_str().unwrap_or("").is_empty(){query.as_object_mut().unwrap().remove("contains");}
+  Ok((wiparse_core::log_analysis::LibrarySpec{directory:None,files},query))
+ }
+}
+
+#[cfg(test)]mod agent_report_regressions{
+ use super::*;use serde_json::json;
+ #[test]fn full_report_search_covers_beyond_preview_and_keeps_distant_match(){
+  let root=std::env::temp_dir().join(format!("wiparse-ai-report-{}",uuid::Uuid::new_v4()));fs::create_dir_all(&root).unwrap();let dir=root.join("projects/default");fs::create_dir_all(&dir).unwrap();let path=dir.join("report.md");fs::write(&path,format!("{}\n{}FINAL_TIMEOUT evidence", "prefix\n".repeat(70000),"x".repeat(1500))).unwrap();
+  let mut panel=TestReportPanel::new(&AppConfig::default());panel.selected=Some(path);let(spec,query)=panel.agent_search_input(&json!({"contains":"FINAL_TIMEOUT"}),&root).unwrap();let response=crate::ai::agent::LogJobs::default().analyze(&egui::Context::default(),query,spec,None,std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));let r=response.receiver.unwrap().recv_timeout(Duration::from_secs(10)).unwrap();assert_eq!(r["ok"],true);assert_eq!(r["data"]["coverage"]["complete"],true);assert!(r["data"]["examples"][0]["text"].as_str().unwrap().contains("FINAL_TIMEOUT"));assert!(panel.agent_search_input(&json!({"contains":"x","report_ids":["report-invalid"]}),&root).is_err());let _=fs::remove_dir_all(root);
+ }
 }

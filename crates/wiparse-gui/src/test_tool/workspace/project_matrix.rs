@@ -381,7 +381,7 @@ impl TestToolPanel {
         });
         let m = &self.workspace.snapshot["matrix"];
         if let Some(error) = m["error"].as_str() {
-            ui.colored_label(egui::Color32::LIGHT_RED, error);
+            ui.colored_label(crate::theme::error_color(ui), error);
         }
         if m["available"] == true {
             ui.weak(if self.job.is_none() || self.preflight_only {
@@ -674,7 +674,7 @@ impl TestToolPanel {
             if historical.is_object(){ui.label(format!("{}: {} · #{}",if zh{"结果来源"}else{"Result source"},display_value(&run),display_value(&historical["attempt"])));ui.label(format!("{} · {}",matrix_status_label(historical["status"].as_str().unwrap_or(""),zh),historical["phase"].as_str().unwrap_or("")));for k in ["message","error_code"]{if let Some(t)=historical[k].as_str().filter(|t|!t.is_empty()){ui.add(egui::Label::new(t).wrap());}}}
             else{ui.label(if zh{"尚未测试。保存并预检后执行；采集计划见用例配置。"}else{"Not tested. Save and preflight to execute; see configuration for the capture plan."});}
             let details=self.workspace.result_details.clone();
-            if let Some(error)=details["error"].as_str(){ui.colored_label(egui::Color32::LIGHT_RED,error);}
+            if let Some(error)=details["error"].as_str(){ui.colored_label(crate::theme::error_color(ui),error);}
             if details["available"]!=true {if let Some(reference)=details["result_ref"].as_str(){if ui.link(if zh{"查看未核验的历史原文件"}else{"Inspect unverified historical file"}).clicked(){self.workspace.result_ref=Some(reference.into());}}}
             if details["available"]==true{
                 let value=&details["value"];

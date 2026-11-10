@@ -168,9 +168,9 @@ fn fpga_chrome_counts_widths_themes_and_languages() {
                         }
                         for pair in cards.windows(2) {
                             assert!(
-                                ((pair[1].0.top() - pair[0].0.top()) - (CONFIG_ROW_H + 8.0)).abs()
+                                ((pair[1].0.top() - pair[0].0.top()) - (CONFIG_ROW_H + crate::theme::SPACE_SM)).abs()
                                     < 0.1,
-                                "rendered row pitch must match virtual scrolling"
+                                "rendered row pitch must match virtual scrolling: {:?} {:?}",pair[0].0,pair[1].0
                             );
                         }
                     }

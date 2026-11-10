@@ -16,6 +16,10 @@ pub use ufcs::{decode_ufcs, UfcsConfig};
 pub use fields::explain_frame;
 pub use scp::{decode_scp, explain_scp, ScpConfig};
 
+/// Protocol-default comparator midpoint, in volts. Explicit thresholds take precedence.
+pub const USB_PD_DEFAULT_THRESHOLD_V: f64 = 0.4;
+pub const SCP_DEFAULT_THRESHOLD_V: f64 = 1.0;
+
 pub use ddsss::{
     decode_ddsss, qi_ask_frame, synthesize_ddsss, DdsssConfig, DdsssExtension, DdsssSequence,
     DdsssSynthRequest,

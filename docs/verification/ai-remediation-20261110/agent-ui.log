@@ -1,0 +1,6 @@
+
+running 1 test
+test ai::agent::tests::task_chat_renders_at_narrow_widths ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 273 filtered out; finished in 0.59s
+

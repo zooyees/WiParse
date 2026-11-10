@@ -45,6 +45,7 @@ fn symbol(bits: &[Bit], pos: usize) -> Option<u8> {
 }
 
 pub fn decode_usb_pd(trace: &WaveformTrace, threshold: Option<f64>) -> BusDecodeResult {
+    let threshold=threshold.filter(|value|value.is_finite()).or(Some(super::USB_PD_DEFAULT_THRESHOLD_V));
     let edges = signal(trace, threshold).edges();
     let mut result = BusDecodeResult::default();
     let mut used = 0;

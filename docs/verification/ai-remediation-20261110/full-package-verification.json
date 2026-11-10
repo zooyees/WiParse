@@ -1,0 +1,19 @@
+{
+  "archive": "dist/WiParse-1.2.2-Windows-x64-20261110-AI-Full.zip",
+  "archive_bytes": 125508348,
+  "sha256": "611ec0e363a886c79f39fd0b7098ff15a2f837628432a6deed47b2df18163bed",
+  "files": 6266,
+  "plugins": 9,
+  "cli": "wiparse 1.2.2",
+  "node": "v24.15.0",
+  "mcp": {
+    "ok": true,
+    "mcp_version": "1.2.2",
+    "tool_count": 6,
+    "report_dispatch_checks": 4,
+    "hub_dispatch_checks": 20,
+    "backend": "local mock; no hardware"
+  },
+  "unicode_and_space_relocation_verified": true,
+  "all_file_hashes_verified": true
+}

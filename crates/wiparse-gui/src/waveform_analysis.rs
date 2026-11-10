@@ -22,8 +22,10 @@ use wiparse_core::bus_decode::{
     BusFrameError, BusKind, MAX_DECODE_BYTES, DdsssExtension, DdsssSequence, I2sFormat, SpiMode, SpiWire,
     UartParity,
 };
+mod protocol_view;
+#[cfg(test)]
 use crate::waveform_protocol_html::{
-    render_protocol_report, write_protocol_html, ProtocolReport, ProtocolReportField, ProtocolReportFrame,
+    ProtocolReportField, ProtocolReportFrame,
     ProtocolReportLane, ProtocolReportWave,
 };
 use wiparse_core::protocol::describe_ask_bytes;
@@ -40,10 +42,7 @@ use wiparse_core::waveform_file::{
     WaveformMeasurements,
 };
 
-fn toolbar_height(width: f32) -> f32 {
-    if width < 480.0 { 172.0 } else if width < 720.0 { 108.0 } else if width < 1080.0 { 76.0 } else { 44.0 }
-}
-const PANEL_GAP: f32 = 12.0;
+const PANEL_GAP: f32 = 4.0;
 const SIDE_W: f32 = ui_theme::SIDEBAR_W;
 /// Compact Y-axis strip width (scope-style, right of plot).
 const CHANNEL_AXIS_COL_W: f32 = 28.0;
@@ -51,7 +50,7 @@ const AXIS_HANDLE_RADIUS: f32 = 5.5;
 const AXIS_TICK_LEN: f32 = 4.0;
 const BTN: egui::Vec2 = egui::vec2(108.0, 28.0);
 const BTN_SM: egui::Vec2 = egui::vec2(72.0, 28.0);
-const CARD_MARGIN_X: i8 = 12;
+const CARD_MARGIN_X: i8 = 6;
 /// Cursor grab distance as a fraction of visible axis span.
 const CURSOR_GRAB_FRAC: f64 = 0.012;
 /// Max zoom-out: view may extend this factor beyond full data extent (X axis).
@@ -250,7 +249,11 @@ pub struct WaveformAnalysisPanel {
     bus_lanes: Vec<ProtocolLane>,
     active_bus_lane: usize,
     next_bus_lane_id: u64,
-    protocol_html_path: Option<PathBuf>,
+    protocol_results_open: bool,
+    protocol_search:String,
+    protocol_errors_only:bool,
+    protocol_show_details:bool,
+    protocol_rows_cache:Option<protocol_view::RowCache>,
     bus_decode_dirty: bool,
     /// Optional manual UART baud entry (empty = auto).
     uart_baud_text: String,
@@ -318,7 +321,11 @@ impl WaveformAnalysisPanel {
             }],
             active_bus_lane: 0,
             next_bus_lane_id: 1,
-            protocol_html_path: None,
+            protocol_results_open:true,
+            protocol_search:String::new(),
+            protocol_errors_only:false,
+            protocol_show_details:false,
+            protocol_rows_cache:None,
             bus_decode_dirty: false,
             uart_baud_text: String::new(),
             ddsss_fop_text: String::new(),
@@ -367,17 +374,16 @@ impl WaveformAnalysisPanel {
         let mid_right = center.max.x;
         let plot_w = (mid_right - mid_left).max(1.0);
         let side_rect = egui::Rect::from_min_size(center.min, egui::vec2(side_w, body_h));
-        let toolbar_h = toolbar_height(plot_w).min(body_h);
-        let toolbar_rect = egui::Rect::from_min_size(egui::pos2(mid_left, body_top), egui::vec2(plot_w, toolbar_h));
-        let plot_top = (toolbar_rect.bottom() + PANEL_GAP).min(full.bottom());
-        let plot_rect = egui::Rect::from_min_max(
-            egui::pos2(mid_left, plot_top),
-            egui::pos2(mid_right, full.max.y.max(plot_top + 80.0)),
-        );
-
-        panel_in_rect(ui, toolbar_rect, |ui| {
-            self.toolbar(ui, lang, tokens);
-        });
+        // Measure the wrapped toolbar this frame: no reserved blank rows.
+        let toolbar_rect=egui::Rect::from_min_size(egui::pos2(mid_left,body_top),egui::vec2(plot_w,body_h));
+        let mut toolbar_h=0.0;
+        panel_in_rect(ui,toolbar_rect,|ui|{toolbar_h=self.toolbar(ui,lang,tokens);});
+        let plot_top=(body_top+toolbar_h+PANEL_GAP).min(full.bottom());
+        let available_plot_h=full.bottom()-plot_top;
+        let results_h=if self.protocol_results_open && self.bus_settings.kind!=BusKind::Off && self.bus_result.is_some(){(available_plot_h*0.30).clamp(100.0,240.0).min((available_plot_h-100.0).max(0.0))}else{0.0};
+        let plot_bottom=if results_h>0.0{full.bottom()-results_h-PANEL_GAP}else{full.bottom()};
+        let plot_rect=egui::Rect::from_min_max(egui::pos2(mid_left,plot_top),egui::pos2(mid_right,plot_bottom));
+        if results_h>0.0{let results_rect=egui::Rect::from_min_max(egui::pos2(mid_left,plot_bottom+PANEL_GAP),egui::pos2(mid_right,full.bottom()));panel_in_rect(ui,results_rect,|ui|self.protocol_results_panel(ui,lang,tokens));}
 
         let body_inner = (body_h - PANEL_GAP).max(1.0);
         let browser_h = body_inner * 0.58;
@@ -399,13 +405,7 @@ impl WaveformAnalysisPanel {
             &t(lang, "测量", "Measurements"),
             |ui| self.measures_panel(ui, lang, tokens),
         );
-        card_in_rect(
-            ui,
-            plot_rect,
-            tokens,
-            &t(lang, "波形图", "Plot"),
-            |ui| self.plot_area(ui, lang, tokens),
-        );
+        panel_in_rect(ui,plot_rect,|ui|self.plot_area(ui,lang,tokens));
         card_in_rect(
             ui,
             right_rect,
@@ -436,29 +436,15 @@ impl WaveformAnalysisPanel {
         if !full.is_positive() {
             return;
         }
-        let meas_h = 96.0;
-        let toolbar_rect =
-            egui::Rect::from_min_size(full.min, egui::vec2(full.width(), toolbar_height(full.width())));
-        let plot_top = full.min.y + toolbar_height(full.width()) + PANEL_GAP;
-        let plot_h = (full.max.y - plot_top - meas_h - PANEL_GAP).max(80.0);
-        let plot_rect = egui::Rect::from_min_size(
-            egui::pos2(full.min.x, plot_top),
-            egui::vec2(full.width(), plot_h),
-        );
-        let meas_rect = egui::Rect::from_min_size(
-            egui::pos2(full.min.x, plot_rect.max.y + PANEL_GAP),
-            egui::vec2(full.width(), meas_h),
-        );
-        panel_in_rect(ui, toolbar_rect, |ui| {
-            self.toolbar(ui, lang, tokens);
-        });
-        card_in_rect(
-            ui,
-            plot_rect,
-            tokens,
-            &t(lang, "波形图", "Plot"),
-            |ui| self.plot_area(ui, lang, tokens),
-        );
+        let meas_h=96.0_f32.min(full.height()*0.25);
+        let toolbar_rect=egui::Rect::from_min_size(full.min,full.size());
+        let mut toolbar_h=0.0;
+        panel_in_rect(ui,toolbar_rect,|ui|{toolbar_h=self.toolbar(ui,lang,tokens);});
+        let plot_top=(full.top()+toolbar_h+PANEL_GAP).min(full.bottom());
+        let plot_bottom=(full.bottom()-meas_h-PANEL_GAP).max(plot_top);
+        let plot_rect=egui::Rect::from_min_max(egui::pos2(full.left(),plot_top),egui::pos2(full.right(),plot_bottom));
+        let meas_rect=egui::Rect::from_min_max(egui::pos2(full.left(),(plot_bottom+PANEL_GAP).min(full.bottom())),full.max);
+        panel_in_rect(ui,plot_rect,|ui|self.plot_area(ui,lang,tokens));
         card_in_rect(
             ui,
             meas_rect,
@@ -468,12 +454,12 @@ impl WaveformAnalysisPanel {
         );
     }
 
-    fn toolbar(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+    fn toolbar(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) -> f32 {
         Frame::NONE
             .fill(tokens.surface_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-            .inner_margin(Margin::symmetric(10, 6))
+            .inner_margin(Margin::symmetric(6, 4))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.set_max_width(ui.available_width());
@@ -681,7 +667,7 @@ impl WaveformAnalysisPanel {
                 });
             }).response.on_hover_text(t(lang,
                 "Ctrl+滚轮=X · Ctrl+Shift+滚轮=Y",
-                "Ctrl+wheel=X · Ctrl+Shift+wheel=Y"));
+                "Ctrl+wheel=X · Ctrl+Shift+wheel=Y")).rect.height()
     }
 
     fn reset_channel_display(&mut self, index: usize) {
@@ -821,11 +807,9 @@ impl WaveformAnalysisPanel {
             return None;
         }
         let xpad = ((xmax - xmin).abs() * 0.02).max(VIEW_MIN_SPAN_ABS);
-        let ypad = ((ymax - ymin).abs() * 0.08).max(VIEW_MIN_SPAN_ABS);
-        Some(PlotBounds::from_min_max(
-            [xmin - xpad, ymin - ypad],
-            [xmax + xpad, ymax + ypad],
-        ))
+        let floor=self.waves.iter().map(|wave|default_voltage_span(&wave.trace.y_unit,wave.y_scale)).fold(0.0_f64,f64::max);
+        let (ymin,ymax)=auto_y_bounds(ymin,ymax,floor);
+        Some(PlotBounds::from_min_max([xmin-xpad,ymin],[xmax+xpad,ymax]))
     }
 
     fn mark_extent_dirty(&mut self) {
@@ -1750,49 +1734,7 @@ impl WaveformAnalysisPanel {
         self.bus_frame_popup = None;
     }
 
-    fn open_protocol_report(&mut self, lang: Lang) {
-        self.commit_active_lane();
-        let zh = matches!(lang, Lang::Zh);
-        let lanes = self.protocol_report_lanes(zh);
-        if lanes.is_empty() {
-            self.status = t(lang, "先选择协议和通道", "Choose a protocol and channels first").into();
-            return;
-        }
-        let mut sources = Vec::new();
-        for wave in &self.waves {
-            let text = wave.path.display().to_string();
-            if !sources.contains(&text) {
-                sources.push(text);
-            }
-        }
-        let focus = self.bus_lanes.get(self.active_bus_lane).and_then(|lane| {
-            self.bus_frame_popup.or(self.selected_bus_frame).map(|index| (lane.id, index))
-        });
-        let html = render_protocol_report(&ProtocolReport {
-            zh,
-            sources,
-            byte_limit: MAX_DECODE_BYTES,
-            focus,
-            waves: self.report_waves(&lanes),
-            lanes,
-        });
-        match write_protocol_html(&mut self.protocol_html_path, &html) {
-            Ok(path) => {
-                if crate::test_report::open_path_external(&path) {
-                    let count = self.bus_lanes.iter().filter(|lane| lane.settings.kind != BusKind::Off).count();
-                    self.status = t(
-                        lang,
-                        &format!("已在浏览器打开 {count} 路协议解析"),
-                        &format!("Opened {count} protocol lanes in the browser"),
-                    );
-                } else {
-                    self.status = format!("{} {}", t(lang, "无法打开", "Could not open"), path.display());
-                }
-            }
-            Err(err) => self.status = err,
-        }
-    }
-
+    #[cfg(test)]
     fn protocol_report_lanes(&self, zh: bool) -> Vec<ProtocolReportLane> {
         self.bus_lanes
             .iter()
@@ -1802,7 +1744,7 @@ impl WaveformAnalysisPanel {
                 let ready = channels_ready(&lane.settings);
                 let frames = lane.result.as_ref().map(|result| {
                     let origin = result.frames.first().map(|frame| frame.t_start).unwrap_or(0.0);
-                    result.frames.iter().enumerate().map(|(frame_index, frame)| {
+                    result.frames.iter().enumerate().filter(|(_,frame)|protocol_view::is_data_frame(lane.settings.kind,frame)).map(|(frame_index, frame)| {
                         let mut fields = Vec::new();
                         report_field(&mut fields, if zh { "相对时间" } else { "Time" }, rel_stamp(origin, frame.t_start), false, zh);
                         report_field(&mut fields, if zh { "时长" } else { "Duration" }, duration_text(frame.t_start, frame.t_end), false, zh);
@@ -1839,6 +1781,7 @@ impl WaveformAnalysisPanel {
             .collect()
     }
 
+    #[cfg(test)]
     fn report_waves(&self, lanes: &[ProtocolReportLane]) -> Vec<ProtocolReportWave> {
         let windows = detail_windows(lanes);
         let count = self.waves.len().min(12).max(1);
@@ -1860,9 +1803,9 @@ impl WaveformAnalysisPanel {
             .map(|index| {
                 let settings = if index == self.active_bus_lane { &self.bus_settings } else { &self.bus_lanes[index].settings };
                 let count = if index == self.active_bus_lane {
-                    self.bus_result.as_ref().map(|result| result.frames.len())
+                    self.bus_result.as_ref().map(|result| protocol_view::data_count(settings.kind,result))
                 } else {
-                    self.bus_lanes[index].result.as_ref().map(|result| result.frames.len())
+                    self.bus_lanes[index].result.as_ref().map(|result| protocol_view::data_count(settings.kind,result))
                 };
                 (protocol_lane_chip(settings, &self.waves, zh), count.map(|count| count.to_string()).unwrap_or_default())
             })
@@ -1910,13 +1853,13 @@ impl WaveformAnalysisPanel {
         if unused > 0 && ui.add_sized([width, 28.0], egui::Button::new(t(lang, "其余通道同时解析", "Decode the other channels"))).clicked() {
             fill = true;
         }
-        if ui_theme::primary_btn_sized(ui, tokens, t(lang, "在浏览器中分析", "Analyze in browser"), egui::vec2(width, 30.0)).clicked() {
+        if ui_theme::primary_btn_sized(ui, tokens, t(lang, if self.protocol_results_open{"收起报文列表"}else{"显示报文列表"}, if self.protocol_results_open{"Hide decoded frames"}else{"Show decoded frames"}), egui::vec2(width, 30.0)).clicked() {
             open = true;
         }
         ui.label(RichText::new(t(
             lang,
-            "在这里选择协议和通道。波形、时序和字段在浏览器中查看。",
-            "Choose the protocol and channels here. The browser page shows the waveform, timing, and fields.",
+            "选择协议和通道，报文与字段在波形下方查看。",
+            "Select protocol and channels; inspect frames and fields below the waveform.",
         )).small().color(tokens.text_muted));
         if let Some(index) = switch {
             self.show_protocol_lane(index);
@@ -1931,7 +1874,7 @@ impl WaveformAnalysisPanel {
             self.decode_remaining_channels();
         }
         if open {
-            self.open_protocol_report(lang);
+            self.protocol_results_open=!self.protocol_results_open;
         }
     }
 
@@ -2009,11 +1952,14 @@ impl WaveformAnalysisPanel {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 let mut manual = self.bus_settings.threshold.is_some();
                                 if ui.checkbox(&mut manual, t(lang, "手动", "Manual")).changed() {
-                                    self.bus_settings.threshold = if manual { Some(if self.bus_settings.kind == BusKind::Scp { 1.1 } else { 0.6 }) } else { None };
+                                    self.bus_settings.threshold = if manual { Some(match self.bus_settings.kind {BusKind::Scp=>wiparse_core::bus_decode::SCP_DEFAULT_THRESHOLD_V,BusKind::UsbPd=>wiparse_core::bus_decode::USB_PD_DEFAULT_THRESHOLD_V,_=>0.6}) } else { None };
                                     changed = true;
                                 }
                                 if let Some(value) = self.bus_settings.threshold.as_mut() {
                                     changed |= ui.add(egui::DragValue::new(value).speed(0.01).range(-20.0..=20.0)).changed();
+                                } else {
+                                    let value=match self.bus_settings.kind{BusKind::UsbPd=>Some(wiparse_core::bus_decode::USB_PD_DEFAULT_THRESHOLD_V),BusKind::Scp=>Some(wiparse_core::bus_decode::SCP_DEFAULT_THRESHOLD_V),_=>None};
+                                    ui.label(RichText::new(value.map(|v|format!("{v:.2} V")).unwrap_or_else(||t(lang,"自动","Auto").into())).size(12.)).on_hover_text(t(lang,"协议默认阈值，勾选后可手动调整","Protocol default threshold; enable Manual to override"));
                                 }
                             },
                         );
@@ -2339,38 +2285,8 @@ impl WaveformAnalysisPanel {
                 );
             }
             if !result.info.is_empty() {
-                ui.label(RichText::new(&result.info).small().color(tokens.text_muted));
-            }
-            if let Some(i) = self.selected_bus_frame {
-                if let Some(frame) = result.frames.get(i) {
-                    let hex = frame
-                        .bytes
-                        .iter()
-                        .map(|b| format!("{b:02X}"))
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    if let Some(desc) = describe_ask_bytes(&frame.bytes).filter(|_| self.bus_settings.kind == BusKind::Ddsss) {
-                        ui.label(
-                            RichText::new(format!("{desc}  [{hex}]"))
-                                .small()
-                                .color(if frame.has_error() {
-                                    tokens.stop_bg
-                                } else {
-                                    tokens.text_primary
-                                }),
-                        );
-                    } else if !hex.is_empty() {
-                        ui.label(
-                            RichText::new(format!("{}  [{hex}]", frame.plot_label()))
-                                .small()
-                                .color(if frame.has_error() {
-                                    tokens.stop_bg
-                                } else {
-                                    tokens.text_primary
-                                }),
-                        );
-                    }
-                }
+                let info=if self.bus_settings.kind==BusKind::Scp{format!("SCP · {} {} · {} PING",protocol_view::data_count(BusKind::Scp,result),t(lang,"报文","frames"),result.frames.iter().filter(|frame|!protocol_view::is_data_frame(BusKind::Scp,frame)).count())}else{result.info.clone()};
+                ui.label(RichText::new(info).small().color(tokens.text_muted));
             }
             if result.frames.is_empty() && result.error.is_none() {
                 ui.label(
@@ -2379,7 +2295,7 @@ impl WaveformAnalysisPanel {
                         .color(tokens.text_muted),
                 );
             } else if !result.frames.is_empty() || !result.byte_spans.is_empty() {
-                let nerr = result.frames.iter().filter(|f| f.has_error()).count();
+                let nerr = result.frames.iter().filter(|f| protocol_view::is_data_frame(self.bus_settings.kind,f)&&f.has_error()).count();
                 let nchip_err = result.chips.iter().filter(|c| c.error).count();
                 let err_zh = match (nerr, nchip_err) {
                     (0, 0) => String::new(),
@@ -2398,13 +2314,13 @@ impl WaveformAnalysisPanel {
                         lang,
                         &format!(
                             "包 {}{err_zh} · 字节 {} · chip {}（点击标注可定位）",
-                            result.frames.len(),
+                            protocol_view::data_count(self.bus_settings.kind,result),
                             result.byte_spans.len(),
                             result.chips.len()
                         ),
                         &format!(
                             "{} packets{err_en} · {} bytes · {} chips (click a label to zoom)",
-                            result.frames.len(),
+                            protocol_view::data_count(self.bus_settings.kind,result),
                             result.byte_spans.len(),
                             result.chips.len()
                         ),
@@ -2423,6 +2339,7 @@ impl WaveformAnalysisPanel {
     fn open_bus_frame(&mut self, index: usize) {
         self.selected_bus_frame = Some(index);
         self.bus_frame_popup = Some(index);
+        self.protocol_results_open=true;
         if let Some(frame) = self.bus_result.as_ref().and_then(|result| result.frames.get(index)).cloned() {
             self.zoom_to_bus_frame(&frame);
         }
@@ -2707,7 +2624,7 @@ impl WaveformAnalysisPanel {
                         RichText::new(&ch)
                             .small()
                             .strong()
-                            .color(w.color),
+                            .color(ui_theme::readable_on(w.color,tokens.surface_bg)),
                     );
                     measure_row(ui, tokens, "Y1", &format_eng(y1, yu));
                     measure_row(ui, tokens, "Y2", &format_eng(y2, yu));
@@ -2833,7 +2750,7 @@ impl WaveformAnalysisPanel {
 
         for i in 0..n {
             let w = &self.waves[i];
-            let color = w.color;
+            let color = ui_theme::readable_on(w.color,tokens.surface_bg);
             let (hy, on_screen) = handle_y(i);
             let selected = self.selected == Some(i);
             let active = self.dragging_channel_offset == Some(i)
@@ -2989,6 +2906,8 @@ impl WaveformAnalysisPanel {
 
     fn plot_area(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
         let height = ui.available_height().max(80.0);
+        #[cfg(test)]
+        ui.ctx().data_mut(|data|data.insert_temp(egui::Id::new("wave-layout-region"),ui.available_rect_before_wrap()));
         if self.waves.is_empty() {
             ui.allocate_ui_with_layout(
                 egui::vec2(ui.available_width(), height),
@@ -3198,7 +3117,7 @@ impl WaveformAnalysisPanel {
             .bus_result
             .as_ref()
             .map(|r| {
-                sampled_visible_indices(&r.frames, overlay_range, mark_budget, self.selected_bus_frame, |f| (f.t_start, f.t_end))
+                sampled_visible_indices(&r.frames, overlay_range, mark_budget, self.selected_bus_frame, |f| if protocol_view::is_data_frame(self.bus_settings.kind,f){(f.t_start,f.t_end)}else{(f64::NAN,f64::NAN)})
                     .into_iter()
                     .map(|i| (i, &r.frames[i]))
                     .map(|(i, f)| {
@@ -3377,7 +3296,7 @@ impl WaveformAnalysisPanel {
                         if !w.overview.is_empty() {
                             plot_ui.add(ScopeEnvelopePlotItem::new(
                                 Arc::clone(&w.overview),
-                                w.color,
+                                ui_theme::readable_on(w.color,tokens.plot_bg),
                                 stroke,
                                 w.label.clone(),
                                 highlighted,
@@ -3390,7 +3309,7 @@ impl WaveformAnalysisPanel {
                             WaveViewportSeries::Envelope(cols) if !cols.is_empty() => {
                                 plot_ui.add(ScopeEnvelopePlotItem::new(
                                     Arc::clone(cols),
-                                    w.color,
+                                    ui_theme::readable_on(w.color,tokens.plot_bg),
                                     stroke,
                                     w.label.clone(),
                                     highlighted,
@@ -3401,7 +3320,7 @@ impl WaveformAnalysisPanel {
                             WaveViewportSeries::Uniform(pts) if pts.len() >= 2 => {
                                 plot_ui.add(ScopeVectorPlotItem::new(
                                     Arc::clone(pts),
-                                    w.color,
+                                    ui_theme::readable_on(w.color,tokens.plot_bg),
                                     stroke,
                                     w.label.clone(),
                                     highlighted,
@@ -3414,7 +3333,7 @@ impl WaveformAnalysisPanel {
                                 if !lod_transient && !w.overview.is_empty() {
                                     plot_ui.add(ScopeEnvelopePlotItem::new(
                                         Arc::clone(&w.overview),
-                                        w.color,
+                                        ui_theme::readable_on(w.color,tokens.plot_bg),
                                         stroke,
                                         w.label.clone(),
                                         highlighted,
@@ -3430,7 +3349,7 @@ impl WaveformAnalysisPanel {
                     } else if !w.overview.is_empty() {
                         plot_ui.add(ScopeEnvelopePlotItem::new(
                             Arc::clone(&w.overview),
-                            w.color,
+                            ui_theme::readable_on(w.color,tokens.plot_bg),
                             stroke,
                             w.label.clone(),
                             highlighted,
@@ -3443,7 +3362,7 @@ impl WaveformAnalysisPanel {
                 if let Some(v) = x1 {
                     plot_ui.vline(
                         VLine::new(v)
-                            .color(Color32::from_rgb(0xF5, 0xA6, 0x23))
+                            .color(ui_theme::readable_on(Color32::from_rgb(0xF5, 0xA6, 0x23),tokens.plot_bg))
                             .width(1.5_f32)
                             .name("X1"),
                     );
@@ -3451,7 +3370,7 @@ impl WaveformAnalysisPanel {
                 if let Some(v) = x2 {
                     plot_ui.vline(
                         VLine::new(v)
-                            .color(Color32::from_rgb(0x2E, 0xC4, 0xB6))
+                            .color(ui_theme::readable_on(Color32::from_rgb(0x2E, 0xC4, 0xB6),tokens.plot_bg))
                             .width(1.5_f32)
                             .name("X2"),
                     );
@@ -3459,7 +3378,7 @@ impl WaveformAnalysisPanel {
                 if let Some(v) = y1 {
                     plot_ui.hline(
                         HLine::new(v)
-                            .color(Color32::from_rgb(0xF5, 0xA6, 0x23))
+                            .color(ui_theme::readable_on(Color32::from_rgb(0xF5, 0xA6, 0x23),tokens.plot_bg))
                             .width(1.5_f32)
                             .name("Y1"),
                     );
@@ -3467,7 +3386,7 @@ impl WaveformAnalysisPanel {
                 if let Some(v) = y2 {
                     plot_ui.hline(
                         HLine::new(v)
-                            .color(Color32::from_rgb(0x2E, 0xC4, 0xB6))
+                            .color(ui_theme::readable_on(Color32::from_rgb(0x2E, 0xC4, 0xB6),tokens.plot_bg))
                             .width(1.5_f32)
                             .name("Y2"),
                     );
@@ -3487,7 +3406,7 @@ impl WaveformAnalysisPanel {
                         continue;
                     }
                     if *selected || *t0 - last_marker >= min_marker_dt {
-                        let color = bus_packet_color(*selected, summary);
+                        let color = ui_theme::readable_on(bus_packet_color(*selected, summary),tokens.plot_bg);
                         plot_ui.vline(
                             VLine::new(*t0)
                                 .color(if *selected { color } else { color.gamma_multiply(0.38) })
@@ -3513,7 +3432,7 @@ impl WaveformAnalysisPanel {
                             .highlight(selected),
                     );
                 };
-                let marker_color = |selected: bool, summary: &str| bus_packet_color(selected, summary);
+                let marker_color = |selected: bool, summary: &str| ui_theme::readable_on(bus_packet_color(selected, summary),tokens.plot_bg);
                 let mut shown_pkt: Vec<f64> = Vec::new();
                 for (_i, t0, t1, selected, summary) in &bus_markers {
                     if *t1 < x_lo || *t0 > x_hi {
@@ -3574,8 +3493,8 @@ impl WaveformAnalysisPanel {
                     }
                 }
 
-                let byte_ok = Color32::from_rgb(0x38, 0xBD, 0xF8);
-                let byte_bad = Color32::from_rgb(0xF9, 0x73, 0x16);
+                let byte_ok = ui_theme::readable_on(Color32::from_rgb(0x38, 0xBD, 0xF8),tokens.plot_bg);
+                let byte_bad = ui_theme::readable_on(Color32::from_rgb(0xF9, 0x73, 0x16),tokens.plot_bg);
                 let mut shown_byte: Vec<f64> = Vec::new();
                 for (t0, t1, hex, bad) in &bus_bytes {
                     if *t1 < x_lo || *t0 > x_hi {
@@ -3637,6 +3556,7 @@ impl WaveformAnalysisPanel {
                         } else {
                             ddsss_bit_color(kind.trim_end_matches('!'))
                         };
+                        let color=ui_theme::readable_on(color,tokens.plot_bg);
                         let ctrl = kind.starts_with("St") || kind.starts_with("Sp") || kind.starts_with("P");
                         if bit_px >= 24.0 {
                             plot_ui.vline(
@@ -3664,7 +3584,7 @@ impl WaveformAnalysisPanel {
                 // wide enough; when denser they wash out bit labels — draw faintly
                 // or skip, and keep orange mismatch marks only when readable.
                 if show_bit_lane {
-                    let err_col = Color32::from_rgb(0xF9, 0x73, 0x16);
+                    let err_col = ui_theme::readable_on(Color32::from_rgb(0xF9, 0x73, 0x16),tokens.plot_bg);
                     let mut chip_shown = 0usize;
                     let mut bit_i = 0usize;
                     // Soften / gate chip separators by on-screen chip width.
@@ -3889,6 +3809,8 @@ impl WaveformAnalysisPanel {
         });
 
         let response = plot_response.expect("waveform plot");
+        #[cfg(test)]
+        ui.ctx().data_mut(|data|data.insert_temp(egui::Id::new("wave-layout-plot-rect"),response.response.rect));
 
         if fit {
             self.fit_request = false;
@@ -4022,7 +3944,7 @@ impl WaveformAnalysisPanel {
                 egui::Align2::LEFT_TOP,
                 text,
                 egui::FontId::monospace(13.0),
-                tokens.text_primary,
+                tokens.plot_fg,
             );
         }
         let _ = lang;
@@ -4110,15 +4032,16 @@ impl WaveformAnalysisPanel {
 
     /// Cached, bounded summary only; raw samples are not uploaded by this helper.
     pub(crate) fn ai_summary(&self) -> serde_json::Value {
-        let channels: Vec<_> = self.waves.iter().take(16).map(|wave| serde_json::json!({
+        let channels: Vec<_> = self.waves.iter().enumerate().take(16).map(|(index,wave)| serde_json::json!({
+            "index":index,"trace_id":format!("trace-{:x}-{:x}",wave.trace.x.as_ptr() as usize,wave.trace.y.as_ptr() as usize),"source_file":wave.path.file_name().map(|p|p.to_string_lossy()),
             "channel": wave.trace.channel, "points": wave.measures.count, "sample_interval_s": wave.measures.dt,
             "unit": wave.trace.y_unit, "min": wave.measures.min, "max": wave.measures.max,
             "peak_to_peak": wave.measures.pp, "mean": wave.measures.mean, "rms": wave.measures.rms,
             "frequency_hz": wave.measures.freq_hz, "period_s": wave.measures.period,
             "measurements_pending": wave.measures_pending,
         })).collect();
-        let frames: Vec<_> = self.bus_result.as_ref().map(|result| result.frames.iter().take(20).map(|frame| serde_json::json!({"start_s":frame.t_start,"end_s":frame.t_end,"summary":frame.summary.chars().take(240).collect::<String>(),"integrity":format!("{:?}", frame.error),"bytes":frame.bytes.iter().take(64).copied().collect::<Vec<_>>()})).collect()).unwrap_or_default();
-        serde_json::json!({"decoded_frame_sample":frames, "channels": channels, "protocol": self.bus_settings.kind.label(), "cursors": {"x1":self.x1,"x2":self.x2,"y1":self.y1,"y2":self.y2}, "raw_samples_included": false})
+        let frames: Vec<_> = self.bus_result.as_ref().map(|result| result.frames.iter().filter(|frame|protocol_view::is_data_frame(self.bus_settings.kind,frame)).take(20).map(|frame| serde_json::json!({"start_s":frame.t_start,"end_s":frame.t_end,"summary":frame.summary.chars().take(240).collect::<String>(),"integrity":format!("{:?}", frame.error),"bytes":frame.bytes.iter().take(64).copied().collect::<Vec<_>>()})).collect()).unwrap_or_default();
+        serde_json::json!({"decode_provenance":self.agent_provenance(),"decoded_frame_sample":frames, "channels": channels, "protocol": self.bus_settings.kind.label(), "cursors": {"x1":self.x1,"x2":self.x2,"y1":self.y1,"y2":self.y2}, "raw_samples_included": false})
     }
 
     pub fn api_snapshot(&self) -> serde_json::Value {
@@ -4737,6 +4660,19 @@ fn paint_channel_gnd_handle(
     }
 }
 
+/// Voltage-only default floor: 500 mV/div across ten vertical divisions.
+/// Manual zoom remains independent (including 1 mV/div and below).
+fn default_voltage_span(unit:&str,scale:f64)->f64{
+    let volts_per_unit=match unit.trim(){"V"|"v"=>1.0,"mV"|"mv"=>1e-3,"uV"|"µV"|"μV"=>1e-6,_=>return 0.0};
+    5.0/volts_per_unit*scale.abs()
+}
+fn auto_y_bounds(minimum:f64,maximum:f64,min_span:f64)->(f64,f64){
+    let span=(maximum-minimum).abs().max(VIEW_MIN_SPAN_ABS);
+    let padded=(span*1.16).max(min_span).max(VIEW_MIN_SPAN_ABS);
+    let center=minimum*0.5+maximum*0.5;
+    (center-padded*0.5,center+padded*0.5)
+}
+
 /// Display-space Y bounds for a loaded wave (scale + offset applied).
 fn wave_display_y_bounds(w: &LoadedWave) -> (f64, f64) {
     let y0 = w.y_min * w.y_scale + w.y_offset;
@@ -4754,7 +4690,8 @@ fn auto_stagger_channel_offsets(waves: &mut [LoadedWave], range: std::ops::Range
         .map(|w| (w.y_max - w.y_min).abs())
         .sum::<f64>()
         / (range.end - range.start) as f64;
-    let gap = (avg_pp * 0.12).max(1e-12);
+    let default_gap=waves[range.clone()].iter().map(|wave|default_voltage_span(&wave.trace.y_unit,wave.y_scale)/20.0).fold(0.0_f64,f64::max);
+    let gap = (avg_pp * 0.12).max(default_gap).max(1e-12);
     let start = range.start;
     let mut top =
         waves[start].y_max * waves[start].y_scale + waves[start].y_offset;
@@ -4951,11 +4888,9 @@ fn extent_of_traces(waves: &[&LoadedWave]) -> Option<PlotBounds> {
         ymax = ymin + VIEW_MIN_SPAN_ABS;
     }
     let xpad = ((xmax - xmin).abs() * 0.02).max(VIEW_MIN_SPAN_ABS);
-    let ypad = ((ymax - ymin).abs() * 0.08).max(VIEW_MIN_SPAN_ABS);
-    Some(PlotBounds::from_min_max(
-        [xmin - xpad, ymin - ypad],
-        [xmax + xpad, ymax + ypad],
-    ))
+    let floor=waves.iter().map(|wave|default_voltage_span(&wave.trace.y_unit,wave.y_scale)).fold(0.0_f64,f64::max);
+    let (ymin,ymax)=auto_y_bounds(ymin,ymax,floor);
+    Some(PlotBounds::from_min_max([xmin-xpad,ymin],[xmax+xpad,ymax]))
 }
 
 fn trace_extent(trace: &WaveformTrace) -> (f64, f64, f64, f64) {
@@ -5082,12 +5017,12 @@ fn card_in_rect(
     add: impl FnOnce(&mut egui::Ui),
 ) {
     panel_in_rect(ui, rect, |ui| {
-        Frame::NONE.fill(tokens.surface_bg).corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD)).inner_margin(Margin::same(12))
+        Frame::NONE.fill(tokens.surface_bg).corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD)).inner_margin(Margin::same(6))
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
                 ui.set_max_size(ui.available_size());
                 ui.label(RichText::new(title).size(ui_theme::FONT_SECTION).strong().color(tokens.text_primary));
-                ui.add_space(8.0);
+                ui.add_space(2.0);
                 let body = ui.available_size();
                 ui.allocate_ui_with_layout(body, egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_min_size(body);
@@ -5099,14 +5034,9 @@ fn card_in_rect(
     });
 }
 
-/// Right-hand protocol column. The plot keeps at least 360 px; the column stays between 220 and 360.
-fn protocol_column_width(total: f32) -> f32 {
-    let room = total - 200.0 - 360.0 - PANEL_GAP * 2.0;
-    if room >= 220.0 {
-        room.clamp(240.0, 360.0)
-    } else {
-        (total * 0.34).clamp(200.0, 280.0)
-    }
+/// Keep the decode form usable while prioritising the waveform canvas.
+fn protocol_column_width(total:f32)->f32 {
+    (total*0.20).clamp(200.0,280.0)
 }
 
 fn bus_form_layout(ui: &egui::Ui) -> BusFormLayout {
@@ -5317,6 +5247,7 @@ fn lane_wave_index(settings: &BusDecodeSettings) -> Option<usize> {
     })
 }
 
+#[cfg(test)]
 fn decimate_series(x: &[f64], y: &[f64], max_cols: usize) -> Vec<[f64; 4]> {
     let n = x.len().min(y.len());
     if n == 0 || max_cols == 0 {
@@ -5343,6 +5274,7 @@ fn decimate_series(x: &[f64], y: &[f64], max_cols: usize) -> Vec<[f64; 4]> {
     out
 }
 
+#[cfg(test)]
 fn thin_columns(columns: &[[f64; 4]], max_cols: usize) -> Vec<[f64; 4]> {
     if columns.len() <= max_cols || max_cols == 0 {
         return columns.iter().copied().filter(|col| col.iter().all(|value| value.is_finite())).collect();
@@ -5371,6 +5303,7 @@ fn thin_columns(columns: &[[f64; 4]], max_cols: usize) -> Vec<[f64; 4]> {
     out
 }
 
+#[cfg(test)]
 fn wave_overview_columns(wave: &LoadedWave) -> Vec<[f64; 4]> {
     const MAX_COLS: usize = 4800;
     if !wave.overview.is_empty() {
@@ -5381,6 +5314,7 @@ fn wave_overview_columns(wave: &LoadedWave) -> Vec<[f64; 4]> {
 }
 
 /// Time spans that need sample-level edges: each decoded frame, plus one frame of context.
+#[cfg(test)]
 fn detail_windows(lanes: &[ProtocolReportLane]) -> Vec<(f64, f64)> {
     let mut spans: Vec<(f64, f64)> = lanes.iter().flat_map(|lane| lane.frames.iter()).filter_map(|frame| {
         if frame.t0.is_finite() && frame.t1.is_finite() {
@@ -5413,6 +5347,7 @@ fn detail_windows(lanes: &[ProtocolReportLane]) -> Vec<(f64, f64)> {
 }
 
 /// High-resolution min/max columns around decoded frames. The overview stays coarse.
+#[cfg(test)]
 fn detail_columns(x: &[f64], y: &[f64], windows: &[(f64, f64)], budget: usize) -> Vec<[f64; 4]> {
     let n = x.len().min(y.len());
     if n == 0 || budget == 0 {
@@ -5454,6 +5389,7 @@ fn detail_columns(x: &[f64], y: &[f64], windows: &[(f64, f64)], budget: usize) -
 }
 
 /// Split a sample budget across frame windows without dropping a later frame to zero.
+#[cfg(test)]
 fn share_columns(lengths: &[usize], budget: usize) -> Vec<usize> {
     let covered: usize = lengths.iter().sum();
     if covered == 0 || budget == 0 {
@@ -5474,6 +5410,7 @@ fn share_columns(lengths: &[usize], budget: usize) -> Vec<usize> {
     shares
 }
 
+#[cfg(test)]
 fn report_field(fields: &mut Vec<ProtocolReportField>, name: &str, value: String, raw: bool, zh: bool) {
     let (code, value) = split_code_value(&value);
     fields.push(ProtocolReportField { name: name.to_string(), value, code, raw, note: field_note(name, zh) });
@@ -5662,6 +5599,32 @@ fn t(lang: Lang, zh: &str, en: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_waveform_layout_fills_bottom_and_reserves_only_rendered_toolbar_rows() {
+        let dir=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tmp/serial-local-log-ui");std::fs::create_dir_all(&dir).unwrap();let path=dir.join("layout-wave.csv");
+        let mut csv=String::from("Time(s),CH1(V)\n");for i in 0..1000{csv.push_str(&format!("{},{}\n",i as f64*1e-6,if i%50<24{5.0}else{0.0}));}std::fs::write(&path,csv).unwrap();
+        for (width,height) in [(640.,360.),(1100.,720.),(1600.,1000.)] {for lang in [Lang::Zh,Lang::En]{
+            let ctx=egui::Context::default();crate::fonts::install_cjk_fonts(&ctx);let tokens=ui_theme::apply_theme(&ctx,false);let mut panel=WaveformAnalysisPanel::new(&AppConfig::default());panel.open_path(&path,lang).unwrap();let mut output=egui::FullOutput::default();
+            for _ in 0..3{output=ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(width,height))),..Default::default()},|ctx|{egui::CentralPanel::default().frame(Frame::NONE.inner_margin(Margin::same(2))).show(ctx,|ui|panel.ui(ui,lang,&tokens));});}
+            let rect=ctx.data(|data|data.get_temp::<egui::Rect>(egui::Id::new("wave-layout-plot-rect"))).unwrap();assert!(rect.width()>80.&&rect.height()>50.,"plot collapsed at {width}: {rect:?}");let region=ctx.data(|data|data.get_temp::<egui::Rect>(egui::Id::new("wave-layout-region"))).unwrap();assert!((region.bottom()-(height-2.)).abs()<1.1,"plot leaves bottom space: {region:?}");assert!(rect.bottom()>=region.bottom()-40.&&rect.bottom()<=region.bottom(),"excessive axis footer: {rect:?}");
+            if width>=1100.{assert!(region.width()>width*0.58&&rect.width()>width*0.50,"waveform does not dominate width: {rect:?}");}
+            let keys=[t(lang,"打开波形…","Open Waveform…"),t(lang,"清除光标","Clear"),t(lang,"复位全部","Reset All"),"X+".into(),"X−".into(),"Y+".into(),"Y−".into()];
+            let last_button=output.shapes.iter().filter_map(|shape|match &shape.shape{egui::Shape::Text(text) if keys.contains(&text.galley.job.text)=>Some(text.pos.y+text.galley.rect.bottom()),_=>None}).fold(0.0_f32,f32::max);assert!(last_button<=rect.top()&&rect.top()-last_button<20.,"toolbar gap/overlap at {width}: {last_button}, {rect:?}");
+            if width>=1100.&&lang==Lang::Zh{output.textures_delta.set.retain(|(id,_)|*id!=egui::TextureId::Managed(0));output.textures_delta.set.push((egui::TextureId::Managed(0),egui::epaint::ImageDelta::full(ctx.fonts(|fonts|fonts.image()),egui::TextureOptions::LINEAR)));crate::ui_audit::export_frame(&ctx,output,&dir,&format!("wave-compact-{}",width as u32),egui::vec2(width,height));}
+        }}
+    }
+
+    #[test]
+    fn default_voltage_fit_floor_is_unit_aware_and_keeps_large_signals(){
+        let (lo,hi)=auto_y_bounds(12.0001,12.0003,default_voltage_span("V",1.));assert!((hi-lo-5.).abs()<1e-10);assert!(((hi+lo)*0.5-12.0002).abs()<1e-10);
+        let (lo,hi)=auto_y_bounds(-10.,10.,default_voltage_span("V",1.));assert!(lo < -10. && hi > 10.);
+        assert_eq!(default_voltage_span("mV",1.),5000.);assert_eq!(default_voltage_span("A",1.),0.);
+        let (lo,hi)=auto_y_bounds(1.,1.,default_voltage_span("V",1.));assert!(lo.is_finite()&&hi.is_finite()&&hi-lo>=5.);
+        // Viewport clamping keeps manual 1 mV/div possible after the default fit.
+        let mut panel=WaveformAnalysisPanel::new(&AppConfig::default());panel.cached_extent=Some((0.,1.,-1.,1.));
+        let manual=panel.clamp_view_bounds(PlotBounds::from_min_max([0.,-0.005],[1.,0.005]));assert!((manual.height()-0.01).abs()<1e-12);
+    }
 
     #[test]
     fn ctrl_wheel_zoom_never_passes_collapsed_bounds_to_plot() {
@@ -5872,4 +5835,30 @@ mod tests {
         assert!(field_note("请求电压", true).contains("伏特"));
         assert!(field_note("原始字节", true).contains("起始位"));
     }
+}
+
+impl WaveformAnalysisPanel {
+ pub(crate) fn agent_identity(&self)->String{format!("{:?}:{}:{}:{:?}",self.waves.iter().map(|w|(w.trace.x.as_ptr() as usize,w.trace.y.as_ptr() as usize,w.trace.y.len())).collect::<Vec<_>>(),self.active_bus_lane,self.bus_decode_gen,settings_for_decode(&self.bus_settings,&self.uart_baud_text,&self.ddsss_fop_text,self.x1,self.x2))}
+ pub(crate) fn agent_provenance(&self)->serde_json::Value{serde_json::json!({"generation":self.bus_decode_gen,"lane":self.active_bus_lane,"configuration":format!("{:?}",settings_for_decode(&self.bus_settings,&self.uart_baud_text,&self.ddsss_fop_text,self.x1,self.x2)),"source_binding":self.agent_identity(),"pending":self.pending_bus_decode.is_some()||self.bus_decode_dirty})}
+ pub(crate) fn agent_tick(&mut self,lang:Lang){self.poll_pending_loads(lang);self.poll_pending_viewport();self.poll_pending_bus_decode();if self.bus_decode_dirty&&self.schedule_bus_decode(){self.bus_decode_dirty=false;}}
+ pub(crate) fn agent_measure(&self,params:&serde_json::Value,ctx:&egui::Context,cancel:Arc<std::sync::atomic::AtomicBool>)->crate::ai::agent::HostReply{
+  let Some(wave)=params["channel"].as_u64().and_then(|i|self.waves.get(i as usize))else{return crate::ai::agent::HostReply::value(crate::ai::agent::failure("波形通道不存在"))};let trace=wave.trace.clone();let index=params["channel"].clone();
+  let params=params.clone();let other=params["other_channel"].as_u64().and_then(|i|self.waves.get(i as usize)).map(|w|w.trace.clone());let provenance=self.agent_provenance();
+  crate::ai::agent::spawn_work(ctx,move||{match wiparse_core::engineering_wave::analyze(&trace,other.as_ref(),&params,&cancel){Ok(mut data)=>{data["channel_index"]=index;data["channel"]=serde_json::json!(trace.channel);data["trace_id"]=serde_json::json!(format!("trace-{:x}-{:x}",trace.x.as_ptr() as usize,trace.y.as_ptr() as usize));data["provenance"]=provenance;serde_json::json!({"ok":true,"data":data})},Err(e)=>crate::ai::agent::failure(e)}
+  })
+ }
+ pub(crate) fn agent_frames(&self,params:&serde_json::Value)->serde_json::Value{
+  if self.pending_bus_decode.is_some()||self.bus_decode_dirty{return serde_json::json!({"ok":false,"error":"协议解析正在更新，请等待完成"});}
+  let Some(result)=&self.bus_result else{return serde_json::json!({"ok":false,"error":"当前没有协议解析结果，请先配置协议或调用wave.decode"})};
+  let query=params["contains"].as_str().unwrap_or("").to_lowercase();let errors=params["errors_only"].as_bool().unwrap_or(false);let offset=params["offset"].as_u64().unwrap_or(0) as usize;let limit=params["limit"].as_u64().unwrap_or(10).min(20) as usize;
+  let rows:Vec<_>=result.frames.iter().enumerate().filter(|(_,f)|protocol_view::is_data_frame(self.bus_settings.kind,f)&&(!errors||f.has_error())&&(query.is_empty()||f.summary.to_lowercase().contains(&query))).collect();
+  serde_json::json!({"ok":true,"data":{"protocol":self.bus_settings.kind.label(),"provenance":self.agent_provenance(),"protocol_statistics":{"all_data_frames":result.frames.iter().filter(|f|protocol_view::is_data_frame(self.bus_settings.kind,f)).count(),"integrity_error_frames":result.frames.iter().filter(|f|protocol_view::is_data_frame(self.bus_settings.kind,f)&&f.has_error()).count(),"ping_frames_excluded":self.bus_settings.kind==BusKind::Scp},"total_matches":rows.len(),"decoder_truncated":result.truncated,"decoder_error":result.error,"next_offset":if offset+limit<rows.len(){Some(offset+limit)}else{None},"frames":rows.iter().skip(offset).take(limit).map(|(i,f)|serde_json::json!({"index":i,"start_s":f.t_start,"end_s":f.t_end,"summary":f.summary,"integrity":integrity_text(f.error,true),"bytes":f.bytes.iter().take(128).collect::<Vec<_>>(),"bytes_total":f.bytes.len(),"fields":if f.bytes.len()<=256{explain_frame(self.bus_settings.kind,&result.frames,*i,true)}else{vec!["超长帧：未对截断内容重新解释字段".into()]}})).collect::<Vec<_>>()}})
+ }
+ pub(crate) fn agent_decode_status(&self,generation:u64)->serde_json::Value{if self.bus_decode_gen!=generation{return serde_json::json!({"ok":false,"error":"协议任务已被后续解析替换"});}if self.pending_bus_decode.is_some(){serde_json::json!({"_agent_wait":{"method":"wave.decode.result","params":{"generation":generation}}})}else{self.agent_frames(&serde_json::json!({"limit":6}))}}
+ pub(crate) fn agent_decode(&mut self,params:&serde_json::Value,lang:Lang)->serde_json::Value{
+  if self.pending_bus_decode.is_some(){return serde_json::json!({"ok":false,"error":"已有协议解析正在进行，请稍后重试"});}
+  for key in ["signal","scl","sda","clk","mosi","miso","cs","ws","sd"]{if params[key].as_u64().is_some_and(|i|i as usize>=self.waves.len()){return serde_json::json!({"ok":false,"error":"协议通道超出已加载范围"});}}
+  let mut params=params.clone();if params["kind"]=="i2s"{params["bclk"]=params["clk"].clone();params["data"]=params["sd"].clone();}if params["kind"]=="uart"{params["uart"]=params["signal"].clone();}let result=self.api_bus(&params);if !result.ok{return serde_json::json!({"ok":false,"error":result.error});}self.agent_tick(lang);
+  serde_json::json!({"_agent_wait":{"method":"wave.decode.result","params":{"generation":self.bus_decode_gen}}})
+ }
 }

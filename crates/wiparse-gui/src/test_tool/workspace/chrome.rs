@@ -106,7 +106,7 @@ impl TestToolPanel {
         Frame::NONE
             .fill(tokens.surface_bg)
             .corner_radius(ui_theme::RADIUS_CARD)
-            .inner_margin(Margin::symmetric(10, 8))
+            .inner_margin(Margin::symmetric(6, 6))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 if ui.available_width() >= 1000.0
@@ -158,7 +158,7 @@ impl TestToolPanel {
                         RichText::new(if zh { "保存修改" } else { "Save changes" })
                             .color(tokens.accent_text),
                     )
-                    .fill(tokens.accent),
+                    .fill(tokens.accent_fill),
                 )
                 .clicked()
             {

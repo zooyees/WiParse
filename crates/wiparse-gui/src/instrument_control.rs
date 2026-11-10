@@ -1728,7 +1728,7 @@ impl InstrumentControlPanel {
         if !full.is_positive() {
             return;
         }
-        let gap = 8.0;
+        let gap = 4.0;
         let width = theme::resizable_sidebar_width(
             ui,
             "instrument_control",
@@ -1996,7 +1996,7 @@ impl InstrumentControlPanel {
             .fill(tokens.surface_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
-            .inner_margin(Margin::symmetric(10, 8))
+            .inner_margin(Margin::symmetric(6, 6))
             .show(ui, |ui| {
                 ui.set_width(CARD_PANEL_WIDTH);
                 ui.horizontal(|ui| {
@@ -2074,7 +2074,7 @@ impl InstrumentControlPanel {
                                 ui.label(
                                     RichText::new(error)
                                         .small()
-                                        .color(Color32::from_rgb(0xF5, 0x9E, 0x0B)),
+                                        .color(tokens.warning),
                                 );
                             }
                             ui.add_space(3.0);
@@ -2091,8 +2091,8 @@ impl InstrumentControlPanel {
                                 if ui
                                     .add_sized(
                                         [ui.available_width(), 22.0],
-                                        egui::Button::new(text(lang, "连接", "Connect"))
-                                            .fill(tokens.accent),
+                                        egui::Button::new(RichText::new(text(lang, "连接", "Connect")).color(tokens.accent_text))
+                                            .fill(tokens.accent_fill),
                                     )
                                     .clicked()
                                 {
@@ -2383,7 +2383,7 @@ impl InstrumentControlPanel {
                 .add_enabled(
                     can_shot && !busy,
                     egui::Button::new(RichText::new(text(lang, "屏幕截图", "Screenshot")).color(tokens.accent_text))
-                        .fill(tokens.accent)
+                        .fill(tokens.accent_fill)
                         .min_size(SCOPE_BTN_WIDE),
                 )
                 .clicked()
@@ -2524,7 +2524,7 @@ impl InstrumentControlPanel {
             if ui
                 .add_sized(
                     SCOPE_BTN,
-                    egui::Button::new(text(lang, "读取屏幕", "Read Screen")).fill(tokens.accent),
+                    egui::Button::new(RichText::new(text(lang, "读取屏幕", "Read Screen")).color(tokens.accent_text)).fill(tokens.accent_fill),
                 )
                 .on_hover_text(text(
                     lang,
@@ -3559,7 +3559,7 @@ fn scope_panel(ui: &mut egui::Ui, tokens: &Tokens, title: &str, add: impl FnOnce
         .fill(tokens.surface_bg)
         .stroke(Stroke::new(1.0_f32, tokens.divider))
         .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
-        .inner_margin(Margin::symmetric(10, 8))
+        .inner_margin(Margin::symmetric(6, 6))
         .show(ui, |ui| {
             ui.set_min_width(width);
             ui.set_max_width(width);
@@ -3866,7 +3866,7 @@ fn card(ui: &mut egui::Ui, tokens: &Tokens, title: &str, add: impl FnOnce(&mut e
         .fill(tokens.surface_bg)
         .stroke(Stroke::new(1.0_f32, tokens.divider))
         .corner_radius(CornerRadius::same(8))
-        .inner_margin(Margin::same(12))
+        .inner_margin(Margin::same(6))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.label(RichText::new(title).strong());
@@ -3933,7 +3933,7 @@ fn instrument_type_card(
             },
         ))
         .corner_radius(CornerRadius::same(7))
-        .inner_margin(Margin::symmetric(11, 9))
+        .inner_margin(Margin::symmetric(6, 6))
         .show(ui, |ui| {
             let content_width = ui.available_width().max(1.0);
             ui.set_min_width(content_width);
@@ -4071,8 +4071,8 @@ fn instrument_type_card(
                     if ui
                         .add_enabled(
                             can_connect,
-                            egui::Button::new(text(lang, "连接", "Connect"))
-                                .fill(tokens.accent)
+                            egui::Button::new(RichText::new(text(lang, "连接", "Connect")).color(tokens.accent_text))
+                                .fill(tokens.accent_fill)
                                 .min_size(egui::vec2(button_width, CARD_CONTROL_HEIGHT)),
                         )
                         .clicked()
@@ -4451,7 +4451,7 @@ fn capability_badge(ui: &mut egui::Ui, tokens: &Tokens, label: impl Into<String>
         .fill(tokens.surface_bg)
         .stroke(Stroke::new(1.0_f32, tokens.border))
         .corner_radius(CornerRadius::same(4))
-        .inner_margin(Margin::symmetric(7, 3))
+        .inner_margin(Margin::symmetric(6, 3))
         .show(ui, |ui| {
             ui.label(RichText::new(label.into()).small());
         });
@@ -4553,7 +4553,7 @@ fn hud_chip(ui: &mut egui::Ui, hud: &HudTokens, label: impl Into<String>, color:
         ))
         .stroke(Stroke::new(1.0_f32, color))
         .corner_radius(CornerRadius::same(3))
-        .inner_margin(Margin::symmetric(8, 3))
+        .inner_margin(Margin::symmetric(6, 3))
         .show(ui, |ui| {
             ui.label(RichText::new(label.into()).small().monospace().color(color));
         });
@@ -4657,7 +4657,7 @@ fn paint_control_pipeline(
                 .fill(fill)
                 .stroke(Stroke::new(1.0_f32, *color))
                 .corner_radius(CornerRadius::same(3))
-                .inner_margin(Margin::symmetric(10, 5))
+                .inner_margin(Margin::symmetric(6, 5))
                 .show(ui, |ui| {
                     ui.label(
                         RichText::new(*label)
@@ -6184,7 +6184,7 @@ fn overview_type_card(
             },
         ))
         .corner_radius(CornerRadius::same(7))
-        .inner_margin(Margin::symmetric(11, 9))
+        .inner_margin(Margin::symmetric(6, 6))
         .show(ui, |ui| {
             let content_width = ui.available_width().max(1.0);
             ui.set_min_width(content_width);
@@ -6269,7 +6269,7 @@ fn overview_device_tile(
         .fill(Color32::from_rgb(0x05, 0x0C, 0x14))
         .stroke(Stroke::new(1.0_f32, hud.line))
         .corner_radius(CornerRadius::same(6))
-        .inner_margin(Margin::same(10))
+        .inner_margin(Margin::same(6))
         .show(ui, |ui| {
             ui.set_width((tile_w - 22.0).max(1.0));
             ui.set_min_height((tile_h - 22.0).max(1.0));
@@ -7357,4 +7357,56 @@ mod layout_audit {
         assert!(!panel.devices[0].controls.source_outputs[0]);
         panel.on_exit();
     }
+}
+
+#[cfg(test)]
+impl InstrumentControlPanel {
+    pub(crate) fn prepare_compact_ui_preview(&mut self,ctx:&egui::Context,kind:InstrumentKind){
+        let session=open_demo_session(kind).unwrap();self.handle_event(ctx,connected_event(1,&session));self.selected_kind=kind;self.selected_id=Some(1);self.overview_open=false;
+    }
+}
+
+impl InstrumentControlPanel { pub(crate) fn agent_identity(&self)->String {format!("{:?}", self.devices.iter().map(|d|(d.id,d.kind)).collect::<Vec<_>>())} }
+
+impl InstrumentControlPanel {
+ pub(crate) fn agent_validate_device(&self,p:&serde_json::Value,capture:bool)->Result<(),String> {
+  let id=p["device_id"].as_u64().ok_or("DEVICE.ID_REQUIRED")?;
+  let d=self.devices.iter().find(|d|d.id==id).ok_or("DEVICE.NOT_CONNECTED")?;
+  if capture{return if d.capabilities.screenshot{Ok(())}else{Err("DEVICE.SCREENSHOT_UNSUPPORTED".into())};}
+  let c=&p["command"];let name=c.as_str().or_else(||c.as_object().and_then(|o|o.keys().next().map(String::as_str))).ok_or("DEVICE.INVALID_COMMAND")?;
+  let expected=if name.starts_with("Scope"){InstrumentKind::Oscilloscope}else if name.starts_with("Source"){InstrumentKind::DcSource}else if name.starts_with("Load"){InstrumentKind::ElectronicLoad}else if name=="ProbeStatus"{InstrumentKind::DebugProbe}else if name=="BridgeInfo"{InstrumentKind::UsbBridge}else if name=="DongleInfo"{InstrumentKind::WiparseDongle}else{return Err("DEVICE.AI_COMMAND_UNSUPPORTED".into());};
+  if d.kind!=expected{return Err("DEVICE.COMMAND_KIND_MISMATCH".into());}
+  if let Some(ch)=c[name]["channel"].as_u64(){if ch==0||ch>d.capabilities.channels as u64{return Err("DEVICE.CHANNEL_UNSUPPORTED".into());}}
+  if name=="ScopeTrigger" {if let Some(src)=c[name]["source"].as_str().and_then(|s|s.strip_prefix("CH")).and_then(|s|s.parse::<u8>().ok()){if src==0||src>d.capabilities.channels{return Err("DEVICE.TRIGGER_CHANNEL_UNSUPPORTED".into());}}}
+  if name=="SourceOutput"&&!d.capabilities.source_output{return Err("DEVICE.OUTPUT_UNSUPPORTED".into());}
+  if matches!(name,"SourceOvp"|"SourceOcp")&&!d.capabilities.source_protection{return Err("DEVICE.PROTECTION_UNSUPPORTED".into());}
+  if name=="LoadMode"||name=="LoadLevel" {let mode=if name=="LoadMode"{c[name].as_str()}else{c[name]["mode"].as_str()}.ok_or("DEVICE.MODE_REQUIRED")?;if !d.capabilities.load_modes.iter().any(|s|s.eq_ignore_ascii_case(mode)){return Err("DEVICE.LOAD_MODE_UNSUPPORTED".into());}}
+  Ok(())
+ }
+}
+
+#[cfg(test)]mod agent_capability_regressions{
+ use super::*;use serde_json::json;
+ #[test]fn mismatched_kind_and_nonexistent_channels_never_enter_device_queue(){
+  let mut panel=InstrumentControlPanel::new(&AppConfig::default());let scope=open_demo_session(InstrumentKind::Oscilloscope).unwrap();panel.handle_event(&egui::Context::default(),connected_event(10,&scope));
+  assert!(panel.agent_validate_device(&json!({"device_id":10,"command":"ScopeStop"}),false).is_ok());
+  assert!(panel.agent_validate_device(&json!({"device_id":10,"command":{"ScopeScale":{"channel":8,"volts_per_div":1.}}}),false).is_err());
+  assert!(panel.agent_validate_device(&json!({"device_id":10,"command":{"SourceOutput":{"channel":1,"enabled":true}}}),false).is_err());
+  assert!(panel.agent_validate_device(&json!({"device_id":999,"command":"ScopeStop"}),false).is_err());
+ }
+}
+
+impl InstrumentControlPanel {
+ pub(crate) fn agent_capture(&mut self,p:&serde_json::Value)->crate::backend::InvokeReply {let mut p=p.clone();p["wait"]=serde_json::json!(true);self.api_capture(&p)}
+}
+#[cfg(test)]mod agent_capture_regression{
+ use super::*;use serde_json::json;
+ #[test]fn ai_capture_waits_for_actual_demo_screenshot_completion(){
+  let mut p=InstrumentControlPanel::new(&AppConfig::default());let ctx=egui::Context::default();p.begin_connect_demo(InstrumentKind::Oscilloscope,Lang::Zh);let end=Instant::now()+Duration::from_secs(10);
+  while p.devices.is_empty()&&Instant::now()<end{p.pump(&ctx);std::thread::sleep(Duration::from_millis(5));}
+  let id=p.devices.iter().find(|d|d.kind==InstrumentKind::Oscilloscope).expect("demo scope connected").id;
+  let accepted=p.agent_capture(&json!({"device_id":id}));assert!(accepted.ok);let job=accepted.data["job_id"].as_u64().expect("durable job ID required");
+  let result=loop{p.pump(&ctx);let r=p.api_job_get(&json!({"job_id":job}));if r.data["state"]=="completed"{break r;}assert!(Instant::now()<end,"screenshot did not complete");std::thread::sleep(Duration::from_millis(5));};
+  assert_eq!(result.data["ok"],true);assert_eq!(result.data["device_id"],id);
+ }
 }

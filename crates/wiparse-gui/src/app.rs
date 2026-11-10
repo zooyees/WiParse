@@ -3,6 +3,8 @@
 //! Settings menu mirrors Python `QToolButton#settings_menu_btn` + cascading `QMenu`:
 //! root items with ▶ flyouts (Panels / Language / Theme), accent hover, checkmarks.
 
+#[path = "agent_host.rs"]
+mod agent_host;
 use crate::backend::{self, ApiBridge};
 use crate::calculator::CalculatorPanel;
 use crate::data_analysis::DataAnalysisPanel;
@@ -13,7 +15,7 @@ use crate::test_tool::TestToolPanel;
 use crate::theme::{self as ui_theme, Tokens};
 use crate::update::UpdateController;
 use crate::waveform_analysis::WaveformAnalysisPanel;
-use egui::{Color32, CornerRadius, FontId, Frame, Margin, Pos2, Rect, Sense, Stroke, Vec2};
+use egui::{RichText, Color32, CornerRadius, FontId, Frame, Margin, Pos2, Rect, Sense, Stroke, Vec2};
 use wiparse_core::config::{save_config, AppConfig};
 use wiparse_core::i18n::{parse_lang, tr, Lang};
 
@@ -880,7 +882,7 @@ impl WiParseApp {
                                         );
                                     }
                                     UpdatePhase::Error(msg) => {
-                                    ui.colored_label(Color32::from_rgb(0xFF, 0x6B, 0x6B), msg);
+                                    ui.colored_label(t.stop_bg, msg);
                                 }
                             },
                         );
@@ -897,9 +899,9 @@ impl WiParseApp {
                             if matches!(self.updater.phase(), UpdatePhase::Available { .. })
                                 && ui
                                     .add(
-                                        egui::Button::new(tr(self.lang, "update.download"))
+                                        egui::Button::new(RichText::new(tr(self.lang, "update.download")).color(t.accent_text))
                                             .min_size(BTN)
-                                            .fill(t.accent)
+                                            .fill(t.accent_fill)
                                             .stroke(Stroke::NONE),
                                     )
                                     .clicked()
@@ -909,9 +911,9 @@ impl WiParseApp {
                             if matches!(self.updater.phase(), UpdatePhase::Ready(_))
                                 && ui
                                     .add(
-                                        egui::Button::new(tr(self.lang, "update.install"))
+                                        egui::Button::new(RichText::new(tr(self.lang, "update.install")).color(t.accent_text))
                                             .min_size(BTN)
-                                            .fill(t.accent)
+                                            .fill(t.accent_fill)
                                             .stroke(Stroke::NONE),
                                     )
                                     .clicked()
@@ -1129,6 +1131,7 @@ impl eframe::App for WiParseApp {
             data.insert_temp(egui::Id::new("wiparse-ai-project-root"),self.test_tool.data_root_path());
         });
         self.serial.tick_ai(ctx, self.lang, self.test_tool.current_project_id(), &self.cfg.ai, self.test_tool.running_plugin_id().is_some());
+        self.tick_engineering_agent(ctx);
         // Data Analysis serial-live: pull new live lines after serial drain.
         if self.data_analysis.wants_live_serial() {
             let dropped = self.serial.live_dropped();
@@ -1462,7 +1465,7 @@ impl eframe::App for WiParseApp {
             });
 
         egui::CentralPanel::default()
-            .frame(Frame::NONE.fill(t.canvas_bg).inner_margin(Margin::same(8)))
+            .frame(Frame::NONE.fill(t.canvas_bg).inner_margin(Margin::same(if matches!(self.active,MainTab::Waveform){2}else{4})))
             .show(ctx, |ui| match self.active {
                 MainTab::Serial if self.show_serial => {
                     self.serial.ui(ui, self.lang, &t);
@@ -1580,7 +1583,7 @@ fn menu_cascade_row(
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, h), Sense::click());
     let hot = resp.hovered() || open;
     if hot {
-        ui.painter().rect_filled(rect, CornerRadius::ZERO, t.accent);
+        ui.painter().rect_filled(rect, CornerRadius::ZERO, t.accent_fill);
     }
     let fg = if hot { t.accent_text } else { t.text_primary };
     let galley = ui.fonts(|f| f.layout_no_wrap(label.to_string(), FontId::proportional(13.0), fg));
@@ -1606,7 +1609,7 @@ fn menu_action_row(ui: &mut egui::Ui, t: &Tokens, label: &str, width: f32) -> eg
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, h), Sense::click());
     let hot = resp.hovered();
     if hot {
-        ui.painter().rect_filled(rect, CornerRadius::ZERO, t.accent);
+        ui.painter().rect_filled(rect, CornerRadius::ZERO, t.accent_fill);
     }
     let fg = if hot { t.accent_text } else { t.text_primary };
     let galley = ui.fonts(|f| f.layout_no_wrap(label.to_string(), FontId::proportional(13.0), fg));
@@ -1626,7 +1629,7 @@ fn menu_check_row(
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, h), Sense::click());
     let hot = resp.hovered();
     if hot {
-        ui.painter().rect_filled(rect, CornerRadius::ZERO, t.accent);
+        ui.painter().rect_filled(rect, CornerRadius::ZERO, t.accent_fill);
     }
     let fg = if hot { t.accent_text } else { t.text_primary };
 
@@ -1636,7 +1639,7 @@ fn menu_check_row(
         Pos2::new(rect.left() + 14.0, rect.center().y),
         Vec2::splat(box_size),
     );
-    let box_fill = if checked { t.accent } else { t.input_bg };
+    let box_fill = if checked { t.accent_fill } else { t.input_bg };
     let box_stroke = if checked {
         Stroke::new(1.0_f32, t.accent)
     } else {
@@ -1664,7 +1667,7 @@ fn menu_check_row(
         egui::StrokeKind::Outside,
     );
     if checked {
-        let check_color = if hot { t.accent } else { t.accent_text };
+        let check_color = if hot { t.accent_fill } else { t.accent_text };
         let p1 = Pos2::new(box_rect.left() + 3.0, box_rect.center().y);
         let p2 = Pos2::new(box_rect.center().x - 0.5, box_rect.bottom() - 3.5);
         let p3 = Pos2::new(box_rect.right() - 3.0, box_rect.top() + 3.0);

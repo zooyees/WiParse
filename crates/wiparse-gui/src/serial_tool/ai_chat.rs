@@ -1,6 +1,7 @@
 //! Serial-specific conversation and bounded monitoring over the shared AI service.
 mod alerts;
 mod host;
+mod library;
 mod platform;
 mod protocol;
 mod view;
@@ -31,6 +32,7 @@ struct Snapshot {
     reception_requested: bool,
     connection_confirmed: bool,
     absolute_lines: usize,
+    retained_lines:usize,
     selected_bytes: usize,
     automation_locked: bool,
 }
@@ -41,10 +43,12 @@ enum Mode {
     Monitor,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DataScope {
-    Recent,
+    Current,
+    Range,
     Selection,
+    Library,
     None,
 }
 
@@ -94,6 +98,9 @@ pub(super) struct SerialAiChat {
     config: Option<AiConfig>,
     prompt: String,
     scope: DataScope,
+    range_first: u64,
+    range_last: u64,
+    library: library::Library,
     mode: Mode,
     watch_goal: String,
     reports: usize,
@@ -125,7 +132,10 @@ impl Default for SerialAiChat {
             project: String::new(),
             config: None,
             prompt: String::new(),
-            scope: DataScope::Recent,
+            scope: DataScope::Current,
+            range_first:1,
+            range_last:1000,
+            library: Default::default(),
             mode: Mode::Analyse,
             watch_goal: String::new(),
             reports: 0,
@@ -153,6 +163,9 @@ impl Default for SerialAiChat {
 
 enum UiAction {
     Send(String),
+    ChooseLogDirectory,
+    ClearLogDirectory,
+    PreviewLogs,
     ToggleWatch,
     ResumeAi,
     Cancel,
@@ -257,6 +270,8 @@ impl SerialAiChat {
                 self.history.clear();
                 self.allow_automation = false;
                 self.conversation_source = None;
+                self.library=Default::default();
+                if self.scope==DataScope::Library{self.scope=DataScope::Current;}
             }
             self.note(
                 if project_changed {
@@ -275,7 +290,7 @@ impl SerialAiChat {
         &mut self,
         ctx: &egui::Context,
         state: &Snapshot,
-        data: serde_json::Value,
+        mut data: serde_json::Value,
         question: String,
         automatic: bool,
     ) -> Result<(), String> {
@@ -290,15 +305,23 @@ impl SerialAiChat {
         if self.history.len() > 10 {
             self.history.drain(..self.history.len() - 10);
         }
+        if !automatic&&self.scope!=DataScope::None{
+            let mut library=self.library.status();
+            if data["platform_results"].as_array().is_some_and(|results|results.iter().any(|result|result["method"].as_str().is_some_and(library::is_local))){library["last_analysis"]=serde_json::Value::Null;}
+            data["local_log_library"]=library;
+        }
+        let tools=if !automatic&&self.scope!=DataScope::None{
+            if self.allow_automation{format!("{}\n{}",platform::catalog(),library::catalog())}else{library::catalog().into()}
+        }else{platform::catalog().into()};
         let task = service.submit_conversation(AiRequest {
-            purpose: format!("{}\n{}",protocol::contract(self.allow_automation && !state.automation_locked),platform::catalog()),
+            purpose: format!("{}\n{}",protocol::contract(self.allow_automation && !state.automation_locked),tools),
             text: serde_json::to_string(&json!({"user_request":question,"source":state,"ai_monitoring":self.watch.is_some(),"observation":data})).map_err(|e|e.to_string())?,
         }, if automatic {Vec::new()} else {self.history.clone()}).map_err(|error| error.to_string())?;
         let history_before = self.history.len();
-        if !automatic {
+        if !automatic && self.tool_round==0 {
             self.history.push(AiMessage::User(bounded(&question, 8000)));
         }
-        if !automatic {
+        if !automatic && self.tool_round==0 {
             self.entry("user", question.clone());
         }
         self.pending = Some(Pending {
@@ -363,7 +386,7 @@ impl SerialAiChat {
         if !self.open {
             return (full, None);
         }
-        let gap = 12.0;
+        let gap = 4.0;
         let max = (full.width() - 300.0 - gap)
             .max(160.0)
             .min(full.width() * 0.55);

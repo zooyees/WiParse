@@ -25,6 +25,7 @@ probe-rs = { version = "0.27", default-features = false, features = ["builtin-ta
 sha2 = "0.10"
 ureq = { version = "2", default-features = false, features = ["json", "tls"] }
 url = "2"
+webpki-roots = "0.26"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [target.'cfg(windows)'.dependencies]

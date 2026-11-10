@@ -25,8 +25,8 @@ use wiparse_core::paths::project_path;
 use wiparse_core::marketplace::CHANNELS;
 
 const SIDE_W: f32 = ui_theme::SIDEBAR_W;
-const PANEL_GAP: f32 = 8.0;
-const CARD_MARGIN_X: i8 = 8;
+const PANEL_GAP: f32 = ui_theme::PANEL_GAP;
+const CARD_MARGIN_X: i8 = 6;
 const MAX_LOG_CHARS: usize = 200_000;
 const LABEL_COL_MIN: f32 = 84.0;
 const LABEL_COL_MAX: f32 = 132.0;
@@ -36,7 +36,7 @@ const PARAM_GAP_X: f32 = 8.0;
 const PLUGIN_ROW_H: f32 = 44.0;
 const HUD_H: f32 = 26.0;
 /// Config / Output horizontal split inside the runner card.
-const RUNNER_SPLIT_GAP: f32 = 8.0;
+const RUNNER_SPLIT_GAP: f32 = 4.0;
 const CONFIG_FRAC: f32 = 0.42;
 const CONFIG_MIN_W: f32 = 320.0;
 const OUTPUT_MIN_W: f32 = 240.0;
@@ -160,6 +160,7 @@ struct LogLine {
 }
 
 struct RunningJob {
+    agent_run_id: String,
     child: Child,
     rx: Receiver<LogLine>,
         plugin_id: String,
@@ -217,6 +218,8 @@ pub struct TestToolPanel {
     log: String,
     pending_pick: Option<PathPickTarget>,
     job: Option<RunningJob>,
+    agent_exit_code: Option<i32>,
+    agent_finished_key: Option<String>,
     /// Extra free-form args after form params.
     extra_args: String,
     /// Values for selected plugin params (name → value).
@@ -296,6 +299,8 @@ impl TestToolPanel {
             log: String::new(),
             pending_pick: None,
             job: None,
+            agent_exit_code: None,
+            agent_finished_key: None,
             extra_args: String::new(),
             param_values: HashMap::new(),
             preflight_only: false,
@@ -794,7 +799,7 @@ impl TestToolPanel {
             .fill(tokens.surface_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-            .inner_margin(Margin::symmetric(CARD_MARGIN_X, 10))
+            .inner_margin(Margin::symmetric(CARD_MARGIN_X, 6))
             .show(ui, |ui| {
                 ui.set_max_width(inner_w);
                 ui.set_min_height(ui.available_height());
@@ -1045,7 +1050,7 @@ impl TestToolPanel {
             .fill(tokens.surface_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-            .inner_margin(Margin::symmetric(10, 8))
+            .inner_margin(Margin::symmetric(6, 6))
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 4.0);
@@ -1196,18 +1201,10 @@ impl TestToolPanel {
                     );
                 }
                 let width = ui.available_width().max(1.0);
-                ui.add_sized(
-                    [width, row_h],
-                    egui::Label::new(
-                        RichText::new(&title)
-                            .size(ui_theme::FONT_TITLE)
-                            .strong()
-                            .color(tokens.text_primary),
-                    )
-                    .truncate()
-                    .selectable(false),
-                )
-                .on_hover_text(&title);
+                ui.allocate_ui_with_layout(egui::vec2(width,row_h),egui::Layout::left_to_right(egui::Align::Center),|ui|{
+                    ui.set_max_width(width);
+                    ui.add(egui::Label::new(RichText::new(&title).size(ui_theme::FONT_TITLE).strong().color(tokens.text_primary)).truncate().selectable(false)).on_hover_text(&title);
+                });
             },
         );
         let mut run_clicked = false;
@@ -1425,7 +1422,7 @@ impl TestToolPanel {
             .fill(tokens.canvas_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(6))
-            .inner_margin(Margin::symmetric(8, 6))
+            .inner_margin(Margin::symmetric(6, 6))
             .show(ui, |ui| {
                 ui.set_min_height((log_h - 14.0).max(0.0));
                 ui.set_min_width(ui.available_width());
@@ -1939,7 +1936,7 @@ impl TestToolPanel {
             .fill(tokens.input_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(4))
-            .inner_margin(Margin::symmetric(8, 3))
+            .inner_margin(Margin::symmetric(6, 3))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
@@ -2550,7 +2547,7 @@ impl TestToolPanel {
             .fill(tokens.surface_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-            .inner_margin(Margin::symmetric(CARD_MARGIN_X, 10))
+            .inner_margin(Margin::symmetric(CARD_MARGIN_X, 6))
             .show(ui, |ui| {
                 ui.set_max_width(inner_w);
                 ui.set_min_height(ui.available_height());
@@ -2742,7 +2739,7 @@ impl TestToolPanel {
             .fill(tokens.surface_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-            .inner_margin(Margin::symmetric(10, 8))
+            .inner_margin(Margin::symmetric(6, 6))
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
@@ -3123,7 +3120,9 @@ impl TestToolPanel {
         }
         drop(tx);
 
+        self.agent_exit_code=None;
         self.job = Some(RunningJob {
+            agent_run_id: uuid::Uuid::new_v4().to_string(),
             child,
             rx,
             plugin_id: plugin.id.clone(),
@@ -3223,6 +3222,7 @@ impl TestToolPanel {
         }
 
         if let Some(e) = wait_err {
+            self.agent_finished_key=self.agent_job_key();
             self.append_log(LogKind::System, &format!("wait error: {e}\n"));
             if let Some(job) = self.job.take() {
                 drop_overlay_file(job.overlay_file.as_deref());
@@ -3237,11 +3237,13 @@ impl TestToolPanel {
         }
 
         if let Some((id, status)) = finished {
+            self.agent_finished_key=self.agent_job_key();
             if let Some(job) = self.job.take() {
                 drop_overlay_file(job.overlay_file.as_deref());
             }
             self.bump_artifact_epoch();
             let code = status.code().unwrap_or(-1);
+            self.agent_exit_code=Some(code);
             if status.success() {
                 self.append_log(LogKind::System, &format!("—— done {id} (exit 0) ——\n"));
                 self.status = format!("{} · {}", tr(lang, "test_tool.status_ok"), id);
@@ -4831,4 +4833,13 @@ mod visual_snapshot {
         }, |ctx| { egui::CentralPanel::default().show(ctx, |ui| { panel.ui(ui, super::Lang::Zh, &tokens, &[]); }); });
         crate::ui_audit::export_frame(&ctx, output, &std::path::PathBuf::from(dir), "cmsis-dap", size);
     }
+}
+
+impl TestToolPanel{
+ pub(crate) fn agent_tick(&mut self,lang:Lang){self.poll_job(lang);}
+ pub(crate) fn agent_identity(&self)->String{format!("{}:{:?}:{}:{:?}",self.effective_project_id(),self.selected,self.workspace.agent_identity(),self.param_values)}
+ pub(crate) fn agent_job_key(&self)->Option<String>{self.job.as_ref().map(|job|job.agent_run_id.clone())}
+ pub(crate) fn agent_cases(&self,params:&serde_json::Value)->serde_json::Value{serde_json::json!({"ok":true,"data":self.workspace.agent_cases(params["offset"].as_u64().unwrap_or(0) as usize,params["limit"].as_u64().unwrap_or(10).min(20) as usize)})}
+ pub(crate) fn agent_start(&mut self,preflight:bool)->crate::backend::InvokeReply{let Some(id)=self.selected.clone()else{return crate::backend::invoke_err("testing.run","请先在集成测试中选择并配置插件")};if self.job.is_some(){return crate::backend::invoke_err("testing.run","已有测试正在运行")};self.api_run(&serde_json::json!({"id":id,"lifecycle":if preflight{"preflight"}else{"run"}}))}
+ pub(crate) fn agent_run_status(&self)->serde_json::Value{serde_json::json!({"running":self.job.is_some(),"run_id":self.agent_job_key(),"process_exit_code":self.agent_exit_code,"completed_run_identity":self.agent_finished_key,"status":self.status,"project":self.effective_project_id(),"plugin":self.selected,"workspace":self.workspace.ai_brief(),"log_tail":self.log.lines().rev().take(20).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>()})}
 }

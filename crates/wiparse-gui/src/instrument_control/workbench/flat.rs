@@ -29,9 +29,9 @@ impl InstrumentControlPanel {
                 .max_height(ui.available_height().max(1.0))
                 .min_scrolled_height(0.0)
                 .show(ui, |ui| {
-                    let column = (ui.available_width() - 16.0) * 0.5;
+                    let column = (ui.available_width() - 6.0) * 0.5;
                     ui.horizontal_top(|ui| {
-                        ui.spacing_mut().item_spacing.x = 16.0;
+                        ui.spacing_mut().item_spacing.x = 6.0;
                         let controls = ui.allocate_ui_with_layout(
                             egui::vec2(column, 0.0),
                             egui::Layout::top_down(egui::Align::Min),
@@ -47,7 +47,6 @@ impl InstrumentControlPanel {
                             |ui| {
                                 ui.set_width(column);
                                 let height = controls.response.rect.height()
-                                    - 12.0
                                     - ui.spacing().item_spacing.y;
                                 aligned_panel(
                                     ui,
@@ -107,18 +106,18 @@ impl InstrumentControlPanel {
                     }
                 }
             });
-            ui.add_space(8.0);
+            ui.add_space(4.0);
         }
         let width = ui.available_width();
         let height = ui.available_height().max(1.0);
         if width >= 720.0 {
-            let left = (width - 16.0) * 0.5;
+            let left = (width - 6.0) * 0.5;
             let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
             for column in 0..2 {
                 let r = if column == 0 {
                     Rect::from_min_size(rect.min, egui::vec2(left, height))
                 } else {
-                    Rect::from_min_max(rect.min + egui::vec2(left + 16.0, 0.0), rect.max)
+                    Rect::from_min_max(rect.min + egui::vec2(left + 6.0, 0.0), rect.max)
                 };
                 theme::scope_in_allocated_rect(
                     ui,

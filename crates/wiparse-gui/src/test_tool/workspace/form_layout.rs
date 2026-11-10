@@ -106,7 +106,7 @@ pub(super) fn object_fields(
                 .is_some_and(|c| value.get(&k).is_some_and(|v| v != c))
             {
                 ui.colored_label(
-                    egui::Color32::LIGHT_RED,
+                    crate::theme::error_color(ui),
                     if zh {
                         "固定参数不合法，请查看校验结果并修复配置"
                     } else {
@@ -176,7 +176,7 @@ pub(super) fn object_fields(
     }
     if missing.iter().any(|k| required(k)) {
         ui.colored_label(
-            egui::Color32::LIGHT_RED,
+            crate::theme::error_color(ui),
             if zh {
                 "缺少必需字段，请在高级设置中添加后保存"
             } else {

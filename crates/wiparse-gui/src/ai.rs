@@ -1,4 +1,5 @@
-//! Global AI configuration and explicit, read-only engineering assistance.
+//! Shared provider settings, conversation and bounded engineering tasks.
+pub(crate) mod agent;
 use crate::theme::{self as ui_theme, Tokens};
 use egui::{Context, CornerRadius, Frame, Margin, RichText, Stroke};
 use wiparse_core::{
@@ -61,6 +62,8 @@ impl PageGuide {
 pub(crate) struct AiPanel {
     pub open: bool,
     pub service: AiService,
+    pub(crate) agent:agent::Session,
+    agent_mode:bool,
     draft: AiConfig,
     key_input: String,
     clear_key: bool,
@@ -87,6 +90,8 @@ impl AiPanel {
         Self {
             open: false,
             service: AiService::new(config.clone()),
+            agent:Default::default(),
+            agent_mode:false,
             draft: config.clone(),
             key_input: String::new(),
             clear_key: false,
@@ -211,6 +216,7 @@ impl AiPanel {
         }
     }
     pub fn open_assistant(&mut self) {
+        self.agent_mode=true;
         self.open = true;
         self.settings = false;
     }
@@ -229,6 +235,8 @@ impl AiPanel {
         page_context: impl Fn() -> String,
     ) {
         self.poll(ctx);
+        self.agent.configure(&self.applied);
+        self.agent.poll(ctx,&self.service);
         let mut open = self.open;
         if open {
             let tokens = ui_theme::tokens_for_preference(cfg.ui.theme == "light");
@@ -243,17 +251,20 @@ impl AiPanel {
             })
                 .id(egui::Id::new("global-ai-window"))
                 .open(&mut open)
-                .default_width(980.0)
-                .default_height(720.0)
-                .min_width(620.0)
-                .min_height(520.0)
+                .default_width(980.0_f32.min((ctx.screen_rect().width()-40.).max(200.)))
+                .max_width((ctx.screen_rect().width()-40.).max(200.))
+                .default_height(720.0_f32.min((ctx.screen_rect().height()-40.).max(200.)))
+                .min_width((if self.settings {620.0_f32}else{420.0_f32}).min((ctx.screen_rect().width()-40.).max(200.)))
+                .min_height((if self.settings {520.0_f32}else{360.0_f32}).min((ctx.screen_rect().height()-40.).max(200.)))
+                .max_height((ctx.screen_rect().height()-40.).max(200.))
+                .constrain_to(ctx.screen_rect())
                 .resizable(true)
                 .show(ctx, |ui| {
-                    ui.set_max_width(1120.0);
+                    ui.set_max_width(ui.available_width().min(1120.0));
                     ui.spacing_mut().item_spacing =
                         egui::vec2(ui_theme::SPACE_MD, ui_theme::SPACE_SM);
                     ai_card(ui, &tokens, 10, |ui| {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             ui.selectable_value(
                                 &mut self.settings,
                                 true,
@@ -264,6 +275,7 @@ impl AiPanel {
                                 false,
                                 text(lang, "AI 助手", "Assistant"),
                             );
+                            if !self.settings{ui.selectable_value(&mut self.agent_mode,true,"智能任务");ui.selectable_value(&mut self.agent_mode,false,"摘要对话");}
                             ui.separator();
                             ui.label(
                                 RichText::new(if self.draft.enabled {
@@ -287,6 +299,9 @@ impl AiPanel {
                             if self.settings {
                                 self.settings_ui(ui, lang, cfg, &tokens);
                                 self.result_ui(ui, ctx, lang, &tokens);
+                            } else if self.agent_mode {
+                                let ready=self.applied.enabled&&!self.unsaved();
+                                self.agent.ui(ui,ctx,lang,&tokens,&self.service,ready);
                             } else {
                                 self.result_ui(ui, ctx, lang, &tokens);
                                 self.assistant_ui(ui, ctx, lang, &tokens, guide, page_context);
@@ -379,7 +394,7 @@ impl AiPanel {
                             .color(t.accent_text)
                             .strong(),
                     )
-                    .fill(t.accent)
+                    .fill(t.accent_fill)
                     .stroke(Stroke::NONE),
                 );
                 if save.clicked() {
@@ -711,7 +726,7 @@ impl AiPanel {
                             .color(t.accent_text)
                             .strong(),
                     )
-                    .fill(t.accent)
+                    .fill(t.accent_fill)
                     .stroke(Stroke::NONE)
                     .min_size(egui::vec2(120.0, ui_theme::CTRL_H)),
                 )
@@ -1167,6 +1182,7 @@ mod tests {
                         output.shapes = next.shapes;
                         output.pixels_per_point = next.pixels_per_point;
                     }
+                    for shape in &output.shapes{if let egui::Shape::Rect(rect)=&shape.shape{if rect.fill==crate::theme::tokens_for_preference(light).input_bg&&rect.rect.width()>200.{assert!(rect.rect.right()<=width+1.,"AI editor exceeds viewport: {:?} on {width}",rect.rect);}}}
                     assert!(panel.pending.is_none());
                     assert!(!cfg.ai.enabled);
                     assert!(service(&ctx).is_some());

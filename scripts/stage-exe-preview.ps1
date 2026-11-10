@@ -35,7 +35,12 @@ if(Test-Path -LiteralPath (Join-Path $repo "docs/releases/$version.md")){Copy-It
 $readme="WiParse $version EXE preview`r`n`r`nRun bin\WiParse.exe in this directory; keep adjacent dependencies. Node.js 18+ is required for test plugins.`r`nThe 20 shipped FPGA examples retain their original parameters. Open Project settings, preview the legacy migration, inspect mappings, then explicitly commit. Existing user data is not migrated automatically.`r`nNo ZIP has been generated. Full packaging follows user confirmation.`r`n"
 [IO.File]::WriteAllText((Join-Path $output 'PREVIEW.txt'),$readme,[Text.UTF8Encoding]::new($false))
 $hashes=@{}
-foreach($name in @('WiParse.exe','WiParse-CLI.exe','WiParse-Service.exe','WiParse.pdb')){$hashes[$name]=(Get-FileHash -LiteralPath (Join-Path $output "bin/$name") -Algorithm SHA256).Hash.ToLowerInvariant()}
+foreach($name in @('WiParse.exe','WiParse-CLI.exe','WiParse-Service.exe','WiParse.pdb')){
+ $sha=[Security.Cryptography.SHA256]::Create()
+ $stream=[IO.File]::OpenRead((Join-Path $output "bin/$name"))
+ try{$hashes[$name]=[BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant()}
+ finally{$stream.Dispose();$sha.Dispose()}
+}
 $manifest=@{kind='exe_preview';version=$version;created_at=[DateTime]::UtcNow.ToString('o');zip_created=$false;industrial_approved=$false;binary_sha256=$hashes}
 [IO.File]::WriteAllText((Join-Path $output 'preview-manifest.json'),($manifest|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
 $global:LASTEXITCODE=0

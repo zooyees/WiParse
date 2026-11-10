@@ -42,9 +42,9 @@ impl InstrumentControlPanel {
                 let side_by_side =
                     include_utilities && width >= (count as f32 * 232.0 + 24.0) * 2.0;
                 if side_by_side {
-                    let column = (width - 16.0) * 0.5;
+                    let column = (width - 6.0) * 0.5;
                     ui.horizontal_top(|ui| {
-                        ui.spacing_mut().item_spacing.x = 16.0;
+                        ui.spacing_mut().item_spacing.x = 6.0;
                         let channels = ui.allocate_ui_with_layout(
                             egui::vec2(column, 0.0),
                             egui::Layout::top_down(egui::Align::Min),
@@ -58,9 +58,7 @@ impl InstrumentControlPanel {
                             egui::Layout::top_down(egui::Align::Min),
                             |ui| {
                                 ui.set_width(column);
-                                let height = channels.response.rect.height()
-                                    - 12.0
-                                    - ui.spacing().item_spacing.y;
+                                let height = channels.response.rect.height();
                                 aligned_panel(
                                     ui,
                                     t,
@@ -104,9 +102,9 @@ impl InstrumentControlPanel {
                         self.source_trend_panel(ui, lang, t, index);
                     }
                     if side_by_side && count >= 3 {
-                        let info_width = (width - 16.0) * 0.5;
+                        let info_width = (width - 6.0) * 0.5;
                         ui.horizontal_top(|ui| {
-                            ui.spacing_mut().item_spacing.x = 16.0;
+                            ui.spacing_mut().item_spacing.x = 6.0;
                             let info = ui.allocate_ui_with_layout(
                                 egui::vec2(info_width, 0.0),
                                 egui::Layout::top_down(egui::Align::Min),
@@ -115,15 +113,13 @@ impl InstrumentControlPanel {
                                     self.device_information_sections(ui, lang, t, index);
                                 },
                             );
-                            let console_width = width - info_width - 16.0;
+                            let console_width = width - info_width - 6.0;
                             ui.allocate_ui_with_layout(
                                 egui::vec2(console_width, 0.0),
                                 egui::Layout::top_down(egui::Align::Min),
                                 |ui| {
                                     ui.set_width(console_width);
-                                    let height = info.response.rect.height()
-                                        - 12.0
-                                        - ui.spacing().item_spacing.y;
+                                    let height = info.response.rect.height();
                                     aligned_panel(
                                         ui,
                                         t,
@@ -153,8 +149,8 @@ impl InstrumentControlPanel {
         let id = self.devices[index].id;
         let count = self.devices[index].capabilities.channels.clamp(1, 4) as usize;
         let columns =
-            (((ui.available_width() + 12.0) / (min_width + 12.0)).floor() as usize).clamp(1, count);
-        ui.spacing_mut().item_spacing.x = 12.0;
+            (((ui.available_width() + 6.0) / (min_width + 6.0)).floor() as usize).clamp(1, count);
+        ui.spacing_mut().item_spacing.x = 6.0;
         for start in (0..count).step_by(columns) {
             ui.columns(columns, |uis| {
                 for (offset, ui) in uis.iter_mut().enumerate() {

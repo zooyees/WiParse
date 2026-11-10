@@ -1,6 +1,7 @@
 use super::*;
 
 impl SerialToolPanel {
+
     pub(super) fn ai_state(&self, project: &str, testing: bool) -> Snapshot {
         let tab = self.tabs.get(self.active_tab);
         let (selected, selected_baud) = self.current_port_baud();
@@ -50,8 +51,9 @@ impl SerialToolPanel {
             reception_requested: requested,
             connection_confirmed: confirmed.is_some(),
             absolute_lines: tab.map_or(0, |tab| tab.dropped().saturating_add(tab.line_count())),
-            selected_bytes: tab.map_or(0, |tab| bounded(&tab.ai_selection(), 16 * 1024).len()),
-            automation_locked: testing || self.live_test.is_some(),
+            retained_lines:tab.map_or(0,|tab|tab.line_count()),
+            selected_bytes: tab.map_or(0, |tab| tab.ai_selection().len()),
+            automation_locked: self.ai_controls_locked(testing),
         }
     }
 
@@ -93,25 +95,19 @@ impl SerialToolPanel {
         &self,
         scope: DataScope,
     ) -> Result<serde_json::Value, String> {
-        let mut data = self.ai_observation(scope != DataScope::None, None, None);
+        let mut data = self.ai_observation(false, None, None);
+        data["sampling"]=json!("Manual analysis uses the local engine across the selected scope, not a recent-100-lines sample. Raw logs are not attached. Request log.files / log.analyze for evidence.");
         data["data_scope"] = json!(match scope {
-            DataScope::Recent => "recent",
+            DataScope::Current => "current_log",
+            DataScope::Range => "current_log_row_range",
             DataScope::Selection => "selection",
             DataScope::None => "none",
+            DataScope::Library => "local_library",
         });
-        match scope {
-            DataScope::Selection => {
-                data["recent_lines"] = json!([]);
-                if data["selected_text"].as_str().unwrap_or("").is_empty() {
-                    return Err(
-                        "请先在日志中选中要分析的内容 / Select log text to analyse first".into(),
-                    );
-                }
-            }
-            _ => {
-                data["selected_text"] = json!("");
-            }
+        if scope==DataScope::Selection && self.tabs.get(self.active_tab).is_none_or(|tab|tab.ai_selection().is_empty()) {
+            return Err("请先在日志中选中要分析的内容 / Select log text to analyse first".into());
         }
+        if let Some(tab)=self.tabs.get(self.active_tab){data["available_rows"]=json!({"retained":tab.line_count(),"evicted":tab.dropped(),"live_snapshot":tab.live,"disk_file":tab.filepath.is_some()});}
         Ok(data)
     }
 
@@ -573,6 +569,8 @@ impl SerialToolPanel {
                 UiAction::Settings => self.ai_settings_requested = true,
                 UiAction::Clear => {
                     chat.cancel();
+                    chat.library.reset();
+                    chat.tool_results.clear();
                     chat.watch = None;
                     chat.entries.clear();
                     chat.history.clear();
@@ -609,19 +607,33 @@ impl SerialToolPanel {
                         }
                     }
                 }
+                UiAction::ChooseLogDirectory=>{
+                    if let Some(root)=rfd::FileDialog::new().pick_folder(){chat.cancel();chat.library.directory=Some(root);chat.library.reset();chat.scope=DataScope::Library;chat.tool_results.clear();chat.history.clear();chat.note(label(lang,"已更新本地日志目录，后续只发送有限统计和证据。","Local log directory updated. Only bounded statistics and evidence are sent."),false);}
+                }
+                UiAction::ClearLogDirectory=>{chat.cancel();chat.library.directory=None;chat.library.reset();chat.tool_results.clear();chat.history.clear();}
+                UiAction::PreviewLogs=>{
+                    if chat.pending.is_none()&&chat.tool.is_none(){
+                        chat.tool_round=0;chat.tool_results.clear();chat.library.bind_scope(self.local_log_scope_key(&chat));let params=chat.library.preview_params();
+                        match self.begin_platform_call(ui.ctx(),&mut chat,"log.analyze".into(),params,"本地日志预分析".into(),false){
+                            Ok(())=>{if let Some(tool)=chat.tool.as_mut(){tool.local_only=true;}},Err(error)=>chat.note(error,true),
+                        }
+                    }
+                }
                 UiAction::Send(question) => {
                     if chat.pending.is_some() || chat.tool.is_some() {
                         continue;
                     }
                     chat.tool_round = 0;
                     chat.tool_results.clear();
-                    let data = match self.ai_scoped_observation(chat.scope) {
+                    chat.library.bind_scope(self.local_log_scope_key(&chat));
+                    let mut data = match self.ai_scoped_observation(chat.scope) {
                         Ok(data) => data,
                         Err(error) => {
                             chat.note(error, true);
                             continue;
                         }
                     };
+                    if chat.scope==DataScope::Range{data["requested_rows"]=json!({"first":chat.range_first,"last":chat.range_last});}
                     match chat.submit(ui.ctx(), &state, data, question, false) {
                         Ok(()) => chat.prompt.clear(),
                         Err(error) => {
@@ -642,4 +654,56 @@ impl SerialToolPanel {
     pub(crate) fn open_ai_window(&mut self) {
         self.ai_chat.open = true;
     }
+}
+
+impl SerialToolPanel {
+    pub(crate) fn ai_controls_locked(&self, integrated_test: bool) -> bool { integrated_test || self.live_test.is_some() }
+
+ pub(crate) fn agent_identity(&self,project:&str)->String{serde_json::to_string(&self.ai_state(project,self.ai_test_locked).binding).unwrap_or_default()}
+ pub(crate) fn agent_inspect(&self,project:&str)->serde_json::Value{let state=self.ai_state(project,self.ai_test_locked);json!({"source_id":state.binding.source_id,"live":state.binding.live,"status":state.status,"requested":state.reception_requested,"connected":state.connection_confirmed,"total_received_rows":state.absolute_lines,"retained_rows":state.retained_lines,"evicted_rows":state.absolute_lines.saturating_sub(state.retained_lines),"baud":state.binding.baud,"source_title":state.source_title})}
+ pub(crate) fn agent_log_input(&self)->Result<(wiparse_core::log_analysis::LibrarySpec,Option<wiparse_core::log_analysis::Source>),String>{
+  let tab=self.tabs.get(self.active_tab).ok_or("请先打开或接收串口日志")?;
+  if !tab.live{if let Some(path)=&tab.filepath{return Ok((wiparse_core::log_analysis::LibrarySpec{directory:None,files:vec![PathBuf::from(path)]},None));}}
+  Ok((Default::default(),Some(wiparse_core::log_analysis::Source::memory(&tab.display_title(),tab.ai_shared_lines(),tab.dropped() as u64+1,tab.dropped() as u64))))
+ }
+ pub(crate) fn agent_control(&mut self,project:&str,start:bool,lang:Lang,testing:bool)->Result<serde_json::Value,String>{
+  let mut chat=SerialAiChat::default();chat.project=project.into();chat.allow_automation=true;
+  self.apply_ai_action(&mut chat,if start{Action::SerialStart}else{Action::SerialStop},"工程智能任务",lang,testing)?;
+  Ok(self.agent_inspect(project))
+ }
+ pub(crate) fn validate_agent_instrument(method:&str,params:&serde_json::Value)->Result<bool,String>{super::platform::validate(method,params)}
+}
+
+impl SerialToolPanel {
+ pub(crate) fn agent_library(&mut self, method:&str, params:serde_json::Value, ctx:&egui::Context, cancel:Arc<AtomicBool>)->crate::ai::agent::HostReply {
+  let key=self.local_log_scope_key(&self.ai_chat);self.ai_chat.library.bind_scope(key);
+  let work=||->Result<Receiver<crate::backend::InvokeReply>,String>{
+   let chat=&self.ai_chat;
+   if chat.scope==DataScope::None{return Err("LOG.DATA_SCOPE: 请在串口AI中选择日志范围".into());}
+   let mut files=Vec::new();let mut memory=None;
+   if chat.scope==DataScope::Library {
+    files=self.tabs.iter().filter_map(|t|t.filepath.as_ref().map(PathBuf::from)).collect();
+    if self.save_live_to_disk {if let Some(p)=&self.live_file{files.push(p.clone());}}
+   }else{
+    let tab=self.tabs.get(self.active_tab).ok_or("LOG.NO_CURRENT_LOG")?;
+    if chat.scope==DataScope::Selection {let text=tab.ai_selection();if text.is_empty(){return Err("LOG.EMPTY_SELECTION".into());}memory=Some(wiparse_core::log_analysis::Source::memory("selection",text.lines().map(Arc::<str>::from).collect(),1,0));}
+    else if !tab.live&&tab.filepath.is_some(){files.push(PathBuf::from(tab.filepath.as_ref().unwrap()));}
+    else{memory=Some(wiparse_core::log_analysis::Source::memory(&tab.display_title(),tab.ai_shared_lines(),tab.dropped() as u64+1,tab.dropped() as u64));}
+   }
+   let range=if chat.scope==DataScope::Range{Some((chat.range_first.max(1),chat.range_last.max(chat.range_first.max(1))))}else{None};
+   chat.library.start_scoped(method,params,files,memory,range,chat.scope==DataScope::Library,cancel,ctx.clone())
+  };
+  match work(){Ok(rx)=>{let(tx,out)=crossbeam_channel::bounded(1);let ctx=ctx.clone();std::thread::spawn(move||{if let Ok(r)=rx.recv(){let _=tx.send(json!({"ok":r.ok,"data":r.data,"error":r.error}));ctx.request_repaint();}});crate::ai::agent::HostReply::work(out)},Err(e)=>crate::ai::agent::HostReply::value(crate::ai::agent::failure(e))}
+ }
+}
+
+impl SerialToolPanel {
+ pub(crate) fn agent_monitor(&mut self,method:&str,params:&serde_json::Value,project:&str,lang:Lang,testing:bool)->serde_json::Value{
+  let mut action=params.clone();action["type"]=json!(method.strip_prefix("serial.").unwrap_or(method));
+  let result=serde_json::from_value::<Action>(action).map_err(|e|e.to_string()).and_then(|action|{
+   let mut chat=std::mem::take(&mut self.ai_chat);chat.project=project.into();
+   let result=self.apply_ai_action(&mut chat,action,"工程智能监控",lang,testing);self.ai_chat=chat;result
+  });
+  match result{Ok(())=>json!({"ok":true,"data":{"monitoring":self.ai_chat.watch.is_some(),"interval_seconds":self.ai_chat.interval_seconds,"local_rules":"full retained incoming lines evaluated locally; cloud analysis is periodic, not a safety interlock","reception":self.agent_inspect(project)}}),Err(e)=>crate::ai::agent::failure(e)}
+ }
 }

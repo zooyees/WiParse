@@ -12,9 +12,9 @@ pub(super) fn section(
     Frame::NONE
         .fill(t.surface_bg)
         .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
-        .inner_margin(Margin::same(12))
+        .inner_margin(Margin::same(theme::CARD_PADDING))
         .show(ui, |ui| {
-            ui.set_width((width - 24.0).max(1.0));
+            ui.set_width((width - 2.0 * f32::from(theme::CARD_PADDING)).max(1.0));
             if !title.is_empty() {
                 ui.label(
                     RichText::new(title)
@@ -25,11 +25,10 @@ pub(super) fn section(
                 if !subtitle.is_empty() {
                     ui.label(RichText::new(subtitle).size(12.0).color(t.text_muted));
                 }
-                ui.add_space(12.0);
+                ui.add_space(4.0);
             }
             body(ui);
         });
-    ui.add_space(12.0);
 }
 
 /// Every label, value and accessory follows the same row alignment.
@@ -98,7 +97,7 @@ pub(super) fn toggle(ui: &mut egui::Ui, t: &Tokens, value: &mut bool) -> egui::R
     ui.painter().rect_filled(
         r,
         CornerRadius::same(11),
-        if *value { t.accent } else { t.button_hover },
+        if *value { t.accent_fill } else { t.border },
     );
     ui.painter().circle_filled(
         egui::pos2(r.left() + 11.0 + x * 14.0, r.center().y),
@@ -324,10 +323,10 @@ pub(super) fn metric(
 pub(super) fn split(ui: &mut egui::Ui, mut content: impl FnMut(&mut egui::Ui, usize)) {
     let width = ui.available_width();
     if width >= 720.0 {
-        let left = (width - 16.0) * 0.5;
+        let left = (width - 6.0) * 0.5;
         ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = 16.0;
-            for (i, width) in [left, (width - left - 16.0).max(1.0)]
+            ui.spacing_mut().item_spacing.x = 6.0;
+            for (i, width) in [left, (width - left - 6.0).max(1.0)]
                 .into_iter()
                 .enumerate()
             {
@@ -435,13 +434,13 @@ pub(super) fn task_form(
     let width = ui.available_width();
     if width < 460.0 {
         parameters(ui, lang, t, d);
-        ui.add_space(12.0);
+        ui.add_space(4.0);
         return actions(ui, lang, t, d);
     }
     let mut out = Vec::new();
     let parameter_width = width - 240.0;
     let row = ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing.x = 16.0;
+        ui.spacing_mut().item_spacing.x = 6.0;
         ui.allocate_ui_with_layout(
             egui::vec2(parameter_width, 0.0),
             egui::Layout::top_down(egui::Align::Min),
@@ -491,7 +490,7 @@ pub(super) fn aligned_panel(
     theme::scope_in_allocated_rect(
         ui,
         egui::UiBuilder::new()
-            .max_rect(rect.shrink(12.0))
+            .max_rect(rect.shrink(f32::from(theme::CARD_PADDING)))
             .layout(egui::Layout::top_down(egui::Align::Min)),
         |ui| {
             ui.set_clip_rect(rect.intersect(ui.clip_rect()));
@@ -501,9 +500,8 @@ pub(super) fn aligned_panel(
                     .strong()
                     .color(t.text_primary),
             );
-            ui.add_space(12.0);
+            ui.add_space(4.0);
             body(ui);
         },
     );
-    ui.add_space(12.0);
 }

@@ -1,0 +1,673 @@
+note: did not finalize incremental compilation session directory `\\?\D:\windlink\windlink\WiParse-R\target\debug\incremental\winit-2ua2zgdwt6x11\s-ho021uitx0-0urfoci-working`: Access is denied. (os error 5)
+  |
+  = help: the next build will not be able to reuse work from this compilation
+
+warning: variable does not need to be mutable
+   --> crates\wiparse-core\src\protocol\decode.rs:891:17
+    |
+891 |             let mut fields = vec![field("pattern", name, "", Some(format!("0x{header:02X}")))];
+    |                 ----^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `lfsr_msequence` is never used
+   --> crates\wiparse-core\src\bus_decode\ddsss.rs:181:8
+    |
+181 | pub fn lfsr_msequence(width: u8, taps: &[u8]) -> Vec<bool> {
+    |        ^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `scope_screen_point_count`, `tek_screen_point_count`, `keysight_screen_point_count`, `prepare_keysight_screen_waveform`, and `apply_tek_visible_data_window` are never used
+    --> crates\wiparse-core\src\instrument\drivers.rs:1361:8
+     |
+ 882 | impl InstrumentDevice {
+     | --------------------- methods in this implementation
+...
+1361 |     fn scope_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1399 |     fn tek_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^
+...
+1406 |     fn keysight_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1449 |     fn prepare_keysight_screen_waveform(&mut self, channel: u8) -> Result<(), InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2018 |     fn apply_tek_visible_data_window(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `parse_keysight_preamble_points` is never used
+    --> crates\wiparse-core\src\instrument\drivers.rs:3167:4
+     |
+3167 | fn parse_keysight_preamble_points(pre: &str) -> Option<usize> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `verify_file_against_meta` is never used
+   --> crates\wiparse-core\src\marketplace\trust.rs:160:8
+    |
+160 | pub fn verify_file_against_meta(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `open_tcp_uart_from_info` is never used
+   --> crates\wiparse-core\src\serial.rs:624:4
+    |
+624 | fn open_tcp_uart_from_info(info: &PortInfo, baud: u32) -> Result<SerialSession, SerialError> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `load_tek_wfm` is never used
+   --> crates\wiparse-core\src\waveform_file.rs:968:4
+    |
+968 | fn load_tek_wfm(bytes: &[u8], default_channel: &str) -> Result<WaveformTrace, WaveformFileError> {
+    |    ^^^^^^^^^^^^
+
+warning: `wiparse-core` (lib) generated 7 warnings (run `cargo fix --lib -p wiparse-core` to apply 1 suggestion)
+warning: unused import: `Color32`
+ --> crates\wiparse-gui\src\calculator.rs:4:12
+  |
+4 | use egui::{Color32, CornerRadius, Frame, Margin, Pos2, Rect, Sense, Stroke, Vec2};
+  |            ^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Color32`
+ --> crates\wiparse-gui\src\converter.rs:3:12
+  |
+3 | use egui::{Color32, CornerRadius, Frame, Margin, Stroke};
+  |            ^^^^^^^
+
+warning: unused import: `wiparse_core::protocol::describe_ask_bytes`
+  --> crates\wiparse-gui\src\waveform_analysis.rs:31:5
+   |
+31 | use wiparse_core::protocol::describe_ask_bytes;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\alerts.rs:183:41
+    |
+183 |                     .stroke(Stroke::new(1.0, t.warning))
+    |                                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+    = note: `#[warn(float_literal_f32_fallback)]` (part of `#[warn(future_incompatible)]`) on by default
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\host.rs:546:41
+    |
+546 |                     .stroke(Stroke::new(1.0, t.divider))
+    |                                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> crates\wiparse-gui\src\serial_tool\ai_chat.rs:413:69
+    |
+413 |                 .vline(drag.center().x, drag.y_range(), Stroke::new(1.0, t.accent));
+    |                                                                     ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> crates\wiparse-gui\src\theme.rs:75:67
+   |
+75 |         Stroke::new(if response.hovered() || response.dragged() { 2.0 } else { 1.0 },
+   |                                                                   ^^^ help: explicitly specify the type as `f32`: `2.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> crates\wiparse-gui\src\theme.rs:75:80
+   |
+75 |         Stroke::new(if response.hovered() || response.dragged() { 2.0 } else { 1.0 },
+   |                                                                                ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> crates\wiparse-gui\src\data_analysis.rs:665:64
+    |
+665 | ...   Frame::NONE.fill(tokens.surface_bg).stroke(Stroke::new(1.,tokens.divider)).corner_radius(CornerRadius::same(ui_theme::RADIUS_...
+    |                                                              ^^ help: explicitly specify the type as `f32`: `1._f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> crates\wiparse-gui\src\test_tool\workspace\chrome.rs:127:41
+    |
+127 | ...                   Stroke::new(1.0, tokens.divider),
+    |                                   ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> crates\wiparse-gui\src\test_tool\workspace\chrome.rs:274:13
+    |
+274 |             1.0,
+    |             ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: use of deprecated method `egui::Ui::set_enabled`: Use disable(), add_enabled_ui(), or add_enabled() instead
+   --> crates\wiparse-gui\src\test_tool.rs:680:16
+    |
+680 |             ui.set_enabled(false);
+    |                ^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `egui::Ui::set_enabled`: Use disable(), add_enabled_ui(), or add_enabled() instead
+   --> crates\wiparse-gui\src\test_tool.rs:777:12
+    |
+777 |         ui.set_enabled(was_enabled);
+    |            ^^^^^^^^^^^
+
+warning: use of deprecated method `egui::Ui::set_enabled`: Use disable(), add_enabled_ui(), or add_enabled() instead
+    --> crates\wiparse-gui\src\test_tool.rs:1362:20
+     |
+1362 |                 ui.set_enabled(self.job.is_none());
+     |                    ^^^^^^^^^^^
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> crates\wiparse-gui\src\waveform_analysis\protocol_view.rs:341:33
+    |
+341 |                     Stroke::new(1., tokens.divider),
+    |                                 ^^ help: explicitly specify the type as `f32`: `1._f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: unused import: `std::io::Read`
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\responsiveness_tests.rs:200:9
+    |
+200 |     use std::io::Read;
+    |         ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Read`
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\responsiveness_tests.rs:263:9
+    |
+263 |     use std::io::Read;
+    |         ^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> crates\wiparse-gui\src\backend\mod.rs:191:19
+    |
+191 | fn handle_request(mut request: Request, bridge: &ApiBridge) -> Result<(), String> {
+    |                   ----^^^^^^^
+    |                   |
+    |                   help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `defer`
+   --> crates\wiparse-gui\src\instrument_control\workbench\flat.rs:222:9
+    |
+222 |         defer: bool,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_defer`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `defer`
+   --> crates\wiparse-gui\src\instrument_control\workbench.rs:195:9
+    |
+195 |         defer: bool,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_defer`
+
+warning: unused variable: `hud`
+    --> crates\wiparse-gui\src\instrument_control.rs:4546:32
+     |
+4546 | fn hud_chip(ui: &mut egui::Ui, hud: &HudTokens, label: impl Into<String>, color: Color32) {
+     |                                ^^^ help: if this is intentional, prefix it with an underscore: `_hud`
+
+warning: unused variable: `border`
+    --> crates\wiparse-gui\src\log_tab.rs:2357:60
+     |
+2357 |     let (ask, fsk, code, hex, ok, err, warn, field, muted, border) = if light {
+     |                                                            ^^^^^^ help: if this is intentional, prefix it with an underscore: `_border`
+
+warning: unused variable: `output`
+   --> crates\wiparse-gui\src\test_tool\line_trigger_editor.rs:769:13
+    |
+769 |         let output = click(&ctx, &mut raw, add);
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_output`
+
+warning: variable does not need to be mutable
+    --> crates\wiparse-gui\src\waveform_analysis.rs:4912:10
+     |
+4912 |     let (mut ymin, mut ymax) = robust_y_range(&trace.y[..n]);
+     |          ----^^^^
+     |          |
+     |          help: remove this `mut`
+
+warning: associated function `new` is never used
+   --> crates\wiparse-gui\src\app.rs:250:12
+    |
+249 | impl WiParseApp {
+    | --------------- associated function in this implementation
+250 |     pub fn new(cfg: AppConfig) -> Self {
+    |            ^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `next_seq` is never used
+  --> crates\wiparse-gui\src\backend\events.rs:96:12
+   |
+23 | impl EventBus {
+   | ------------- method in this implementation
+...
+96 |     pub fn next_seq(&self) -> u64 {
+   |            ^^^^^^^^
+
+warning: field `points` is never read
+  --> crates\wiparse-gui\src\instrument_control.rs:80:9
+   |
+77 |     Waveform {
+   |     -------- field in this variant
+...
+80 |         points: usize,
+   |         ^^^^^^
+
+warning: field `channel` is never read
+   --> crates\wiparse-gui\src\instrument_control.rs:246:5
+    |
+245 | struct CachedWavePlot {
+    |        -------------- field in this struct
+246 |     channel: String,
+    |     ^^^^^^^
+
+warning: field `max_points` is never read
+   --> crates\wiparse-gui\src\instrument_control.rs:430:5
+    |
+417 | pub struct InstrumentControlPanel {
+    |            ---------------------- field in this struct
+...
+430 |     max_points: usize,
+    |     ^^^^^^^^^^
+
+warning: methods `visible_instrument_kinds`, `pump`, and `discovered_resources_panel` are never used
+    --> crates\wiparse-gui\src\instrument_control.rs:610:8
+     |
+ 476 | impl InstrumentControlPanel {
+     | --------------------------- methods in this implementation
+...
+ 610 |     fn visible_instrument_kinds(&self) -> Vec<InstrumentKind> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 642 |     pub fn pump(&mut self, ctx: &egui::Context) {
+     |            ^^^^
+...
+1994 |     fn discovered_resources_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `mean` is never read
+    --> crates\wiparse-gui\src\instrument_control.rs:3427:5
+     |
+3421 | struct WaveformStats {
+     |        ------------- field in this struct
+...
+3427 |     mean: f64,
+     |     ^^^^
+     |
+     = note: `WaveformStats` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: function `export_waveform_csv` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:3477:4
+     |
+3477 | fn export_waveform_csv(
+     |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `waveform_csv_cell` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:3502:4
+     |
+3502 | fn waveform_csv_cell(value: &str) -> String {
+     |    ^^^^^^^^^^^^^^^^^
+
+warning: function `scope_panel` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:3556:4
+     |
+3556 | fn scope_panel(ui: &mut egui::Ui, tokens: &Tokens, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+     |    ^^^^^^^^^^^
+
+warning: function `card` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:3864:4
+     |
+3864 | fn card(ui: &mut egui::Ui, tokens: &Tokens, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+     |    ^^^^
+
+warning: constant `CARD_PANEL_WIDTH` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:3879:7
+     |
+3879 | const CARD_PANEL_WIDTH: f32 = 258.0;
+     |       ^^^^^^^^^^^^^^^^
+
+warning: constant `CARD_CONTROL_HEIGHT` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:3880:7
+     |
+3880 | const CARD_CONTROL_HEIGHT: f32 = 26.0;
+     |       ^^^^^^^^^^^^^^^^^^^
+
+warning: constant `CARD_ICON_COLUMN_WIDTH` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:3881:7
+     |
+3881 | const CARD_ICON_COLUMN_WIDTH: f32 = 42.0;
+     |       ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `InstrumentCardAction` is never constructed
+    --> crates\wiparse-gui\src\instrument_control.rs:3884:8
+     |
+3884 | struct InstrumentCardAction {
+     |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `instrument_type_card` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:3890:4
+     |
+3890 | fn instrument_type_card(
+     |    ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `instrument_control_hint` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4245:4
+     |
+4245 | fn instrument_control_hint(lang: Lang, kind: InstrumentKind) -> &'static str {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `instrument_acquisition_hint` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4290:4
+     |
+4290 | fn instrument_acquisition_hint(lang: Lang, kind: InstrumentKind) -> &'static str {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `instrument_settings_hint` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4330:4
+     |
+4330 | fn instrument_settings_hint(lang: Lang, kind: InstrumentKind) -> &'static str {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `instrument_features` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4375:4
+     |
+4375 | fn instrument_features(lang: Lang, kind: InstrumentKind) -> [(&'static str, &'static str); 3] {
+     |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `setting_row` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4443:4
+     |
+4443 | fn setting_row(ui: &mut egui::Ui, label: &str, value: &str) {
+     |    ^^^^^^^^^^^
+
+warning: function `capability_badge` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4449:4
+     |
+4449 | fn capability_badge(ui: &mut egui::Ui, tokens: &Tokens, label: impl Into<String>) {
+     |    ^^^^^^^^^^^^^^^^
+
+warning: function `resource_address_hint` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4473:4
+     |
+4473 | fn resource_address_hint(kind: InstrumentKind) -> &'static str {
+     |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `resource_empty_prompt` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4482:4
+     |
+4482 | fn resource_empty_prompt(lang: Lang, kind: InstrumentKind) -> &'static str {
+     |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `overview_type_card` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:6164:4
+     |
+6164 | fn overview_type_card(
+     |    ^^^^^^^^^^^^^^^^^^
+
+warning: function `paint_mesh_icon` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:6831:4
+     |
+6831 | fn paint_mesh_icon(painter: &egui::Painter, rect: Rect, selected: bool) {
+     |    ^^^^^^^^^^^^^^^
+
+warning: field `scroll_generation` is never read
+   --> crates\wiparse-gui\src\log_tab.rs:122:16
+    |
+101 | pub(crate) struct PaneState {
+    |                   --------- field in this struct
+...
+122 |     pub(crate) scroll_generation: u64,
+    |                ^^^^^^^^^^^^^^^^^
+    |
+    = note: `PaneState` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: methods `release_display_buffers` and `store_file` are never used
+   --> crates\wiparse-gui\src\log_tab.rs:869:12
+    |
+414 | impl LogTabPage {
+    | --------------- methods in this implementation
+...
+869 |     pub fn release_display_buffers(&mut self) {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^
+...
+875 |     fn store_file(&self) -> Option<&Arc<FileLogStore>> {
+    |        ^^^^^^^^^^
+
+warning: field `wifi_scan_pending` is never read
+   --> crates\wiparse-gui\src\serial_tool.rs:112:5
+    |
+ 67 | pub struct SerialToolPanel {
+    |            --------------- field in this struct
+...
+112 |     wifi_scan_pending: bool,
+    |     ^^^^^^^^^^^^^^^^^
+
+warning: methods `open_path_and_show` and `needs_repaint` are never used
+    --> crates\wiparse-gui\src\serial_tool.rs:311:19
+     |
+ 154 | impl SerialToolPanel {
+     | -------------------- methods in this implementation
+...
+ 311 |     pub(crate) fn open_path_and_show(&mut self, path: PathBuf) -> Option<usize> {
+     |                   ^^^^^^^^^^^^^^^^^^
+...
+1942 |     pub fn needs_repaint(&self) -> bool {
+     |            ^^^^^^^^^^^^^
+
+warning: function `elide_tab_title` is never used
+    --> crates\wiparse-gui\src\serial_tool.rs:3116:4
+     |
+3116 | fn elide_tab_title(title: &str, max_chars: usize) -> String {
+     |    ^^^^^^^^^^^^^^^
+
+warning: method `open_ai_window` is never used
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\host.rs:653:19
+    |
+  3 | impl SerialToolPanel {
+    | -------------------- method in this implementation
+...
+653 |     pub(crate) fn open_ai_window(&mut self) {
+    |                   ^^^^^^^^^^^^^^
+
+warning: function `tokens_for_panel` is never used
+   --> crates\wiparse-gui\src\theme.rs:297:8
+    |
+297 | pub fn tokens_for_panel(light_pref: bool, _scope_workbench: bool) -> Tokens {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `secondary_button` is never used
+   --> crates\wiparse-gui\src\theme.rs:329:8
+    |
+329 | pub fn secondary_button(ui: &mut egui::Ui, t: &Tokens, label: impl Into<String>) -> egui::Response {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `ghost_button` is never used
+   --> crates\wiparse-gui\src\theme.rs:346:8
+    |
+346 | pub fn ghost_button(ui: &mut egui::Ui, t: &Tokens, label: impl Into<String>) -> egui::Response {
+    |        ^^^^^^^^^^^^
+
+warning: function `field_label` is never used
+   --> crates\wiparse-gui\src\theme.rs:716:8
+    |
+716 | pub fn field_label(ui: &mut egui::Ui, t: &Tokens, label: &str, label_w: f32, row_h: f32) {
+    |        ^^^^^^^^^^^
+
+warning: function `caption` is never used
+   --> crates\wiparse-gui\src\theme.rs:727:8
+    |
+727 | pub fn caption(ui: &mut egui::Ui, t: &Tokens, text: &str) {
+    |        ^^^^^^^
+
+warning: function `mono_body` is never used
+   --> crates\wiparse-gui\src\theme.rs:735:8
+    |
+735 | pub fn mono_body(text: impl Into<String>, t: &Tokens) -> RichText {
+    |        ^^^^^^^^^
+
+warning: function `add_singleline` is never used
+   --> crates\wiparse-gui\src\theme.rs:764:8
+    |
+764 | pub fn add_singleline(
+    |        ^^^^^^^^^^^^^^
+
+warning: variant `Progress` is never constructed
+  --> crates\wiparse-gui\src\update\mod.rs:41:5
+   |
+39 | enum UpdateMsg {
+   |      --------- variant in this enum
+40 |     Checked(Result<UpdateAvailability, String>),
+41 |     Progress { received: u64, total: u64 },
+   |     ^^^^^^^^
+
+warning: method `set_config` is never used
+  --> crates\wiparse-gui\src\update\mod.rs:59:12
+   |
+45 | impl UpdateController {
+   | --------------------- method in this implementation
+...
+59 |     pub fn set_config(&mut self, cfg: UpdateConfig) {
+   |            ^^^^^^^^^^
+
+warning: function `layout_and_map_drafts` is never used
+    --> crates\wiparse-gui\src\data_analysis.rs:2444:4
+     |
+2444 | fn layout_and_map_drafts(series: &mut [SeriesDraft]) {
+     |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `map_drafts_inplace` is never used
+    --> crates\wiparse-gui\src\data_analysis.rs:2481:4
+     |
+2481 | fn map_drafts_inplace(series: &mut [SeriesDraft]) {
+     |    ^^^^^^^^^^^^^^^^^^
+
+warning: function `ensure_cache_dir` is never used
+  --> crates\wiparse-gui\src\data_extract_cache.rs:60:8
+   |
+60 | pub fn ensure_cache_dir() -> std::io::Result<PathBuf> {
+   |        ^^^^^^^^^^^^^^^^
+
+warning: field `channel` is never read
+  --> crates\wiparse-gui\src\market_jobs.rs:39:9
+   |
+33 | pub struct CatalogRow {
+   |            ---------- field in this struct
+...
+39 |     pub channel: String,
+   |         ^^^^^^^
+   |
+   = note: `CatalogRow` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `entry` is never read
+   --> crates\wiparse-gui\src\test_tool.rs:124:5
+    |
+115 | struct PluginInfo {
+    |        ---------- field in this struct
+...
+124 |     entry: String,
+    |     ^^^^^
+    |
+    = note: `PluginInfo` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: method `status_tone` is never used
+   --> crates\wiparse-gui\src\test_tool.rs:428:12
+    |
+248 | impl TestToolPanel {
+    | ------------------ method in this implementation
+...
+428 |     pub fn status_tone(&self) -> crate::theme::StatusTone {
+    |            ^^^^^^^^^^^
+
+warning: method `report_waves` is never used
+    --> crates\wiparse-gui\src\waveform_analysis.rs:1785:8
+     |
+ 264 | impl WaveformAnalysisPanel {
+     | -------------------------- method in this implementation
+...
+1785 |     fn report_waves(&self, lanes: &[ProtocolReportLane]) -> Vec<ProtocolReportWave> {
+     |        ^^^^^^^^^^^^
+
+warning: function `thin_columns` is never used
+    --> crates\wiparse-gui\src\waveform_analysis.rs:5276:4
+     |
+5276 | fn thin_columns(columns: &[[f64; 4]], max_cols: usize) -> Vec<[f64; 4]> {
+     |    ^^^^^^^^^^^^
+
+warning: function `wave_overview_columns` is never used
+    --> crates\wiparse-gui\src\waveform_analysis.rs:5305:4
+     |
+5305 | fn wave_overview_columns(wave: &LoadedWave) -> Vec<[f64; 4]> {
+     |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `detail_windows` is never used
+    --> crates\wiparse-gui\src\waveform_analysis.rs:5316:4
+     |
+5316 | fn detail_windows(lanes: &[ProtocolReportLane]) -> Vec<(f64, f64)> {
+     |    ^^^^^^^^^^^^^^
+
+warning: unused return value of `Ui::button` that must be used
+   --> crates\wiparse-gui\src\theme.rs:839:78
+    |
+839 |                     egui::Layout::left_to_right(egui::Align::Center), |ui| { ui.button("button"); });
+    |                                                                              ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: You should check if the user clicked this with `if ui.button(…).clicked() { … } 
+    = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+839 |                     egui::Layout::left_to_right(egui::Align::Center), |ui| { let _ = ui.button("button"); });
+    |                                                                              +++++++
+
+warning: calls to `std::mem::drop` with a reference instead of an owned value does nothing
+    --> crates\wiparse-gui\src\test_tool.rs:3284:13
+     |
+3284 |             drop(job);
+     |             ^^^^^---^
+     |                  |
+     |                  argument has type `&mut RunningJob`
+     |
+     = note: `#[warn(dropping_references)]` on by default
+help: use `let _ = ...` to ignore the expression or result
+     |
+3284 -             drop(job);
+3284 +             let _ = job;
+     |
+
+warning: linker stdout: 正在创建库 D:\windlink\windlink\WiParse-R\target\debug\deps\wiparse_gui-599cee71a718ceba.lib 和对象 D:\windlink\windlink\WiParse-R\target\debug\deps\wiparse_gui-599cee71a718ceba.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `wiparse-gui` (bin "wiparse-gui" test) generated 78 warnings (run `cargo fix --bin "wiparse-gui" -p wiparse-gui --tests` to apply 19 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.76s
+     Running unittests src\main.rs (target\debug\deps\wiparse_gui-599cee71a718ceba.exe)
+
+running 1 test
+test ui_audit::light_and_sidebar_style_gallery ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 261 filtered out; finished in 7.70s
+

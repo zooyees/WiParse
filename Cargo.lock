@@ -5532,6 +5532,7 @@ dependencies = [
  "ureq",
  "url",
  "uuid",
+ "webpki-roots 0.26.11",
  "windows-sys 0.48.0",
  "winreg",
 ]
@@ -5557,6 +5558,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ureq",
+ "uuid",
  "winresource",
  "wiparse-core",
 ]

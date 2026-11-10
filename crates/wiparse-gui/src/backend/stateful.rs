@@ -30,6 +30,9 @@ pub fn drain_api_requests(bridge: &ApiBridge, mut host: UiHost<'_>) -> bool {
                 continue;
             }
         }
+        if req.ai_guard.is_some() && matches!(req.method.as_str(),"instrument.command"|"instrument.capture") {
+            if let Err(error)=host.instruments.agent_validate_device(&req.params,req.method=="instrument.capture") {let _=req.reply.try_send(err(&req.method,&error));continue;}
+        }
         if Instant::now() > req.deadline {
             let _ = req
                 .reply

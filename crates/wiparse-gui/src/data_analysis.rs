@@ -29,9 +29,9 @@ use wiparse_core::i18n::{tr, tr_fmt, Lang};
 use wiparse_core::paths::project_path;
 
 const TOOLBAR_H: f32 = 40.0;
-const SIDE_W: f32 = ui_theme::SIDEBAR_W;
-const PANEL_GAP: f32 = 8.0;
-const CARD_MARGIN_X: i8 = 10;
+const SIDE_W: f32 = 248.0;
+const PANEL_GAP: f32 = ui_theme::PANEL_GAP;
+const CARD_MARGIN_X: i8 = 6;
 const MAX_SERIES: usize = 8;
 const VIEW_MIN_SPAN_ABS: f64 = 1e-12;
 const VIEW_MAX_PAD: f64 = 8.0;
@@ -90,7 +90,7 @@ struct DataLoadOk {
     kinds: Option<Vec<String>>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DataKind {
     Voltage,
     Current,
@@ -211,6 +211,7 @@ pub struct DataAnalysisPanel {
     kinds: Vec<DataKind>,
 
     series: Vec<DataSeries>,
+    agent_generation: u64,
     frame_count: usize,
     selected: Option<usize>,
     dragging_offset: Option<usize>,
@@ -287,6 +288,7 @@ impl DataAnalysisPanel {
             filters,
             kinds,
             series: Vec::new(),
+            agent_generation: 0,
             frame_count: 0,
             selected: None,
             dragging_offset: None,
@@ -510,7 +512,7 @@ impl DataAnalysisPanel {
             egui::vec2(plot_w, body_h),
         );
 
-        let browser_h = (body_h * 0.42).clamp(1.0, (body_h - PANEL_GAP).max(1.0));
+        let browser_h = (body_h * 0.25).clamp(120.0, 220.0).min((body_h * 0.45).max(1.0));
         let rules_h = (body_h - browser_h - PANEL_GAP).max(1.0);
         let browser_rect =
             egui::Rect::from_min_size(side_rect.min, egui::vec2(side_w, browser_h));
@@ -538,7 +540,7 @@ impl DataAnalysisPanel {
             .fill(tokens.surface_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-            .inner_margin(Margin::symmetric(10, 6))
+            .inner_margin(Margin::symmetric(6, 6))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.horizontal(|ui| {
@@ -622,7 +624,7 @@ impl DataAnalysisPanel {
             .fill(tokens.surface_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-            .inner_margin(Margin::symmetric(CARD_MARGIN_X, 8))
+            .inner_margin(Margin::symmetric(CARD_MARGIN_X, 6))
             .show(ui, |ui| {
                 ui.set_min_width(inner_w);
                 ui.set_max_width(inner_w);
@@ -660,227 +662,41 @@ impl DataAnalysisPanel {
             });
     }
 
-    fn rules_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
-        let card_w = ui.available_width();
-        let inner_w = (card_w - f32::from(CARD_MARGIN_X) * 2.0).max(80.0);
-        let mut apply_now = false;
-        let mut count_changed = false;
-        let mut source_changed = false;
-        Frame::NONE
-            .fill(tokens.surface_bg)
-            .stroke(Stroke::new(1.0_f32, tokens.divider))
-            .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-            .inner_margin(Margin::symmetric(CARD_MARGIN_X, 8))
-            .show(ui, |ui| {
-                ui.set_min_width(inner_w);
-                ui.set_max_width(inner_w);
-                ui.set_min_height(ui.available_height());
-                ui.spacing_mut().item_spacing = egui::vec2(0.0, 5.0);
-
-                egui::ScrollArea::vertical()
-                    .id_salt("data-rules-scroll")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                ui.set_max_width(inner_w);
-
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(tr(lang, "data.rules"))
-                            .size(ui_theme::FONT_TITLE)
-                            .strong()
-                            .color(tokens.text_primary),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui_theme::primary_btn_sized(
-                            ui,
-                            tokens,
-                            tr(lang, "data.apply"),
-                            egui::vec2(72.0, 24.0),
-                        )
-                        .clicked()
-                        {
-                            apply_now = true;
-                        }
-                    });
+    fn rules_panel(&mut self,ui:&mut egui::Ui,lang:Lang,tokens:&Tokens){
+        let mut apply_now=false;let mut source_changed=false;
+        Frame::NONE.fill(tokens.surface_bg).stroke(Stroke::new(1.,tokens.divider)).corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD)).inner_margin(8).show(ui,|ui|{
+            ui.set_min_height(ui.available_height());
+            let width=ui.available_width();
+            ui.horizontal(|ui|{ui.label(RichText::new(tr(lang,"data.rules")).size(ui_theme::FONT_TITLE).strong());ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{if ui_theme::primary_btn_sized(ui,tokens,tr(lang,"data.apply"),egui::vec2(56.,28.)).clicked(){apply_now=true;}});});
+            ui.separator();
+            egui::ScrollArea::vertical().id_salt("data-rules-scroll").auto_shrink([false,false]).show(ui,|ui|{
+                ui.set_width(width);ui.spacing_mut().item_spacing=egui::vec2(6.,6.);
+                ui_theme::form_row(ui,&tr(lang,"data.source"),|ui|{
+                    let before=self.source;
+                    egui::ComboBox::from_id_salt("data_source").selected_text(tr(lang,if self.source==DataSource::File{"data.source_file"}else{"data.source_serial"})).width(ui.available_width()).show_ui(ui,|ui|{ui.selectable_value(&mut self.source,DataSource::File,tr(lang,"data.source_file"));ui.selectable_value(&mut self.source,DataSource::SerialLive,tr(lang,"data.source_serial"));});
+                    source_changed|=before!=self.source;
                 });
-
-                ui.label(
-                    RichText::new(tr(lang, "data.rules_hint"))
-                        .size(ui_theme::FONT_CAPTION)
-                        .color(tokens.text_muted),
-                );
-
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(tr(lang, "data.source"))
-                            .size(ui_theme::FONT_CAPTION)
-                            .color(tokens.text_muted),
-                    );
-                    let mut src = self.source;
-                    let src_label = match src {
-                        DataSource::File => tr(lang, "data.source_file"),
-                        DataSource::SerialLive => tr(lang, "data.source_serial"),
-                    };
-                    egui::ComboBox::from_id_salt("data_source")
-                        .selected_text(src_label)
-                        .width(120.0)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut src,
-                                DataSource::File,
-                                tr(lang, "data.source_file"),
-                            );
-                            ui.selectable_value(
-                                &mut src,
-                                DataSource::SerialLive,
-                                tr(lang, "data.source_serial"),
-                            );
+                ui_theme::form_row(ui,&tr(lang,"data.frame_header"),|ui|{let r=ui.add_sized([ui.available_width(),ui_theme::CTRL_H],egui::TextEdit::singleline(&mut self.frame_header).hint_text("HDR / FRAME / ==="));apply_now|=r.lost_focus();r.on_hover_text(tr(lang,"data.frame_header_hint"));});
+                ui_theme::form_row(ui,&tr(lang,"data.series_count"),|ui|{let before=self.series_count;egui::ComboBox::from_id_salt("data_series_count").selected_text(self.series_count.to_string()).width(ui.available_width()).show_ui(ui,|ui|{for n in 1..=MAX_SERIES{ui.selectable_value(&mut self.series_count,n,n.to_string());}});apply_now|=before!=self.series_count;});
+                ui.add_space(2.);ui.separator();
+                for i in 0..self.series_count{
+                    ui.push_id(i,|ui|{
+                        ui.horizontal(|ui|{
+                            let(rect,_)=ui.allocate_exact_size(egui::vec2(8.,8.),egui::Sense::hover());ui.painter().rect_filled(rect,2,series_color(i));
+                            ui.label(RichText::new(format!("{} {}",if lang==Lang::Zh{"数据"}else{"Series"},i+1)).strong());
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{let before=self.kinds[i];egui::ComboBox::from_id_salt("data_kind").width(68.).selected_text(self.kinds[i].short_axis()).show_ui(ui,|ui|{for k in [DataKind::Voltage,DataKind::Current,DataKind::Temperature]{ui.selectable_value(&mut self.kinds[i],k,format!("{} ({})",k.label(lang),k.short_axis()));}});apply_now|=before!=self.kinds[i];});
                         });
-                    if src != self.source {
-                        self.source = src;
-                        source_changed = true;
-                    }
-                });
-
-                ui.label(
-                    RichText::new(tr(lang, "data.frame_header"))
-                        .size(ui_theme::FONT_CAPTION)
-                        .color(tokens.text_muted),
-                );
-                let header_edit = ui.add(
-                    egui::TextEdit::singleline(&mut self.frame_header)
-                        .desired_width(inner_w)
-                        .hint_text(tr(lang, "data.frame_header_hint"))
-                        .margin(egui::vec2(6.0, 4.0)),
-                );
-                if header_edit.lost_focus() {
-                    apply_now = true;
-                }
-
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(tr(lang, "data.series_count"))
-                            .size(ui_theme::FONT_CAPTION)
-                            .color(tokens.text_muted),
-                    );
-                    let mut count = self.series_count;
-                    egui::ComboBox::from_id_salt("data_series_count")
-                        .selected_text(count.to_string())
-                        .width(56.0)
-                        .show_ui(ui, |ui| {
-                            for n in 1..=MAX_SERIES {
-                                ui.selectable_value(&mut count, n, n.to_string());
-                            }
-                        });
-                    if count != self.series_count {
-                        self.series_count = count;
-                        count_changed = true;
-                        apply_now = true;
-                    }
-                });
-
-                ui.vertical(|ui| {
-                        ui.set_max_width(inner_w);
-                        for i in 0..self.series_count {
-                            let color = series_color(i);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 4.0;
-                                let (swatch, _) = ui.allocate_exact_size(
-                                    egui::vec2(10.0, 10.0),
-                                    egui::Sense::hover(),
-                                );
-                                ui.painter().rect_filled(swatch, CornerRadius::same(2), color);
-                                ui.label(
-                                    RichText::new(format!("{}", i + 1))
-                                        .size(ui_theme::FONT_CAPTION)
-                                        .color(tokens.text_muted),
-                                );
-                                let filter_w = (inner_w - 100.0).max(80.0);
-                                let edit = ui.add(
-                                    egui::TextEdit::singleline(&mut self.filters[i])
-                                        .desired_width(filter_w)
-                                        .hint_text(tr(lang, "data.filter_hint"))
-                                        .margin(egui::vec2(4.0, 3.0)),
-                                );
-                                if edit.lost_focus() {
-                                    apply_now = true;
-                                }
-                                let mut kind = self.kinds[i];
-                                egui::ComboBox::from_id_salt(("data_kind", i))
-                                    .selected_text(kind.short_axis())
-                                    .width(56.0)
-                                    .show_ui(ui, |ui| {
-                                        for k in [
-                                            DataKind::Voltage,
-                                            DataKind::Current,
-                                            DataKind::Temperature,
-                                        ] {
-                                            ui.selectable_value(
-                                                &mut kind,
-                                                k,
-                                                format!("{} ({})", k.label(lang), k.short_axis()),
-                                            );
-                                        }
-                                    });
-                                if kind != self.kinds[i] {
-                                    self.kinds[i] = kind;
-                                    apply_now = true;
-                                }
-                            });
-                            ui.add_space(2.0);
-                        }
+                        let edit=ui.add_sized([ui.available_width(),ui_theme::CTRL_H],egui::TextEdit::singleline(&mut self.filters[i]).hint_text(if lang==Lang::Zh{"提取字段，如 TEMP"}else{"Field, e.g. TEMP"}));apply_now|=edit.lost_focus();edit.on_hover_text(tr(lang,"data.filter_hint"));
                     });
-
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(tr(lang, "data.thresholds"))
-                        .size(ui_theme::FONT_CAPTION)
-                        .strong()
-                        .color(tokens.text_primary),
-                );
-                ui.label(
-                    RichText::new(tr(lang, "data.threshold_hint"))
-                        .size(10.0)
-                        .color(tokens.text_muted),
-                );
-                let mut thr_dirty = false;
-                thr_dirty |= threshold_row(
-                    ui,
-                    tokens,
-                    lang,
-                    DataKind::Voltage,
-                    &mut self.thr_voltage_on,
-                    &mut self.thr_voltage,
-                );
-                thr_dirty |= threshold_row(
-                    ui,
-                    tokens,
-                    lang,
-                    DataKind::Current,
-                    &mut self.thr_current_on,
-                    &mut self.thr_current,
-                );
-                thr_dirty |= threshold_row(
-                    ui,
-                    tokens,
-                    lang,
-                    DataKind::Temperature,
-                    &mut self.thr_temperature_on,
-                    &mut self.thr_temperature,
-                );
-                if thr_dirty {
-                    self.persist_rules();
                 }
-                    });
+                ui.separator();ui.label(RichText::new(tr(lang,"data.thresholds")).strong()).on_hover_text(tr(lang,"data.threshold_hint"));
+                let mut dirty=threshold_row(ui,tokens,lang,DataKind::Voltage,&mut self.thr_voltage_on,&mut self.thr_voltage);
+                dirty|=threshold_row(ui,tokens,lang,DataKind::Current,&mut self.thr_current_on,&mut self.thr_current);
+                dirty|=threshold_row(ui,tokens,lang,DataKind::Temperature,&mut self.thr_temperature_on,&mut self.thr_temperature);
+                if dirty{self.persist_rules();}
             });
-
-        if source_changed {
-            self.on_source_changed(lang);
-            self.persist_rules();
-        } else if apply_now || count_changed {
-            self.persist_rules();
-            self.apply_rules(lang);
-        }
+        });
+        if source_changed{self.on_source_changed(lang);self.persist_rules();}else if apply_now{self.persist_rules();self.apply_rules(lang);}
     }
 
     fn browser_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
@@ -890,7 +706,7 @@ impl DataAnalysisPanel {
             .fill(tokens.surface_bg)
             .stroke(Stroke::new(1.0_f32, tokens.divider))
             .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
-            .inner_margin(Margin::symmetric(CARD_MARGIN_X, 8))
+            .inner_margin(Margin::symmetric(CARD_MARGIN_X, 6))
             .show(ui, |ui| {
                 ui.set_min_width(inner_w);
                 ui.set_max_width(inner_w);
@@ -1068,7 +884,7 @@ impl DataAnalysisPanel {
 
         let total_w = ui.available_width();
         let nch = self.series.iter().filter(|s| !s.points.is_empty()).count();
-        let strip_w = if nch > 0 { 56.0 } else { 0.0 };
+        let strip_w = if nch > 0 { 74.0 } else { 0.0 };
         let plot_w = (total_w - strip_w - 3.0).max(80.0);
         let plot_width_px = plot_w.max(64.0);
 
@@ -1095,8 +911,9 @@ impl DataAnalysisPanel {
                     ui.set_min_width(plot_w);
                     ui.set_max_width(plot_w);
                     plot_rect = Some(ui.max_rect());
-                    ui_theme::with_plot_well_visuals(ui, tokens, |ui| {
-                        let response = Plot::new("data_analysis_plot")
+                    let plot_tokens=if tokens.scope_dark{*tokens}else{Tokens{plot_bg:tokens.surface_bg,plot_fg:tokens.text_primary,..*tokens}};
+                    ui_theme::with_plot_well_visuals(ui, &plot_tokens, |ui| {
+                        let response = Plot::new("data_analysis_plot").grid_spacing(egui::emath::Rangef::new(28.,140.))
                             .height(height)
                             .allow_zoom(allow_zoom)
                             .allow_drag(true)
@@ -1135,14 +952,14 @@ impl DataAnalysisPanel {
                                     plot_ui.line(
                                         Line::new(pts)
                                             .name(item.label.clone())
-                                            .color(item.color)
+                                            .color(ui_theme::readable_on(item.color,plot_tokens.plot_bg))
                                             .width(width),
                                     );
                                     if item.draw_dots {
                                         let dots =
                                             PlotPoints::from_iter(item.line.iter().copied());
                                         plot_ui.points(
-                                            Points::new(dots).color(item.color).radius(2.4_f32),
+                                            Points::new(dots).color(ui_theme::readable_on(item.color,plot_tokens.plot_bg)).radius(2.4_f32),
                                         );
                                     }
                                 }
@@ -1156,7 +973,7 @@ impl DataAnalysisPanel {
                                     );
                                     plot_ui.hline(
                                         HLine::new(*y_plot)
-                                            .color(kind.threshold_color())
+                                            .color(ui_theme::readable_on(kind.threshold_color(),plot_tokens.plot_bg))
                                             .width(1.6_f32)
                                             .style(LineStyle::dashed_dense())
                                             .name(name),
@@ -1269,7 +1086,7 @@ impl DataAnalysisPanel {
             } else {
                 s.label.clone()
             };
-            rows.push((i, s.color, label, text));
+            rows.push((i, ui_theme::readable_on(s.color,tokens.surface_bg), label, text));
         }
         if rows.is_empty() {
             return;
@@ -1295,7 +1112,7 @@ impl DataAnalysisPanel {
         painter.rect_filled(
             panel,
             CornerRadius::same(4),
-            tokens.surface_bg.gamma_multiply(0.92),
+            tokens.surface_bg,
         );
         painter.rect_stroke(
             panel,
@@ -1400,7 +1217,7 @@ impl DataAnalysisPanel {
         let (sel_kind, sel_color, sel_scale, sel_offset) = sel_idx
             .map(|i| {
                 let s = &self.series[i];
-                (s.kind, s.color, s.y_scale, s.y_offset)
+                (s.kind, ui_theme::readable_on(s.color,tokens.surface_bg), s.y_scale, s.y_offset)
             })
             .unwrap_or((DataKind::Voltage, tokens.text_muted, 1.0, 0.0));
         let y_unit = sel_kind.unit();
@@ -1417,7 +1234,7 @@ impl DataAnalysisPanel {
         );
 
         // Header: selected series unit + per-division (native units of that series).
-        let header_h = 22.0_f32;
+        let header_h = 30.0_f32;
         let native_lo = plot_y_to_native(y_lo, sel_scale, sel_offset, sel_kind);
         let native_hi = plot_y_to_native(y_hi, sel_scale, sel_offset, sel_kind);
         let per_div = ((native_hi - native_lo).abs() / 8.0).max(0.0);
@@ -1429,10 +1246,10 @@ impl DataAnalysisPanel {
             sel_color,
         );
         painter.text(
-            egui::pos2(rect.center().x, rect.top() + 14.0),
+            egui::pos2(rect.center().x, rect.top() + 17.0),
             egui::Align2::CENTER_TOP,
             format!("{}{}/div", format_eng_short(per_div), y_unit),
-            egui::FontId::monospace(7.5),
+            egui::FontId::monospace(10.0),
             tokens.text_muted,
         );
 
@@ -1461,7 +1278,7 @@ impl DataAnalysisPanel {
                     egui::pos2(rect.right() - 2.0, y),
                     egui::Align2::RIGHT_CENTER,
                     format_axis_tick(*nv, y_unit, with_unit),
-                    egui::FontId::monospace(7.5),
+                    egui::FontId::monospace(10.0),
                     if self.selected.is_some() {
                         sel_color.gamma_multiply(0.9)
                     } else {
@@ -1498,7 +1315,7 @@ impl DataAnalysisPanel {
             if s.points.is_empty() {
                 continue;
             }
-            let color = s.color;
+            let color = ui_theme::readable_on(s.color,tokens.surface_bg);
             let (hy, on_screen) = handle_y(s.y_offset);
             let selected = self.selected == Some(i);
             let active =
@@ -1532,7 +1349,7 @@ impl DataAnalysisPanel {
                         egui::pos2(axis_cx, hy + radius + 1.0),
                         egui::Align2::CENTER_TOP,
                         format_scale(s.y_scale),
-                        egui::FontId::monospace(8.0),
+                        egui::FontId::monospace(10.0),
                         color.gamma_multiply(0.85),
                     );
                 }
@@ -1689,6 +1506,7 @@ impl DataAnalysisPanel {
         self.last_open_path = None;
         self.file_text = None;
         self.series.clear();
+        self.agent_generation = self.agent_generation.wrapping_add(1);
         self.frame_count = 0;
         self.cached_extent = None;
         self.last_x_range = None;
@@ -1730,7 +1548,8 @@ impl DataAnalysisPanel {
                     s.y_scale = 1.0;
                     s.y_offset = 0.0;
                 }
-                self.frame_count = 0;
+                self.agent_generation = self.agent_generation.wrapping_add(1);
+        self.frame_count = 0;
                 self.live_tail.clear();
                 self.live_cursor = 0;
                 self.live_auto_fit = true;
@@ -1779,7 +1598,8 @@ impl DataAnalysisPanel {
                     s.y_max = 0.0;
                 }
                 self.series.clear();
-                self.frame_count = 0;
+                self.agent_generation = self.agent_generation.wrapping_add(1);
+        self.frame_count = 0;
                 self.live_tail.clear();
                 self.live_cursor = 0;
                 self.live_auto_fit = true;
@@ -1922,6 +1742,7 @@ impl DataAnalysisPanel {
         self.load_progress = 0;
         self.load_progress_target = 0;
         self.series.clear();
+        self.agent_generation = self.agent_generation.wrapping_add(1);
         self.frame_count = 0;
         self.cached_extent = None;
         self.invalidate_lod();
@@ -1947,7 +1768,8 @@ impl DataAnalysisPanel {
         let header = self.frame_header.trim().to_owned();
         if header.is_empty() {
             self.series.clear();
-            self.frame_count = 0;
+            self.agent_generation = self.agent_generation.wrapping_add(1);
+        self.frame_count = 0;
             self.cached_extent = None;
             self.invalidate_lod();
             self.status = tr(lang, "data.status_need_header");
@@ -1956,7 +1778,8 @@ impl DataAnalysisPanel {
         let filters = self.rules_filter_vec();
         if filters.iter().all(|f| f.is_empty()) {
             self.series.clear();
-            self.frame_count = 0;
+            self.agent_generation = self.agent_generation.wrapping_add(1);
+        self.frame_count = 0;
             self.cached_extent = None;
             self.invalidate_lod();
             self.status = tr(lang, "data.status_need_filter");
@@ -2019,7 +1842,8 @@ impl DataAnalysisPanel {
                 Err(e) => {
                     self.series.clear();
                     self.file_text = None;
-                    self.frame_count = 0;
+                    self.agent_generation = self.agent_generation.wrapping_add(1);
+        self.frame_count = 0;
                     self.cached_extent = None;
                     self.invalidate_lod();
                     self.load_progress = 0;
@@ -2069,6 +1893,7 @@ impl DataAnalysisPanel {
             }
         }
         self.frame_count = ok.frame_count;
+        self.agent_generation=self.agent_generation.wrapping_add(1);
         self.series = ok
             .series
             .into_iter()
@@ -3340,43 +3165,15 @@ fn status_with_counts(lang: Lang, key: &str, frames: usize, points: usize) -> St
 }
 
 /// One threshold row: color swatch + checkbox + value + unit. Returns true if changed.
-fn threshold_row(
-    ui: &mut egui::Ui,
-    tokens: &Tokens,
-    lang: Lang,
-    kind: DataKind,
-    on: &mut bool,
-    value: &mut f64,
-) -> bool {
-    let mut dirty = false;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let (swatch, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
-        ui.painter()
-            .rect_filled(swatch, CornerRadius::same(2), kind.threshold_color());
-        if ui
-            .checkbox(on, RichText::new(kind.label(lang)).size(ui_theme::FONT_CAPTION))
-            .changed()
-        {
-            dirty = true;
-        }
-        let edit = ui.add(
-            egui::DragValue::new(value)
-                .speed(0.01)
-                .max_decimals(4)
-                .min_decimals(0),
-        );
-        // Persist on commit (lost focus) to avoid rewriting config every drag frame.
-        if edit.lost_focus() {
-            dirty = true;
-        }
-        ui.label(
-            RichText::new(kind.unit())
-                .size(ui_theme::FONT_CAPTION)
-                .color(tokens.text_muted),
-        );
+fn threshold_row(ui:&mut egui::Ui,tokens:&Tokens,lang:Lang,kind:DataKind,on:&mut bool,value:&mut f64)->bool{
+    let mut dirty=false;
+    ui_theme::form_row(ui,&kind.label(lang),|ui|{
+        dirty|=ui.checkbox(on,"").on_hover_text(tr(lang,"data.threshold_hint")).changed();
+        let width=ui.available_width();
+        let response=ui.add_sized([width,ui_theme::CTRL_H],egui::DragValue::new(value).speed(0.01).max_decimals(4).min_decimals(2).suffix(format!(" {}",kind.unit())));
+        dirty|=response.drag_stopped()||response.lost_focus();
     });
-    dirty
+    let _=tokens;dirty
 }
 
 fn format_eng_short(value: f64) -> String {
@@ -3667,4 +3464,40 @@ VOLT 3.4
         assert_eq!(DataSource::from_config_str("serial").as_config_str(), "serial");
         assert_eq!(DataSource::from_config_str("file").as_config_str(), "file");
     }
+}
+
+#[derive(Default)]
+struct AgentReducer{count:u64,invalid:u64,min:Option<f64>,max:Option<f64>,mean:f64,scale:f64,ssq:f64,above:u64}
+pub(crate) struct AgentDataStats{signature:String,cutoffs:Vec<usize>,edges:Vec<(Option<[f64;2]>,Option<[f64;2]>)>,series:usize,offset:usize,reducers:Vec<AgentReducer>}
+impl DataAnalysisPanel{
+ pub(crate) fn agent_identity(&self)->String{format!("{}:{:?}:{}:{:?}:{:?}",self.source==DataSource::SerialLive,self.last_open_path,self.series_count,self.filters,(self.agent_generation,&self.kinds))}
+ pub(crate) fn agent_statistics(&self,job:&mut Option<AgentDataStats>,begin:bool)->Value{
+  let signature=format!("{}:{:?}:{:?}",self.agent_identity(),self.series.iter().map(|s|(&s.label,s.kind)).collect::<Vec<_>>(),[(self.thr_voltage_on,self.thr_voltage),(self.thr_current_on,self.thr_current),(self.thr_temperature_on,self.thr_temperature)]);
+  if begin{*job=Some(AgentDataStats{signature:signature.clone(),cutoffs:self.series.iter().map(|s|s.points.len()).collect(),edges:self.series.iter().map(|s|(s.points.first().copied(),s.points.last().copied())).collect(),series:0,offset:0,reducers:self.series.iter().map(|_|AgentReducer::default()).collect()});}
+  let Some(job)=job.as_mut()else{return json!({"ok":false,"error":"数据统计任务不存在"})};if signature!=job.signature||self.series.iter().enumerate().any(|(i,s)|s.points.len()<job.cutoffs[i]||format!("{:?}",(if job.cutoffs[i]>0{s.points.first().copied()}else{None},job.cutoffs[i].checked_sub(1).and_then(|n|s.points.get(n).copied())))!=format!("{:?}",job.edges[i])){return json!({"ok":false,"error":"数据源在统计过程中发生变化，未报告全量结论；实时采集请先保存快照"});}
+  let at=std::time::Instant::now();let mut processed=0;
+  while job.series<self.series.len()&&processed<20000&&at.elapsed()<std::time::Duration::from_millis(4){
+   let series=&self.series[job.series];if job.offset>=job.cutoffs[job.series]{job.series+=1;job.offset=0;continue;}
+   let value=series.points[job.offset][1];job.offset+=1;processed+=1;let stats=&mut job.reducers[job.series];if !value.is_finite(){stats.invalid+=1;continue;}
+   stats.count+=1;stats.min=Some(stats.min.map_or(value,|v|v.min(value)));stats.max=Some(stats.max.map_or(value,|v|v.max(value)));stats.mean=stats.mean*(1.-1./stats.count as f64)+value/stats.count as f64;
+   let magnitude=value.abs();if magnitude>0.{if stats.scale<magnitude{stats.ssq=1.+stats.ssq*(stats.scale/magnitude).powi(2);stats.scale=magnitude;}else{stats.ssq+=(magnitude/stats.scale).powi(2);}}
+   let threshold=match series.kind{DataKind::Voltage=>self.thr_voltage_on.then_some(self.thr_voltage),DataKind::Current=>self.thr_current_on.then_some(self.thr_current),DataKind::Temperature=>self.thr_temperature_on.then_some(self.thr_temperature)};if threshold.is_some_and(|limit|value>limit){stats.above+=1;}
+  }
+  if job.series<self.series.len(){return json!({"_agent_wait":{"method":"data.statistics.result","params":{},"interval_ms":16}});}
+  json!({"ok":job.reducers.iter().any(|s|s.count>0),"data":{"coverage":"immutable cutoff of each curve at query start; appended samples excluded","raw_samples_uploaded":false,"x_axis":"frame index, not synchronized physical time","series":self.series.iter().zip(&job.reducers).enumerate().map(|(i,(series,stats))|json!({"index":i,"label":series.label,"unit":series.kind.unit(),"sample_count":stats.count,"invalid_samples":stats.invalid,"quality_complete":stats.count>0&&stats.invalid==0,"min":stats.min,"max":stats.max,"mean":(stats.count>0&&stats.mean.is_finite()).then_some(stats.mean),"rms":if stats.count>0{Some(stats.scale*(stats.ssq/stats.count as f64).sqrt())}else{None},"points":job.cutoffs[i],"new_points_excluded":series.points.len().saturating_sub(job.cutoffs[i]),"first_frame":series.points.first().map(|p|p[0]),"last_frame":job.cutoffs[i].checked_sub(1).and_then(|n|series.points.get(n)).map(|p|p[0]),"above_configured_upper_limit":match series.kind{DataKind::Voltage=>self.thr_voltage_on.then_some(stats.above),DataKind::Current=>self.thr_current_on.then_some(stats.above),DataKind::Temperature=>self.thr_temperature_on.then_some(stats.above)}})).collect::<Vec<_>>()}})
+ }
+}
+
+#[cfg(test)]mod agent_statistics_tests{
+ use super::*;
+ #[test]fn all_points_are_reduced_once_and_missing_values_are_explicit(){let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.series_count=2;panel.ensure_series_shells(Lang::Zh);panel.series[0].points=vec![[0.,1.],[1.,2.],[2.,3.],[3.,f64::NAN]];panel.thr_voltage_on=true;panel.thr_voltage=2.;let mut job=None;let result=panel.agent_statistics(&mut job,true);let s=&result["data"]["series"][0];assert_eq!(s["sample_count"],3);assert_eq!(s["invalid_samples"],1);assert_eq!(s["mean"],2.);assert!((s["rms"].as_f64().unwrap()-(14f64/3.).sqrt()).abs()<1e-12);assert_eq!(s["above_configured_upper_limit"],1);assert_eq!(s["quality_complete"],false);let empty=&result["data"]["series"][1];assert!(empty["min"].is_null());assert!(empty["mean"].is_null());}
+ #[test]fn incremental_statistics_reject_replaced_sources(){let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.series_count=2;panel.ensure_series_shells(Lang::Zh);panel.series[0].points=(0..50000).map(|i|[i as f64,5.]).collect();let mut job=None;let result=panel.agent_statistics(&mut job,true);assert!(result.get("_agent_wait").is_some());panel.series[0].points[0]=[0.,99.];assert_eq!(panel.agent_statistics(&mut job,false)["ok"],false);}
+}
+
+#[cfg(test)]impl DataAnalysisPanel{pub(crate) fn prepare_style_audit(&mut self){self.series_count=3;self.filters[0]="VIN".into();self.filters[1]="IOUT".into();self.filters[2]="TEMP".into();self.kinds[0]=DataKind::Voltage;self.kinds[1]=DataKind::Current;self.kinds[2]=DataKind::Temperature;self.ensure_series_shells(Lang::Zh);for(i,series)in self.series.iter_mut().enumerate(){series.points=(0..240).map(|n|[n as f64,match i{0=>5000.+(n as f64*0.05).sin()*100.,1=>1000.+(n as f64*0.08).cos()*50.,_=>25.+n as f64*0.04}]).collect();series.y_min=series.points.iter().map(|p|p[1]).fold(f64::INFINITY,f64::min);series.y_max=series.points.iter().map(|p|p[1]).fold(f64::NEG_INFINITY,f64::max);series.disp_dirty=true;}self.frame_count=240;self.thr_voltage=5400.;self.thr_voltage_on=true;self.thr_current=1500.;self.thr_current_on=true;self.thr_temperature=45.;self.thr_temperature_on=true;self.fit_request=true;}}
+
+#[cfg(test)]mod remediation_snapshot_tests{
+ use super::*;
+ #[test]fn live_append_reallocation_does_not_change_snapshot_cutoff(){let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.source=DataSource::SerialLive;panel.series_count=1;panel.ensure_series_shells(Lang::Zh);panel.series[0].points=(0..60000).map(|i|[i as f64,2.]).collect();let identity=panel.agent_identity();let mut job=None;assert!(panel.agent_statistics(&mut job,true).get("_agent_wait").is_some());panel.series[0].points.extend((60000..90000).map(|i|[i as f64,100.]));assert_eq!(identity,panel.agent_identity());let result=loop{let r=panel.agent_statistics(&mut job,false);if r.get("_agent_wait").is_none(){break r;}};assert_eq!(result["data"]["series"][0]["sample_count"],60000);assert_eq!(result["data"]["series"][0]["mean"],2.);assert_eq!(result["data"]["series"][0]["new_points_excluded"],30000);}
+ #[test]fn empty_curves_are_not_complete_measurements(){let panel=DataAnalysisPanel::new(&AppConfig::default());let mut job=None;let r=panel.agent_statistics(&mut job,true);assert_eq!(r["ok"],false);for series in r["data"]["series"].as_array().unwrap(){assert_eq!(series["quality_complete"],false);}}
 }

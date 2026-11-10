@@ -881,7 +881,7 @@ fn error(ui: &mut egui::Ui, value: Option<&str>) {
             ui.label(
                 egui::RichText::new(value)
                     .small()
-                    .color(Color32::from_rgb(239, 68, 68)),
+                    .color(crate::theme::error_color(ui)),
             );
         }
     });
@@ -1032,4 +1032,14 @@ mod tests {
             );
         }
     }
+}
+
+impl ConverterPanel{
+ pub(crate) fn agent_calculate(&mut self,f:&serde_json::Value)->serde_json::Value{
+  let result=match f["tab"].as_str(){
+   Some("scientific")=>{self.tab=ConverterTab::Scientific;self.expression=f["expression"].as_str().unwrap_or("").into();self.angle_mode=if f["angle_mode"]=="degrees"{AngleMode::Degrees}else{AngleMode::Radians};evaluate_expression(&self.expression,self.angle_mode).map(|v|v.to_string())},
+   Some("radix")=>{self.tab=ConverterTab::Radix;self.radix_input=f["input"].as_str().unwrap_or("").into();self.source_base=f["source_base"].as_u64().unwrap_or(10) as u32;self.target_base=f["target_base"].as_u64().unwrap_or(16) as u32;convert_radix(&self.radix_input,self.source_base,self.target_base)},
+   Some("ascii")=>{self.tab=ConverterTab::Ascii;self.byte_input=f["input"].as_str().unwrap_or("").into();self.byte_base=if f["base"]=="decimal"{ByteBase::Decimal}else{ByteBase::Hex};self.byte_direction=if f["direction"]=="bytes_to_text"{ByteDirection::BytesToText}else{ByteDirection::TextToBytes};match self.byte_direction{ByteDirection::TextToBytes=>utf8_to_bytes(&self.byte_input,self.byte_base),ByteDirection::BytesToText=>bytes_to_utf8(&self.byte_input,self.byte_base)}},_=>Err("未知转换工具".into())};
+  match result{Ok(value)=>{self.expression_error=None;self.radix_error=None;self.byte_error=None;match self.tab{ConverterTab::Scientific=>self.expression_result=value.clone(),ConverterTab::Radix=>self.radix_result=value.clone(),ConverterTab::Ascii=>self.byte_result=value.clone()};serde_json::json!({"ok":true,"data":{"input":f,"result":value,"calculation_only":true}})},Err(error)=>serde_json::json!({"ok":false,"error":error})}
+ }
 }
