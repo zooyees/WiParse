@@ -1,4 +1,4 @@
-# WiParse MCP Server 1.2.3
+# WiParse MCP Server 1.2.4
 
 通过 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 把 WiParse 暴露给 Agent。
 
@@ -7,7 +7,7 @@
 ## 前置条件
 
 - Node.js 18+
-- 已启动的 `WiParse.exe`；建议与 MCP 同为 1.2.3；工程共享配置、迁移与结果详情接口需要 GUI 1.2.2。
+- 已启动的 `WiParse.exe`；建议与 MCP 同为 1.2.4；工程共享配置、迁移与结果详情接口需要 GUI 1.2.2。
 
 对机部署（解压 zip、注册 Cursor）见 [`docs/DEPLOY_MCP.md`](../../docs/DEPLOY_MCP.md)。双击包内 `mcp/wiparse/setup-mcp.cmd` 即可。
 

@@ -5798,7 +5798,7 @@ dependencies = [
 
 [[package]]
 name = "wiparse-cli"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5812,7 +5812,7 @@ dependencies = [
 
 [[package]]
 name = "wiparse-core"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "chrono",
  "crossbeam-channel",
@@ -5841,7 +5841,7 @@ dependencies = [
 
 [[package]]
 name = "wiparse-gui"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "bytemuck",
  "chrono",
@@ -5872,7 +5872,7 @@ dependencies = [
 
 [[package]]
 name = "wiparse-service"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "chrono",
  "serde",

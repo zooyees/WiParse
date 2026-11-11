@@ -22,6 +22,10 @@ foreach($pair in @(@('wiparse-gui.exe','WiParse.exe'),@('wiparse.exe','WiParse-C
 Copy-PreviewTree (Join-Path $repo 'test-tools') (Join-Path $output 'test-tools')
 New-Item -ItemType Directory -Path (Join-Path $output 'docs/reviews') -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo 'docs/reviews/engineering-agent-candidate-2026-11-11.md') -Destination (Join-Path $output 'docs/reviews')
+foreach ($name in @("engineering-agent-$version.md",'ai-wiparse-engineering-fit-2026-11-11.md','ai-agent-intelligence-review-2026-11-10.md')) {
+ $path=Join-Path $repo "docs/reviews/$name"
+ if(Test-Path -LiteralPath $path){Copy-Item -LiteralPath $path -Destination (Join-Path $output 'docs/reviews')}
+}
 Copy-PreviewTree (Join-Path $repo 'mcp/wiparse') (Join-Path $output 'mcp/wiparse')
 Copy-PreviewTree (Join-Path $repo 'recipes/fpga-firmware-test') (Join-Path $output 'recipes/fpga-firmware-test')
 if(Test-Path -LiteralPath (Join-Path $repo 'docs/specs/wireless-test')){Copy-PreviewTree (Join-Path $repo 'docs/specs/wireless-test') (Join-Path $output 'docs/specs/wireless-test')}
@@ -32,7 +36,13 @@ New-Item -ItemType Directory -Path (Join-Path $output 'docs') -Force|Out-Null
 if(Test-Path -LiteralPath (Join-Path $repo 'docs/licenses')){Copy-PreviewTree (Join-Path $repo 'docs/licenses') (Join-Path $output 'docs/licenses')}
 foreach($doc in @('HUB_PROJECT_CONFIG_CONTRACT.md','HUB_UI_FIELDS_CONTRACT.md','AI_INTERFACE.md','CHANGELOG.md')){Copy-Item -LiteralPath (Join-Path $repo "docs/$doc") -Destination (Join-Path $output "docs/$doc")}
 if(Test-Path -LiteralPath (Join-Path $repo "docs/ui-testing-hub-$version")){Copy-PreviewTree (Join-Path $repo "docs/ui-testing-hub-$version") (Join-Path $output "docs/ui-testing-hub-$version")}
-if(Test-Path -LiteralPath (Join-Path $repo "docs/releases/$version.md")){Copy-Item -LiteralPath (Join-Path $repo "docs/releases/$version.md") -Destination (Join-Path $output 'docs/release-notes.md')}
+$releaseNote=Join-Path $repo "docs/releases/$version.md"
+if(Test-Path -LiteralPath $releaseNote){
+ New-Item -ItemType Directory -Path (Join-Path $output 'docs/releases') -Force | Out-Null
+ Copy-Item -LiteralPath $releaseNote -Destination (Join-Path $output 'docs/releases')
+ $notes=[IO.File]::ReadAllText($releaseNote).Replace('](../reviews/','](reviews/')
+ [IO.File]::WriteAllText((Join-Path $output 'docs/release-notes.md'),$notes,[Text.UTF8Encoding]::new($false))
+}
 # The shipped demo recipes are legacy migration sources. Keep them untouched so
 # users can inspect the plan and explicitly commit within the preview UI.
 $readme="WiParse $version EXE preview`r`n`r`nRun bin\WiParse.exe in this directory; keep adjacent dependencies. Node.js 18+ is required for test plugins.`r`nThe 20 shipped FPGA examples retain their original parameters. Open Project settings, preview the legacy migration, inspect mappings, then explicitly commit. Existing user data is not migrated automatically.`r`nNo ZIP has been generated. Full packaging follows user confirmation.`r`n"

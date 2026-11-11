@@ -1,5 +1,6 @@
 //! One bounded task at a time over the existing shared provider transport.
 mod report_view;
+mod read_batch;
 use super::*;
 use serde_json::{json, Value};
 use std::{
@@ -124,6 +125,9 @@ pub(crate) struct Session {
     queue_paused:bool,
     native_pending: Option<(wiparse_core::ai::tools::Assistant,Call)>,
     native_rounds: Vec<wiparse_core::ai::tools::Round>,
+    batch_remaining: VecDeque<Call>,
+    batch_outputs: Vec<Value>,
+    incomplete_progress: Option<(Vec<String>,u64)>,
     evidence_sequence: u64,
     repair_attempted: bool,
     awaiting_input:bool,
@@ -175,7 +179,7 @@ impl Default for Session {
             config: None,
             resume_model: false,
             revision: None,questions:VecDeque::new(),queue_paused:false,
-            native_pending: None,
+            native_pending: None, batch_remaining:VecDeque::new(),batch_outputs:Vec::new(),incomplete_progress:None,
             native_rounds: vec![],
             evidence_sequence: 0,
             repair_attempted: false,
@@ -354,7 +358,7 @@ impl Session {
             }
         }
         if let Some(r)=&request {
-            if !r.internal && contract::tool(&r.call.method).is_some_and(|t|matches!(t.effect,Effect::Device|Effect::Test)){
+            if !r.internal && contract::validate(&r.call).is_ok_and(|t|matches!(t.effect,Effect::Device|Effect::Test)){
                 self.checkpoint("awaiting_readback",Some((&r.call.method,&json!({"state":"dispatching","command_fingerprint":crate::ai::journal::command_fingerprint(&r.call.method,&r.call.params),"command_id":r.id,"device_id":r.call.params.get("device_id")}))));
             }
         }
@@ -477,6 +481,7 @@ impl Session {
         self.revision=None;
         self.stream_preview=None;
         self.native_pending=None;
+        self.batch_remaining.clear();self.batch_outputs.clear();self.incomplete_progress=None;
         self.cancel.store(true, Ordering::Release);
         if let Some(model) = self.model.take() {
             model.cancel();
@@ -575,7 +580,7 @@ impl Session {
             })
             .collect();
         wiparse_core::ai::context::deduplicate_current(&mut history, &self.question);
-        let mut request=AiRequest{purpose:format!("{}\n{}\nThis shared host accepts ONE call per response; do not batch calls. Follow the active transport contract. Relevant read-only analysis is already authorized; do not ask the user to say scan/start/continue. A plan without a call is not completion.",format!("{}\n{}\n{}",if native {wiparse_core::ai::context::NATIVE}else{contract::CONTRACT},wiparse_core::ai::workflow::GUIDANCE,wiparse_core::ai::workflow::profile(&context.page)),catalog),text:json!({"task_id":self.task,"user_request":self.question,"page":context.page,"project":context.project,"permissions":{"read_current_data":self.read_data,"cross_tools":self.cross_tools,"application_changes":self.application,"device_and_test_actions":"explicit operator confirmation per concrete action"},"verified_evidence":self.observations.iter().filter(|e|e["scope"]["binding"]==context.binding&&e["tool"].as_str().is_some_and(|m|self.evidence_allowed(m))).collect::<Vec<_>>(),"workflow":self.workflow.state(),"evidence_index":if self.read_data{self.evidence_index()}else{Value::Null},"budget":{"round":self.round,"max_rounds":self.max_rounds},"testing_active":context.testing}).to_string()};
+        let mut request=AiRequest{purpose:format!("{}\n{}\nNative transport accepts up to four independent read-only queries in one response. Ask for report pages together only when their coordinates are already known. Submit mutations, plans and dependent work separately. JSON transport accepts one call at a time. Follow the active transport contract. Relevant read-only analysis is already authorized; do not ask the user to say scan/start/continue. A plan without a call is not completion.",format!("{}\n{}\n{}",if native {wiparse_core::ai::context::NATIVE}else{contract::CONTRACT},wiparse_core::ai::workflow::GUIDANCE,wiparse_core::ai::workflow::profile(&context.page)),catalog),text:json!({"task_id":self.task,"user_request":self.question,"page":context.page,"project":context.project,"permissions":{"read_current_data":self.read_data,"cross_tools":self.cross_tools,"application_changes":self.application,"device_and_test_actions":"explicit operator confirmation per concrete action"},"verified_evidence":self.observations.iter().filter(|e|e["scope"]["binding"]==context.binding&&e["tool"].as_str().is_some_and(|m|self.evidence_allowed(m))).collect::<Vec<_>>(),"workflow":self.workflow.state(),"evidence_index":if self.read_data{self.evidence_index()}else{Value::Null},"budget":{"round":self.round,"max_rounds":self.max_rounds},"testing_active":context.testing}).to_string()};
         let functions=wiparse_core::ai::tools::host_functions(contract::TOOLS.iter().filter(|t| (self.cross_tools||matches!(t.page,"any"|"current")||t.page==context.page)&& (self.read_data||t.effect==Effect::LocalCompute) &&(self.application||t.effect!=Effect::Application)).map(|t|t.method).collect());
         let mut host_context=None;
         if native {if let Ok(mut payload)=serde_json::from_str::<Value>(&request.text){payload["verified_evidence"]=json!({"details":"native tool messages or agent.evidence"});request.text=payload.to_string();}let (base,base_history)=self.native_base.get_or_insert_with(||(request.clone(),history.clone()));if request.text!=base.text{let mut update=serde_json::from_str::<Value>(&request.text).unwrap();update.as_object_mut().unwrap().remove("user_request");host_context=Some(update.to_string());}request=base.clone();history=base_history.clone();}
@@ -669,20 +674,23 @@ impl Session {
         } else {
             "完成"
         };
+        let next=self.pair_native_output(&wait.origin,&data);
         self.record_step(&wait, data, status);
+        if let Some(next)=next {
+            if self.revision.is_none(){self.enqueue(next,false);return;}
+            self.native_pending=None;self.batch_remaining.clear();self.batch_outputs.clear();
+        }
         self.confirmed = None;
         self.resume_model = true;
         self.status = "已取得宿主结果，继续分析…".into();
     }
     fn record_step(&mut self, wait: &Waiting, data: Value, status: &str) {
-        if self.native_pending.as_ref().is_some_and(|(_,call)|call==&wait.origin){let(assistant,_)=self.native_pending.take().unwrap();self.native_rounds.push(wiparse_core::ai::tools::Round{assistant,outputs:vec![json!({"evidence_id":format!("E{}",self.evidence_sequence+1),"result":data})]});}
-        while self.native_rounds.len()>6||serde_json::to_vec(&self.native_rounds).map_or(usize::MAX,|v|v.len())>96*1024{if self.native_rounds.len()<=1{break;}self.native_rounds.remove(0);}
         self.evidence_sequence += 1;
         let id = format!("E{}", self.evidence_sequence);
         let method = wait.origin.method.clone();
         if self.first_evidence_ms.is_none()&&data["ok"]==true&&!method.starts_with("agent.")&&self.task==wait.task{self.first_evidence_ms=self.started.map(|t|t.elapsed().as_millis() as u64);}
         if self.context.as_ref().is_some_and(|c|c.project==wait.request.context.project&&c.binding==wait.request.context.binding){self.workflow.record(&id,&method,&data);}
-        if self.task==wait.task && wait.poll.is_none() && data["ok"]==true && data["data"]["accepted"]!=true && contract::tool(&method).is_some_and(|t|matches!(t.effect,Effect::Device|Effect::Test)){
+        if self.task==wait.task && wait.poll.is_none() && data["ok"]==true && data["data"]["accepted"]!=true && contract::validate(&wait.origin).is_ok_and(|t|matches!(t.effect,Effect::Device|Effect::Test)){
             self.checkpoint("running",Some((&method,&json!({"state":"completed","command_id":wait.request.id}))));
         }
         if self.task==wait.task{self.checkpoint("running",Some((&method,&json!({"result":data,"ok":data["ok"],"evidence_id":id}))));}
@@ -796,7 +804,9 @@ impl Session {
                         return;
                     }
                     let proposed=if let Some(message)=&reply.tool_message{
-                        if message.calls.len()!=1 {Err("AGENT.EXACTLY_ONE_NATIVE_CALL_REQUIRED".into())}else{
+                        if message.calls.len()>1 {
+                            self.prepare_read_batch(message).and_then(|call|contract::parse(&json!({"reply":"","call":call}).to_string()))
+                        }else if message.calls.is_empty(){Err("AGENT.EMPTY_NATIVE_CALL".into())}else{
                             let c=&message.calls[0];let p=serde_json::from_str::<Value>(&c.arguments).ok();
                             match (c.name.as_str(),p){
                                 ("wiparse_call"|"wiparse_log_files"|"wiparse_log_analyze"|"wiparse_log_events"|"wiparse_log_timeline"|"wiparse_plan"|"wiparse_evidence"|"wiparse_help"|"wiparse_report_read",Some(_))=>match wiparse_core::ai::tools::normalized(c){Ok((method,params))=>contract::parse(&json!({"reply":"","call":{"method":method,"params":params}}).to_string()),Err(_)=>Err("AGENT.INVALID_NATIVE_ARGUMENTS".into())},
@@ -821,7 +831,15 @@ impl Session {
                         Ok(answer) => {
                             let needs_input = answer.status == Some(contract::FinalStatus::NeedsInput);
                             if answer.call.is_none()&&!needs_input&&!self.workflow.open_goals().is_empty(){
-                                self.message("assistant",format!("任务还有未完成目标：{}。继续取证并更新任务清单，或说明实际阻塞条件。",self.workflow.open_goals().join("；")));
+                                let goals=self.workflow.open_goals();
+                                let current=(goals.clone(),self.evidence_sequence);
+                                if self.incomplete_progress.as_ref()==Some(&current) {
+                                    if self.first_evidence_ms.is_none() && self.try_scope_read(){return;}
+                                    let reason=format!("部分完成。仍缺少{}所需的证据或产物。已取得的结果可从执行记录查看。",goals.join("、"));
+                                    self.message("assistant",reason.clone());self.end_task(&reason,"partial");return;
+                                }
+                                self.incomplete_progress=Some(current);
+                                self.message("assistant",format!("任务还有未完成目标：{}。继续取证并更新任务清单，或说明实际阻塞条件。",goals.join("；")));
                                 self.request_model(service);return;
                             }
                             if !answer.reply.trim().is_empty() {

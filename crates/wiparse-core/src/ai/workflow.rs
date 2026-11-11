@@ -32,6 +32,8 @@ struct Evidence {
     value: Value,
     summary: Value,
     truncated: bool,
+    retained_bytes: usize,
+    encoded_page: std::sync::OnceLock<String>,
 }
 #[derive(Default, Clone)]
 pub struct Workflow {
@@ -39,10 +41,12 @@ pub struct Workflow {
     previous_steps: Vec<Step>,
     requested: Vec<(String,String)>,
     satisfied: std::collections::HashSet<String>,
-    evidence: VecDeque<Evidence>,
+    evidence: VecDeque<std::sync::Arc<Evidence>>,
+    evidence_bytes: usize,
 }
 fn supports_deliverable(kind:&str,method:&str,value:&Value,d:&Value)->bool {
 match kind {
+                            "present_curve" => method=="data.present" && d["presented"]==true && d["records"].as_u64().is_some_and(|n|n>0),
                             "curve" => (method=="data.present"&&d["presented"]==true&&d["records"].as_u64().is_some_and(|n|n>0)) || d["timeline_analysis"]["sources"].as_array().is_some_and(
                                 |sources| {
                                     sources.iter().any(|s| {
@@ -70,6 +74,7 @@ match kind {
 const REQUIREMENTS: &[(&str,&str,&[&str])] = &[
     ("cycle_duration","计算充电时长",&["计算充电时长","计算充电时间","算充电时长","算时长","calculate charging duration"]),
     ("curve","绘制数据曲线",&["绘制功率曲线","画功率曲线","绘制曲线","画曲线","画图","绘图","画出","plot the power curve","plot a curve"]),
+    ("present_curve","在数据分析页展示曲线",&["在数据分析页显示","打开数据分析页展示","导入数据分析页","在数据分析工具中展示","在数据分析工具中显示","在数据分析工具中呈现","通过数据分析工具进行数据呈现","在数据分析页面呈现","在数据分析页展示","在数据分析页面显示","plot in the data analysis tool","present in data analysis","plot in data analysis"]),
     ("protocol","核查协议通信",&["检查协议","核查协议","检查充电过程中协议","分析协议通信","标出对应协议帧","标出相关协议帧","check protocol communication"]),
     ("report_file","生成报告文件",&["生成报告","形成报告","保存报告","生成测试报告","存报告","导出报告","save a report","generate a report"]),
 ];
@@ -100,7 +105,11 @@ impl Workflow {
             for prefix in ["请问","请","please "] {clause=clause.strip_prefix(prefix).unwrap_or(clause).trim();}
             if ["怎么","如何","是否支持","怎样","how to","how do","do you support","can you explain"].iter().any(|s|clause.starts_with(s)){explanatory=true;continue;}
             if explanatory {continue;}
+            let analysis_plot=(clause.contains("数据分析页") || clause.contains("数据分析工具")) &&
+                ["画图","绘图","绘制","画出","显示曲线","呈现曲线","展示曲线"].iter().any(|v|clause.contains(v));
             for &(kind,title,terms) in REQUIREMENTS {
+                let kind=if kind=="curve" && analysis_plot {"present_curve"} else {kind};
+                let title=if kind=="present_curve" {"在数据分析页展示曲线"} else {title};
                 let Some(at)=terms.iter().filter_map(|term|clause.find(term)).min() else {continue;};
                 let prefix=&clause[..at];
                 let cancel=["不要","不用","无需","取消","跳过","do not","don't","skip ","without "].iter()
@@ -172,27 +181,18 @@ impl Workflow {
                 o.insert("last_line".into(),rows.last().map_or(Value::Null,|r|r["line"].clone()));
             }
         }
-        let truncated = value.to_string().len() > 1024 * 1024;
-        self.evidence.push_back(Evidence {
+        let bytes = value.to_string().len();
+        let truncated = bytes > 1024 * 1024;
+        let retained = if truncated {json!({"ok":ok,"summary":summary,"detail_omitted":true})} else {value.clone()};
+        let retained_bytes=if truncated {retained.to_string().len()} else {bytes};
+        self.evidence_bytes+=retained_bytes;
+        self.evidence.push_back(std::sync::Arc::new(Evidence {
             id: id.into(),
             method: method.into(),
-            value: if truncated {
-                json!({"ok":ok,"summary":summary,"detail_omitted":true})
-            } else {
-                value.clone()
-            },
-            summary,
-            truncated,
-        });
-        while self.evidence.len() > 48
-            || self
-                .evidence
-                .iter()
-                .map(|e| e.value.to_string().len())
-                .sum::<usize>()
-                > 8 * 1024 * 1024
-        {
-            self.evidence.pop_front();
+            value:retained, summary, truncated, retained_bytes, encoded_page:Default::default(),
+        }));
+        while self.evidence.len()>48 || self.evidence_bytes>8*1024*1024 {
+            if let Some(old)=self.evidence.pop_front(){self.evidence_bytes-=old.retained_bytes;}else{break;}
         }
     }
     pub fn index(&self) -> Value {
@@ -224,19 +224,20 @@ impl Workflow {
     /// Bounded, lossless UTF-8 JSON chunks for evidence too large for one model turn.
     pub fn page(&self, params: &Value) -> Result<Value, String> {
         validate_management("agent.evidence", params)?;
-        let value = self.get(params["evidence_id"].as_str().unwrap())?;
-        let text = value.to_string();
-        if params.get("offset").is_none() && text.len() <= 48 * 1024 { return Ok(value); }
+        let id=params["evidence_id"].as_str().unwrap();
+        let e=self.evidence.iter().find(|e|e.id==id).ok_or("AGENT.EVIDENCE_NOT_RETAINED: refresh source")?;
+        if params.get("offset").is_none() && e.retained_bytes<47*1024 {return self.get(id);}
+        let text=e.encoded_page.get_or_init(||json!({"ok":true,"evidence_id":e.id,"method":e.method,"result":e.value,"truncated":e.truncated}).to_string());
         let offset = params["offset"].as_u64().unwrap_or(0) as usize;
         if offset > text.len() || !text.is_char_boundary(offset) {
             return Err("AGENT.INVALID_EVIDENCE_OFFSET: use returned next_offset".into());
         }
         let mut end = (offset + 16 * 1024).min(text.len());
         while !text.is_char_boundary(end) { end -= 1; }
-        Ok(json!({"ok":true,"evidence_id":params["evidence_id"],"method":value["method"],
+        Ok(json!({"ok":true,"evidence_id":params["evidence_id"],"method":e.method,
             "encoding":"utf8_json_fragment","text":&text[offset..end],"offset":offset,
             "next_offset":if end < text.len(){Some(end)}else{None},"total_bytes":text.len(),
-            "complete":end==text.len(),"source_truncated":value["truncated"]}))
+            "complete":end==text.len(),"source_truncated":e.truncated}))
     }
     /// Map a log timestamp between two observed log/decoder boundary pairs.
     /// Pair selection is an engineering hypothesis; residual drift between anchors is unknown.
@@ -364,7 +365,7 @@ pub fn validate_management(method: &str, p: &Value) -> Result<(), String> {
                     || s.title.len() > 240
                     || !matches!(
                         s.deliverable.as_str(),
-                        "analysis" | "curve" | "calculation" | "report" | "operation" | "report_file" | "protocol" | "cycle_duration"
+                        "analysis" | "curve" | "present_curve" | "calculation" | "report" | "operation" | "report_file" | "protocol" | "cycle_duration"
                     )
                     || s.evidence_ids.len() > 16
                     || s.evidence_ids.iter().any(|s| s.is_empty() || s.len() > 64)
@@ -583,5 +584,32 @@ mod engineering_fit_tests {
         p["calibration"]=json!({"first_pair_error_s":0.001,"last_pair_error_s":0.003,"residual_rate_bound_ppm":100});assert!((w.align(&p).unwrap()["data"]["conditional_error_bound_s"].as_f64().unwrap()-0.0025).abs()<1e-10);
         p["log_time_s"]=json!(12);assert!(w.align(&p).is_err());
         w.new_task();assert!(w.open_goals().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod presentation_goals {
+    use super::*;
+    #[test]
+    fn explicit_page_requires_confirmed_presentation() {
+        let mut flow=Workflow::default();
+        flow.bind_request("提取数据，并通过数据分析工具进行数据呈现");
+        flow.record("S1","log.analyze",&json!({"ok":true,"data":{"timeline_analysis":{"sources":[{"points":[[1,2]]}]}}}));
+        assert!(flow.open_goals().iter().any(|g|g.contains("present_curve")));
+        flow.record("S2","data.present",&json!({"ok":true,"data":{"presented":true,"records":20}}));
+        assert!(flow.open_goals().is_empty());
+    }
+    #[test]
+    fn evidence_pages_are_lossless_after_workflow_clone() {
+        let mut flow=Workflow::default();
+        flow.record("large","report.read",&json!({"ok":true,"data":{"text":"充电".repeat(16000)}}));
+        let mut bytes=String::new();
+        let mut cursor=0;
+        loop {
+            let page=flow.page(&json!({"evidence_id":"large","offset":cursor})).unwrap();
+            bytes.push_str(page["text"].as_str().unwrap());
+            if let Some(next)=page["next_offset"].as_u64(){cursor=next;}else{break;}
+        }
+        assert_eq!(serde_json::from_str::<Value>(&bytes).unwrap(),flow.clone().get("large").unwrap());
     }
 }

@@ -207,3 +207,37 @@ fn missing_input_with_open_goals_stops_in_native_and_json_modes(){
         worker.join().unwrap();assert!(s.status.contains("等待补充"),"{}",s.status);assert_eq!(s.round,1);assert!(!s.workflow.open_goals().is_empty());
     }
 }
+
+#[test]
+fn shared_native_pair_returns_both_receipts_in_the_next_provider_request() {
+    use std::io::Read;
+    let server=tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let addr=server.server_addr().to_ip().unwrap();
+    let worker=std::thread::spawn(move||{
+        let first=server.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+        let calls:Vec<_>=["serial.inspect","log.files"].iter().enumerate().map(|(i,m)|
+            json!({"id":format!("read{i}"),"type":"function","function":{"name":"wiparse_call","arguments":json!({"method":m,"params":{}}).to_string()}})).collect();
+        let message=json!({"content":null,"tool_calls":calls});
+        first.respond(tiny_http::Response::from_string(json!({"choices":[{"message":message,"finish_reason":"tool_calls"}]}).to_string())).unwrap();
+        let mut next=server.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+        let mut body=String::new();next.as_reader().read_to_string(&mut body).unwrap();
+        let request:Value=serde_json::from_str(&body).unwrap();
+        let ids=request["messages"].as_array().unwrap().iter().filter(|m|m["role"]=="tool").map(|m|m["tool_call_id"].as_str().unwrap()).collect::<Vec<_>>();
+        assert_eq!(ids,vec!["read0","read1"]);
+        next.respond(tiny_http::Response::from_string(json!({"choices":[{"message":{"content":"两个来源的状态均已读取。"},"finish_reason":"stop"}]}).to_string())).unwrap();
+    });
+    let cfg=AiConfig{enabled:true,base_url:format!("http://{addr}"),model:"local".into(),..Default::default()};
+    let svc=AiService::new(cfg.clone());let mut s=session();s.configure(&cfg);s.prompt="查看当前来源状态".into();s.start(&svc);
+    let ctx=Context::default();let end=Instant::now()+Duration::from_secs(12);
+    while s.started.is_some()&&Instant::now()<end {
+        s.poll(&ctx,&svc);
+        if let Some(q)=s.take_request(){
+            assert!(s.authorize(&q,&state()));
+            s.attach(&q.id,HostReply::value(json!({"ok":true,"data":{"rows":2}})));
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    worker.join().unwrap();
+    assert_eq!(s.round,2);
+    assert!(!s.error && s.started.is_none());
+}
