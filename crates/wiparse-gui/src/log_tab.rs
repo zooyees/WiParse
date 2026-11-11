@@ -850,6 +850,25 @@ impl LogTabPage {
     pub(crate) fn ai_shared_lines(&self) -> Vec<Arc<str>> {
         (0..self.line_count()).filter_map(|i|self.backend.line_at(i)).collect()
     }
+    pub(crate) fn ai_navigate(&mut self,method:&str,p:&serde_json::Value)->Result<serde_json::Value,String>{
+        if self.loading || self.is_editing(){return Err("SERIAL.VIEW_LOADING_OR_EDITING".into());}
+        if method!="serial.view" && p["view_id"].as_u64()!=Some(self.view_id){return Err("SERIAL.VIEW_CHANGED: inspect serial.view again".into());}
+        if method=="serial.search" {
+            self.set_pane_filter(self.selected_pane,p["query"].as_str().unwrap_or(""))?;
+            self.list_all_matches(self.selected_pane);
+        }
+        if method=="serial.jump" {
+            let line=p["line"].as_u64().ok_or("SERIAL.INVALID_LINE")?;
+            let first=self.dropped() as u64+1;
+            if line<first || line-first>=self.line_count() as u64{return Err("SERIAL.LINE_UNAVAILABLE: outside retained or loaded rows".into());}
+            if let Some(pane)=self.panes.get_mut(self.selected_pane){pane.history=None;pane.resume_tail=false;}
+            self.goto_line((line-first+1)as usize);
+        }
+        self.poll_background_tasks();
+        let pane=self.panes.get(self.selected_pane).ok_or("SERIAL.NO_PANE")?;
+        let first=self.dropped() as u64+1;
+        Ok(serde_json::json!({"view_id":self.view_id,"title":self.display_title(),"first_line":first,"last_line":self.dropped()+self.line_count(),"search_query":pane.filter_applied,"search_pending":pane.filter_busy,"matched_occurrences":pane.find_hits.len(),"matches_truncated":pane.find_truncated,"hit_lines":pane.search_map.iter().take(20).map(|r|*r as u64+first).collect::<Vec<_>>(),"highlighted_line":pane.highlight_master.map(|r|r as u64+first),"line_numbering":"1-based original file / absolute live rows; not selection-relative","follow_latest":pane.scroll_pinned}))
+    }
     pub(crate) fn ai_view_id(&self) -> u64 { self.view_id }
     pub(crate) fn set_ai_visible(&mut self, visible: bool) { self.ai_visible = visible; }
     pub(crate) fn take_ai_toggle(&mut self) -> bool { std::mem::take(&mut self.ai_toggle_requested) }
@@ -1105,23 +1124,18 @@ impl LogTabPage {
         self.poll_filter_debounce(now);
         self.handle_view_shortcuts(ui);
 
-        if !self.edit_mode {
-            egui::ScrollArea::horizontal()
-                .id_salt("log_toolbar")
-                .max_height(36.0)
-                .auto_shrink([false, true])
-                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.set_min_height(28.0);
-                        ui.set_max_height(28.0);
-                        self.toolbar_row_find(ui, lang, t);
-                    });
-                });
-        }
-        ui.horizontal_wrapped(|ui| self.toolbar_row_main(ui, lang, t));
-
-        ui.add_space(2.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(5., 3.);
+            if !self.edit_mode {
+                self.toolbar_row_find(ui, lang, t);
+            }
+            // Keep navigation together when the search controls fill the row.
+            if self.live && ui.available_width() >= 320. {
+                ui.horizontal(|ui| self.toolbar_row_main(ui, lang, t));
+            } else {
+                self.toolbar_row_main(ui, lang, t);
+            }
+        });
         Frame::NONE
             .fill(t.panel_bg)
             .inner_margin(Margin::symmetric(4, 4))
@@ -1473,13 +1487,14 @@ impl LogTabPage {
             ui.label(RichText::new(tr(lang, "log.find")).size(12.5).color(t.text_muted));
             {
                 let pane = &mut self.panes[i];
-                let filter_width = 200.0;
+                let filter_width = (ui.max_rect().width() * 0.23).clamp(100.,200.);
                 let edit = ui.add_sized(
                     [filter_width, 24.0],
                     egui::TextEdit::singleline(&mut pane.filter_draft)
                         .hint_text(tr(lang, "log.filter_placeholder"))
                         .margin(egui::vec2(6.0, 3.0)),
                 );
+                let edit = edit.on_hover_text(tr(lang, "log.find_hint"));
                 if edit.changed() {
                     if pane.filter_draft.is_empty() {
                         pane.filter_apply_at = Some(now);
@@ -1571,12 +1586,6 @@ impl LogTabPage {
         if !count_text.is_empty() {
             ui.label(RichText::new(count_text).size(12.0).color(t.text_muted));
         }
-        ui.label(
-            RichText::new(tr(lang, "log.find_hint"))
-                .size(11.0)
-                .color(t.text_muted),
-        );
-
         if let Some(i) = list_idx {
             self.list_all_matches(i);
         } else if let Some(i) = apply_idx {
@@ -2917,5 +2926,23 @@ mod ai_scope_tests {
     fn selected_text_for_local_processing_is_not_truncated_to_a_prompt_budget() {
         let mut page=LogTabPage::live_tab(Lang::Zh);let text=format!("{}END_OF_SELECTION","full selected text\n".repeat(2000));page.panes[0].last_selected_text=text.clone();assert_eq!(page.ai_selection(),text);
         page.append_lines((0..200).map(|i|format!("row {i}")),false);let snapshot=page.ai_shared_lines();page.append_lines(["later".into()],false);assert_eq!(snapshot.len(),200);assert_eq!(snapshot[0].as_ref(),"row 0");
+    }
+}
+
+#[cfg(test)]
+mod ai_navigation_tests {
+    use super::*;
+    #[test]
+    fn navigation_search_jump_preserves_capture_and_rejects_stale_or_missing_rows(){
+        let mut tab=LogTabPage::live_tab(Lang::Zh);
+        tab.append_lines(vec!["VIN=5".into(),"fault timeout".into(),"VIN=4".into()],true);
+        let view=tab.ai_navigate("serial.view",&serde_json::json!({})).unwrap();
+        let id=view["view_id"].clone();
+        let result=tab.ai_navigate("serial.search",&serde_json::json!({"view_id":id,"query":"timeout"})).unwrap();
+        assert_eq!(result["hit_lines"],serde_json::json!([2]));
+        let result=tab.ai_navigate("serial.jump",&serde_json::json!({"view_id":id,"line":2})).unwrap();
+        assert_eq!(result["highlighted_line"],2);assert_eq!(result["follow_latest"],false);assert!(tab.live);
+        assert!(tab.ai_navigate("serial.jump",&serde_json::json!({"view_id":id,"line":999})).is_err());
+        assert!(tab.ai_navigate("serial.jump",&serde_json::json!({"view_id":0,"line":1})).is_err());
     }
 }

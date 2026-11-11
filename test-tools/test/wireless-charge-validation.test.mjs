@@ -42,6 +42,13 @@ for(const [fixture,expected] of [['gold','PASS'],['bad','FAIL'],['missing','INCO
   test(`${fixture} replay validates all SYS and never certifies a DUT`,async()=>temporary(async(dir)=>{
     const run=await execute(bundle('replay',fixture),{root,dir,client:mockClient});
     assert.equal(run.execution_status,'completed');assert.equal(run.validation_verdict,expected);assert.equal(run.product_verdict,'INCONCLUSIVE');
+    const diagnostic=JSON.parse(fs.readFileSync(path.join(dir,'investigation.json')));
+    assert.equal(diagnostic.findings.length,run.cases.flatMap(c=>c.checks).filter(c=>c.product_verdict!=='PASS').length);
+    const source=JSON.parse(fs.readFileSync(path.join(dir,diagnostic.replay.file)));
+    for(const finding of diagnostic.findings){
+      assert.equal(finding.confirmed_root_cause,null);
+      if(finding.observation_pointer) assert(source.cases[finding.case_id][finding.check_id]);
+    }
     const coverage=JSON.parse(fs.readFileSync(path.join(dir,'coverage.json')));assert.equal(coverage.length,10);
     for(const row of coverage){assert.equal(row.missing_case_ids.length,0);assert.equal(row.verdict,expected);}
     const manifest=JSON.parse(fs.readFileSync(path.join(dir,'manifest.json')));
@@ -122,11 +129,44 @@ test('generated Markdown links resolve to intact per-case and raw evidence files
   const run=await execute(bundle(),{root,dir,client:mockClient});
   const text=fs.readFileSync(run.summary_md,'utf8');
   const links=[...text.matchAll(/\]\(([^)]+)\)/g)].map(m=>m[1]);
-  assert.equal(links.length,run.cases.length+6);
+  assert(links.includes("investigation.json"));
+  assert(links.includes("adapter-matrix.json"));
+  assert.equal(links.length,run.cases.length+8);
   for(const link of links) assert(fs.statSync(path.join(dir,link)).isFile(),link);
   const record=JSON.parse(fs.readFileSync(path.join(dir,'case-001.json')));
   assert.equal(record.run_id,run.run_id);assert.equal(record.case_id,run.cases[0].case_id);
   assert.deepEqual(record.checks,run.cases[0].checks);
   const manifest=JSON.parse(fs.readFileSync(path.join(dir,'manifest.json')));
   for(const file of manifest.files) assert.equal(hash(fs.readFileSync(path.join(dir,file.path))),file.sha256);
+}));
+
+test('compare two archived runs and reject damaged input',async()=>temporary(async(dir)=>{
+  const {compareRuns}=await import('../plugins/wireless-charge-validation/lib/compare-runs.mjs');
+  const left=path.join(dir,'before'),right=path.join(dir,'after');
+  await execute(bundle('replay','gold'),{root,dir:left,client:mockClient});
+  await execute(bundle('replay','bad'),{root,dir:right,client:mockClient});
+  const comparison=compareRuns(left,right);
+  assert(comparison.rows.some(r=>r.comparable && r.before==='PASS' && r.after==='FAIL'));
+  assert(comparison.rows.some(r=>Number.isFinite(r.delta)));
+  fs.appendFileSync(path.join(right,'checks.json'),' ');
+  assert.throws(()=>compareRuns(left,right),/HASH_MISMATCH/);
+}));
+
+test('project recording preserves raw evidence and does not send instrument or evaluation commands',async()=>temporary(async(dir)=>{
+  const b=loadBundle(root,{mode:'recorded',capture_id:'bench1'});
+  fs.mkdirSync(path.join(dir,'captures'));
+  const data={schema_version:'wiparse.station-observation/1',simulation_only:false,
+    station_id:'test-station',dut_serial:'test-unit',firmware:'test-build',clock_domain:'scope-1',
+    cases:{ADP01:{'ADP01.01':{evidence_refs:['e1']}}},
+    evidence:{e1:{source:'trace',coordinate:'sample_0based',position:0,raw:'1.03'}}};
+  fs.writeFileSync(path.join(dir,'captures/bench1.json'),JSON.stringify(data));
+  const result=await execute(b,{root,dir:path.join(dir,'result'),captureRoot:dir,client:{request(){throw Error('unexpected call');}}});
+  assert.equal(result.execution_status,'completed');
+  assert.equal(result.cases[0].checks[0].reason_code,'CAPTURE.OBSERVED_REVIEW_REQUIRED');
+  assert.equal(result.product_verdict,'INCONCLUSIVE');
+  assert.equal(result.cases[1].checks[0].reason_code,'CAPTURE.RAW_EVIDENCE_MISSING');
+  const saved=JSON.parse(fs.readFileSync(path.join(dir,'result/recorded-evidence.json')));
+  assert.equal(saved.evidence[saved.observed[0].evidence_refs[0]].raw,'1.03');
+  assert(fs.readFileSync(result.summary_md,'utf8').includes('(recorded-evidence.json)'));
+  assert.throws(()=>loadBundle(root,{mode:'recorded',capture_id:'../test'}),/INVALID_ID/);
 }));

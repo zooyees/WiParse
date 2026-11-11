@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
-import {readDocument} from './config.mjs';
+import {readRecording,readDocument} from './config.mjs';
 import {aggregate,stateRule,communicationRule} from './rules.mjs';
 import {writeReport} from './report.mjs';
 const mono=()=>performance.now();
-export async function execute(bundle,{root,dir,client,signal,stopRequested=()=>false,project='default',test_id='WirelessCharge',run_id=randomUUID(),attempt_id=randomUUID(),fixtureDocument}={}) {
+export async function execute(bundle,{root,dir,client,signal,stopRequested=()=>false,project='default',test_id='WirelessCharge',run_id=randomUUID(),attempt_id=randomUUID(),fixtureDocument,captureRoot}={}) {
   const run={schema_version:bundle.profile.schema_version,run_id,attempt_id,project,test_id,dut:{serial:bundle.args.dut_serial||null,firmware:bundle.args.dut_firmware||null},plugin_version:'0.1.1',configuration_hashes:bundle.hashes,mode:bundle.args.mode,execution_status:'completed',product_verdict:'INCONCLUSIVE',validation_verdict:'INCONCLUSIVE',industrial_approved:false,cases:[],errors:[],first_error_id:null};
   const error=(code,c,check,refs=[],serviceError=null)=>{
     const e={error_id:randomUUID(),code,source:'wireless-charge-validation',severity:code.includes('FAIL')?'product_fault':'data_or_station',run_id,step_id:c?.case_id||null,check_id:check?.check_id||null,time:new Date().toISOString(),host_monotonic_ns:process.hrtime.bigint().toString(),first_error_id:run.first_error_id,observed:check?.product_verdict||null,expected:'PASS',automatic_action:'no_stimulus',recovery_id:'review-evidence-new-attempt',evidence_refs:refs,candidate_cause:code,suggested_action:'保留首个异常及原始证据；核对限值/状态/采集质量。未知设备状态不可重发刺激。'};
@@ -24,6 +24,21 @@ export async function execute(bundle,{root,dir,client,signal,stopRequested=()=>f
       if(fixture.schema_version!==bundle.profile.schema_version||fixture.simulation_only!==true) throw new Error('REPLAY.UNVERIFIED_PROVENANCE');
       fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,'replay-input.json'),JSON.stringify(fixture,null,2)+'\n');
     }
+    if(bundle.args.mode==='recorded') {
+      const document=readRecording(captureRoot,bundle.args);
+      fixture=document.value;
+      run.dut={serial:fixture.dut_serial,firmware:fixture.firmware};
+      run.capture={station_id:fixture.station_id,clock_domain:fixture.clock_domain,source_sha256:document.sha256};
+      run.fixture_hash=document.sha256;
+      fs.mkdirSync(dir,{recursive:true});
+      fs.writeFileSync(path.join(dir,'replay-input.json'),JSON.stringify(fixture,null,2)+'\n');
+    }
+    if (bundle.args.mode==='recorded' && fixture?.synchronized_capture) {
+      guard();
+      const alignment=await client.request('/v1/invoke',{method:'capture.correlate_window',params:fixture.synchronized_capture},15000);
+      run.synchronized_capture=alignment;
+      guard();
+    }
     for(const scenario of bundle.cases) {
       guard();
       const c={case_id:scenario.id,sys:scenario.sys,pl:scenario.pl,dg:scenario.dg,sw:scenario.sw,execution_status:'completed',product_verdict:'INCONCLUSIVE',checks:[],reason_code:null};run.cases.push(c);
@@ -37,7 +52,17 @@ export async function execute(bundle,{root,dir,client,signal,stopRequested=()=>f
         for(const spec of scenario.checks) {
           guard();let result={product_verdict:'INCONCLUSIVE',reason_code:'DRY_RUN.NO_MEASUREMENT',evidence_refs:[]};
           const o=fixture?.cases?.[scenario.id]?.[spec.id];
-          if(bundle.args.mode==='replay'&&o) {
+          if(bundle.args.mode==='recorded') {
+            const refs=o?.measurement?.evidence_refs ?? o?.evidence_refs ?? o?.events?.flatMap(event=>event.evidence_refs??[]) ?? [];
+            const grounded=Array.isArray(refs) && refs.length && refs.every(ref=>{
+              const raw=typeof ref==='string' && Object.hasOwn(fixture.evidence,ref) && fixture.evidence[ref];
+              return raw && typeof raw.source==='string' && raw.source.trim() &&
+                Number.isSafeInteger(raw.position) && raw.position>=0 &&
+                ['line_1based','sample_0based','byte_0based'].includes(raw.coordinate) &&
+                (raw.coordinate!=='line_1based'||raw.position>0) && typeof raw.raw==='string' && raw.raw.trim();
+            });
+            result={product_verdict:'INCONCLUSIVE',reason_code:grounded?'CAPTURE.OBSERVED_REVIEW_REQUIRED':'CAPTURE.RAW_EVIDENCE_MISSING',evidence_refs:grounded?refs:[]};
+          } else if(bundle.args.mode==='replay'&&o) {
             if(spec.kind==='scalar') {
               const item=bundle.limits.items[spec.limits_ref];
               const m=o.measurement;
@@ -47,9 +72,9 @@ export async function execute(bundle,{root,dir,client,signal,stopRequested=()=>f
             } else if(spec.kind==='state') result=stateRule(spec,o,bundle.states);
             else result=communicationRule(spec,o);
           } else if(bundle.args.mode==='replay') result.reason_code='REPLAY.MISSING_REQUIRED_EVIDENCE';
-          const check={...result,check_id:spec.id,case_id:scenario.id,sys:scenario.sys,pl:scenario.pl,sw:scenario.sw,dg:scenario.dg,limits_hash:bundle.hashes.limits,measurement:o?.measurement||null,state_window:spec.state||null,scope:bundle.args.mode==='replay'?'simulation':'dry-run'};
+          const check={...result,check_id:spec.id,case_id:scenario.id,sys:scenario.sys,pl:scenario.pl,sw:scenario.sw,dg:scenario.dg,limits_hash:bundle.hashes.limits,measurement:o?.measurement||null,state_window:spec.state||null,scope:bundle.args.mode==='recorded'?'recorded':bundle.args.mode==='replay'?'simulation':'dry-run'};
           c.checks.push(check);
-          if(check.product_verdict!=='PASS')error(check.product_verdict==='FAIL'?`PRODUCT.FAIL:${check.reason_code}`:check.reason_code,c,check,check.evidence_refs);
+          if(check.product_verdict!=='PASS' && check.reason_code!=='CAPTURE.OBSERVED_REVIEW_REQUIRED')error(check.product_verdict==='FAIL'?`PRODUCT.FAIL:${check.reason_code}`:check.reason_code,c,check,check.evidence_refs);
           // Preserve a completed FAIL even if stop arrived during this read-only check.
           guard();
         }

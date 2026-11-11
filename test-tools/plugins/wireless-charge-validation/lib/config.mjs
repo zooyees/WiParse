@@ -12,12 +12,25 @@ export function inside(file, root) {
 }
 export function readDocument(root, relative) {
   const file=inside(fs.realpathSync(path.resolve(root,relative)),fs.realpathSync(root));
+  const stat=fs.statSync(file);
+  if(!stat.isFile() || stat.size>8*1024*1024) fail('CONFIG.SIZE_BUDGET');
   const bytes=fs.readFileSync(file);
   if(bytes.length>8*1024*1024) fail('CONFIG.SIZE_BUDGET');
   return {value:JSON.parse(bytes),sha256:hash(bytes),path:file};
 }
+export function readRecording(testDirectory,args) {
+  if(!testDirectory) fail('CAPTURE.PROJECT_REQUIRED');
+  const document=readDocument(testDirectory,`captures/${args.capture_id}.json`);
+  const capture=document.value;
+  if(capture?.schema_version!=='wiparse.station-observation/1'||capture.simulation_only!==false ||
+     !['station_id','dut_serial','firmware','clock_domain'].every(key=>typeof capture[key]==='string' && capture[key].trim()) ||
+     ![capture.cases,capture.evidence].every(x=>x&&typeof x==='object'&&!Array.isArray(x))) fail('CAPTURE.IDENTITY_OR_EVIDENCE_MISSING');
+  if((args.dut_serial && args.dut_serial!==capture.dut_serial)||(args.dut_firmware && args.dut_firmware!==capture.firmware))
+    fail('CAPTURE.DUT_IDENTITY_MISMATCH');
+  return document;
+}
 export function loadBundle(root, args={}) {
-  const permitted=new Set(['product','suite','mode','fixture','dut_serial','dut_firmware','service_root','file_prefix','project','data_root']);
+  const permitted=new Set(['product','suite','mode','fixture','dut_serial','dut_firmware','service_root','capture_id','file_prefix','project','data_root']);
   for(const key of Object.keys(args)) if(!permitted.has(key)) fail(`CONFIG.OVERLAY_FORBIDDEN:${key}`);
   const id=v=>{if(!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(v)) fail('CONFIG.INVALID_ID');return v;};
   const product=id(args.product||'reference-tx'), suite=id(args.suite||'smoke');
@@ -26,7 +39,8 @@ export function loadBundle(root, args={}) {
   const b=Object.fromEntries(Object.entries(docs).map(([k,d])=>[k,d.value]));
   b.hashes=Object.fromEntries(Object.entries(docs).map(([k,d])=>[k,d.sha256]));
   b.args={...args,product,suite,mode:args.mode||'dry-run',fixture:id(args.fixture||'gold')};
-  if(!['dry-run','replay','live'].includes(b.args.mode)) fail('CONFIG.INVALID_MODE');
+  if(!['dry-run','replay','recorded','live'].includes(b.args.mode)) fail('CONFIG.INVALID_MODE');
+  if(b.args.mode==='recorded') b.args.capture_id=id(args.capture_id||'');
   for(const doc of Object.values(docs)) if(doc.value.schema_version!==VERSION || !doc.value.version) fail('CONFIG.SCHEMA_VERSION');
   if(!b.limits.items || !b.station.protection || !b.station.bindings || !b.states.layers || !b.states.transitions) fail('CONFIG.REQUIRED_SECTION');
   for(const l of Object.values(b.limits.items)) {

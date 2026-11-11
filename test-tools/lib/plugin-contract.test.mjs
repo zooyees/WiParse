@@ -77,7 +77,8 @@ test("scope-serial-monitor plugin.json validates", () => {
   );
   const check = validatePluginManifest(raw);
   assert.equal(check.ok, true, check.errors?.join("; "));
-  assert.equal(raw.version, "0.6.2");
+  const readme = fs.readFileSync(path.join(here, "..", "plugins", raw.id, "README.md"), "utf8");
+  assert.ok(readme.includes("Plugin **v" + raw.version + "**"), "README must identify the shipped plugin version");
   assert.equal(raw.engines?.wiparse, ">=1.1.16");
   assert.ok(!String(raw.description || "").includes("tests/scope-serial-monitor"));
   const station = JSON.parse(

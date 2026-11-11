@@ -1,10 +1,14 @@
 //! Shared provider settings, conversation and bounded engineering tasks.
 pub(crate) mod agent;
+pub(crate) mod journal;
+pub(crate) mod broker;
+pub(crate) mod artifact;
+pub(crate) mod report;
 use crate::theme::{self as ui_theme, Tokens};
 use egui::{Context, CornerRadius, Frame, Margin, RichText, Stroke};
 use wiparse_core::{
     ai::{
-        protect_key, AiConfig, AiError, AiMessage, AiProtocol, AiProvider, AiReply, AiRequest,
+        protect_key, AiConfig, AiError, AiMessage, AiProtocol, AiProvider, AiReply, AiRequest, AiToolMode,
         AiService, AiTask,
     },
     config::{save_config, AppConfig},
@@ -91,7 +95,7 @@ impl AiPanel {
             open: false,
             service: AiService::new(config.clone()),
             agent:Default::default(),
-            agent_mode:false,
+            agent_mode:true,
             draft: config.clone(),
             key_input: String::new(),
             clear_key: false,
@@ -484,6 +488,9 @@ impl AiPanel {
                         "Responses",
                     );
                 });
+            ai_field_label(ui,t,text(lang,"Agent工具协议","Agent tool protocol"));
+            egui::ComboBox::from_id_salt("ai-tool-protocol").width(ui.available_width()).selected_text(match self.draft.tool_mode{AiToolMode::Auto=>text(lang,"原生工具优先","Prefer native tools"),AiToolMode::Json=>text(lang,"JSON兼容模式","JSON compatibility")}).show_ui(ui,|ui|{ui.selectable_value(&mut self.draft.tool_mode,AiToolMode::Auto,text(lang,"原生工具优先","Prefer native tools"));ui.selectable_value(&mut self.draft.tool_mode,AiToolMode::Json,text(lang,"JSON兼容模式","JSON compatibility"));});
+            ui.weak(text(lang,"DeepSeek/千问等使用原生工具；不支持时可选兼容模式。","Use native tools for DeepSeek/Qwen, or JSON mode for legacy services."));
             ai_field_label(ui, t, text(lang, "模型名称", "Model"));
             ui.add_sized(
                 [ui.available_width(), ui_theme::CTRL_H],
@@ -492,7 +499,7 @@ impl AiPanel {
             if self.draft.protocol == AiProtocol::ChatCompletions {
                 ui.checkbox(
                     &mut self.draft.stream,
-                    text(lang, "启用流式兼容", "Enable streaming compatibility"),
+                    text(lang, "流式显示回复", "Stream response text"),
                 );
                 if matches!(self.draft.provider, AiProvider::Qwen | AiProvider::DeepSeek) {
                     let mut thinking = self.draft.thinking.unwrap_or(false);
@@ -567,7 +574,7 @@ impl AiPanel {
                 columns[1].add_sized(
                     [columns[1].available_width(), ui_theme::CTRL_H],
                     egui::DragValue::new(&mut self.draft.max_output_tokens)
-                        .range(64..=32768)
+                        .range(64..=wiparse_core::ai::MAX_OUTPUT_TOKENS)
                         .suffix(" tokens"),
                 );
             });
@@ -1096,6 +1103,7 @@ fn error_message(error: &AiError) -> &'static str {
         AiError::Http(404)=>"接口或模型不存在：核对服务器路径、接口类型和模型名。 / Endpoint or model not found.",
         AiError::Http(429)=>"请求受限：检查额度和调用频率，稍后手动重试。 / Rate or quota limit; retry later.",
         AiError::Http(500..=599)=>"AI 服务暂时异常，请稍后手动重试。 / Provider unavailable; retry later.",
+        AiError::ToolProtocol=>"模型或服务拒绝工具调用参数；请核对服务能力，或在AI设置中切换JSON兼容模式。 / Tool protocol unsupported; check settings or select JSON compatibility.",
         AiError::Network=>"连接失败或超时：检查网络、代理、TLS 和服务器地址。 / Network or timeout error.",
         AiError::Disabled=>"AI 尚未启用，请在连接设置中启用并保存。 / Enable and save AI settings first.",
         AiError::Credential=>"密钥无法读取：请重新输入密钥，或检查密钥环境变量。 / Credential unavailable.",
@@ -1438,6 +1446,7 @@ mod tests {
                     model: "mock-model".into(),
                     usage: serde_json::json!({"prompt_tokens":58,"completion_tokens":524}),
                     finish_reason: Some("stop".into()),
+                    tool_message: None,
                 };
                 panel.turns.push(AiTurn {
                     question: "检测 DeepSeek 连接".into(),

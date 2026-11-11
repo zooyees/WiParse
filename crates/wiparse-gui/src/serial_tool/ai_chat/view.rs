@@ -50,9 +50,9 @@ impl SerialAiChat {
         let full = ui.available_rect_before_wrap();
         let _ = ui.allocate_exact_size(full.size(), egui::Sense::hover());
         let short = full.height() < 520.0;
-        let header_h = 100.0_f32.min(full.height() * 0.30);
+        let header_h = 100.0_f32.min(full.height() * 0.38);
         let bottom_h = (if self.mode == Mode::Analyse {
-            (if short {132.0} else {148.0}) + if self.scope!=DataScope::None{34.0}else{0.0}
+            if short {132.0_f32} else {148.0_f32}
         } else {
             32.0_f32
         })
@@ -102,6 +102,18 @@ impl SerialAiChat {
         ui.style_mut()
             .text_styles
             .insert(egui::TextStyle::Body, egui::FontId::proportional(13.0));
+        if let Some(run)=self.run.as_mut(){
+            if let Some((key,description))=run.pending_readback.clone(){
+                ui.group(|ui|{
+                    ui.label(format!("设备动作结果待核对 · {description}"));
+                    if ui.button(label(lang,"已核对状态，允许再次提交此操作","State checked; allow this operation again")).clicked(){
+                        if let Some(j)=&run.journal {j.record(&run.id,"serial",&run.question,"readback",&run.workflow,Some(("device.readback",&serde_json::json!({"state":"readback_acknowledged","command_fingerprint":key}))));}
+                        run.uncertain.retain(|k|k!=&key);
+                        run.pending_readback=None;
+                    }
+                });
+            }
+        }
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(label(lang, "串口 AI", "Serial AI"))
@@ -121,6 +133,11 @@ impl SerialAiChat {
                     actions.push(UiAction::Close);
                 }
                 ui.menu_button("…", |ui| {
+                    if self.working() && self.run.is_some() && ui.add_enabled(!self.prompt.trim().is_empty(),egui::Button::new(label(lang,"用输入内容纠正当前任务","Steer current task with draft"))).clicked(){
+                        actions.push(UiAction::Correct(self.prompt.clone()));ui.close_menu();
+                    }
+                    if !self.working(){if let Some(j)=crate::ai::journal::Journal::for_project(ui.ctx(),&state.binding.project){if let Some(recovery)=j.menu(ui){self.prompt=recovery.draft.clone();self.recovery=Some(recovery);}}}
+                    ui.menu_button(label(lang,"日志选项与预处理","Log options and processing"),|ui|{ui.set_width((ui.ctx().screen_rect().width()-24.0).clamp(180.0,260.0));self.library_controls(ui,lang,actions);});
                     if ui
                         .button(label(lang, "AI 服务设置…", "AI service settings…"))
                         .clicked()
@@ -140,10 +157,11 @@ impl SerialAiChat {
                         ui.close_menu();
                     }
                 });
-                let color = if self.ready() { t.success } else { t.warning };
+                let busy=self.working();
+                let color = if busy {t.accent}else if self.ready() { t.success } else { t.warning };
                 ui.colored_label(
                     color,
-                    if self.ready() {
+                    if busy {label(lang,"处理中","Working")} else if self.ready() {
                         label(lang, "已就绪", "Ready")
                     } else {
                         label(lang, "未配置", "Setup needed")
@@ -203,7 +221,7 @@ impl SerialAiChat {
                                 t.text_muted
                             },
                         ))
-                        .frame(false),
+                        .fill(if self.mode==mode{t.accent_soft}else{t.header_bg}).stroke(Stroke::new(1.0_f32,t.border)),
                     )
                     .clicked()
                 {
@@ -232,6 +250,8 @@ impl SerialAiChat {
                 ui.add_space(12.0);
             }
             if mode==Mode::Monitor {self.monitor_controls(ui,lang,t,state,actions);ui.add_space(12.0);}
+            if let Some(run)=&self.run{crate::ai::journal::show_progress(ui,&run.workflow);}
+            if self.usage_total.responses>0||self.usage_total.failed_attempts>0{egui::CollapsingHeader::new(label(lang,"AI用量（服务报告）","AI usage (provider reported)")).id_salt("ai-usage").show(ui,|ui|{if let Some(run)=&self.run{ui.add(egui::Label::new(format!("{} {}",label(lang,"本任务","Task"),run.usage.summary())).wrap());}ui.add(egui::Label::new(egui::RichText::new(format!("{} {}",label(lang,"本会话","Session"),self.usage_total.summary())).size(12.0).color(t.text_muted)).wrap());});}
             let activities:Vec<_>=self.entries.iter().filter(|e|e.role=="host"&&!e.error).collect();
             if !activities.is_empty(){
                 egui::CollapsingHeader::new(egui::RichText::new(format!("{} · {}",label(lang,"活动记录","Activity"),activities.len())).size(12.0).color(t.text_muted)).id_salt("chat-activities").show(ui,|ui|{
@@ -240,17 +260,17 @@ impl SerialAiChat {
             }
             let visible=self.entries.iter().any(|e|e.role!="host"&&(mode==Mode::Analyse||e.automatic));
             if !visible && mode==Mode::Analyse && self.ready(){
-                ui.add_space(16.0);ui.label(egui::RichText::new(label(lang,"今天要检查什么？","What would you like to check?")).size(ui_theme::FONT_TITLE).strong());
+                ui.add_space(6.0);ui.label(egui::RichText::new(label(lang,"今天要检查什么？","What would you like to check?")).size(ui_theme::FONT_TITLE).strong());
                 ui.add(egui::Label::new(egui::RichText::new(label(lang,"分析日志、设定监控目标，或让 AI 调用平台工具。","Analyse logs, set a monitoring goal, or use platform tools.")).size(ui_theme::FONT_BODY).color(t.text_muted)).wrap());
                 ui.add_space(12.0);
-                for (title,question) in [(label(lang,"分析日志异常","Analyse log anomalies"),label(lang,"分析当前日志中的异常，列出证据和下一步检查。","Analyse current log anomalies with evidence and next checks.")),(label(lang,"设置监控与预警","Set up monitoring"),label(lang,"帮我设置当前串口的监控与预警，先确认需要关注的数据字段和阈值。","Help configure monitoring and alerts; first confirm the fields and thresholds."))]{if ui.add_sized([ui.available_width(),30.0],egui::Button::new(title).frame(false)).clicked(){self.prompt=question.into();}}
+                for (title,question) in [(label(lang,"分析日志异常","Analyse log anomalies"),label(lang,"分析当前日志中的异常，列出证据和下一步检查。","Analyse current log anomalies with evidence and next checks.")),(label(lang,"设置监控与预警","Set up monitoring"),label(lang,"帮我设置当前串口的监控与预警，先读取并识别数据字段，明确保护性阈值缺失时再询问。","Help configure monitoring and alerts; first inspect the fields; ask only for missing protection thresholds."))]{if ui.add_sized([ui.available_width(),30.0],egui::Button::new(title).fill(t.header_bg).stroke(Stroke::new(1.0_f32,t.border))).clicked(){self.prompt=question.into();}}
             }
             for(index,entry)in self.entries.iter().enumerate().filter(|(_,e)|(e.role!="host"||e.error)&&(mode==Mode::Analyse||e.role=="host"||e.role=="alert"||e.automatic)){
                 ui.push_id(index,|ui|{
                     let width=ui.available_width();
                     match entry.role {
                         "host"=>{ui.add(egui::Label::new(egui::RichText::new(Self::readable(&entry.text,lang)).size(12.0).color(t.warning)).wrap());}
-                        "tool"=>{egui::CollapsingHeader::new(egui::RichText::new(Self::readable(entry.text.lines().next().unwrap_or("Platform call"),lang)).size(12.0).color(if entry.error {t.warning}else{t.text_muted})).id_salt("tool").show(ui,|ui|entry.markdown.ui_chat(ui,t,lang));}
+                        "tool"=>{egui::CollapsingHeader::new(egui::RichText::new(Self::readable(entry.text.lines().next().unwrap_or("Platform call").trim_start_matches('#').trim(),lang)).size(12.0).color(if entry.error {t.warning}else{t.text_muted})).id_salt("tool").show(ui,|ui|entry.markdown.ui_chat(ui,t,lang)); if let Some(data)=&entry.timeline{timeline_view::show(ui,data,lang,t);}}
                         "alert"=>{Frame::NONE.fill(t.warning.gamma_multiply(0.08)).corner_radius(8).inner_margin(12).show(ui,|ui|{ui.set_width((width-24.0).max(1.0));ui.label(egui::RichText::new(label(lang,"监控预警","Monitoring alert")).size(13.0).strong().color(t.warning));ui.add(egui::Label::new(egui::RichText::new(&entry.text).size(ui_theme::FONT_BODY)).wrap());});}
                         "user" => {
                             Frame::NONE.fill(t.header_bg).corner_radius(8).inner_margin(10).show(ui, |ui| {
@@ -279,6 +299,15 @@ impl SerialAiChat {
                     ui.add_space(10.0);
                 });
             }
+            if self.status_error&&!self.entries.last().is_some_and(|e|e.role=="host"&&e.error&&e.text==self.status){ui.add(egui::Label::new(egui::RichText::new(Self::readable(&self.status,lang)).size(13.0).color(t.warning)).wrap());}
+            if let Some(notice)=&self.queue_notice{ui.add(egui::Label::new(egui::RichText::new(Self::readable(notice,lang)).size(13.0).color(t.warning)).wrap());}
+            if let Some(pending) = &self.pending { if let Some(preview) = &pending.preview {
+                ui.push_id("streaming-answer", |ui| {
+                    ui.label(egui::RichText::new(label(lang,"AI · 正在生成（尚未完成）","AI · Generating (not final)")).size(12.0).color(t.text_muted));
+                    preview.ui_chat(ui,t,lang);
+                });
+            }}
+            self.queue_ui(ui,lang,t,actions);
             if self.pending.as_ref().is_some_and(|p|mode==Mode::Analyse||p.automatic){ui.horizontal(|ui|{ui.spinner();ui.label(egui::RichText::new(label(lang,"正在分析…","Analysing…")).size(13.0).color(t.text_muted));});}
         });
     }
@@ -324,6 +353,11 @@ impl SerialAiChat {
         if !state.binding.live || !state.connection_confirmed {
             ui.add(egui::Label::new(egui::RichText::new(label(lang,"实时监控需要先连接串口；文件日志可直接在对话中分析。","Connect serial reception for live monitoring. Log files can be analysed in the conversation.")).color(t.text_muted)).wrap());
         }
+            if let Some(snapshot)=self.watch.as_ref().and_then(|watch|watch.first_trigger.as_ref()) {
+                ui.collapsing(label(lang,"首个告警与触发前日志","First alert and preceding log"),|ui|{
+                    ui.add(egui::Label::new(snapshot.as_str()).wrap().selectable(true));
+                });
+            }
         ui.label(egui::RichText::new(label(lang, "任务目标", "Task goal")).strong());
         if running {
             let width = ui.available_width();
@@ -422,7 +456,9 @@ impl SerialAiChat {
             }
             let status = if watch.ai_paused {
                 label(lang, "本地规则监控运行中", "Local rule monitoring active").into()
-            } else if self.tool.is_some() {
+            } else if self.deferred.is_some(){
+            label(lang,"等待AI资源，自动继续…","Waiting for AI capacity…").into()
+        } else if self.tool.is_some() {
                 label(
                     lang,
                     "正在等待平台任务完成",
@@ -489,7 +525,7 @@ impl SerialAiChat {
     }
 
     fn library_controls(&mut self, ui:&mut egui::Ui, lang:Lang, actions:&mut Vec<UiAction>) {
-        let busy=self.pending.is_some()||self.tool.is_some();
+        let busy=self.working();
         ui.spacing_mut().item_spacing=egui::vec2(6.,6.);
         let width=ui.available_width();
         ui.add_enabled_ui(!busy,|ui|{
@@ -497,7 +533,7 @@ impl SerialAiChat {
                 let old=(self.range_first,self.range_last);
                 ui.label(label(lang,"行范围（含首尾）","Rows (inclusive)"));
                 ui.horizontal(|ui|{ui.add(egui::DragValue::new(&mut self.range_first).range(1..=u64::MAX));ui.label("–");ui.add(egui::DragValue::new(&mut self.range_last).range(self.range_first..=u64::MAX));});
-                if old!=(self.range_first,self.range_last){self.library.reset();self.tool_results.clear();self.history.clear();}
+                if old!=(self.range_first,self.range_last){self.cancel();self.queue_paused=!self.messages.is_empty();self.run=None;self.library.reset();self.tool_results.clear();self.history.clear();}
             }
             let root=if self.scope==DataScope::Library{self.library.directory.as_ref().map(|path|path.display().to_string()).unwrap_or_else(||label(lang,"已打开文件与已落盘记录","Opened files and saved capture").into())}else{label(lang,"当前日志或选区，在本地处理","Current log or selection, processed locally").into()};
             ui.add_sized([width,20.],egui::Label::new(&root).truncate()).on_hover_text(&root);
@@ -514,192 +550,45 @@ impl SerialAiChat {
         ui.add(egui::Label::new(egui::RichText::new(label(lang,"本地处理全范围，仅发送统计与证据。预分析不消耗token。实时历史全量请选落盘文件；不含未保存编辑。","Full scope stays local; AI receives statistics and evidence. Preview uses no tokens. For full live history select the recorded file. Unsaved edits excluded.")).size(ui_theme::FONT_CAPTION)).wrap());
     }
 
-    fn composer(
-        &mut self,
-        ui: &mut egui::Ui,
-        lang: Lang,
-        t: &Tokens,
-        state: &Snapshot,
-        short: bool,
-        actions: &mut Vec<UiAction>,
-    ) {
+    fn composer(&mut self,ui:&mut egui::Ui,lang:Lang,t:&Tokens,state:&Snapshot,short:bool,actions:&mut Vec<UiAction>){
         ui.separator();
-        if self.mode == Mode::Monitor {
-            if ui
-                .add_sized(
-                    [ui.available_width(), 28.0],
-                    egui::Button::new(label(
-                        lang,
-                        "返回对话，调整任务或继续分析",
-                        "Back to conversation",
-                    )),
-                )
-                .clicked()
-            {
-                self.mode = Mode::Analyse;
-                ui.ctx().request_repaint();
-            }
-            return;
+        if self.mode==Mode::Monitor {
+            if ui.add_sized([ui.available_width(),28.0],egui::Button::new(label(lang,"返回对话，调整任务或继续分析","Back to conversation"))).clicked(){self.mode=Mode::Analyse;ui.ctx().request_repaint();}return;
         }
-        let status = if self.status_error {
-            Self::readable(&self.status, lang)
-        } else if self.tool.is_some() {
-            label(lang, "平台任务执行中…", "Platform task running…").into()
-        } else if self.pending.is_some() {
-            label(lang, "AI 正在分析…", "AI is analysing…").into()
-        } else {
-            self.config
-                .as_ref()
-                .map(|c| c.model.clone())
-                .unwrap_or_default()
-        };
-        let frame_width = ui.available_width();
-        Frame::NONE
-            .fill(t.input_bg)
-            .stroke(Stroke::new(1.0_f32, t.border))
-            .corner_radius(10)
-            .inner_margin(10)
-            .show(ui, |ui| {
-                ui.set_width((frame_width - 20.0).max(1.0));
-                ui.horizontal(|ui| {
-                    let old_scope=self.scope;
-                    egui::ComboBox::from_id_salt("serial-ai-data-scope")
-                        .width((ui.available_width() - 62.0).clamp(80.0, 150.0))
-                        .truncate()
-                        .selected_text(match self.scope {
-                            DataScope::Current => label(lang, "当前日志 · 全范围", "Current log · all rows"),
-                            DataScope::Range => label(lang,"指定行范围","Row range"),
-                            DataScope::Selection => label(lang, "选中内容", "Selected text"),
-                            DataScope::None => label(lang, "仅提问", "Question only"),
-                            DataScope::Library => label(lang,"本地日志库","Local logs"),
-                        })
-                        .show_ui(ui, |ui| {
-                            for (scope, name) in [
-                                (
-                                    DataScope::Current,
-                                    label(lang, "当前日志 · 全范围", "Current log · all rows"),
-                                ),
-                                (
-                                    DataScope::Selection,
-                                    label(lang, "选中内容", "Selected text"),
-                                ),
-                                (DataScope::Range,label(lang,"指定行范围（本地处理）","Row range (local)")),
-                                (DataScope::Library,label(lang,"本地日志库（本地扫描）","Local logs (local scan)")),
-                                (
-                                    DataScope::None,
-                                    label(lang, "仅提问，不附日志", "Question only, no log"),
-                                ),
-                            ] {
-                                ui.selectable_value(&mut self.scope, scope, name);
-                            }
-                        });
-                    if old_scope!=self.scope{self.cancel();self.library.reset();self.tool_results.clear();self.history.clear();}
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(match self.scope {
-                                DataScope::Current => format!(
-                                    "{} {}",
-                                    state.retained_lines,
-                                    label(lang, "行", "lines")
-                                ),
-                                DataScope::Range => format!("{}–{}",self.range_first,self.range_last),
-                                DataScope::Selection => format!("{} B", state.selected_bytes),
-                                DataScope::None => String::new(),
-                                DataScope::Library => label(lang,"统计优先","Summary first").into(),
-                            })
-                            .size(12.0)
-                            .color(t.text_muted),
-                        )
-                        .truncate(),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(&status)
-                                    .size(ui_theme::FONT_CAPTION)
-                                    .color(if self.status_error {
-                                        t.warning
-                                    } else {
-                                        t.text_muted
-                                    }),
-                            )
-                            .truncate(),
-                        )
-                        .on_hover_text(&status);
-                    });
-                });
-                if self.scope!=DataScope::None{
-                    ui.menu_button(label(lang,"本地日志：设置与预分析…","Local logs: settings and preview…"),|ui|{ui.set_width((frame_width-20.0).clamp(180.0,280.0));self.library_controls(ui,lang,actions);});
-                }
-                let id = ui.make_persistent_id("serial-ai-question");
-                let shortcut = ui.memory(|m| m.has_focus(id))
-                    && ui.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::Enter));
-                ui.add_sized(
-                    [ui.available_width(), if short { 32.0 } else { 48.0 }],
-                    egui::TextEdit::multiline(&mut self.prompt)
-                        .id(id)
-                        .font(egui::FontId::proportional(ui_theme::FONT_BODY))
-                        .frame(false)
-                        .desired_rows(2)
-                        .desired_width(f32::INFINITY)
-                        .margin(egui::vec2(0.0, 4.0))
-                        .char_limit(4096)
-                        .hint_text(label(
-                            lang,
-                            "输入问题或测试目标…",
-                            "Ask a question or describe a test…",
-                        )),
-                );
-                ui.horizontal(|ui| {
-                    ui.add_enabled(!state.automation_locked,
-                        egui::Checkbox::new(&mut self.allow_automation, label(lang,"允许控制","Allow control")))
-                        .on_hover_text(label(lang,
-                            "由你授权AI启停当前串口、控制已连接仪器；勾选后请重新发送。测试运行时锁定，AI不能自行授权。",
-                            "Authorize AI to start/stop this serial source and control connected devices. Resend after enabling. Locked during tests; AI cannot grant itself permission."));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let busy = self.pending.is_some() || self.tool.is_some();
-                        if busy {
-                            if ui
-                                .add_sized(
-                                    [60.0, 28.0],
-                                    egui::Button::new(label(lang, "停止", "Stop")),
-                                )
-                                .clicked()
-                            {
-                                actions.push(UiAction::Cancel);
-                            }
-                        } else {
-                            let send = self.ready()
-                                && !self.prompt.trim().is_empty()
-                                && (self.scope != DataScope::Selection || state.selected_bytes > 0);
-                            if ui
-                                .add_enabled(
-                                    send,
-                                    egui::Button::new(egui::RichText::new(label(lang, "发送", "Send")).color(t.accent_text))
-                                        .min_size(egui::vec2(60.0, 28.0))
-                                        .fill(t.accent_fill),
-                                )
-                                .clicked()
-                                || (shortcut && send)
-                            {
-                                actions.push(UiAction::Send(self.prompt.clone()));
-                            }
-                            if let Some(retry) = &self.retry {
-                                if ui
-                                    .add(
-                                        egui::Button::new(label(lang, "重试", "Retry"))
-                                            .frame(false),
-                                    )
-                                    .clicked()
-                                {
-                                    actions.push(UiAction::Send(retry.clone()));
-                                }
-                            }
-                        }
-                    });
+        let width=ui.available_width();
+        Frame::NONE.fill(t.input_bg).stroke(Stroke::new(1.0_f32,t.border)).corner_radius(10).inner_margin(8).show(ui,|ui|{
+            ui.set_width((width-16.0).max(1.0));
+            ui.spacing_mut().item_spacing=egui::vec2(6.0,6.0);
+            ui.horizontal(|ui|{
+                let old=self.scope;
+                egui::ComboBox::from_id_salt("serial-ai-data-scope").width((ui.available_width()*0.62).clamp(70.0,164.0)).truncate().selected_text(match self.scope{
+                    DataScope::Current=>label(lang,"当前日志 · 全范围","Current log · all rows"),DataScope::Range=>label(lang,"指定行范围","Row range"),DataScope::Selection=>label(lang,"选中内容","Selected text"),DataScope::None=>label(lang,"仅提问","Question only"),DataScope::Library=>label(lang,"本地日志库","Local logs")
+                }).show_ui(ui,|ui|{for (scope,title) in [(DataScope::Current,label(lang,"当前日志 · 全范围","Current log · all rows")),(DataScope::Selection,label(lang,"选中内容","Selected text")),(DataScope::Range,label(lang,"指定行范围（本地处理）","Row range (local)")),(DataScope::Library,label(lang,"本地日志库（本地扫描）","Local logs (local scan)")),(DataScope::None,label(lang,"仅提问，不附日志","Question only, no log"))]{ui.selectable_value(&mut self.scope,scope,title);}});
+                if old!=self.scope{self.cancel();self.queue_paused=!self.messages.is_empty();self.run=None;self.library.reset();self.tool_results.clear();self.history.clear();}
+                let count=match self.scope{DataScope::Current=>format!("{} {}",state.retained_lines,label(lang,"行","lines")),DataScope::Range=>format!("{}–{}",self.range_first,self.range_last),DataScope::Selection=>format!("{} B",state.selected_bytes),DataScope::Library=>label(lang,"本地处理","Local processing").into(),_=>String::new()};
+                ui.add(egui::Label::new(egui::RichText::new(count).size(12.0).color(t.text_muted)).truncate()).on_hover_text(self.config.as_ref().map(|c|c.model.as_str()).unwrap_or(""));
+            });
+            let id=ui.make_persistent_id("serial-ai-question");
+            let shortcut=ui.memory(|m|m.has_focus(id))&&ui.input_mut(|i|i.consume_key(egui::Modifiers::CTRL,egui::Key::Enter));
+            let working=self.working();
+            ui.add_sized([ui.available_width(),if short{32.0}else{48.0}],egui::TextEdit::multiline(&mut self.prompt).id(id).font(egui::FontId::proportional(ui_theme::FONT_BODY)).frame(false).desired_rows(2).desired_width(f32::INFINITY).margin(egui::vec2(0.0,4.0)).char_limit(4096).hint_text(if working{label(lang,"继续输入，发送后排队…","Continue typing; send to queue…")}else{label(lang,"输入问题或测试目标…","Ask a question or describe a test…")}));
+            ui.horizontal(|ui|{
+                let old=self.allow_automation;
+                let narrow=ui.available_width()<210.0;
+                ui.add_enabled(!state.automation_locked,egui::Checkbox::new(&mut self.allow_automation,if narrow{label(lang,"控制","Control")}else{label(lang,"允许控制","Allow control")})).on_hover_text(label(lang,"仅授权当前串口和已连接设备；撤销会影响当前任务及排队消息，重新勾选不会给旧消息补授权。","Current serial and connected devices only. Revocation affects active and queued work; re-enabling does not grant older messages new permissions."));
+                if old&&!self.allow_automation{self.revoke_controls();}
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{
+                    let busy=self.working();let queued=busy||(!self.messages.is_empty()&&!self.queue_paused);
+                    let can_send=self.ready()&&!self.prompt.trim().is_empty()&&(self.scope!=DataScope::Selection||state.selected_bytes>0)&&(!queued||self.messages.len()<16);
+                    let title=if queued{label(lang,"排队发送","Queue")}else{label(lang,"发送","Send")};
+                    if ui.add_enabled(can_send,egui::Button::new(egui::RichText::new(title).color(t.accent_text)).min_size(egui::vec2(76.0,28.0)).fill(t.accent_fill)).on_hover_text(label(lang,"Ctrl+Enter；分析中可继续提交，消息依次执行。","Ctrl+Enter; messages submitted during analysis run in order.")).clicked()||(shortcut&&can_send){actions.push(UiAction::Send(self.prompt.clone()));}
+                    if busy&&ui.add_sized([28.0,28.0],egui::Button::new("■")).on_hover_text(label(lang,"取消当前任务并暂停队列","Cancel current task and pause queue")).clicked(){actions.push(UiAction::Cancel);}
+                    if !busy&&ui.available_width()>80.0 {if let Some(retry)=&self.retry{if ui.small_button(label(lang,"重试","Retry")).clicked(){actions.push(UiAction::Send(retry.clone()));}}}
                 });
             });
+        });
     }
+
 }
 
 /// Every message uses the same content inset and metadata baseline.

@@ -162,11 +162,14 @@ fn local_alerts_keep_running_when_ai_is_paused_or_service_changes() {
     p.begin_ai_watch(&mut chat, "watch".into(), false).unwrap();
     chat.watch.as_mut().unwrap().ai_paused = true;
     chat.watch.as_mut().unwrap().next = Instant::now() - Duration::from_secs(1);
+    chat.observe(p.tabs[0].ai_view_id(),&["VIN stable".into()]);
     p.ai_chat = chat;
     p.tabs[0].append_lines(vec!["ERROR timeout".into()], true);
     p.ai_chat
         .observe(p.tabs[0].ai_view_id(), &["ERROR timeout".into()]);
     p.tick_ai(&ctx, Lang::Zh, "ai-tools".into(), &config, false);
+    let frozen=p.ai_chat.watch.as_ref().unwrap().first_trigger.as_ref().unwrap();
+    assert!(frozen.contains("VIN stable") && frozen.contains("ERROR timeout"));
     assert!(p.ai_chat.pending.is_none());
     assert!(p.ai_chat.watch.is_some());
     assert_eq!(p.ai_chat.alert_count, 1);
@@ -348,6 +351,7 @@ fn ai_tool_loop_waits_for_completed_job_then_uses_actual_result() {
     let second = rx.recv_timeout(Duration::from_secs(1)).unwrap();
     assert!(second.contains("100000"));
     assert!(second.contains("completed"));
-    assert!(p.ai_chat.history.iter().any(|message|matches!(message,AiMessage::User(text) if text.contains("Verified platform result") && text.contains("100000"))));
+    assert!(!p.ai_chat.history.iter().any(|message|matches!(message,AiMessage::User(text) if text.contains("Verified platform result"))));
+    assert!(p.ai_chat.tool_results.iter().any(|value|value.to_string().contains("100000")));
     server.join().unwrap();
 }

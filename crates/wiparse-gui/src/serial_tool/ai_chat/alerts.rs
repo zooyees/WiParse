@@ -119,7 +119,7 @@ impl SerialAiChat {
         }
         let now = Instant::now();
         let mut shown = 0;
-        for line in lines {
+        for (offset,line) in lines.iter().enumerate() {
             let Some((key, reason)) = self.rules.check(line) else {
                 continue;
             };
@@ -144,6 +144,15 @@ impl SerialAiChat {
                 ));
             }
             if let Some(watch) = &mut self.watch {
+                if watch.first_trigger.is_none() {
+                    let mut before:Vec<_>=watch.pretrigger.iter().rev().take(8usize.saturating_sub(offset)).cloned().collect();
+                    before.reverse();
+                    before.extend(lines[offset.saturating_sub(8)..offset].iter().map(|s|bounded(s,600)));
+                    let row=watch.observed_rows.saturating_add(offset as u64).saturating_add(1);
+                    before.push(format!("▶ {sample}"));
+                    watch.first_trigger=Some(format!("{reason} · 监控收到的第 {row} 行\n{}",before.join("\n")));
+                    watch.pretrigger.clear();
+                }
                 if watch.stats.alert_examples.len() == 12 {
                     watch.stats.alert_examples.pop_front();
                 }
@@ -155,6 +164,15 @@ impl SerialAiChat {
                             .max(watch.last_request + Duration::from_secs(MIN_INTERVAL_SECONDS)),
                     );
                 }
+            }
+        }
+        if let Some(watch)=&mut self.watch {
+            watch.observed_rows=watch.observed_rows.saturating_add(lines.len() as u64);
+            if watch.first_trigger.is_none() {
+                let tail=&lines[lines.len().saturating_sub(8)..];
+                let excess=(watch.pretrigger.len()+tail.len()).saturating_sub(8);
+                watch.pretrigger.drain(..excess);
+                watch.pretrigger.extend(tail.iter().map(|s|bounded(s,600)));
             }
         }
     }

@@ -3,7 +3,7 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {AutomationClient} from '../../lib/automation-client.mjs';
 import {resolveProjectLayout,sanitizeTestId,resolveReportName} from '../../lib/plugin-contract.mjs';
-import {loadBundle,preflightBundle,inside} from './lib/config.mjs';
+import {loadBundle,preflightBundle,inside,readRecording} from './lib/config.mjs';
 import {execute} from './lib/orchestrator.mjs';
 function setup(ctx) {
   const root=ctx.pluginDir||ctx.plugin.dir;
@@ -13,10 +13,16 @@ function setup(ctx) {
   return {root,bundle,layout,client};
 }
 export async function preflight(ctx) {
-  const {bundle,client}=setup({...ctx,lifecycle:'preflight'});
+  const {bundle,client,layout}=setup({...ctx,lifecycle:'preflight'});
+  let requiresAlignment=false;
+  if(bundle.args.mode==='recorded') {
+    try {requiresAlignment=Boolean(readRecording(layout.test_dir,bundle.args).value.synchronized_capture);}
+    catch(error){return {ok:false,error:error.message,preflight:{blocking:[error.message],product_verdict:'INCONCLUSIVE'}};}
+  }
   let caps={implemented:[],industrial_approved:false};
-  if(bundle.args.mode!=='dry-run') {
+  if(requiresAlignment || !['dry-run','recorded'].includes(bundle.args.mode)) {
     try {caps=await client.invoke('system.capabilities');} catch(e) {return {ok:false,preflight:{blocking:[e.message],product_verdict:'INCONCLUSIVE'},error:e.message};}
+    if(requiresAlignment && !caps.implemented?.includes('capture.correlate_window')) return {ok:false,error:'CAPABILITY.MISSING:capture.correlate_window'};
     if(bundle.args.mode==='replay'&&!caps.implemented?.includes('check.evaluate')) return {ok:false,error:'CAPABILITY.MISSING:check.evaluate'};
   }
   const result=preflightBundle(bundle,caps);
@@ -44,7 +50,7 @@ export default async function run(ctx) {
   let fd;try {fd=fs.openSync(lock,'wx');}catch(e){if(e.code==='EEXIST')throw new Error('RUN.BUSY_OR_STALE_LOCK');throw e;}
   try {
     fs.writeFileSync(fd,JSON.stringify({attempt,run_dir:layout.run_dir}));fs.closeSync(fd);fd=undefined;
-    return await execute(bundle,{root,dir,client,attempt_id:attempt,project:layout.project,test_id:layout.test_id,signal:ctx.signal,stopRequested:()=>fs.existsSync(stopFile)&&JSON.parse(fs.readFileSync(stopFile,'utf8')).attempt===attempt});
+    return await execute(bundle,{root,dir,client,captureRoot:layout.test_dir,attempt_id:attempt,project:layout.project,test_id:layout.test_id,signal:ctx.signal,stopRequested:()=>fs.existsSync(stopFile)&&JSON.parse(fs.readFileSync(stopFile,'utf8')).attempt===attempt});
   } finally {
     if(fd!==undefined)fs.closeSync(fd);
     if(fs.existsSync(stopFile))fs.unlinkSync(stopFile);

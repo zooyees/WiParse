@@ -5,6 +5,7 @@
  * Export runLoop(cfg, opts) for the standard test-tool plugin contract.
  * Do not call test.start in the capture window: it reopens the serial monitor.
  */
+import { randomUUID } from 'node:crypto';
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -209,55 +210,100 @@ function setHint(step, hint, extra = {}) {
 
 async function serialStatus() {
   const st = await invoke("serial.status", {}, 30_000, { allowFail: true });
-  return Boolean(st.data?.monitoring);
+  if (st.ok === false || typeof st.data?.monitoring !== 'boolean') throw Error('SERIAL.STATE_UNCONFIRMED');
+  return st.data.monitoring;
+}
+
+function unsupportedMethod(reply) {
+  const error = reply?.error;
+  const message = typeof error === 'string' ? error : [error?.code, error?.message].join(' ');
+  return reply?.ok === false && /unknown method|unsupported method|method[._ ]not[._ ]found|未知方法/i.test(message);
 }
 
 async function serialStop() {
-  let r = await invoke("serial.monitor.stop", {}, 30_000, { allowFail: true });
-  if (r.ok === false) r = await invoke("serial.stop", {}, 30_000, { allowFail: true });
-  return r;
+  const reply = await invoke("serial.monitor.stop", {}, 30_000, { allowFail: true });
+  return unsupportedMethod(reply) ? invoke("serial.stop", {}, 30_000, { allowFail: true }) : reply;
 }
 
 async function serialStopUntilOff(ms = cfg.timing.serial_stop_timeout_ms) {
-  const t0 = Date.now();
-  let last = true;
-  while (Date.now() - t0 < ms) {
-    await serialStop();
-    last = await serialStatus();
-    if (!last) return false;
+  const deadline = performance.now() + ms;
+  if (!await serialStatus()) return false;
+  await serialStop();
+  do {
+    if (!await serialStatus()) return false;
     await sleep(120);
-  }
-  return last;
+  } while (performance.now() < deadline);
+  throw Error('SERIAL.STOP_UNCONFIRMED');
 }
 
 async function serialStart() {
-  let r = await invoke("serial.monitor.start", { port, baud }, 30_000, { allowFail: true });
-  if (r.ok === false) r = await invoke("serial.start", { port, baud }, 30_000, { allowFail: true });
-  const t0 = Date.now();
-  while (Date.now() - t0 < 4000) {
-    if (await serialStatus()) return r;
+  let reply = await invoke("serial.monitor.start", { port, baud }, 30_000, { allowFail: true });
+  if (unsupportedMethod(reply)) reply = await invoke("serial.start", { port, baud }, 30_000, { allowFail: true });
+  const deadline = performance.now() + 4000;
+  do {
+    if (await serialStatus()) return reply;
     await sleep(120);
-  }
-  return r;
+  } while (performance.now() < deadline);
+  throw Error('SERIAL.START_UNCONFIRMED');
 }
 
 function holdSerialOff() {
-  if (!holdSerialOffEnabled) {
-    return async () => {};
-  }
-  serialStop().catch(() => {});
-  // Keep serial off during capture without hammering the API every 250ms.
-  const keeper = setInterval(() => {
-    serialStop().catch(() => {});
-  }, 2000);
+  if (!holdSerialOffEnabled) return async () => {};
+  let inFlight;
+  let failure;
+  const check = () => {
+    if (inFlight || failure) return;
+    inFlight = serialStopUntilOff().catch(error => { failure = error; })
+      .finally(() => { inFlight = undefined; });
+  };
+  check();
+  const keeper = setInterval(check, 2000);
   return async () => {
     clearInterval(keeper);
+    await inFlight;
+    if (failure) throw failure;
     await serialStopUntilOff();
   };
 }
 
-async function scopeCommand(deviceId, command) {
-  return invoke("instrument.command", { device_id: deviceId, command, timeout_s: 20 });
+async function scopeCommand(deviceId, command, record = () => {}) {
+  record('command_dispatching',{command,device_id:deviceId});
+  const accepted = await invoke("instrument.command", { device_id: deviceId, command, timeout_s: 20 });
+  const job = accepted.data?.job_id;
+  if (accepted.ok===false || !Number.isSafeInteger(job)) throw Error('SCOPE.COMMAND_RECEIPT_MISSING');
+  const job_session=accepted.data.job_session;
+  if (typeof job_session!=='string' || !job_session) throw Error('SCOPE.COMMAND_SESSION_UNKNOWN');
+  record('command_accepted',{command,device_id:deviceId,job_id:job,job_session});
+  const deadline=performance.now()+20000;
+  while (performance.now()<deadline) {
+    const reply=await invoke('instrument.job.get',{job_id:job,job_session},Math.max(1,Math.ceil(deadline-performance.now())));
+    const receipt=reply.data;
+    if (receipt?.state==='completed') {
+      if (receipt.job_session!==job_session || receipt.job_id!==job || receipt.device_id!==deviceId) throw Error('SCOPE.COMMAND_RECEIPT_MISMATCH');
+      record('command_result',{command,device_id:deviceId,job_id:job,ok:receipt.ok});
+      if (receipt.ok!==true) throw Error('SCOPE.COMMAND_FAILED: '+String(receipt.detail??job));
+      return receipt;
+    }
+    await sleep(100);
+  }
+  throw Error('SCOPE.COMMAND_OUTCOME_UNKNOWN: '+job);
+}
+
+function beginIncident(hit,deviceId,cycle) {
+  const name='incident-'+randomUUID()+'.jsonl';
+  const directory=docsDir||reportDir;
+  fs.mkdirSync(directory,{recursive:true});
+  const file=path.join(directory,name);
+  const append=(event,details={})=>{
+    const row={schema:'wiparse.capture-incident/1',event,time_utc:new Date().toISOString(),
+      since_detection_ms:performance.now()-hit.detected,clock_domain:'host_monotonic',...details};
+    const fd=fs.openSync(file,'a');
+    try{fs.writeFileSync(fd,JSON.stringify(row)+'\n');fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+  };
+  append('serial_trigger',{cycle,device_id:deviceId,session:sessionStamp,port,trigger:hit.trigger,
+    row_1based:hit.row,missing_before_detection:hit.gaps,cursor_resets:hit.resets,
+    line:hit.line,context:hit.context,physical_synchronization_verified:false});
+  return {file,append};
 }
 
 function newestIsf(dir, stem, sinceMs) {
@@ -362,14 +408,14 @@ function scopeSpec() {
  */
 async function liveLinesSince(fromRow, limit = 200) {
   const chunk = await invoke("log.lines.get", {
-    tab_id: 0,
+    ...(port ? {port} : {tab_id:0}),
     from_row: fromRow,
     limit,
   });
   const lines = (chunk.data?.lines || []).map(String);
   const total = Number(chunk.data?.total ?? fromRow + lines.length);
   const next = Number(chunk.data?.next_row ?? fromRow + lines.length);
-  return { lines, total, next };
+  return { lines, total, next, first:Math.max(fromRow, Number(chunk.data?.dropped)||0) };
 }
 
 async function waitTrigger(cycle, scopeId) {
@@ -377,6 +423,7 @@ async function waitTrigger(cycle, scopeId) {
   let fromRow = Number(probe.total) || 0;
   const t0 = Date.now();
   let lastBeat = -1;
+  let gaps=0, resets=0;
   /** @type {string[]} rolling context across chunks */
   const ring = [];
   while (!fs.existsSync(stopFile)) {
@@ -391,12 +438,13 @@ async function waitTrigger(cycle, scopeId) {
         triggers: compiledTriggers.map((t) => t.label),
       });
     }
-    const { lines, total, next } = await liveLinesSince(fromRow, 200);
+    const { lines, total, next, first } = await liveLinesSince(fromRow, 200);
     if (total < fromRow) {
-      // Log buffer reset — keep recent ring for continuity, reset cursor.
-      fromRow = total;
+      // A reset starts a new row sequence. Never splice context from different sessions.
+      resets++; ring.length=0; fromRow=0; rebuildClassifier(currentTriggerBlock());
       continue;
     }
+    if(first>fromRow){gaps+=first-fromRow;ring.length=0;rebuildClassifier(currentTriggerBlock());}
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       ring.push(line);
@@ -407,23 +455,24 @@ async function waitTrigger(cycle, scopeId) {
         const after = lines.slice(i + 1, i + 26);
         return {
           trigger,
-          at: new Date(),
+          at: new Date(), detected:performance.now(), row:first+i+1, gaps, resets,
           line,
           context: [...before, line, ...after],
         };
       }
     }
+    const previous=fromRow;
     fromRow = next > fromRow ? next : total;
-    await sleep(pollMs);
+    if(fromRow>=total || fromRow<=previous) await sleep(pollMs);
   }
   return { trigger: "stop" };
 }
 
-async function stopScopeAndSerial(deviceId) {
+async function stopScopeAndSerial(deviceId,record) {
   const [serial, scope] = await Promise.all([
     serialStopUntilOff(),
     (async () => {
-      const cmd = await scopeCommand(deviceId, "ScopeStop");
+      const cmd = await scopeCommand(deviceId, "ScopeStop",record);
       await sleep(settleMs);
       return cmd;
     })(),
@@ -616,8 +665,8 @@ function appendSummaryRecord(rec) {
   const dataPath = path.join(docsDir || reportDir, `${recId}.json`);
   const indexPath = path.join(docsDir || reportDir, "index.jsonl");
   const dataLinks = [
-    ["记录数据", dataPath], ["采集索引", indexPath],
-  ].filter(([, file]) => fs.existsSync(file))
+    ["记录数据", dataPath], ["采集索引", indexPath], ["触发与设备回执",rec.incidentFile],
+  ].filter(([, file]) => file && fs.existsSync(file))
     .map(([label, file]) => `| ${label} | ${mdFileLink(file)} |`).join("\n");
   const block = `
 ---
@@ -1019,6 +1068,7 @@ export async function runLoop(cfgInput, opts = {}) {
       const hit = await waitTrigger(cycle, live.device_id);
       if (hit.trigger === "stop" || fs.existsSync(stopFile)) break;
 
+      const incident=beginIncident(hit,live.device_id,cycle);
       const at = hit.at;
       const trigger = hit.trigger;
       const ts = stamp(at);
@@ -1041,8 +1091,10 @@ export async function runLoop(cfgInput, opts = {}) {
       let shot = null;
       let monitoring = true;
       try {
-        const stopped = await stopScopeAndSerial(live.device_id);
+        const stopped = await stopScopeAndSerial(live.device_id,incident.append);
         monitoring = stopped.monitoring;
+        incident.append('serial_readback',{monitoring});
+        if(monitoring) throw Error('SERIAL.STOP_NOT_CONFIRMED');
         setHint("processing", `已触发 ${trigger}：串口已停 monitoring=${monitoring}，截图并读源文件`, {
           cycle,
           trigger,
@@ -1053,12 +1105,16 @@ export async function runLoop(cfgInput, opts = {}) {
         const cap = await captureShotAndIsf(live.device_id, shotPath, filename);
         saved = cap.isfPath;
         shot = cap.shotFile;
+        incident.append('source_saved',{waveform:path.relative(path.dirname(incident.file),saved),
+          screenshot:shot?path.relative(path.dirname(incident.file),shot):null});
         monitoring = await serialStatus();
         setHint(
           "processing",
           `已触发 ${trigger}：数据处理中（生成 PDF 报告；串口 monitoring=${monitoring}）`,
           { cycle, trigger, filename, serial_monitoring: monitoring },
         );
+      } catch(error) {
+        incident.append("capture_incomplete",{reason:String(error.message||error)});throw error;
       } finally {
         await releaseSerial();
         monitoring = await serialStatus();
@@ -1088,6 +1144,7 @@ export async function runLoop(cfgInput, opts = {}) {
         await htmlToPdf(written.htmlPath, written.pdfPath);
         pdfPath = written.pdfPath;
         mdPath = appendSummaryRecord({
+          incidentFile:incident.file,
           cycle,
           trigger,
           stamp: ts,
@@ -1106,6 +1163,7 @@ export async function runLoop(cfgInput, opts = {}) {
         log("err", `[pdf] ${e?.message || e}`);
         try {
           mdPath = appendSummaryRecord({
+            incidentFile:incident.file,
             cycle,
             trigger,
             stamp: ts,

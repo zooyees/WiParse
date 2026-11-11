@@ -116,6 +116,7 @@ pub fn invoke(shared: &Arc<Mutex<State>>, v: &Value) -> Result<Value, String> {
                 | "system.capabilities"
                 | "device.capabilities"
                 | "check.evaluate"
+                | "capture.correlate_window"
                 | "time.mapping.fit"
                 | "time.mapping.convert"
         )
@@ -123,6 +124,10 @@ pub fn invoke(shared: &Arc<Mutex<State>>, v: &Value) -> Result<Value, String> {
         return Err("DATA.STORAGE_FAULT_LATCHED_RESTART_REQUIRED".into());
     }
     match method {
+        "capture.correlate_window" => {
+            let request=serde_json::from_value(p).map_err(|e|e.to_string())?;
+            return wiparse_core::automation::capture_window::correlate(request);
+        }
         "time.mapping.fit" => {
             let request = serde_json::from_value(p).map_err(|e| e.to_string())?;
             return serde_json::to_value(wiparse_core::automation::time::fit(&request)?)
@@ -143,7 +148,7 @@ pub fn invoke(shared: &Arc<Mutex<State>>, v: &Value) -> Result<Value, String> {
         }
         "system.capabilities" => {
             return Ok(
-                json!({"schema_version":"wiparse.automation/1","implemented":["wave.analyze","protocol.decode","check.evaluate","stream.validate","uart.capture","device.capabilities","device.lease.acquire","device.lease.release","job.get","job.cancel","time.mapping.fit","time.mapping.convert"],"industrial_approved":false,"unsupported":["dongle.capture.binary","instrument.output.control","scope.armed.verified","protocol.streaming"],"protocols":["uart","i2c","spi","i2s","ddsss","usb_pd","scp","ufcs"],"protocol_mode":"bounded_offline","legacy_instrument_owner":"GUI; not migrated to service"}),
+                json!({"schema_version":"wiparse.automation/1","implemented":["capture.correlate_window","wave.analyze","protocol.decode","check.evaluate","stream.validate","uart.capture","device.capabilities","device.lease.acquire","device.lease.release","job.get","job.cancel","time.mapping.fit","time.mapping.convert"],"industrial_approved":false,"unsupported":["dongle.capture.binary","instrument.output.control","scope.armed.verified","protocol.streaming"],"protocols":["uart","i2c","spi","i2s","ddsss","usb_pd","scp","ufcs"],"protocol_mode":"bounded_offline","legacy_instrument_owner":"GUI; not migrated to service"}),
             )
         }
         "device.capabilities" => {

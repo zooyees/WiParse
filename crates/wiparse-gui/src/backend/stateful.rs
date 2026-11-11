@@ -47,7 +47,29 @@ pub fn drain_api_requests(bridge: &ApiBridge, mut host: UiHost<'_>) -> bool {
     persist
 }
 
-fn handle(bridge: &ApiBridge, host: &mut UiHost<'_>, req: PendingRequest) -> bool {
+pub(crate) fn handle(bridge: &ApiBridge, host: &mut UiHost<'_>, req: PendingRequest) -> bool {
+    if req.method.starts_with("engineering.") {
+        let method=req.method.clone();
+        if req.ai_guard.is_none(){let _=req.reply.try_send(err(&method,"AI.GUARD_REQUIRED"));return false;}
+        if let Err(e)=SerialToolPanel::validate_agent_instrument(&method,&req.params){let _=req.reply.try_send(err(&method,&e));return false;}
+        let value=match method.as_str(){
+            "engineering.inspect"=>{
+                let tool=req.params["tool"].as_str().unwrap_or("");
+                let data=match tool{"waveform"=>host.waveform.ai_summary(),"data_analysis"=>host.data_analysis.ai_summary(),"test_report"=>host.test_report.ai_summary(),"test_tool"=>host.test_tool.agent_run_status(),"calculator"=>host.calculator.ai_summary(),_=>host.instruments.ai_summary()};
+                json!({"ok":true,"data":{"tool":tool,"project":host.test_tool.current_project_id(),"captured_unix_ms":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(),"context":data}})
+            },
+            "engineering.wave.frames"=>host.waveform.agent_frames(&req.params),
+            "engineering.calc.evaluate"=>crate::calculator::CalculatorPanel::new().agent_calculate(&req.params),
+            "engineering.wave.measure"=>{
+                let reply=host.waveform.agent_measure(&req.params,&egui::Context::default(),req.ai_guard.as_ref().unwrap().cancelled.clone());
+                if let Some(rx)=reply.receiver{
+                    std::thread::spawn(move||{let value=rx.recv().unwrap_or_else(|_|json!({"ok":false,"error":"AI.WORKER_DISCONNECTED"}));let _=req.reply.try_send(InvokeReply{ok:value["ok"]==true,cmd:method,data:value["data"].clone(),error:value["error"].as_str().map(str::to_owned)});});return false;
+                }
+                reply.value
+            },_=>json!({"ok":false,"error":"AI.UNKNOWN_ENGINEERING_METHOD"})
+        };
+        let _=req.reply.try_send(InvokeReply{ok:value["ok"]==true,cmd:method,data:value["data"].clone(),error:value["error"].as_str().map(str::to_owned)});return false;
+    }
     if (req.method.starts_with("ui.test_tool.config.") || req.method.starts_with("ui.test_tool.project.") || req.method == "ui.test_tool.result.get") || matches!(req.method.as_str(),"ui.test_tool.matrix.get"|"ui.test_tool.preflight.state"|"ui.test_tool.run.control") { host.test_tool.api_workspace(req);return false; }
     let PendingRequest {
         method,

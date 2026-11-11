@@ -6,9 +6,11 @@ use wiparse_core::log_analysis::{self, LibrarySpec, Query, Scan};
 pub(super) fn catalog() -> &'static str {
     r#"Local text tools: ONLY manual conversation with a non-none data_scope; the host restricts sources and row ranges to the user selection, read-only, no device-control permission required.
 log.files {"offset":0,"limit":16}: inventory within the user-selected current log, row range, selected text, or opened disk logs and user-chosen directory recursively (.log/.txt/.jsonl/.csv and uncompressed rotations). Use opaque source IDs, never file paths. next_offset pages results. If no files, tell user to open logs or choose the visible log directory.
-log.analyze {}: scan ALL registered files locally, return bounded cumulative statistics/evidence. Start with samples:0 for a cheap overview. Optional fields: source_ids:[IDs] (empty=all,max32); contains:[literals] (any by default), require_all:false, exclude:[literals] (max8 each,64 UTF-8 bytes per item); case_sensitive:false; pattern:"Rust regex" (max256 bytes); first_line:1,last_line:N (per-file,1-based); context:0..2,samples:0..8,group:true; numeric:[{"name":"VIN","pattern":"VIN=([+-]?[0-9.]+)","min":4.5,"max":5.5}] (max4,group1 is numeric value, limits only if supplied by user, units from the log).
+log.analyze {}: scan ALL registered files locally, return bounded cumulative statistics/evidence. Start with samples:0 for a cheap overview. Optional fields: source_ids:[IDs] (empty=all,max32); contains:[literals] (any by default), require_all:false, exclude:[literals] (max8 each,64 UTF-8 bytes per item); case_sensitive:false; pattern:"Rust regex" (max256 bytes); first_line:1,last_line:N (per-file,1-based); context:0..2,samples:0..8,group:true; discover:true returns local field names, numeric ranges, observed units/state values and extraction recipes before choosing events/timeline. numeric:[{"name":"VIN","pattern":"VIN=([+-]?[0-9.]+)","min":4.5,"max":5.5}] (max4,group1 is numeric value, limits only if supplied by user, units from the log).
+Optional timeline:{retain_dataset?:true,timestamp_pattern:captureGroup1,timestamp_unit:"clock"|"s"|"ms"|"us",start_time?:"20:05:09.865",start_pattern?:RustRegex,end_pattern?:RustRegex,fields:[{name,pattern:captureGroup1,unit,scale?:1}],power_pair?:[voltageName,currentName],max_points?:48}. Max3 fields, power_pair requires units V and A after scale and same-line values. Returns bounded curves, exact all-sample stats and observed duration per source. Missing end marker means NOT verified full-cycle time. No line filters with timeline. For data analysis page presentation, set retain_dataset:true BEFORE scanning; all actual extracted rows stay local (maximum250000); use returned query_id with data.present. Finish continuation first. Host plots extracted curves; final report should interpret real data and cite evidence.
+Optional events:{active_pattern:RustRegex,inactive_pattern:RustRegex,reason_pattern?:captureGroup1,timestamp_pattern?:captureGroup1,entity_pattern?:captureGroup1,context_lines?:0..8,offset?:0,limit?:1..32}. Infer patterns from observed evidence yourself; do not require user keywords. Events need an unfiltered sequence (no contains/exclude/pattern). Counts active-to-inactive per source/entity; duplicate inactive lines are not new events; an initial inactive state is unpaired, not a confirmed disconnect. Reasons are associated observations, NOT proven causes. No state crosses file boundaries. Use rule, next_offset, coverage and row-omission metadata. There is no fixed product vocabulary.
 Prefer aggregate counts first, then targeted examples around anomalies. Keyword counts are in-range before filtering; numeric statistics apply to matched lines. Grouping removes timestamps/numbers and tracks normalized prefixes, not semantic equivalence. Reports never contain the full raw input. Oversized lines, changing files, UTF-8 decoding issues and grouping limits are explicit. Unsaved disk edits are not read. Live logs use immutable retained-line snapshots; evicted rows are explicitly unavailable, never claimed as analyzed. Selection sources use relative row numbering.
-The user sets a local byte budget; text scanning also yields after a 15s working slice. If continuation is non-null, call log.analyze {"cursor":"host-issued token"} ONLY (no new filters). Results are cumulative; DO NOT sum successive reports. last_analysis is a previous snapshot: start a fresh query without cursor to refresh current data. complete=false cannot establish a full-log conclusion or a clean test. Latest analysis/cursor is in local_log_library. Follow the six-tool-call limit, explain remaining coverage and continue on a later user request if needed. Local preview uses no AI tokens. No edits, shell, arbitrary paths or invented measurements."#
+The user sets a local byte budget; text scanning also yields after a 15s working slice. If continuation is non-null, call log.analyze {"cursor":"host-issued token"} ONLY (no new filters). Results are cumulative; DO NOT sum successive reports. last_analysis is a previous snapshot: start a fresh query without cursor to refresh current data. complete=false cannot establish a full-log conclusion or a clean test. Latest analysis/cursor is in local_log_library. Follow the host task tool-call budget, explain remaining coverage and continue on a later user request if needed. Local preview uses no AI tokens. No edits, shell, arbitrary paths or invented measurements. Read-only tool execution and continuation are already authorized; do not ask scan/start/continue confirmation or narrate implementation budgets unless coverage is actually incomplete."#
 }
 
 #[cfg(test)]
@@ -97,6 +99,11 @@ impl Library {
             self.scope_key = key;
         }
     }
+    pub(super) fn dataset(&self,id:&str)->Result<log_analysis::timeline::Dataset,String>{
+        let store=self.store.try_lock().map_err(|_|"DATA.SCAN_BUSY")?;
+        let scan=&store.jobs.iter().find(|(key,_)|key==id).ok_or("DATA.QUERY_EXPIRED")?.1;
+        let scan=scan.try_lock().map_err(|_|"DATA.SCAN_BUSY")?;scan.dataset()
+    }
     pub fn reset(&mut self) {
         self.store = Arc::new(Mutex::new(Store::default()));
     }
@@ -164,7 +171,7 @@ impl Library {
     if method=="log.files"{
      let mut inventory=log_analysis::discover(&spec,&cancel)?;if let Some(source)=memory.clone(){inventory.sources.push(source);}let offset=params["offset"].as_u64().unwrap_or(0) as usize;let limit=params["limit"].as_u64().unwrap_or(16) as usize;
      let next=(offset+limit).min(inventory.sources.len());
-     return Ok(json!({"files":inventory.sources.iter().skip(offset).take(limit).collect::<Vec<_>>(),"total_files":inventory.sources.len(),"next_offset":if next<inventory.sources.len(){Some(next)}else{None},"inventory_complete":!inventory.incomplete,"issues":inventory.issues,"extensions":"log/txt/jsonl/csv and uncompressed rotated logs, plus opened file tabs","raw_files_uploaded":false}));
+     return Ok(json!({"files":inventory.sources.iter().skip(offset).take(limit).collect::<Vec<_>>(),"total_files":inventory.sources.len(),"next_offset":if next<inventory.sources.len(){Some(next)}else{None},"inventory_complete":!inventory.incomplete,"issues":inventory.issues,"extensions":"log/txt/jsonl/ndjson/csv/tsv and uncompressed rotated logs, plus opened file tabs","raw_files_uploaded":false}));
     }
     let (id,job)=if let Some(id)=params["cursor"].as_str(){
      let job=store.lock().map_err(|_|"LOG.STORE_UNAVAILABLE")?.jobs.iter().find(|(key,_)|key==id).map(|(_,job)|job.clone()).ok_or("LOG.CURSOR_EXPIRED: begin a new analysis")?;(id.to_owned(),job)
@@ -263,6 +270,12 @@ pub(super) fn readable(result: &Value, lang: Lang) -> String {
                 count["lines"]
             );
         }
+    }
+    if let Some(id)=result["evidence_id"].as_str(){text+=&format!("\n\n{}：`{id}`",label(lang,"证据","Evidence"));}
+    if let Some(events)=data.get("state_transition_analysis"){
+        text+=&format!("\n\n**{}**：{} · {} {} · {} {}",label(lang,"确认的状态转换","Confirmed transitions"),events["confirmed_active_to_inactive_transitions"],label(lang,"排除重复行","duplicate rows excluded"),events["repeated_inactive_lines_not_counted"],label(lang,"未配对初始状态","unpaired initial state"),events["unpaired_initial_inactive"]);
+        if let Some(rows)=events["events"].as_array(){for event in rows.iter().take(8){text+=&format!("\n\n- `{}` · `{}` · {} {}\n\n```text\n{}\n```",event["event_id"].as_str().unwrap_or(""),event["source_id"].as_str().unwrap_or(""),label(lang,"行","line"),event["line"],event["evidence"].as_str().unwrap_or(""));}}
+        text+=&format!("\n\n{}",label(lang,"相邻观测仅表示关联，不等于已证明的物理原因。","Nearby observations show association, not proven physical cause."));
     }
     if let Some(groups) = data["top_tracked_groups"].as_array() {
         for group in groups {
@@ -390,8 +403,9 @@ mod tests {
             .contains("DATA_SCOPE"));
         panel.tabs[0].append_lines(["not attached to library prompts".into()], false);
         let observation = panel.ai_scoped_observation(DataScope::Library).unwrap();
-        assert_eq!(observation["data_included"], false);
-        assert_eq!(observation["recent_lines"], json!([]));
+        assert_eq!(observation["raw_logs_uploaded"], false);
+        assert_eq!(observation["read_authorized_for_selected_scope"], true);
+        assert!(observation.get("recent_lines").is_none());
     }
     fn preview_scope(panel: &mut SerialToolPanel, chat: &mut SerialAiChat, params: Value) -> Value {
         chat.tool_round = 0;
@@ -444,8 +458,9 @@ mod tests {
         assert_eq!(report["coverage"]["matched_lines"], 2);
         assert_eq!(report["coverage"]["preceding_rows_unavailable"], 1000);
         let observation = panel.ai_scoped_observation(DataScope::Current).unwrap();
-        assert_eq!(observation["recent_lines"], json!([]));
-        assert_eq!(observation["selected_text"], "");
+        assert!(observation.get("recent_lines").is_none());
+        assert!(observation.get("selected_text").is_none());
+        assert_eq!(observation["raw_logs_uploaded"], false);
         chat.scope = DataScope::Range;
         chat.range_first = 1001;
         chat.range_last = 1010;

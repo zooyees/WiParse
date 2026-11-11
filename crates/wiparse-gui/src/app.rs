@@ -183,12 +183,12 @@ fn initial_tab(
 ) -> MainTab {
     if show_serial {
         MainTab::Serial
+    } else if show_data_analysis {
+        MainTab::DataAnalysis
     } else if show_instruments {
         MainTab::Instruments
     } else if show_waveform {
         MainTab::Waveform
-    } else if show_data_analysis {
-        MainTab::DataAnalysis
     } else if show_test_tool {
         MainTab::TestTool
     } else if show_test_report {
@@ -210,6 +210,8 @@ enum SettingsSub {
 pub struct WiParseApp {
     cfg: AppConfig,
     ai: crate::ai::AiPanel,
+    serial_agent: agent_host::SerialBroker,
+    report_ai: crate::ai::report::ReportAssistant,
     lang: Lang,
     active: MainTab,
     last_logged_tab: Option<MainTab>,
@@ -276,6 +278,8 @@ impl WiParseApp {
         let updater = UpdateController::new(cfg.update.clone());
         Self {
             ai: crate::ai::AiPanel::new(&cfg.ai),
+            serial_agent: Default::default(),
+            report_ai: Default::default(),
             serial: SerialToolPanel::new(&cfg, lang),
             instruments: {
                 let mut panel = InstrumentControlPanel::new(&cfg);
@@ -338,12 +342,12 @@ impl WiParseApp {
         }
         if self.show_serial {
             self.active = MainTab::Serial;
+        } else if self.show_data_analysis {
+            self.active = MainTab::DataAnalysis;
         } else if self.show_instruments {
             self.active = MainTab::Instruments;
         } else if self.show_waveform {
             self.active = MainTab::Waveform;
-        } else if self.show_data_analysis {
-            self.active = MainTab::DataAnalysis;
         } else if self.show_test_tool {
             self.active = MainTab::TestTool;
         } else if self.show_test_report {
@@ -531,6 +535,13 @@ impl WiParseApp {
                     }
                     dirty = true;
                 }
+                if menu_check_row(ui, t, &data_name, self.show_data_analysis, SUB_W).clicked() {
+                    self.show_data_analysis = !self.show_data_analysis;
+                    if self.show_data_analysis {
+                        self.active = MainTab::DataAnalysis;
+                    }
+                    dirty = true;
+                }
                 if menu_check_row(ui, t, &instrument_name, self.show_instruments, SUB_W).clicked() {
                     self.show_instruments = !self.show_instruments;
                     if self.show_instruments {
@@ -542,13 +553,6 @@ impl WiParseApp {
                     self.show_waveform = !self.show_waveform;
                     if self.show_waveform {
                         self.active = MainTab::Waveform;
-                    }
-                    dirty = true;
-                }
-                if menu_check_row(ui, t, &data_name, self.show_data_analysis, SUB_W).clicked() {
-                    self.show_data_analysis = !self.show_data_analysis;
-                    if self.show_data_analysis {
-                        self.active = MainTab::DataAnalysis;
                     }
                     dirty = true;
                 }
@@ -1128,6 +1132,7 @@ impl eframe::App for WiParseApp {
             .drain_events_with_bus(live_filters, Some(&self.api));
         ctx.data_mut(|data| {
             data.insert_temp(egui::Id::new("wiparse-ai-platform-bridge"),self.api.clone());
+            data.insert_temp(egui::Id::new("wiparse-ai-instrument-receipts"),self.instruments.receipt_source());
             data.insert_temp(egui::Id::new("wiparse-ai-project-root"),self.test_tool.data_root_path());
         });
         self.serial.tick_ai(ctx, self.lang, self.test_tool.current_project_id(), &self.cfg.ai, self.test_tool.running_plugin_id().is_some());
@@ -1136,10 +1141,10 @@ impl eframe::App for WiParseApp {
         if self.data_analysis.wants_live_serial() {
             let dropped = self.serial.live_dropped();
             let total = self.serial.live_abs_len();
-            self.data_analysis.prepare_live_poll(total, dropped);
+            let ready = self.data_analysis.prepare_live_poll(total, dropped, self.serial.analysis_source(), self.lang);
             let from = self.data_analysis.live_line_cursor();
-            if total > from {
-                let lines = self.serial.live_lines_since(from, total - from);
+            if ready && total > from {
+                let lines = self.serial.live_lines_since(from, (total - from).min(2000));
                 let next = from.max(dropped).saturating_add(lines.len());
                 self.data_analysis
                     .ingest_live_lines(&lines, next, self.lang);
@@ -1231,102 +1236,28 @@ impl eframe::App for WiParseApp {
                     ui.spacing_mut().item_spacing.x = 2.0;
                     let compact_nav = ui.available_width() < 1160.0;
 
-                    main_tab(
-                        ui,
-                        &t,
-                        &mut self.active,
-                        MainTab::Serial,
-                        self.show_serial,
-                        &tr(self.lang, "tool.serial_tool.name"),
-                    );
-                    main_tab(
-                        ui,
-                        &t,
-                        &mut self.active,
-                        MainTab::Instruments,
-                        self.show_instruments,
-                        &tr(self.lang, "tool.instrument_control.name"),
-                    );
-                    main_tab(
-                        ui,
-                        &t,
-                        &mut self.active,
-                        MainTab::Waveform,
-                        self.show_waveform,
-                        &tr(self.lang, "tool.waveform_analysis.name"),
-                    );
-                    if compact_nav {
-                        ui.menu_button(
-                            if self.lang == Lang::Zh {
-                                "更多"
-                            } else {
-                                "More"
-                            },
-                            |ui| {
-                            for (tab, visible, label) in [
-                                    (
-                                        MainTab::DataAnalysis,
-                                        self.show_data_analysis,
-                                        tr(self.lang, "tool.data_analysis.name"),
-                                    ),
-                                    (
-                                        MainTab::TestTool,
-                                        self.show_test_tool,
-                                        tr(self.lang, "tool.test_tool.name"),
-                                    ),
-                                    (
-                                        MainTab::TestReport,
-                                        self.show_test_report,
-                                        tr(self.lang, "tool.test_report.name"),
-                                    ),
-                                    (
-                                        MainTab::Calculator,
-                                        self.show_calculator,
-                                        tr(self.lang, "tool.calculator.name"),
-                                    ),
-                            ] {
-                                    if visible
-                                        && ui.selectable_label(self.active == tab, label).clicked()
-                                    {
+                    let tabs = [
+                        (MainTab::Serial, self.show_serial, "tool.serial_tool.name"),
+                        (MainTab::DataAnalysis, self.show_data_analysis, "tool.data_analysis.name"),
+                        (MainTab::Instruments, self.show_instruments, "tool.instrument_control.name"),
+                        (MainTab::Waveform, self.show_waveform, "tool.waveform_analysis.name"),
+                        (MainTab::TestTool, self.show_test_tool, "tool.test_tool.name"),
+                        (MainTab::TestReport, self.show_test_report, "tool.test_report.name"),
+                        (MainTab::Calculator, self.show_calculator, "tool.calculator.name"),
+                    ];
+                    let mut visible = tabs.into_iter().filter(|(_, enabled, _)| *enabled).peekable();
+                    for (tab, _, key) in visible.by_ref().take(if compact_nav { 3 } else { tabs.len() }) {
+                        main_tab(ui, &t, &mut self.active, tab, true, &tr(self.lang, key));
+                    }
+                    if visible.peek().is_some() {
+                        ui.menu_button(if self.lang == Lang::Zh { "更多" } else { "More" }, |ui| {
+                            for (tab, _, key) in visible {
+                                if ui.selectable_label(self.active == tab, tr(self.lang, key)).clicked() {
                                     self.active = tab;
                                     ui.close_menu();
                                 }
                             }
-                            },
-                        );
-                    } else {
-                        main_tab(
-                            ui,
-                            &t,
-                            &mut self.active,
-                            MainTab::DataAnalysis,
-                            self.show_data_analysis,
-                            &tr(self.lang, "tool.data_analysis.name"),
-                        );
-                        main_tab(
-                            ui,
-                            &t,
-                            &mut self.active,
-                            MainTab::TestTool,
-                            self.show_test_tool,
-                            &tr(self.lang, "tool.test_tool.name"),
-                        );
-                        main_tab(
-                            ui,
-                            &t,
-                            &mut self.active,
-                            MainTab::TestReport,
-                            self.show_test_report,
-                            &tr(self.lang, "tool.test_report.name"),
-                        );
-                        main_tab(
-                            ui,
-                            &t,
-                            &mut self.active,
-                            MainTab::Calculator,
-                            self.show_calculator,
-                            &tr(self.lang, "tool.calculator.name"),
-                        );
+                        });
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1464,6 +1395,10 @@ impl eframe::App for WiParseApp {
                 });
             });
 
+        if self.active == MainTab::TestReport && self.show_test_report {
+            let label=self.test_report.agent_selected_label();
+            if self.report_ai.ui(ctx,self.lang,&t,&self.cfg.ai,&label) {self.ai.open_settings();}
+        }
         egui::CentralPanel::default()
             .frame(Frame::NONE.fill(t.canvas_bg).inner_margin(Margin::same(if matches!(self.active,MainTab::Waveform){2}else{4})))
             .show(ctx, |ui| match self.active {
@@ -1484,6 +1419,7 @@ impl eframe::App for WiParseApp {
                     self.data_analysis.clear_live_plot_dirty();
                 }
                 MainTab::TestReport if self.show_test_report => {
+                    self.test_report.ai_state = (self.report_ai.open, self.report_ai.session.busy());
                     let plugins = self.test_tool.plugin_metas();
                     let running = self.test_tool.running_test_id().map(str::to_owned);
                     let data_root = self.test_tool.data_root_path();
@@ -1501,9 +1437,19 @@ impl eframe::App for WiParseApp {
                         Some(&mut self.waveform),
                     ) {
                         crate::test_report::ReportAction::None => {}
+                        crate::test_report::ReportAction::ToggleAi => self.report_ai.open = !self.report_ai.open,
                         crate::test_report::ReportAction::GoHub => {
                             self.show_test_tool = true;
                             self.active = MainTab::TestTool;
+                        }
+                        crate::test_report::ReportAction::WaveWindow(path)=>{
+                            self.show_waveform=true;self.active=MainTab::Waveform;
+                            self.waveform.open_report_window(&path,self.lang);
+                        }
+                        crate::test_report::ReportAction::SourceLocation(path)=>{
+                            self.data_analysis.open_source_location(&path,ctx);
+                            self.show_data_analysis=true;
+                            self.active=MainTab::DataAnalysis;
                         }
                         crate::test_report::ReportAction::ProjectChanged(id) => {
                             self.test_tool.set_project_id(id);
@@ -1541,6 +1487,7 @@ impl eframe::App for WiParseApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.report_ai.session.cancel_task("应用关闭，停止报告分析。");
         self.serial.on_exit();
         self.instruments.on_exit();
     }
@@ -1757,10 +1704,10 @@ mod tests {
         );
         assert_eq!(
             initial_tab(false, true, true, true, true, true),
-            MainTab::Instruments
+            MainTab::DataAnalysis
         );
         assert_eq!(
-            initial_tab(false, false, true, true, true, true),
+            initial_tab(false, false, true, false, true, true),
             MainTab::Waveform
         );
         assert_eq!(

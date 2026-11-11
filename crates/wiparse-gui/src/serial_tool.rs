@@ -120,6 +120,8 @@ pub struct SerialToolPanel {
     ai_confirmed: HashMap<String, u32>,
     ai_serial_error: HashMap<String, String>,
     ai_epoch: u64,
+    // Generation and absolute first row of the primary acquisition.
+    analysis_source: (u64,usize),
     ai_test_locked: bool,
     ai_settings_requested: bool,
 }
@@ -221,6 +223,7 @@ impl SerialToolPanel {
             ai_confirmed: HashMap::new(),
             ai_serial_error: HashMap::new(),
             ai_epoch: 0,
+            analysis_source:(0,0),
             ai_test_locked: false,
             ai_settings_requested: false,
         };
@@ -741,6 +744,7 @@ impl SerialToolPanel {
         self.monitoring = true;
         self.ai_epoch = self.ai_epoch.wrapping_add(1);
         self.ai_serial_error.remove(&port);
+        self.analysis_source=(self.analysis_source.0.wrapping_add(1),self.live_abs_len());
         self.primary_device = Some(port.clone());
         let status_port = self
             .ports
@@ -1024,6 +1028,8 @@ impl SerialToolPanel {
     }
 
     /// Next absolute live sequence (`dropped + window`).
+    pub fn analysis_source(&self)->(u64,usize) {self.analysis_source}
+
     pub fn live_abs_len(&self) -> usize {
         self.live_dropped().saturating_add(self.live_line_count())
     }
@@ -1539,6 +1545,7 @@ impl SerialToolPanel {
         let mut new_live = LogTabPage::live_tab(lang);
         new_live.title = self.live_name.clone();
         self.tabs.insert(0, new_live);
+        self.analysis_source=(self.analysis_source.0.wrapping_add(1),0);
         for load in &mut self.pending_loads {
             load.tab_idx += 1;
         }
@@ -1569,6 +1576,7 @@ impl SerialToolPanel {
     fn clear_live_display(&mut self) {
         if let Some(live) = self.tabs.get_mut(0) {
             live.clear_display();
+            self.analysis_source=(self.analysis_source.0.wrapping_add(1),0);
         }
     }
 
@@ -2106,7 +2114,7 @@ impl SerialToolPanel {
                         .corner_radius(CornerRadius::same(ui_theme::RADIUS_CARD))
                         .show(ui, |ui| {
                             ui.set_width(inner_w);
-                            ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
+                            ui.spacing_mut().item_spacing = egui::vec2(0.0, 4.0);
                             ui.label(egui::RichText::new(if matches!(lang, Lang::Zh) { "连接与采集" } else { "Connection & capture" }).size(ui_theme::FONT_SECTION).strong());
                             ui.add_space(6.0);
                             let ctrl_w = inner_w;
@@ -2363,7 +2371,7 @@ impl SerialToolPanel {
                         });
                     paint_sidebar_card_border(ui, g1.response.rect, card_w, t.border);
 
-                    ui.add_space(12.0);
+                    ui.add_space(3.0);
 
                     // Group 2: log directory browser — same fixed width as Group 1.
                     let browser_h = (side_inner.bottom() - ui.cursor().min.y).max(160.0);
@@ -2404,7 +2412,7 @@ impl SerialToolPanel {
                                     ui.set_max_width(content.width());
                                     ui.set_min_height(content.height());
                                     ui.set_clip_rect(content.intersect(ui.clip_rect()));
-                                    ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
+                                    ui.spacing_mut().item_spacing = egui::vec2(0.0, 4.0);
                                     let ctrl_w = content.width().max(1.0);
 
                                     ui.label(
@@ -2416,7 +2424,7 @@ impl SerialToolPanel {
                                     let browser_edit = ui.add_sized(
                                         [ctrl_w, ui_theme::CTRL_H],
                                         ui_theme::singleline_sized(&mut self.browser_dir, ctrl_w)
-                                            .hint_text(tr(lang, "log.browser_hint")),
+                                            .hint_text(if lang==Lang::Zh{"日志文件夹路径"}else{"Log folder path"}),
                                     );
                                     if browser_edit.lost_focus() {
                                         self.refresh_log_browser();
@@ -2902,7 +2910,7 @@ impl SerialToolPanel {
                                 }
                             }
 
-                            ui.add_space(4.0);
+                            ui.add_space(1.0);
 
                             let idx =
                                 self.active_tab.min(self.tabs.len().saturating_sub(1));

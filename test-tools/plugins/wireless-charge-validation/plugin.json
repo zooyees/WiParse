@@ -86,10 +86,21 @@
           "label": "replay"
         },
         {
+          "value": "recorded",
+          "label": "工位记录（只读）"
+        },
+        {
           "value": "live",
           "label": "live"
         }
       ]
+    },
+    {
+      "name": "capture_id",
+      "type": "string",
+      "default": "",
+      "label": "Capture ID",
+      "label_zh": "工位记录 ID"
     },
     {
       "name": "fixture",

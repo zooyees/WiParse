@@ -87,8 +87,9 @@ fn bounded_results_keep_quality_units_and_continuation() {
     );
     assert_eq!(result["data"]["unit"], "mV");
     assert_eq!(result["data"]["coverage"]["complete"], false);
-    assert_eq!(result["data"]["continuation"], "opaque");
-    assert_eq!(result["data"]["text"]["truncated"], true);
+    assert!(result["data"].get("continuation").is_none()); // no cursor may skip omitted details
+    assert_eq!(result["complete"], false);
+    assert_eq!(result["error"], "EVIDENCE.RESPONSE_REQUIRES_PAGING");
 }
 #[test]
 fn truncated_but_valid_action_is_never_executed() {
@@ -183,4 +184,26 @@ fn cancelling_during_an_internal_poll_retains_original_dispatch_and_provider_cha
     assert!(s.messages.is_empty());
     assert!(s.observations.is_empty());
     assert!(!s.steps.is_empty());
+}
+
+#[test]
+fn missing_input_with_open_goals_stops_in_native_and_json_modes(){
+    for native in [true,false]{
+        let server=tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let addr=server.server_addr().to_ip().unwrap();
+        let worker=std::thread::spawn(move||{
+            let req=server.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+            let answer=json!({"reply":"请提供额定输入电压","status":"needs_input","evidence_ids":[]});
+            let msg=if native {json!({"content":null,"tool_calls":[{"id":"ask","type":"function","function":{"name":"wiparse_answer","arguments":answer.to_string()}}]})}else{
+                json!({"content":json!({"reply":"请提供额定输入电压","status":"needs_input","call":null}).to_string()})
+            };
+            let body=json!({"model":"local","choices":[{"message":msg,"finish_reason":if native{"tool_calls"}else{"stop"}}]});
+            req.respond(tiny_http::Response::from_string(body.to_string())).unwrap();
+        });
+        let config=AiConfig{enabled:true,base_url:format!("http://{addr}"),model:"local".into(),..Default::default()};
+        let svc=AiService::new(config);let mut s=session();s.prompt="计算充电时长，绘制曲线，保存报告".into();s.start(&svc);
+        let ctx=Context::default();let deadline=Instant::now()+Duration::from_secs(12);
+        while s.started.is_some()&&Instant::now()<deadline{s.poll(&ctx,&svc);std::thread::sleep(Duration::from_millis(5));}
+        worker.join().unwrap();assert!(s.status.contains("等待补充"),"{}",s.status);assert_eq!(s.round,1);assert!(!s.workflow.open_goals().is_empty());
+    }
 }

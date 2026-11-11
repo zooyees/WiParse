@@ -23,7 +23,11 @@ pub(super) fn action_pair(
             + ui.spacing().button_padding.x * 2.0
             + 2.0
     };
-    let stacked = needed(first).max(needed(second)) > column;
+    let first_min = needed(first);
+    let second_min = needed(second);
+    let stacked = first_min + gap + second_min > width;
+    let first_width = if stacked { width } else { column.clamp(first_min, (width-gap-second_min).max(first_min)) };
+    let second_width = width-gap-first_width;
     ui.scope(|ui| {
         // add_sized alone is a minimum; truncation keeps extreme widths bounded.
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
@@ -43,8 +47,8 @@ pub(super) fn action_pair(
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = gap;
                 (
-                    button(ui, first, true, column),
-                    button(ui, second, second_enabled, column),
+                    button(ui, first, true, first_width),
+                    button(ui, second, second_enabled, second_width),
                 )
             })
             .inner

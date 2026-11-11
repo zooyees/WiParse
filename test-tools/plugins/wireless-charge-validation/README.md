@@ -45,3 +45,28 @@ node test-tools/test/wireless-charge-service.smoke.mjs bin/WiParse-Service.exe
 ```
 
 模拟库生成器 `tests/generate-reference.py` 仅重建参考产品和模拟数据，禁止对正式产品执行。服务联调不访问硬件。工业启用前需补齐 Host 安全状态/设备共享/武装反馈、Dongle 时序捕获与健康、批准产品数据及物理工位，并完成契约 G2 至 G4；详细责任追踪见仓库 `docs/specs/wireless-test/05-plugin-implementation-review.md`。
+
+## 导入工位采集记录
+
+在集成测试中选择“工位记录（只读）”，填写记录 ID。在当前项目的测试目录内创建 `captures/<ID>.json`。ID 可使用字母、数字、下划线和连字符。单个文件最大 8 MiB。以下是格式示例，数值只演示字段含义。
+
+```json
+{
+  "schema_version": "wiparse.station-observation/1",
+  "simulation_only": false,
+  "station_id": "bench-A",
+  "dut_serial": "sample-001",
+  "firmware": "dev-1",
+  "clock_domain": "scope-1",
+  "cases": { "ADP01": { "ADP01.01": { "evidence_refs": ["e1"] } } },
+  "evidence": {
+    "e1": { "source": "capture-001", "coordinate": "sample_0based", "position": 120, "raw": "1.03" }
+  }
+}
+```
+
+支持从 1 计的行号、从 0 计的样本编号和字节偏移，分别使用 `line_1based`、`sample_0based` 和 `byte_0based`。工位负责导出真实片段、物理单位与时钟信息。检查 ID 取自产品场景定义。导入会记录原文件摘要，并在报告目录保存证据副本与复核索引。已找到原文的检查标记为待复核；缺少对应原文的检查标记为缺测。该模式全程只读，产品结论保留为 INCONCLUSIVE。
+
+## 对比存档
+
+运行 `node lib/compare-runs.mjs <前一报告目录> <后一报告目录>` 得到逐检查项 JSON 对照。程序核对存档 SHA-256 和运行身份。配置、模式、信号通道、单位及采样窗匹配，且两侧均有有效标量判定时才计算差值。配置变化、缺失项目与不可比较项保留在结果中。

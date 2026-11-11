@@ -141,7 +141,7 @@ fn chat_typography_and_activity_match_a_narrow_conversation_not_a_report() {
         }
         let send = text_rect(&out, "发送");
         assert!(send.bottom() < 930.0);
-        assert!(text_rect(&out, "mock-model").bottom() < 930.0);
+        assert!(text_rect(&out, "已就绪").bottom() < 100.0); // model remains available as header/scope tooltip
         let question = text_rect(&out, "检查确认你的功能和能力");
         let answer = text_rect(&out, "我可以分析串口数据，并按授权调用平台工具。");
         assert!(
@@ -170,16 +170,14 @@ fn data_scope_never_falls_back_to_recent_logs_for_empty_selection() {
     let mut p = panel();
     p.tabs[0].append_lines(vec!["private serial data".into()], true);
     let none = p.ai_scoped_observation(DataScope::None).unwrap();
-    assert!(none["recent_lines"].as_array().unwrap().is_empty());
-    assert_eq!(none["selected_text"], "");
+    assert!(none.get("recent_lines").is_none());
+    assert_eq!(none["read_authorized_for_selected_scope"], false);
+    assert_eq!(none["raw_logs_uploaded"], false);
     assert!(p.ai_scoped_observation(DataScope::Selection).is_err());
-    assert_eq!(
-        p.ai_scoped_observation(DataScope::Current).unwrap()["recent_lines"]
-            .as_array()
-            .unwrap()
-            .len(),
-        0
-    );
+    let current = p.ai_scoped_observation(DataScope::Current).unwrap();
+    assert!(current.get("recent_lines").is_none());
+    assert_eq!(current["raw_logs_uploaded"], false);
+    assert_eq!(current["read_authorized_for_selected_scope"], true);
     p.tabs[0].live = false;
     p.primary_device = Some("COM-test".into());
     let state = p.ai_state("layout-project", false);
@@ -341,7 +339,7 @@ fn local_library_settings_entry_preserves_composer_on_narrow_and_short_panes(){
  for width in [260.,360.,520.]{for height in [320.,500.,800.]{for lang in [Lang::Zh,Lang::En]{for scope in [DataScope::Current,DataScope::Range,DataScope::Selection,DataScope::Library]{
   let mut p=panel();p.ai_chat.scope=scope;let state=p.ai_state("layout-project",false);let ctx=egui::Context::default();crate::fonts::install_cjk_fonts(&ctx);let theme=ui_theme::apply_theme(&ctx,false);
   let output=ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(width,height))),..Default::default()},|ctx|{egui::CentralPanel::default().show(ctx,|ui|{p.ai_chat.ui(ui,lang,&theme,&state);});});
-  let send=text_rect(&output,label(lang,"发送","Send"));let local=text_rect(&output,label(lang,"本地日志：设置与预分析…","Local logs: settings and preview…"));assert!(send.bottom()<=height&&send.right()<=width);assert!(local.bottom()<send.top()&&local.right()<=width,"library entry overflows {width}x{height}: {local:?}");
+  let send=text_rect(&output,label(lang,"发送","Send"));let local=text_rect(&output,"…");assert!(send.bottom()<=height&&send.right()<=width);assert!(local.bottom()<send.top()&&local.right()<=width,"library entry overflows {width}x{height}: {local:?}");
  }}}}
 }
 
@@ -351,9 +349,13 @@ fn local_library_popup_keeps_preview_accessible_inside_small_windows(){
   let height=500.;let mut p=panel();if width==260.{p.ai_chat.config=None;}p.ai_chat.scope=DataScope::Library;let state=p.ai_state("layout-project",false);let ctx=egui::Context::default();crate::fonts::install_cjk_fonts(&ctx);let theme=ui_theme::apply_theme(&ctx,false);
   ctx.style_mut(|style|style.animation_time=0.);
   let mut draw=|events|ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(width,height))),events,..Default::default()},|ctx|{egui::CentralPanel::default().show(ctx,|ui|{p.ai_chat.ui(ui,Lang::Zh,&theme,&state);});});
-  let out=draw(vec![]);let position=text_rect(&out,"本地日志：设置与预分析…").center();
+  let out=draw(vec![]);let position=text_rect(&out,"…").center();
   let _=draw(vec![egui::Event::PointerMoved(position),egui::Event::PointerButton{pos:position,button:egui::PointerButton::Primary,pressed:true,modifiers:egui::Modifiers::NONE}]);
-  let _=draw(vec![egui::Event::PointerButton{pos:position,button:egui::PointerButton::Primary,pressed:false,modifiers:egui::Modifiers::NONE}]);let mut output=draw(vec![]);
+  let _=draw(vec![egui::Event::PointerButton{pos:position,button:egui::PointerButton::Primary,pressed:false,modifiers:egui::Modifiers::NONE}]);let menu=draw(vec![]);let sub=text_rect(&menu,"日志选项与预处理").center();
+  let _=draw(vec![egui::Event::PointerMoved(sub)]);let mut output=draw(vec![]);
+  if !output.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="本地预分析")){
+   let _=draw(vec![egui::Event::PointerButton{pos:sub,button:egui::PointerButton::Primary,pressed:true,modifiers:egui::Modifiers::NONE}]);let _=draw(vec![egui::Event::PointerButton{pos:sub,button:egui::PointerButton::Primary,pressed:false,modifiers:egui::Modifiers::NONE}]);output=draw(vec![]);
+  }
   let preview=text_rect(&output,"本地预分析");assert!(preview.min.x>=0.&&preview.max.x<=width&&preview.min.y>=0.&&preview.max.y<=height,"preview clipped at {width}: {preview:?}");
   if width==420.{output.textures_delta.set.retain(|(id,_)|*id!=egui::TextureId::Managed(0));output.textures_delta.set.push((egui::TextureId::Managed(0),egui::epaint::ImageDelta::full(ctx.fonts(|fonts|fonts.image()),egui::TextureOptions::LINEAR)));crate::ui_audit::export_frame(&ctx,output,&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tmp/serial-local-log-ui"),"local-library-menu",egui::vec2(width,height));}
  }

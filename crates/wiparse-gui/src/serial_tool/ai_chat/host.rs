@@ -95,7 +95,7 @@ impl SerialToolPanel {
         &self,
         scope: DataScope,
     ) -> Result<serde_json::Value, String> {
-        let mut data = self.ai_observation(false, None, None);
+        let mut data=json!({"analysis_mode":"local_engine","raw_logs_uploaded":false,"read_authorized_for_selected_scope":scope!=DataScope::None});
         data["sampling"]=json!("Manual analysis uses the local engine across the selected scope, not a recent-100-lines sample. Raw logs are not attached. Request log.files / log.analyze for evidence.");
         data["data_scope"] = json!(match scope {
             DataScope::Current => "current_log",
@@ -133,13 +133,13 @@ impl SerialToolPanel {
             .as_ref()
             .is_some_and(|old| old != &source)
         {
-            chat.cancel();
+            chat.cancel();chat.run=None;chat.queue_paused=true;chat.usage_total=Default::default();
             chat.watch = None;
             chat.awaiting_connection = None;
             chat.entries.clear();
             chat.history.clear();
             chat.retry = None;
-            chat.allow_automation = false;
+            chat.allow_automation = false;chat.revoke_controls();
             chat.reports = 0;
             chat.rules = Default::default();
             chat.alert_count = 0;
@@ -185,6 +185,12 @@ impl SerialToolPanel {
                 );
             }
         }
+        if let Some(pending) = &mut chat.pending {
+            if let Some(text) = pending.task.progress.lock().ok().and_then(|mut p|p.take()) {
+                pending.preview = Some(crate::test_report::TextMarkdown::new(&text));
+                ctx.request_repaint();
+            }
+        }
         let result =
             chat.pending
                 .as_ref()
@@ -199,27 +205,79 @@ impl SerialToolPanel {
             let pending = chat.pending.take().unwrap();
             match result {
                 Ok(reply) => {
-                    let mut decoded = protocol::parse(&reply.text);
+                    chat.usage_total.record(&reply.usage);if !pending.automatic{if let Some(run)=&mut chat.run{run.usage.record(&reply.usage);}}
+                    let mut decoded = run::decode(&reply);
+                    // Final text is a valid native response; known read-confirmation loops and
+                    // unfinished declared goals receive feedback instead of false completion.
+                    let native_text_final=!pending.automatic && reply.tool_message.is_none() && matches!(reply.finish_reason.as_deref(),Some("stop"|"completed")) && !reply.text.trim().is_empty() && !reply.text.trim_start().starts_with(['{','[']) && !reply.text.trim_start().starts_with("```json") && decoded.error.is_none() && decoded.actions.is_empty() && serde_json::from_str::<serde_json::Value>(&reply.text).is_err() && !wiparse_core::ai::workflow::is_read_confirmation_loop(&reply.text);
+                    if native_text_final { decoded.finalized=true; }
+
                     if reply.finish_reason.as_deref() == Some("length") {
                         decoded.actions.clear();
                         decoded.error = Some("回复达到输出上限，仅显示已有内容；未执行AI动作 / Output limit reached; no AI actions executed".into());
                     }
-                    chat.entry("assistant", decoded.reply.clone());
+                    if !pending.automatic && decoded.finalized {
+                        if let Some(message)=&reply.tool_message{if message.calls.first().is_some_and(|c|c.name=="wiparse_answer"){
+                            let p:serde_json::Value=serde_json::from_str(&message.calls[0].arguments).unwrap_or_default();
+                            let valid=p["evidence_ids"].as_array().is_some_and(|ids|(decoded.needs_input||chat.scope==DataScope::None||!ids.is_empty())&&ids.iter().all(|id|id.as_str().is_some_and(|id|chat.run.as_ref().is_some_and(|run|run.workflow.get(id).is_ok()))));
+                            if !valid{decoded.finalized=false;decoded.error=Some("AI.EVIDENCE_REFERENCE_REQUIRED: cite actual evidence IDs returned by host tools".into());}
+                        }}
+                    }
+                    if !pending.automatic && decoded.needs_input && wiparse_core::ai::workflow::is_read_confirmation_loop(&decoded.reply){decoded.finalized=false;decoded.error=Some("AGENT.READ_ALREADY_AUTHORIZED".into());}
+                    let stale=self.ai_state(&project,testing).binding!=pending.binding||!pending.automatic&&chat.run.as_ref().is_some_and(|r|r.scope_key!=self.local_log_scope_key(&chat));
+                    if stale {
+                        chat.note("来源已变化，已放弃旧来源的 AI 回复。",true);
+                        self.ai_chat=chat;
+                        ctx.request_repaint();
+                        return;
+                    }
+                    if !pending.automatic&&decoded.finalized {
+                        let goals=chat.run.as_ref().map_or_else(Vec::new,|r|r.workflow.open_goals());
+                        if !decoded.needs_input&&!goals.is_empty(){decoded.finalized=false;decoded.error=Some(format!("AGENT.UNFINISHED_OUTCOMES: {}. Complete actual work then update agent.plan, or mark genuine blockers with reasons.",goals.join("; ")));}
+                    }
+                    let incomplete=!pending.automatic&&!stale&&reply.finish_reason.as_deref()!=Some("length")&&(decoded.error.is_some()||decoded.actions.is_empty()&&!decoded.finalized);
+                    if incomplete {
+                        let reason=decoded.error.as_deref().unwrap_or("AI.NO_ACTION: working reply omitted the tool call");
+                        chat.entry("tool",format!("协议诊断 · {reason}\n结束标记 {:?}，工具调用 {} 个。",reply.finish_reason,reply.tool_message.as_ref().map_or(0,|m|m.calls.len())));
+                        let native=chat.config.as_ref().is_some_and(wiparse_core::ai::context::native);
+                        if let Some(run)=chat.run.as_mut().filter(|r|r.repair_count<3){
+                            run.repair_count+=1;
+                            run.repairs+=1;
+                            // A rejected response has dispatched no actions. Retry only the model
+                            // turn, retaining the bound source, completed calls and host permissions.
+                            if native && run.repair_count>=2 && !run.json_fallback && !reason.starts_with("AGENT.UNFINISHED_OUTCOMES"){
+                                run.json_fallback=true;
+                            }
+                            let recovery=protocol::recovery(native && !run.json_fallback);
+                            run.feedback=Some(format!("{recovery} Last validation: {reason}. Available evidence IDs: {:?}. Open goals: {:?}.",run.evidence_ids,run.workflow.open_goals()));
+                            let mut data=self.ai_scoped_observation(chat.scope).unwrap_or_else(|_|json!({}));
+                            data["platform_results"]=json!(chat.tool_results);
+                            if let Err(e)=chat.submit(ctx,&self.ai_state(&project,testing),data,pending.question.clone(),false){chat.note(e,true);}
+                        }else{
+                            let goals=chat.run.as_ref().map(|r|r.workflow.open_goals()).unwrap_or_default();
+                            let detail=if goals.is_empty(){String::new()}else{format!("；待完成：{}",goals.join("、"))};
+                            let evidence=chat.run.as_ref().map_or(0,|r|r.evidence_ids.len());
+                            chat.note(format!("本次分析未完成。最后一次回复未通过校验：{reason}。活动记录有 {evidence} 项可引用证据{detail}。"),true);
+                        }
+                    } else {
+                    if !decoded.reply.trim().is_empty(){chat.entry("assistant", decoded.reply.clone());}
                     if pending.automatic {
                         chat.reports += 1;
                         if let Some(entry) = chat.entries.last_mut() {
                             entry.automatic = true;
                         }
-                    } else {
+                    } else if decoded.finalized && !decoded.reply.trim().is_empty() {
                         chat.history
                             .push(AiMessage::Assistant(bounded(&decoded.reply, 8000)));
                     }
                     chat.status = format!(
                         "{} · {}",
                         reply.model,
-                        label(lang, "分析完成", "Analysis complete")
+                        if decoded.needs_input {label(lang,"等待补充信息","Input required")} else if !decoded.finalized {label(lang,"处理中","Working")} else if chat.run.as_ref().is_some_and(|r|r.workflow.blocked()>0){label(lang,"部分完成","Partial")}else{label(lang, "分析完成", "Analysis complete")}
                     );
                     chat.status_error = false;
+                    if decoded.needs_input&&!pending.automatic&&!chat.messages.is_empty(){chat.queue_paused=true;}
+                    if decoded.finalized&&!pending.automatic{if let Some(run)=&mut chat.run{run.finish(if decoded.needs_input{"needs_input"}else if run.workflow.blocked()>0{"partial"}else{"completed"});}}
                     if let Some(watch) = &mut chat.watch {
                         watch.failures = 0;
                         watch.next = if watch.alert_waiting {
@@ -232,14 +290,18 @@ impl SerialToolPanel {
                     if let Some(error) = decoded.error {
                         chat.note(error, true);
                     } else if !decoded.actions.is_empty() {
+                        if !pending.automatic{if let Some(run)=&mut chat.run{run.native_pending=reply.tool_message.clone();run.phase="executing";}}
+                        chat.status="正在执行分析工具… / Executing analysis tools…".into();
                         let current = self.ai_state(&project, testing);
-                        if current.binding != pending.binding {
+                        if stale {
                             chat.note(
                                 "目标已变化，未执行AI动作 / Source changed; actions blocked",
                                 true,
                             );
                         } else {
-                            for action in decoded.actions {
+                            let mut actions=decoded.actions;
+                            if actions.len()>1&&reply.tool_message.as_ref().is_some_and(|m|m.calls.len()>1) {if let Some(run)=&mut chat.run {run.queued=actions.drain(1..).collect();}}
+                            for action in actions {
                                 if pending.automatic
                                     && matches!(action, Action::MonitorConfigure { .. })
                                 {
@@ -249,16 +311,16 @@ impl SerialToolPanel {
                                 let controls = match &action {
                                     Action::SerialStart | Action::SerialStop => true,
                                     Action::Platform { method, params } => {
-                                        platform::validate(method, params).unwrap_or(true)
+                                        platform::validate(method, params).unwrap_or(false)
                                     }
                                     _ => false,
                                 };
                                 if controls
                                     && (!pending.automation_granted
-                                        || !chat.allow_automation
+                                        || !chat.control_allowed(&current)
                                         || current.automation_locked)
                                 {
-                                    chat.note("设备控制未授权或测试运行中 / Device control disabled or test running",true);
+                                    chat.note(if current.automation_locked{"测试正在占用设备，未执行AI设备动作 / Test owns devices; action blocked"}else{"本条消息未获得设备操作授权，未执行；授权后请提交新消息，旧消息不会自动补授权。 / This message has no device grant; submit a new message after authorization."},true);
                                     break;
                                 }
                                 if let Action::Platform { method, params } = action {
@@ -270,23 +332,30 @@ impl SerialToolPanel {
                                         pending.question.clone(),
                                         pending.automatic,
                                     ) {
-                                        chat.note(error, true);
+                                        if !pending.automatic&&chat.run.as_ref().is_some_and(|r|r.native_pending.is_some()){
+                                            let result=json!({"ok":false,"error":error,"executed":false});if let Some(run)=&mut chat.run{run.record(result.clone());}chat.tool_round+=1;
+                                            if self.dispatch_queued_reads(ctx,&mut chat,&pending.question){break;}
+                                            let mut data=self.ai_scoped_observation(chat.scope).unwrap_or_else(|_|json!({}));data["rejected_tool"]=result;
+                                            if let Err(e)=chat.submit(ctx,&current,data,pending.question.clone(),false){chat.note(e,true);}
+                                        }else{chat.note(error, true);}
                                     }
-                                } else if let Err(error) = self.apply_ai_action(
-                                    &mut chat,
-                                    action,
-                                    &pending.question,
-                                    lang,
-                                    testing,
-                                ) {
-                                    chat.note(error, true);
-                                    break;
+                                } else {
+                                    let action_method=match &action{Action::MonitorConfigure{..}=>"monitor.configure",Action::MonitorStart{..}=>"monitor.start",Action::MonitorStop=>"monitor.stop",_=>"serial.action"};
+                                    let result=self.apply_ai_action(&mut chat,action,&pending.question,lang,testing);
+                                    if !pending.automatic&&chat.run.as_ref().is_some_and(|r|r.native_pending.is_some()){
+                                        let mut evidence=match result{Ok(())=>json!({"ok":true,"monitoring":chat.watch.is_some(),"reception":self.ai_state(&project,testing)}),Err(e)=>json!({"ok":false,"error":e})};
+                                        chat.evidence_counter=chat.evidence_counter.saturating_add(1);evidence["evidence_id"]=json!(format!("S{}",chat.evidence_counter));if let Some(run)=&mut chat.run{run.workflow.record(evidence["evidence_id"].as_str().unwrap_or(""),action_method,&evidence);run.record(evidence.clone());}chat.tool_round+=1;
+                                        let mut data=self.ai_scoped_observation(chat.scope).unwrap_or_else(|_|json!({}));data["monitor_result"]=evidence;
+                                        if let Err(e)=chat.submit(ctx,&self.ai_state(&project,testing),data,pending.question.clone(),false){chat.note(e,true);}
+                                    }else if let Err(error)=result{chat.note(error,true);break;}
                                 }
                             }
                         }
                     }
                 }
+                }
                 Err(error) => {
+                    chat.usage_total.failure();if !pending.automatic{if let Some(run)=&mut chat.run{run.usage.failure();}}
                     if !pending.automatic {
                         chat.history.truncate(pending.history_before);
                     }
@@ -307,8 +376,18 @@ impl SerialToolPanel {
             }
         }
         self.poll_platform(ctx, &mut chat, lang);
+        if chat.pending.is_none()&&chat.tool.is_none(){
+            if let Some((data,question,bound))=chat.deferred.take(){
+                let current=self.ai_state(&project,testing);
+                if current.binding==bound.binding&&chat.run.as_ref().is_some_and(|run|run.scope_key==self.local_log_scope_key(&chat)){
+                    if let Err(error)=chat.submit(ctx,&current,data,question,false){chat.note(error,true);}
+                }else{chat.note("来源变化，已取消排队的分析请求 / Source changed; queued analysis cancelled",true);}
+            }
+        }
+        let queue_state=self.ai_state(&project,testing);self.pump_message_queue(ctx,&mut chat,&queue_state);
         if chat.pending.is_none()
             && chat.tool.is_none()
+            && chat.deferred.is_none()
             && chat
                 .watch
                 .as_ref()
@@ -389,6 +468,7 @@ impl SerialToolPanel {
         );
         chat.reports = 0;
         chat.watch = Some(Watch {
+            pretrigger: Default::default(), first_trigger: None, observed_rows: 0,
             binding: state.binding,
             goal,
             interval,
@@ -564,7 +644,8 @@ impl SerialToolPanel {
                         chat.watch = None;
                     }
                     chat.cancel();
-                    chat.status = "已取消等待 / Cancelled".into();
+                    chat.queue_paused=true;
+                    chat.status = "已取消当前；队列暂停 / Current task cancelled; queue paused".into();
                 }
                 UiAction::Settings => self.ai_settings_requested = true,
                 UiAction::Clear => {
@@ -572,7 +653,7 @@ impl SerialToolPanel {
                     chat.library.reset();
                     chat.tool_results.clear();
                     chat.watch = None;
-                    chat.entries.clear();
+                    chat.entries.clear();chat.messages.clear();chat.queue_paused=false;chat.queue_notice=None;chat.run=None;chat.usage_total=Default::default();
                     chat.history.clear();
                     chat.retry = None;
                     chat.status.clear();
@@ -619,22 +700,34 @@ impl SerialToolPanel {
                         }
                     }
                 }
+                UiAction::RemoveQueued(id)=>{chat.messages.retain(|m|m.id!=id);chat.queue_notice=None;},
+                UiAction::EditQueued(id)=>{if chat.prompt.trim().is_empty(){if let Some(i)=chat.messages.iter().position(|m|m.id==id){chat.prompt=chat.messages.remove(i).unwrap().text;chat.queue_notice=None;}}else{chat.queue_notice=Some("输入区已有草稿，请先保存或发送，排队内容保持不变 / Draft exists; queued message preserved".into());}},
+                UiAction::ClearQueue=>{chat.messages.clear();chat.queue_paused=false;chat.queue_notice=None;},
+                UiAction::ResumeQueue=>{chat.queue_paused=false;chat.status_error=false;},
+                UiAction::Correct(text)=>{
+                    let scope=self.local_log_scope_key(&chat);
+                    let Some(run)=chat.run.as_mut().filter(|r|r.scope_key==scope && matches!(r.phase,"planning"|"reading"|"executing"|"analysing")) else {continue;};
+                    if run.question.len()+text.len()+32>16*1024 {chat.note("修正后任务过长，草稿已保留",true);continue;}
+                    if chat.pending.as_ref().is_some_and(|p|p.automatic || p.binding!=state.binding) || chat.tool.as_ref().is_some_and(|t|t.automatic){continue;}
+                    if run.correction.is_some(){chat.note("上一条修正正在等待当前操作返回，新输入已保留。",false);continue;}
+                    run.correction=Some(text.clone());
+                    run.queued.clear();
+                    chat.prompt.clear();chat.entry("user",text);
+                    if let Some(pending)=chat.pending.take(){
+                        pending.task.cancel();
+                        chat.history.truncate(pending.history_before);
+                        match self.ai_scoped_observation(chat.scope).and_then(|data|chat.submit(ui.ctx(),&state,data,pending.question,false)){
+                            Ok(())=>{},Err(error)=>chat.note(error,true)
+                        }
+                    }
+                }
                 UiAction::Send(question) => {
-                    if chat.pending.is_some() || chat.tool.is_some() {
+                    if chat.working() || (!chat.messages.is_empty()&&!chat.queue_paused) {
+                        let key=self.local_log_scope_key(&chat);
+                        match chat.enqueue_message(question,&state,key){Ok(())=>{chat.prompt.clear();chat.queue_notice=None;},Err(error)=>{chat.queue_notice=Some(error);}}
                         continue;
                     }
-                    chat.tool_round = 0;
-                    chat.tool_results.clear();
-                    chat.library.bind_scope(self.local_log_scope_key(&chat));
-                    let mut data = match self.ai_scoped_observation(chat.scope) {
-                        Ok(data) => data,
-                        Err(error) => {
-                            chat.note(error, true);
-                            continue;
-                        }
-                    };
-                    if chat.scope==DataScope::Range{data["requested_rows"]=json!({"first":chat.range_first,"last":chat.range_last});}
-                    match chat.submit(ui.ctx(), &state, data, question, false) {
+                    match self.begin_manual_agent(ui.ctx(),&mut chat,&state,question) {
                         Ok(()) => chat.prompt.clear(),
                         Err(error) => {
                             chat.status = error;
@@ -675,6 +768,10 @@ impl SerialToolPanel {
 }
 
 impl SerialToolPanel {
+ pub(crate) fn agent_dataset(&mut self,id:&str)->Result<wiparse_core::log_analysis::timeline::Dataset,String>{
+  let key=self.local_log_scope_key(&self.ai_chat);self.ai_chat.library.bind_scope(key);
+  self.ai_chat.library.dataset(id)
+ }
  pub(crate) fn agent_library(&mut self, method:&str, params:serde_json::Value, ctx:&egui::Context, cancel:Arc<AtomicBool>)->crate::ai::agent::HostReply {
   let key=self.local_log_scope_key(&self.ai_chat);self.ai_chat.library.bind_scope(key);
   let work=||->Result<Receiver<crate::backend::InvokeReply>,String>{

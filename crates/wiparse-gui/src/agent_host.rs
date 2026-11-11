@@ -22,7 +22,7 @@ impl WiParseApp {
             "instruments",
         ]
         .into_iter()
-        
+
         .map(|page| {
             let identity = match page {
                 "serial" => self.serial.agent_identity(&project),
@@ -45,6 +45,8 @@ impl WiParseApp {
         }
     }
     pub(super) fn tick_engineering_agent(&mut self, ctx: &egui::Context) {
+        self.tick_report_agent(ctx);
+        self.tick_serial_broker(ctx);
         if self.ai.agent.busy() || self.ai.agent.tracking_test() {
             self.waveform.agent_tick(self.lang);
             self.test_tool.agent_tick(self.lang);
@@ -65,12 +67,14 @@ impl WiParseApp {
             );
             return;
         }
-        let response = self.agent_dispatch(ctx, &request);
+        let mut session = std::mem::take(&mut self.ai.agent);
+        let response = self.agent_dispatch(ctx, &mut session, &request);
+        self.ai.agent = session;
         // A host-approved transition (start reception / configured decode) may change its own binding.
         self.ai.agent.host_transition(self.agent_context());
         self.ai.agent.attach(&request.id, response);
     }
-    fn agent_dispatch(&mut self, ctx: &egui::Context, r: &HostCall) -> HostReply {
+    fn agent_dispatch(&mut self, ctx: &egui::Context, session: &mut agent::Session, r: &HostCall) -> HostReply {
         let p = &r.call.params;
         let method = r.call.method.as_str();
         if !r.internal {
@@ -80,7 +84,9 @@ impl WiParseApp {
         }
         let project = self.test_tool.current_project_id().to_owned();
         let value = match method {
-            "evidence.get"=>self.ai.agent.evidence(p["id"].as_str().unwrap_or("")),
+            "platform.catalog"=>wiparse_core::platform_api::catalog(p),
+            "platform.invoke"=>return self.invoke_platform(ctx,r),
+            "evidence.get"=>session.evidence(p["id"].as_str().unwrap_or("")),
             "page.inspect" => json!({"ok":true,"data":match r.context.page.as_str() {
                 "serial"=>self.serial.ai_summary(),"waveform"=>self.waveform.ai_summary(),
                 "data_analysis"=>self.data_analysis.ai_summary(),"test_report"=>self.test_report.ai_summary(),
@@ -91,7 +97,7 @@ impl WiParseApp {
             "log.files" | "log.analyze" => return self.serial.agent_library(method,p.clone(),ctx,r.cancelled.clone()),
             "serial.logs" => {
                 return match self.serial.agent_log_input() {
-                    Ok((spec, memory)) => self.ai.agent.log_jobs.analyze(
+                    Ok((spec, memory)) => session.log_jobs.analyze(
                         ctx,
                         p.clone(),
                         spec,
@@ -149,43 +155,58 @@ impl WiParseApp {
                     _ => json!({"ok":true,"data":self.waveform.ai_summary()}),
                 }
             }
+            "data.present" => match self.data_analysis.file_dataset(p["query_id"].as_str().unwrap_or("")).map(Ok).unwrap_or_else(||self.serial.agent_dataset(p["query_id"].as_str().unwrap_or("")).map(std::sync::Arc::new)) {
+                Ok(dataset)=>match self.data_analysis.agent_present(&dataset,p["query_id"].as_str().unwrap(),self.lang){Ok(v)=>{self.active=MainTab::DataAnalysis;json!({"ok":true,"data":v})},Err(e)=>agent::failure(e)},Err(e)=>agent::failure(e)
+            },
+            "data.extract" => return self.data_analysis.agent_extract(p, ctx, r.cancelled.clone()),
             "data.inspect" => json!({"ok":true,"data":self.data_analysis.ai_summary()}),
             "data.statistics" => self
                 .data_analysis
-                .agent_statistics(&mut self.ai.agent.data_job, true),
+                .agent_statistics(&mut session.data_job, true),
             "data.statistics.result" if r.internal => self
                 .data_analysis
-                .agent_statistics(&mut self.ai.agent.data_job, false),
+                .agent_statistics(&mut session.data_job, false),
+            "report.create" => return match session.report_evidence(p).and_then(|e|crate::ai::artifact::start(self.test_tool.data_root_path(),project.clone(),p.clone(),e,r.cancelled.clone(),ctx.clone(),|v|v)){Ok(rx)=>HostReply::work(rx),Err(e)=>HostReply::value(agent::failure(e))},
+            "report.open" => {
+                match crate::ai::artifact::report_path(&self.test_tool.data_root_path(),&project,p["report_id"].as_str().unwrap_or("")){
+                    Ok(path) if path.is_file()=>{let _=self.test_report.select_project(&self.test_tool.data_root_path(),&[],&project);self.test_report.open_markdown(path,self.lang);self.active=MainTab::TestReport;json!({"ok":true,"data":{"opened":true,"report_id":p["report_id"]}})},
+                    _=>agent::failure("REPORT.NOT_AVAILABLE_IN_CURRENT_PROJECT")
+                }
+            },
             "report.inspect" => self.test_report.agent_index(p),
+            "report.read" => return self.test_report.agent_read(p,&self.test_tool.data_root_path(),ctx,r.cancelled.clone()),
             "report.search" => return match self.test_report.agent_search_input(p,&self.test_tool.data_root_path()) {
-                Ok((spec,query))=>self.ai.agent.report_jobs.analyze(ctx,query,spec,None,r.cancelled.clone()),
+                Ok((spec,query))=>session.report_jobs.analyze(ctx,query,spec,None,r.cancelled.clone()),
                 Err(e)=>HostReply::value(agent::failure(e))
             },
             "calc.inspect" => json!({"ok":true,"data":self.calculator.ai_summary()}),
             "calc.evaluate" => CalculatorPanel::new().agent_calculate(p),
             "calc.apply" => self.calculator.agent_calculate(p),
             "testing.inspect" | "testing.status" => json!({"ok":true,"data":self.test_tool.agent_run_status()}),
+            "testing.wait" => {
+                let mut params=json!({"key":p["run_id"],"action":"testing.wait","deadline_ms":chrono::Utc::now().timestamp_millis()+p["timeout_seconds"].as_i64().unwrap_or(120)*1000});
+                if self.test_tool.agent_job_key().is_none(){params["deadline_ms"]=json!(chrono::Utc::now().timestamp_millis()+1000);}
+                wait("testing.result",params)
+            },
             "testing.propose" => return self.test_tool.agent_propose(p,ctx),
             "testing.apply" => self.test_tool.agent_apply_draft(p),
             "testing.select" => self.test_tool.agent_select_cases(p),
             "testing.pause" | "testing.resume" => {
-                if !self.ai.agent.owns_test(self.test_tool.agent_job_key().as_deref()){agent::failure("不能操作其他来源发起的测试")}else{self.test_tool.agent_run_control(if method=="testing.pause"{"pause"}else{"resume"})}
+                if !session.owns_test(self.test_tool.agent_job_key().as_deref()){agent::failure("不能操作其他来源发起的测试")}else{self.test_tool.agent_run_control(if method=="testing.pause"{"pause"}else{"resume"})}
             }
             "testing.cases" => self.test_tool.agent_cases(p),
             "testing.run" | "testing.preflight" => {
                 let result = self.test_tool.agent_start(method == "testing.preflight");
                 if result.ok {
                     let key = self.test_tool.agent_job_key();
-                    self.ai.agent.mark_test(key.clone());
+                    session.mark_test(key.clone());
                     json!({"ok":true,"data":{"state":"accepted","run_id":key,"process_completed":false,"status":self.test_tool.agent_run_status(),"tracking":"host tracks completion independently; use testing.status for fresh status","formal_verdict":"not available until actual report"}})
                 } else {
                     reply(result)
                 }
             }
             "testing.stop" => {
-                if !self
-                    .ai
-                    .agent
+                if !session
                     .owns_test(self.test_tool.agent_job_key().as_deref())
                 {
                     agent::failure("不能停止其他来源发起的测试")
@@ -202,7 +223,7 @@ impl WiParseApp {
             "testing.result" if r.internal => {
                 let current = self.test_tool.agent_job_key();
                 if current.is_none() {
-                    self.ai.agent.mark_test(None);
+                    session.mark_test(None);
                     {
                         let status = self.test_tool.agent_run_status();
                         if status["completed_run_identity"] != p["key"] {
@@ -212,6 +233,7 @@ impl WiParseApp {
                         }
                     }
                 } else if current.as_deref() == p["key"].as_str() {
+                    if p["deadline_ms"].as_i64().is_some_and(|d|chrono::Utc::now().timestamp_millis()>=d){return HostReply::value(agent::failure("TEST.WAIT_TIMEOUT: run still active; not cancelled or retried"));}
                     wait("testing.result", p.clone())
                 } else {
                     agent::failure("测试运行已被替换，停止等待旧运行")
@@ -238,7 +260,7 @@ impl WiParseApp {
                                 self.instruments.agent_capture(p)
                             };
                             if result.ok {
-                                wait("instrument.result", json!({"job_id":result.data["job_id"]}))
+                                wait("instrument.result", json!({"job_id":result.data["job_id"],"job_session":result.data["job_session"],"device_id":result.data["device_id"]}))
                             } else {
                                 reply(result)
                             }
@@ -259,5 +281,149 @@ impl WiParseApp {
             _ => agent::failure("未实现或不允许的宿主调用"),
         };
         HostReply::value(value)
+    }
+}
+
+/// The serial model keeps its conversation; execution state reuses the canonical host.
+pub(super) struct SerialBroker {
+    tx: crossbeam_channel::Sender<crate::ai::broker::Request>,
+    rx: crossbeam_channel::Receiver<crate::ai::broker::Request>,
+    session: agent::Session,
+    pending: Option<BrokerPending>,
+}
+struct BrokerPending {
+    origin: crate::ai::broker::Request,
+    request: HostCall,
+    receiver: Option<crossbeam_channel::Receiver<Value>>,
+    next: std::time::Instant,
+    target_page: String,
+    target_binding: Value,
+    approved: bool,
+}
+impl Default for SerialBroker {
+    fn default()->Self {let(tx,rx)=crossbeam_channel::bounded(8);Self{tx,rx,session:Default::default(),pending:None}}
+}
+fn target_binding(context:&ContextState,page:&str)->Value {
+    serde_json::from_str::<Value>(&context.binding).unwrap_or_default()[page].clone()
+}
+impl WiParseApp {
+    fn tick_serial_broker(&mut self,ctx:&egui::Context) {
+        use std::sync::atomic::Ordering;
+        use std::time::{Duration,Instant};
+        ctx.data_mut(|d|d.insert_temp(egui::Id::new("wiparse-canonical-agent"),self.serial_agent.tx.clone()));
+        let mut broker=std::mem::take(&mut self.serial_agent);
+        if broker.session.tracking_test() {
+            self.test_tool.agent_tick(self.lang);
+            broker.session.update_test(self.test_tool.agent_run_status());
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
+        if broker.pending.is_none() {
+            if let Ok(origin)=broker.rx.try_recv() {
+                let mut context=self.agent_context();context.page="serial".into();
+                let page=wiparse_core::engineering_agent::validate(&wiparse_core::engineering_agent::Call{method:origin.method.clone(),params:origin.params.clone()}).map_or("any",|t|t.page).to_owned();
+                let request=HostCall{id:uuid::Uuid::new_v4().to_string(),call:wiparse_core::engineering_agent::Call{method:origin.method.clone(),params:origin.params.clone()},context:context.clone(),cancelled:origin.guard.cancelled.clone(),internal:false};
+                broker.session.set_context(context.clone());
+                broker.pending=Some(BrokerPending{origin,request,receiver:None,next:Instant::now(),target_binding:target_binding(&context,&page),target_page:page,approved:false});
+            }
+        }
+        if let Some(mut pending)=broker.pending.take() {
+            let now=Instant::now();
+            let context=self.agent_context();
+            let validated=wiparse_core::engineering_agent::validate(&wiparse_core::engineering_agent::Call{method:pending.origin.method.clone(),params:pending.origin.params.clone()});
+            let permission=validated.as_ref().is_ok_and(|t|!matches!(t.effect,wiparse_core::engineering_agent::Effect::Device|wiparse_core::engineering_agent::Effect::Test)||pending.origin.guard.controls);
+            let stale=context.project!=pending.origin.guard.project || !(if pending.receiver.is_some() || pending.request.internal {self.serial.ai_platform_result_guard_valid(&pending.origin.guard)}else{self.serial.ai_platform_guard_for(&pending.origin.guard,&pending.origin.method,&pending.origin.params)})
+                || target_binding(&context,&pending.target_page)!=pending.target_binding;
+            let mut result=if pending.request.cancelled.load(Ordering::Acquire)||stale {Some(agent::failure("AI.CANCELLED_OR_STALE"))}
+                else if !permission {Some(agent::failure("AI.CONTROL_LOCKED_OR_INVALID_TOOL"))}
+                else if now>=pending.origin.deadline {Some(agent::failure("AI.TOOL_TIMEOUT: execution may be unknown; do not retry output-changing commands"))}
+                else {None};
+            let review=pending.origin.method=="platform.invoke"&&validated.as_ref().is_ok_and(|t|matches!(t.effect,wiparse_core::engineering_agent::Effect::Device|wiparse_core::engineering_agent::Effect::Test));
+            let mut declined=false;
+            if result.is_none()&&review&&!pending.approved {
+                egui::Window::new("AI 平台操作确认").id(egui::Id::new("platform-action-review")).collapsible(false).resizable(true).show(ctx,|ui|{
+                    ui.label("请核对目标与参数；确认后执行这一次操作。");
+                    egui::ScrollArea::vertical().max_height(320.).show(ui,|ui|{ui.monospace(serde_json::to_string_pretty(&pending.origin.params).unwrap_or_default());});
+                    ui.horizontal(|ui|{if ui.button("确认执行").clicked(){pending.approved=true;}if ui.button("取消此操作").clicked(){declined=true;}});
+                });
+            }
+            if declined{result=Some(agent::failure("PLATFORM.USER_DECLINED"));}
+            if result.is_none() && (!review||pending.approved) && now>=pending.next {
+                if let Some(rx)=&pending.receiver {
+                    match rx.try_recv(){Ok(v)=>{result=Some(v);pending.receiver=None;},Err(crossbeam_channel::TryRecvError::Disconnected)=>result=Some(agent::failure("AI.HOST_WORKER_DISCONNECTED")),_=>{}}
+                }else {
+                    let response=self.agent_dispatch(ctx,&mut broker.session,&pending.request);
+                    if pending.origin.method=="platform.invoke" && matches!(pending.origin.params["method"].as_str(),Some("ui.serial.open"|"ui.serial.close"|"ui.serial.clear"|"ui.serial.tab"|"serial.select"|"serial.monitor.start"|"serial.monitor.stop")) {
+                        self.serial.ai_accept_source_transition(&mut pending.origin.guard);
+                    }
+                    if response.receiver.is_some(){pending.receiver=response.receiver;}else{result=Some(response.value);}
+                    // Only successful host dispatch may change its own view/configuration binding.
+                    pending.target_binding=target_binding(&self.agent_context(),&pending.target_page);
+                }
+            }
+            if let Some(value)=result {
+                if let Some(wait)=value.get("_agent_wait") {
+                    let method=wait["method"].as_str().unwrap_or("");
+                    if matches!(method,"wave.decode.result"|"data.statistics.result"|"testing.result"|"instrument.result"|"serial.ready") {
+                        pending.request.call=wiparse_core::engineering_agent::Call{method:method.into(),params:wait["params"].clone()};pending.request.internal=true;
+                        pending.next=now+Duration::from_millis(100);broker.pending=Some(pending);
+                    }else {let _=pending.origin.reply.try_send(crate::backend::invoke_err(&pending.origin.method,"AI.INVALID_HOST_CONTINUATION"));}
+                }else{
+                    let _=pending.origin.reply.try_send(crate::backend::InvokeReply{ok:value["ok"]!=false,cmd:pending.origin.method.clone(),error:value["error"].as_str().map(str::to_owned),data:value["data"].clone()});
+                }
+            }else{broker.pending=Some(pending);}
+        }
+        if broker.pending.is_some()||!broker.rx.is_empty(){self.waveform.agent_tick(self.lang);self.test_tool.agent_tick(self.lang);ctx.request_repaint_after(Duration::from_millis(50));}
+        self.serial_agent=broker;
+    }
+}
+
+impl WiParseApp {
+ fn invoke_platform(&mut self,ctx:&egui::Context,r:&HostCall)->HostReply {
+  use std::sync::atomic::Ordering;
+  if r.cancelled.load(Ordering::Acquire){return HostReply::value(agent::failure("PLATFORM.CANCELLED"));}
+  if let Err(e)=wiparse_core::engineering_agent::validate(&r.call){return HostReply::value(agent::failure(e));}
+  let method=r.call.params["method"].as_str().unwrap().to_owned();let params=r.call.params["params"].clone();
+  let(tx,rx)=crossbeam_channel::bounded(1);
+  if wiparse_core::platform_api::is_stateful(&method){
+   let request=crate::backend::PendingRequest{method:method.clone(),params,reply:tx,deadline:std::time::Instant::now()+std::time::Duration::from_secs(90),ai_guard:None};
+   let persist=crate::backend::stateful::handle(&self.api,&mut backend::UiHost{
+    cfg:&mut self.cfg,lang:&mut self.lang,active:&mut self.active,
+    show_serial:&mut self.show_serial,show_calculator:&mut self.show_calculator,show_instruments:&mut self.show_instruments,show_waveform:&mut self.show_waveform,show_data_analysis:&mut self.show_data_analysis,show_test_report:&mut self.show_test_report,show_test_tool:&mut self.show_test_tool,
+    serial:&mut self.serial,instruments:&mut self.instruments,calculator:&mut self.calculator,waveform:&mut self.waveform,data_analysis:&mut self.data_analysis,test_report:&mut self.test_report,test_tool:&mut self.test_tool},request);
+   if persist{self.persist_ui_prefs();self.ensure_visible_tab();}
+  }else{
+   let bridge=self.api.clone();let method=method.clone();let cancel=r.cancelled.clone();
+   std::thread::spawn(move||{let result=if cancel.load(Ordering::Acquire){crate::backend::invoke_err(&method,"PLATFORM.CANCELLED")}else{crate::backend::dispatch::invoke(&bridge,&method,params)};let _=tx.send(result);});
+  }
+  let(out_tx,out_rx)=crossbeam_channel::bounded(1);let ctx=ctx.clone();
+  std::thread::spawn(move||{
+   let value=match rx.recv_timeout(std::time::Duration::from_secs(90)){
+    Ok(result)=>{
+     if result.ok&&method.starts_with("instrument.")&&result.data["job_id"].as_u64().is_some(){wait("instrument.result",json!({"job_id":result.data["job_id"],"job_session":result.data["job_session"],"device_id":result.data["device_id"]}))}
+     else {json!({"ok":result.ok,"data":wiparse_core::platform_api::redact(result.data),"error":result.error,"method":method,"completion_note":"API handler result; inspect loading/running/job state where present. Acceptance is not physical verification."})}
+    },Err(_)=>agent::failure("PLATFORM.RESULT_UNKNOWN: do not automatically repeat state-changing actions")
+   };let _=out_tx.send(value);ctx.request_repaint();
+  });HostReply::work(out_rx)
+ }
+}
+
+impl WiParseApp {
+    fn tick_report_agent(&mut self,ctx:&egui::Context) {
+        if !(self.report_ai.open && self.active==MainTab::TestReport) && !self.report_ai.session.busy() && !self.report_ai.session.tracking_test() {return;}
+        let Some(service)=crate::ai::service(ctx) else {return;};
+        let mut session=std::mem::take(&mut self.report_ai.session);
+        let mut context=self.agent_context(); context.page="test_report".into();
+        session.configure(&self.cfg.ai);
+        session.set_report_context(context.clone());
+        session.poll(ctx,&service);
+        if session.tracking_test() {self.test_tool.agent_tick(self.lang);session.update_test(self.test_tool.agent_run_status());}
+        if let Some(source)=session.navigation.take(){if source.project==context.project{self.active=MainTab::TestReport;self.show_test_report=true;}}
+        if let Some(request)=session.take_request() {
+            let response=if session.authorize(&request,&context){self.agent_dispatch(ctx,&mut session,&request)}else{HostReply::value(agent::failure("报告来源或权限已变化，本次操作未执行"))};
+            let mut updated=self.agent_context();updated.page="test_report".into();
+            session.host_transition(updated);session.attach(&request.id,response);
+        }
+        if session.busy()||session.tracking_test(){ctx.request_repaint_after(std::time::Duration::from_millis(100));}
+        self.report_ai.session=session;
     }
 }

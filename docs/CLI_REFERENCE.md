@@ -240,3 +240,7 @@ wiparse test run --plan docs/examples/ask71_waveform_source.json --port COM3
 | `WCM_CONFIG` | 配置文件（同 `--config`） |
 
 MCP：[`mcp/wiparse/README.md`](../mcp/wiparse/README.md)。部署：[`DEPLOY_API.md`](DEPLOY_API.md)。
+
+## 本地复核示波器测量
+
+`WiParse-CLI.exe --local wave measure <源文件> --channel CH1 --threshold 1.0` 对归档的示波器数据运行与工程助手相同的波形算法。通道名按文件内标识匹配，命令返回 JSON。可以附加 `--start-s` 与 `--end-s` 限定分析窗口。测同一次采集的互补通道时指定 `--other-channel CH2 --other-threshold 1.0`。阈值单位为对应通道的原生幅度单位；两条同步通道和显式阈值是计算死区的必要输入。命令只读取指定文件。

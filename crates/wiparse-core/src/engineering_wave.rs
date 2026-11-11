@@ -23,6 +23,28 @@ impl Stats {
         json!({"count":self.n,"min":self.min,"max":self.max,"mean":(self.n>0).then_some(self.mean),"stddev":(self.n>0).then(||(self.m2/self.n as f64).max(0.).sqrt()),"peak_to_peak":self.min.zip(self.max).map(|(a,b)|b-a)})
     }
 }
+/// Stable identity of decoded samples, independent of file location or process.
+pub fn trace_digest(trace: &WaveformTrace) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(b"wiparse-wave-trace-v1");
+    for field in [&trace.channel, &trace.x_unit, &trace.y_unit] {
+        hash.update((field.len() as u64).to_le_bytes());
+        hash.update(field.as_bytes());
+    }
+    for axis in [&trace.x, &trace.y] {
+        hash.update((axis.len() as u64).to_le_bytes());
+        for chunk in axis.chunks(1024) {
+            let mut bytes = [0u8; 8192];
+            for (dest, sample) in bytes.chunks_exact_mut(8).zip(chunk) {
+                dest.copy_from_slice(&sample.to_le_bytes());
+            }
+            hash.update(&bytes[..chunk.len() * 8]);
+        }
+    }
+    format!("{:x}", hash.finalize())
+}
+
 /// All samples are scanned locally. Threshold and window are explicit physical inputs.
 pub fn analyze(
     trace: &WaveformTrace,
@@ -65,9 +87,15 @@ pub fn analyze(
     );
     let mut invalid = 0u64;
     let mut selected = 0u64;
+    let mut first_index=None;
+    let mut last_index=None;
+    let mut max_dt:Option<f64>=None;
     let mut min_dt = None::<f64>;
     let mut overlap = 0u64;
-    let mut off_armed = false;
+    let mut previous_leg=None;
+    let mut first_to_second=Stats::default();
+    let mut second_to_first=Stats::default();
+    let mut same_leg_gaps=0u64;
     for i in 0..n {
         if i % 4096 == 0 && cancel.load(Ordering::Acquire) {
             return Err("AGENT.CANCELLED".into());
@@ -83,12 +111,14 @@ pub fn analyze(
             rising = None;
             transition = None;
             dead_start = None;
-            off_armed = false;
+            previous_leg=None;
             continue;
         }
         if t < a || t > b {
             continue;
         }
+        first_index.get_or_insert(i);
+        last_index=Some(i);
         selected += 1;
         amplitude.add(y);
         let magnitude = y.abs();
@@ -104,6 +134,7 @@ pub fn analyze(
             if t <= prev {
                 return Err("WAVE.TIME_AXIS_NOT_STRICTLY_INCREASING".into());
             }
+            max_dt=Some(max_dt.map_or(t-prev,|d|d.max(t-prev)));
             min_dt = Some(min_dt.map_or(t - prev, |d| d.min(t - prev)));
         }
         if let Some(level) = threshold {
@@ -130,23 +161,22 @@ pub fn analyze(
             high_state = state;
             if let Some(o) = other {
                 let oy = o.y[i];
-                if !oy.is_finite() || (o.x[i] - t).abs() > 1e-12 {
+                if !o.x[i].is_finite() || !oy.is_finite() || (o.x[i] - t).abs() > 1e-12 {
                     return Err("WAVE.CHANNELS_NOT_SYNCHRONIZED_OR_INVALID".into());
                 }
                 let second = oy >= p["other_threshold"].as_f64().unwrap();
-                if state && second {
-                    overlap += 1;
-                }
-                if state || second {
-                    off_armed = true;
-                }
-                if !state && !second {
-                    if off_armed && dead_start.is_none() {
-                        dead_start = Some(t);
-                    }
-                } else if let Some(start) = dead_start.take() {
-                    if last_t.is_some() {
-                        dead.add(t - start);
+                match (state,second) {
+                    (true,true)=>{overlap+=1;previous_leg=None;dead_start=None;}
+                    (false,false)=>{if previous_leg.is_some() && dead_start.is_none(){dead_start=Some(t);}}
+                    _=>{
+                        if let (Some(start),Some(first))=(dead_start.take(),previous_leg) {
+                            if first==state {same_leg_gaps+=1;} else {
+                                let duration=t-start;
+                                dead.add(duration);
+                                if first {first_to_second.add(duration);}else{second_to_first.add(duration);}
+                            }
+                        }
+                        previous_leg=Some(state);
                     }
                 }
             }
@@ -167,7 +197,7 @@ pub fn analyze(
         return Ok(result);
     }
     Ok(
-        json!({"sample_count":selected,"invalid_samples":invalid,"quality_complete":invalid==0,"requested_window_s":[p.get("start_s"),p.get("end_s")],"stage_label":p["stage"],"unit":trace.y_unit,"amplitude":amplitude.value(),"min":amplitude.min,"max":amplitude.max,"peak_to_peak":amplitude.min.zip(amplitude.max).map(|(a,b)|b-a),"mean":amplitude.mean,"rms":scale*(ssq/amplitude.n as f64).sqrt(),"threshold":threshold,"period_s":(periods.n>0).then_some(periods.mean),"period_statistics_s":periods.value(),"frequency_hz":(periods.n>0).then(||1./periods.mean),"high_width_s":high.value(),"low_width_s":low.value(),"dead_time_s":dead.value(),"simultaneous_high_samples":overlap,"sample_resolution_s":min_dt,"sample_interval_s":min_dt,"raw_samples_uploaded":false,"quality_notes":"Timing uses explicit threshold crossings. Pulse statistics exclude incomplete end pulses. Dead time uses synchronized sample positions and has sample-resolution uncertainty; incomplete boundary off intervals excluded. Threshold uses native channel amplitude unit. Stage label is user supplied, not automatic Qi stage recognition. No product pass/fail without explicit limits."}),
+        json!({"first_sample_index":first_index,"last_sample_index":last_index,"sample_count":selected,"invalid_samples":invalid,"quality_complete":invalid==0,"requested_window_s":[p.get("start_s"),p.get("end_s")],"stage_label":p["stage"],"unit":trace.y_unit,"amplitude":amplitude.value(),"min":amplitude.min,"max":amplitude.max,"peak_to_peak":amplitude.min.zip(amplitude.max).map(|(a,b)|b-a),"mean":amplitude.mean,"rms":scale*(ssq/amplitude.n as f64).sqrt(),"threshold":threshold,"period_s":(periods.n>0).then_some(periods.mean),"period_statistics_s":periods.value(),"frequency_hz":(periods.n>0).then(||1./periods.mean),"high_width_s":high.value(),"low_width_s":low.value(),"dead_time_s":dead.value(),"first_to_second_dead_time_s":first_to_second.value(),"second_to_first_dead_time_s":second_to_first.value(),"same_leg_off_intervals_excluded":same_leg_gaps,"probe_deskew_verified":false,"simultaneous_high_samples":overlap,"sample_resolution_s":min_dt,"sample_interval_s":min_dt,"largest_observed_interval_s":max_dt,"external_alignment_verified":false,"raw_samples_uploaded":false,"quality_notes":"Timing uses explicit threshold crossings. Pulse statistics exclude incomplete end pulses. Dead time uses synchronized sample positions and has sample-resolution uncertainty; incomplete boundary off intervals excluded. Threshold uses native channel amplitude unit. Stage label is user supplied, not automatic Qi stage recognition. No product pass/fail without explicit limits."}),
     )
 }
 #[cfg(test)]

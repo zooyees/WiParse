@@ -100,10 +100,10 @@ pub fn invoke(bridge: &ApiBridge, method: &str, params: Value) -> InvokeReply {
         "scope.shot" => scope_shot(method, &params),
         "scope.wave" => scope_wave(method, &params),
         "convert.radix" => convert_radix(method, &params),
-        "convert.expr" => err(
-            method,
-            "use GUI converter or convert.radix; expr evaluation is GUI-side",
-        ),
+        "convert.expr" => {
+            let value=crate::calculator::CalculatorPanel::new().agent_calculate(&json!({"card":"converter","fields":{"tab":"scientific","expression":params["expression"],"angle_mode":params["angle_mode"].as_str().unwrap_or("radians")}}));
+            InvokeReply{ok:value["ok"]!=false,cmd:method.into(),data:value["data"].clone(),error:value["error"].as_str().map(str::to_owned)}
+        },
         _ => err(method, &format!("unknown method: {method}")),
     }
 }

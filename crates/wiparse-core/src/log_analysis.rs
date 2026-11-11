@@ -1,5 +1,8 @@
 //! Streaming, read-only log analysis. Raw files stay local; reports and work
 //! state are bounded independently of input size and can be resumed by a host.
+pub mod events;
+pub mod timeline;
+pub mod structure;
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -96,7 +99,7 @@ fn log_extension(path: &Path) -> bool {
         .unwrap_or_default()
         .to_string_lossy()
         .to_ascii_lowercase();
-    matches!(extension.as_str(), "log" | "txt" | "jsonl" | "csv")
+    matches!(extension.as_str(), "log" | "txt" | "jsonl" | "ndjson" | "csv" | "tsv")
         || ((name.contains(".log.") || name.contains(".txt."))
             && !matches!(extension.as_str(), "gz" | "zip" | "7z" | "bak"))
 }
@@ -286,6 +289,9 @@ pub struct Query {
     pub samples: usize,
     pub group: bool,
     pub numeric: Vec<NumericRule>,
+    pub events: Option<events::Rule>,
+    pub timeline: Option<timeline::Rule>,
+    pub discover: bool,
 }
 impl Default for Query {
     fn default() -> Self {
@@ -302,6 +308,9 @@ impl Default for Query {
             samples: 6,
             group: true,
             numeric: vec![],
+            events: None,
+            timeline: None,
+            discover: false,
         }
     }
 }
@@ -318,6 +327,8 @@ fn compile(pattern: &str, sensitive: bool) -> Result<Regex, String> {
 }
 impl Query {
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(rule)=&self.timeline{rule.validate()?;if !self.contains.is_empty()||!self.exclude.is_empty()||self.pattern.is_some(){return Err("LOG.TIMELINE_REQUIRES_UNFILTERED_SEQUENCE".into());}}
+        if let Some(rule)=&self.events{rule.validate()?;if !self.contains.is_empty()||!self.exclude.is_empty()||self.pattern.is_some(){return Err("LOG.EVENTS_REQUIRE_UNFILTERED_STATE_SEQUENCE".into());}}
         if self.source_ids.len() > 32
             || self
                 .source_ids
@@ -359,9 +370,7 @@ impl Query {
             {
                 return Err("数值字段名称/限值无效或重复".into());
             }
-            if compile(&rule.pattern, self.case_sensitive)?.captures_len() < 2 {
-                return Err("数值正则须提供第一个捕获组作为数值".into());
-            }
+            crate::extract::Selector::compile(&rule.pattern, false, self.case_sensitive)?;
         }
         Ok(())
     }
@@ -378,8 +387,8 @@ struct Numbers {
 }
 impl Numbers {
     fn push(&mut self, text: &str, rule: &NumericRule) {
-        let value = match text.parse::<f64>() {
-            Ok(v) if v.is_finite() => v,
+        let value = match crate::extract::number(text) {
+            Some(v) => v,
             _ => {
                 self.invalid += 1;
                 return;
@@ -423,7 +432,7 @@ pub struct Scan {
     sources: Vec<Source>,
     query: Query,
     pattern: Option<Regex>,
-    numeric: Vec<Regex>,
+    numeric: Vec<crate::extract::Selector>,
     numbers: Vec<Numbers>,
     keywords: Vec<u64>,
     source: usize,
@@ -448,6 +457,9 @@ pub struct Scan {
     groups: BTreeMap<String, Group>,
     groups_omitted: u64,
     examples: Vec<Example>,
+    event_extractor: Option<events::Extractor>,
+    timeline_extractor: Option<timeline::Extractor>,
+    structure: Option<structure::Discovery>,
     normal_time: Regex,
     normal_number: Regex,
 }
@@ -477,9 +489,11 @@ impl Scan {
         let numeric = query
             .numeric
             .iter()
-            .map(|r| compile(&r.pattern, query.case_sensitive))
+            .map(|r| crate::extract::Selector::compile(&r.pattern, false, query.case_sensitive))
             .collect::<Result<_, _>>()?;
-        Ok(Self{sources,pattern,numeric,numbers:(0..query.numeric.len()).map(|_|Numbers::default()).collect(),keywords:vec![0;query.contains.len()],query,
+        let event_extractor=query.events.clone().map(events::Extractor::new).transpose()?;
+        let timeline_extractor=query.timeline.clone().map(timeline::Extractor::new).transpose()?;
+        Ok(Self{structure:query.discover.then(structure::Discovery::new),sources,event_extractor,timeline_extractor,pattern,numeric,numbers:(0..query.numeric.len()).map(|_|Numbers::default()).collect(),keywords:vec![0;query.contains.len()],query,
    source:0,offset:0,row:1,pending:vec![],oversize:false,before:VecDeque::new(),bytes:0,lines:0,in_range:0,matched:0,oversized:0,invalid_utf8:0,nul_lines:0,partial_tails:0,growing_sources:HashSet::new(),diagnostics:HashSet::new(),failed:0,errors:inventory.issues,inventory_incomplete:inventory.incomplete,groups:BTreeMap::new(),groups_omitted:0,examples:vec![],
    normal_time:Regex::new(r"^(?:\[\d{2}:\d{2}:\d{2}(?:\.\d+)?\]\s*|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?\s*)").unwrap(),
    normal_number:Regex::new(r"\b(?:0[xX][0-9a-fA-F]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b").unwrap()})
@@ -503,6 +517,7 @@ impl Scan {
         }
     }
     fn next_source(&mut self) {
+        if let Some(events)=&mut self.event_extractor{events.reset_source();}
         self.source += 1;
         self.offset = 0;
         self.row = self
@@ -702,6 +717,9 @@ impl Scan {
         }
         if row >= self.query.first_line && self.query.last_line.is_none_or(|last| row <= last) {
             self.in_range += 1;
+            if let Some(discovery)=&mut self.structure{discovery.observe(&source.id,row,&text);}
+            if let Some(timeline)=&mut self.timeline_extractor{timeline.observe(&source.id,row,&text);}
+            if let Some(events)=&mut self.event_extractor{events.observe(&source.id,row,&text);}
             let folded = if self.query.case_sensitive {
                 text.clone()
             } else {
@@ -745,12 +763,9 @@ impl Scan {
                     .is_none_or(|pattern| pattern.is_match(&text))
             {
                 self.matched += 1;
-                for (i, pattern) in self.numeric.iter().enumerate() {
-                    for captures in pattern.captures_iter(&text) {
-                        if let Some(value) = captures.get(1) {
-                            self.numbers[i].push(value.as_str(), &self.query.numeric[i]);
-                        }
-                    }
+                let record = crate::extract::Record::new(&text);
+                for (i, selector) in self.numeric.iter().enumerate() {
+                    selector.visit(&record, |value| self.numbers[i].push(value, &self.query.numeric[i]));
                 }
                 if self.query.group {
                     let without_time = self.normal_time.replace(&text, "");
@@ -787,7 +802,7 @@ impl Scan {
                         line: row,
                         text: crate::engineering_agent::match_excerpt(&text,
                             self.pattern.as_ref().and_then(|p|p.find(&text)).map(|m|m.as_str())
-                            .or_else(||self.numeric.iter().find_map(|p|p.find(&text).map(|m|m.as_str())))
+                            .or_else(||self.numeric.iter().find_map(|p|match p {crate::extract::Selector::Capture(re)=>re.find(&text).map(|m|m.as_str()),_=>None}))
                             .or_else(||self.query.contains.iter().zip(&hits).find(|(_,hit)|**hit).map(|(s,_)|s.as_str())).unwrap_or(""),240),
                         before: self.before.iter().cloned().collect(),
                         after: vec![],
@@ -802,6 +817,10 @@ impl Scan {
             self.before.pop_front();
         }
     }
+    pub fn dataset(&self)->Result<timeline::Dataset,String>{
+        if self.report()["coverage"]["complete"]!=true{return Err("DATA.INCOMPLETE_SCAN: finish scan or narrow the scope".into());}
+        self.timeline_extractor.as_ref().ok_or("DATA.NO_TIMELINE")?.dataset()
+    }
     pub fn report(&self) -> Value {
         let mut groups: Vec<_> = self.groups.iter().collect();
         groups.sort_by(|a, b| b.1.count.cmp(&a.1.count).then(a.0.cmp(b.0)));
@@ -812,6 +831,9 @@ impl Scan {
    "grouping":"timestamp removed; numbers replaced; first 240 UTF-8 bytes; counts are exact only for tracked prefixes, not semantic equivalence",
    "grouping_complete":self.groups_omitted==0,"untracked_group_lines":self.groups_omitted,
    "top_tracked_groups":groups.into_iter().take(8).map(|(template,stats)|json!({"template":template,"statistics":stats})).collect::<Vec<_>>(),"examples":self.examples,"examples_are_bounded_first_and_latest":true,"errors":self.errors,"unsaved_edits_included":false,"raw_files_uploaded":false});
+        if let Some(discovery)=&self.structure{value["structure"]=discovery.report();}
+        if let Some(timeline)=&self.timeline_extractor{value["timeline_analysis"]=timeline.report();}
+        if let Some(events)=&self.event_extractor{value["state_transition_analysis"]=events.report();}
         let mut omitted = 0;
         value["report_items_omitted_for_size"] = json!(0);
         while value.to_string().len() > REPORT_BYTES {
@@ -822,6 +844,10 @@ impl Scan {
                 .is_some_and(|a| !a.is_empty())
             {
                 value["top_tracked_groups"].as_array_mut().unwrap().pop();
+            } else if value["structure"]["fields"].as_array().is_some_and(|a|a.len()>2){
+                value["structure"]["fields"].as_array_mut().unwrap().pop();value["structure"]["fields_omitted_for_size"]=json!(true);
+            } else if value["state_transition_analysis"]["events"].as_array().is_some_and(|a|!a.is_empty()){
+                value["state_transition_analysis"]["events"].as_array_mut().unwrap().pop();value["state_transition_analysis"]["event_rows_omitted_for_size"]=json!(true);
             } else {
                 value["scope"] = json!({"query_fingerprint":fingerprint(&serde_json::to_string(&self.query).unwrap_or_default()),"full_filter_details_omitted_for_size":true});
                 break;
@@ -855,6 +881,11 @@ impl Scan {
                 .unwrap()
                 .pop();
             value["source_windows_omitted_for_size"] = json!(true);
+        }
+        if let Some(events)=value.get_mut("state_transition_analysis") {
+            let rows=events["events"].as_array().map_or(0,Vec::len) as u64;
+            let offset=events["rule"]["offset"].as_u64().unwrap_or(0);
+            events["next_offset"]=if offset+rows<events["confirmed_active_to_inactive_transitions"].as_u64().unwrap_or(0){json!(offset+rows)}else{Value::Null};
         }
         value
     }

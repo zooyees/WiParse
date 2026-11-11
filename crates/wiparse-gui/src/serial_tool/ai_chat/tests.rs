@@ -252,7 +252,8 @@ fn shared_ai_transport_decodes_reply_and_records_actual_stop_result() {
     let request = received.recv_timeout(Duration::from_secs(2)).unwrap();
     let serialized = request.to_string();
     assert!(serialized.contains("ERROR timeout"));
-    assert!(serialized.contains("automation_enabled=true"));
+    assert!(serialized.contains("Serial device control allowed: true"));
+    assert!(!serialized.contains("JSON compatibility envelope"));
     server.join().unwrap();
 }
 

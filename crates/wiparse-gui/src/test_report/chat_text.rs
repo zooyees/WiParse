@@ -45,6 +45,10 @@ impl TextMarkdown {
                     lang: code_lang,
                     body,
                 } => {
+                    if code_lang.trim().eq_ignore_ascii_case("mermaid") {
+                        super::mermaid::show(ui, body, lang);
+                        return;
+                    }
                     let width = ui.available_width();
                     Frame::NONE
                         .fill(t.input_bg)

@@ -81,6 +81,7 @@ pub fn file_content_fp(path: &Path) -> String {
 
 pub fn rules_hash(header: &str, filters: &[String], kinds: &[String]) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
+    "selectors-v2".hash(&mut h);
     header.hash(&mut h);
     filters.hash(&mut h);
     kinds.hash(&mut h);
@@ -100,7 +101,7 @@ pub fn cache_path_for(content_fp: &str, header: &str, filters: &[String], kinds:
 }
 
 pub fn live_cache_path(session_id: &str) -> PathBuf {
-    cache_dir().join(format!("live_{session_id}.wida"))
+    cache_dir().join(format!("live_{session_id}.widalive"))
 }
 
 pub fn list_cached_extracts() -> Vec<(String, PathBuf)> {
@@ -110,7 +111,7 @@ pub fn list_cached_extracts() -> Vec<(String, PathBuf)> {
     let mut out = Vec::new();
     for ent in dir.flatten() {
         let path = ent.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("wida") {
+        if !matches!(path.extension().and_then(|e| e.to_str()),Some("wida"|"widalive")) {
             continue;
         }
         let name = path
@@ -229,6 +230,7 @@ pub fn load_wida(path: &Path) -> Result<WidaPayload, String> {
     let mut file = File::open(path).map_err(|e| e.to_string())?;
     let mut magic = [0u8; 4];
     file.read_exact(&mut magic).map_err(|e| e.to_string())?;
+    if &magic == b"SQLi" {return load_live_checkpoint(path).map_err(|e|e.to_string());}
     if &magic != MAGIC {
         return Err("not a WIDA cache".into());
     }
@@ -282,57 +284,79 @@ pub fn downsample_minmax(points: &[[f64; 2]], x0: f64, x1: f64, cols: usize) -> 
     }
     let span = (x1 - x0).abs().max(1e-12);
     let cols = cols.max(1);
-    // Collect indices in range (points are usually sorted by x).
-    let mut first = None;
-    let mut last = None;
-    for (i, p) in points.iter().enumerate() {
-        if p[0] < x0 || p[0] > x1 {
-            continue;
-        }
-        if first.is_none() {
-            first = Some(i);
-        }
-        last = Some(i);
+    let start = points.partition_point(|p| p[0] < x0).saturating_sub(1);
+    let end = (points.partition_point(|p| p[0] <= x1) + 1).min(points.len());
+    let visible = &points[start..end];
+    if visible.len() <= cols.saturating_mul(3) {
+        return visible.to_vec();
     }
-    let (Some(a), Some(b)) = (first, last) else {
-        return Vec::new();
-    };
-    let n = b - a + 1;
-    if n <= cols.saturating_mul(3) {
-        return points[a..=b].to_vec();
-    }
-
-    let mut buckets: Vec<(f64, f64, f64, f64, bool)> = vec![(0.0, 0.0, 0.0, 0.0, false); cols];
-    // (x_min_pt, y_at_xmin, y_min, y_max, used) — emit min then max per column
-    for p in &points[a..=b] {
-        let t = ((p[0] - x0) / span).clamp(0.0, 0.999999);
-        let bi = (t * cols as f64) as usize;
-        let bkt = &mut buckets[bi.min(cols - 1)];
-        if !bkt.4 {
-            *bkt = (p[0], p[1], p[1], p[1], true);
-        } else {
-            if p[0] < bkt.0 {
-                bkt.0 = p[0];
-                bkt.1 = p[1];
+    let bucket = |x: f64| (((x - x0) / span).clamp(0., 1.) * cols as f64) as usize;
+    let mut result = Vec::with_capacity(cols * 4 + 2);
+    let mut i = 0;
+    while i < visible.len() {
+        let first = i;
+        let mut min = i;
+        let mut max = i;
+        let column = bucket(visible[i][0]);
+        i += 1;
+        while i < visible.len() && bucket(visible[i][0]) == column {
+            if visible[i][1] < visible[min][1] {
+                min = i;
             }
-            bkt.2 = bkt.2.min(p[1]);
-            bkt.3 = bkt.3.max(p[1]);
+            if visible[i][1] > visible[max][1] {
+                max = i;
+            }
+            i += 1;
+        }
+        let mut indices = [first, min, max, i - 1];
+        indices.sort_unstable();
+        for (j, &index) in indices.iter().enumerate() {
+            if j == 0 || indices[j - 1] != index {
+                result.push(visible[index]);
+            }
         }
     }
+    result
+}
 
-    let mut out = Vec::with_capacity(cols * 2);
-    for bkt in buckets {
-        if !bkt.4 {
-            continue;
+fn load_live_checkpoint(path: &Path) -> Result<WidaPayload, Box<dyn std::error::Error>> {
+    let mut db =
+        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let tx = db.transaction()?;
+    let text: String = tx.query_row("SELECT header FROM metadata WHERE id=1", [], |row| {
+        row.get(0)
+    })?;
+    let meta: WidaHeader = serde_json::from_str(&text)?;
+    let mut series = Vec::new();
+    let mut query = tx.prepare("SELECT start,data FROM samples WHERE curve=? ORDER BY start")?;
+    for (index, s) in meta.series.iter().enumerate() {
+        let mut points = Vec::new();
+        let mut rows = query.query([index])?;
+        while let Some(row) = rows.next()? {
+            let start: usize = row.get(0)?;
+            let data: Vec<u8> = row.get(1)?;
+            if start != points.len() || data.len() % 16 != 0 {
+                return Err("inconsistent live history block".into());
+            }
+            for pair in data.chunks_exact(16) {
+                points.push([
+                    f64::from_le_bytes(pair[..8].try_into()?),
+                    f64::from_le_bytes(pair[8..].try_into()?),
+                ]);
+            }
         }
-        let (x, y_first, y_min, y_max, _) = bkt;
-        if (y_max - y_min).abs() < 1e-15 {
-            out.push([x, y_first]);
-        } else {
-            // Vertical extent in one column: min then max (or reverse by first).
-            out.push([x, y_min]);
-            out.push([x, y_max]);
+        if points.len() != s.n as usize {
+            return Err("incomplete live history".into());
         }
+        series.push(WidaSeriesData {
+            label: s.label.clone(),
+            kind: s.kind.clone(),
+            y_scale: s.y_scale,
+            y_offset: s.y_offset,
+            y_min: s.y_min,
+            y_max: s.y_max,
+            points,
+        });
     }
-    out
+    Ok(WidaPayload { meta, series })
 }

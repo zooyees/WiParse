@@ -20,6 +20,8 @@ function Copy-PreviewTree($source,$destination,$exclude=@()){
 }
 foreach($pair in @(@('wiparse-gui.exe','WiParse.exe'),@('wiparse.exe','WiParse-CLI.exe'),@('wiparse-service.exe','WiParse-Service.exe'),@('wiparse_gui.pdb','WiParse.pdb'))){Copy-Item -LiteralPath (Join-Path $repo "target/release/$($pair[0])") -Destination (Join-Path $output "bin/$($pair[1])")}
 Copy-PreviewTree (Join-Path $repo 'test-tools') (Join-Path $output 'test-tools')
+New-Item -ItemType Directory -Path (Join-Path $output 'docs/reviews') -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'docs/reviews/engineering-agent-candidate-2026-11-11.md') -Destination (Join-Path $output 'docs/reviews')
 Copy-PreviewTree (Join-Path $repo 'mcp/wiparse') (Join-Path $output 'mcp/wiparse')
 Copy-PreviewTree (Join-Path $repo 'recipes/fpga-firmware-test') (Join-Path $output 'recipes/fpga-firmware-test')
 if(Test-Path -LiteralPath (Join-Path $repo 'docs/specs/wireless-test')){Copy-PreviewTree (Join-Path $repo 'docs/specs/wireless-test') (Join-Path $output 'docs/specs/wireless-test')}
@@ -27,6 +29,7 @@ Copy-Item -LiteralPath (Join-Path $repo 'config.default.json') -Destination (Joi
 $config=@{ui=@{language='zh';theme='dark'};apps=@{test_tool=@{plugins_dir='test-tools/plugins';cli_path='bin/WiParse-CLI.exe';node_path='node';data_root='.';marketplace=@{enabled=$false;install_dir='marketplace'}}}}
 [IO.File]::WriteAllText((Join-Path $output 'config.json'),($config|ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false))
 New-Item -ItemType Directory -Path (Join-Path $output 'docs') -Force|Out-Null
+if(Test-Path -LiteralPath (Join-Path $repo 'docs/licenses')){Copy-PreviewTree (Join-Path $repo 'docs/licenses') (Join-Path $output 'docs/licenses')}
 foreach($doc in @('HUB_PROJECT_CONFIG_CONTRACT.md','HUB_UI_FIELDS_CONTRACT.md','AI_INTERFACE.md','CHANGELOG.md')){Copy-Item -LiteralPath (Join-Path $repo "docs/$doc") -Destination (Join-Path $output "docs/$doc")}
 if(Test-Path -LiteralPath (Join-Path $repo "docs/ui-testing-hub-$version")){Copy-PreviewTree (Join-Path $repo "docs/ui-testing-hub-$version") (Join-Path $output "docs/ui-testing-hub-$version")}
 if(Test-Path -LiteralPath (Join-Path $repo "docs/releases/$version.md")){Copy-Item -LiteralPath (Join-Path $repo "docs/releases/$version.md") -Destination (Join-Path $output 'docs/release-notes.md')}

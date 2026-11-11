@@ -260,6 +260,22 @@ enum SessionCmd {
 
 #[derive(Subcommand, Debug)]
 enum WaveCmd {
+    /// Measure an archived oscilloscope file locally using the engineering agent's algorithm.
+    Measure {
+        file: String,
+        #[arg(long)]
+        channel: String,
+        #[arg(long)]
+        threshold: Option<f64>,
+        #[arg(long, requires = "threshold")]
+        other_channel: Option<String>,
+        #[arg(long, requires = "other_channel")]
+        other_threshold: Option<f64>,
+        #[arg(long)]
+        start_s: Option<f64>,
+        #[arg(long)]
+        end_s: Option<f64>,
+    },
     /// Capture live metrics into waveform JSON (local serial; use --local if GUI holds the port).
     Live {
         #[arg(long)]
@@ -1853,6 +1869,31 @@ fn run(cli: &Cli, _o: &OutputOptions) -> Result<(String, serde_json::Value), (St
                     "logs_count": logs,
                 }),
             ))
+        }
+        Commands::Wave(WaveCmd::Measure {file, channel, threshold, other_channel, other_threshold, start_s, end_s}) => {
+            let method = "wave.measure";
+            if [*threshold,*other_threshold,*start_s,*end_s].into_iter().flatten().any(|v| !v.is_finite())
+                || start_s.zip(*end_s).is_some_and(|(a,b)|a>=b) {
+                return Err((method.into(),"Invalid threshold or time window".into()));
+            }
+            let traces=wiparse_core::waveform_file::load_waveform_file_all(file).map_err(|e|(method.into(),e.to_string()))?;
+            let find=|name:&str| {
+                if let Some(trace)=traces.iter().find(|t| t.channel.eq_ignore_ascii_case(name)) {return Ok(trace);}
+                let mut matches=traces.iter().filter(|t|t.channel.split(',').next().unwrap_or("").trim().eq_ignore_ascii_case(name));
+                match (matches.next(),matches.next()) {
+                    (Some(trace),None)=>Ok(trace),
+                    _=>Err((method.to_string(),format!("Missing or ambiguous channel {name}. Available: {}",traces.iter().map(|t|t.channel.as_str()).collect::<Vec<_>>().join(" | ")))),
+                }
+            };
+            let trace=find(channel)?;
+            let other=other_channel.as_deref().map(find).transpose()?;
+            let mut params=json!({"channel":trace.channel,"threshold":threshold,"start_s":start_s,"end_s":end_s,"other_threshold":other_threshold});
+            if let Some(second)=other {params["other_channel"]=json!(second.channel);}
+            let mut data=wiparse_core::engineering_wave::analyze(trace,other,&params,&std::sync::atomic::AtomicBool::new(false))
+                .map_err(|e|(method.into(),e))?;
+            data["source_filename"]=json!(std::path::Path::new(file).file_name().and_then(|s|s.to_str()));
+            data["channel"]=json!(trace.channel);
+            Ok((method.into(),data))
         }
         Commands::Wave(WaveCmd::Live {
             port,

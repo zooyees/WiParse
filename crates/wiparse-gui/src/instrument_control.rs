@@ -186,6 +186,22 @@ pub struct InstrumentJobResult {
     pub detail: serde_json::Value,
 }
 
+/// Shared read-only access to the same bounded job history used by the device API.
+#[derive(Clone, Default)]
+pub(crate) struct InstrumentReceipts(std::sync::Arc<std::sync::Mutex<VecDeque<InstrumentJobResult>>>);
+impl InstrumentReceipts {
+    fn record(&self, receipt:InstrumentJobResult) {
+        let mut rows=self.0.lock().unwrap_or_else(|e|e.into_inner());
+        rows.push_back(receipt);
+        if rows.len()>512 {rows.pop_front();}
+    }
+    pub(crate) fn lookup(&self,id:u64)->Option<InstrumentJobResult> {
+        self.0.lock().unwrap_or_else(|e|e.into_inner()).iter().find(|r|r.job_id==id).cloned()
+    }
+    #[cfg(test)]
+    fn len(&self)->usize{self.0.lock().unwrap_or_else(|e|e.into_inner()).len()}
+}
+
 /// Query history must survive notification drains without cloning point arrays
 /// or serializing a potentially large reply on the GUI thread.
 fn job_detail_summary(value:&serde_json::Value,budget:&mut usize,depth:usize)->serde_json::Value {
@@ -459,9 +475,10 @@ pub struct InstrumentControlPanel {
     /// Waveform source Save As, opened after a short UI settle delay.
     pending_waveform_save: Option<PendingWaveformSave>,
     pending_save_delay_frames: u8,
+    job_session: String,
     next_job_id: u64,
     job_results: Vec<InstrumentJobResult>,
-    completed_jobs: VecDeque<InstrumentJobResult>,
+    completed_jobs: InstrumentReceipts,
     last_rtt: Instant,
     rtt_pending: HashSet<u64>,
 }
@@ -535,9 +552,10 @@ impl InstrumentControlPanel {
             busy_label: String::new(),
             pending_waveform_save: None,
             pending_save_delay_frames: 0,
+            job_session:uuid::Uuid::new_v4().to_string(),
             next_job_id: 1,
             job_results: Vec::new(),
-            completed_jobs: VecDeque::new(),
+            completed_jobs: InstrumentReceipts::default(),
             last_rtt: Instant::now(),
             rtt_pending: HashSet::new(),
         };
@@ -649,7 +667,7 @@ impl InstrumentControlPanel {
         while frame_budget.elapsed() < Duration::from_millis(4) {
             let Ok(event) = self.rx.try_recv() else { break; };
             if let Some(bus) = bus {
-                publish_instrument_event(bus, &event);
+                publish_instrument_event(bus, &event, &self.job_session);
             }
             self.handle_event(ctx, event);
         }
@@ -789,11 +807,10 @@ impl InstrumentControlPanel {
             }
         }
         let mut detail_budget=16*1024;
-        self.completed_jobs.push_back(InstrumentJobResult {
+        self.completed_jobs.record(InstrumentJobResult {
             job_id,ok,kind:kind.into(),device_id,
             detail: job_detail_summary(&detail,&mut detail_budget,0),
         });
-        while self.completed_jobs.len()>512 {self.completed_jobs.pop_front();}
         self.job_results.push(InstrumentJobResult {
             job_id,
             ok,
@@ -1096,9 +1113,16 @@ impl InstrumentControlPanel {
         }
     }
 
+    pub(crate) fn receipt_source(&self)->(String,InstrumentReceipts){
+        (self.job_session.clone(),self.completed_jobs.clone())
+    }
     pub fn api_job_get(&self, params:&serde_json::Value)->crate::backend::InvokeReply {
+        if params["job_session"].as_str().is_some_and(|epoch|epoch!=self.job_session) {
+            return crate::backend::invoke_err("instrument.job.get","INSTRUMENT.PREVIOUS_SESSION: command outcome unknown; read device state");
+        }
         let Some(id)=params["job_id"].as_u64() else {return crate::backend::invoke_err("instrument.job.get","missing job_id");};
-        let data=self.completed_jobs.iter().find(|r|r.job_id==id).map(|r|serde_json::json!({"state":"completed","job_id":r.job_id,"ok":r.ok,"kind":r.kind,"device_id":r.device_id,"detail":r.detail})).unwrap_or_else(||serde_json::json!({"state":"pending_or_unknown","job_id":id}));
+        let mut data=self.completed_jobs.lookup(id).map(|r|serde_json::json!({"state":"completed","job_id":r.job_id,"ok":r.ok,"kind":r.kind,"device_id":r.device_id,"detail":r.detail})).unwrap_or_else(||serde_json::json!({"state":"pending_or_unknown","job_id":id}));
+        data["job_session"]=serde_json::json!(self.job_session);
         crate::backend::invoke_ok("instrument.job.get",data)
     }
 
@@ -1123,7 +1147,7 @@ impl InstrumentControlPanel {
         }) {
             Ok(()) => ok(
                 "instrument.command",
-                serde_json::json!({ "accepted": true, "device_id": id, "job_id": job_id }),
+                serde_json::json!({ "accepted": true, "device_id": id, "job_session": self.job_session, "job_id": job_id }),
             ),
             Err(e) => err("instrument.command", &e.to_string()),
         }
@@ -1180,7 +1204,7 @@ impl InstrumentControlPanel {
         }) {
             Ok(()) => ok(
                 "instrument.capture",
-                serde_json::json!({ "accepted": true, "device_id": id, "job_id": job_id }),
+                serde_json::json!({ "accepted": true, "device_id": id, "job_session": self.job_session, "job_id": job_id }),
             ),
             Err(e) => err("instrument.capture", &e.to_string()),
         }
@@ -1238,6 +1262,7 @@ impl InstrumentControlPanel {
                 "instrument.waveform_source",
                 serde_json::json!({
                     "accepted": true,
+                    "job_session": self.job_session,
                     "job_id": job_id,
                     "device_id": id,
                 }),
@@ -6869,7 +6894,7 @@ fn short_resource(resource: &str) -> String {
     }
 }
 
-fn publish_instrument_event(bus: &crate::backend::EventBus, event: &Event) {
+fn publish_instrument_event(bus: &crate::backend::EventBus, event: &Event, job_session: &str) {
     match event {
         Event::Resources(resources) => {
             bus.publish(
@@ -6912,7 +6937,7 @@ fn publish_instrument_event(bus: &crate::backend::EventBus, event: &Event) {
         } => {
             bus.publish(
                 "instrument.command_done",
-                serde_json::json!({ "device_id": id, "job_id": job_id, "response": response }),
+                serde_json::json!({ "device_id": id, "job_session": job_session, "job_id": job_id, "response": response }),
                 None,
             );
         }
@@ -6949,6 +6974,7 @@ fn publish_instrument_event(bus: &crate::backend::EventBus, event: &Event) {
                 "instrument.screenshot",
                 serde_json::json!({
                     "device_id": id,
+                    "job_session": job_session,
                     "job_id": job_id,
                     "width": width,
                     "height": height,
@@ -6978,6 +7004,7 @@ fn publish_instrument_event(bus: &crate::backend::EventBus, event: &Event) {
                 "instrument.waveform_source",
                 serde_json::json!({
                     "device_id": id,
+                    "job_session": job_session,
                     "job_id": job_id,
                     "bytes": bytes.len(),
                     "suggested_name": suggested_name,
@@ -7005,7 +7032,7 @@ fn publish_instrument_event(bus: &crate::backend::EventBus, event: &Event) {
         } => {
             bus.publish(
                 "instrument.error",
-                serde_json::json!({ "device_id": id, "job_id": job_id, "message": message }),
+                serde_json::json!({ "device_id": id, "job_session": job_session, "job_id": job_id, "message": message }),
                 None,
             );
         }

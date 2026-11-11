@@ -13,14 +13,24 @@ pub(super) struct ToolPending {
     pub(super) local_only: bool,
     local_scope: String,
     deadline: Instant,
+    command_id:String,
     job: Option<u64>,
+    job_session: Option<String>,
     next_poll: Instant,
 }
 
 pub(super) fn catalog() -> &'static str {
-    r#"Platform tools: request ONE action {"type":"platform.call","method":"...","params":{...}} per answer; wait for the real host result before the next step. Supported:
+    r#"Platform tools: JSON compatibility mode requests ONE action {"type":"platform.call","method":"...","params":{...}} per answer; wait for the real host result before the next step. Supported:
+serial.view {}: inspect current serial log view ID, absolute 1-based row range and search status. serial.search {view_id:actualID,query:string}: apply the existing log search UI and show matching rows; result search_pending means background search has not finished, inspect serial.view later. serial.jump {view_id:actualID,line:positiveInteger}: highlight and scroll current log to original 1-based file/absolute live row, pausing tail follow without stopping capture. These reversible UI actions need no device-control grant, only a manual current-log scope. Never use selection-relative rows or another file's lines. First inspect view identity; use log.analyze for full evidence searches and then jump to a verified row. No serial transmit, edits or capture stop.
+To extract and display serial data: inspect log schema, call log.analyze timeline with retain_dataset:true, finish its cursor, then data.present {query_id:returnedQueryID}; the host imports actual local points into the data analysis page. Do not pass model-generated arrays.
+Discover the complete published platform API with platform.catalog {filter,offset,limit}; then invoke an exact listed method using platform.invoke {method,params}. Catalogue params are examples, never defaults. Device/file/test mutations require concrete confirmation. Never guess targets or credentials. If service_required is true, report unavailable services honestly.
+Canonical shared host tools also available: wave.channels/measure/timing/frames/decode/view, data.inspect/statistics/present, calc.inspect/evaluate/apply, report.inspect/search/create/open, testing.inspect/status/cases/propose/wait. Use agent.help {method:...} for the exact canonical schema. Reversible view/calculator/decoder operations require actual user intent; never change a protocol by guessing. testing.wait waits locally on an actual run_id; do not consume model calls polling. Testing execution/apply remains in the global Agent with its concrete action confirmation. For requested report files, report.create {title,markdown,evidence_ids:[actualIDs]} saves portable Markdown/JSON and real-series PNG/CSV; call report.open {report_id:returnedUUID} to show it in WiParse. Never invent evidence IDs or local file paths.
 serial.monitor.status {} (actual CURRENT source status, read-only; not a global aggregate);
 serial.monitor.start {} / serial.monitor.stop {} (control permission required; CURRENT live source only, no port/baud overrides; start waits for actual connection, stop confirms reception stopped and explicitly reports asynchronous port release). Prefer these over legacy serial actions for multi-step workflows: after the host result you may discover a scope and stop it, without guessing success;
+engineering.inspect {"tool":"waveform"|"data_analysis"|"test_report"|"test_tool"|"calculator"|"instruments"}: relevant current-project tool context with source identity; cached context is not fresh measurement. Use other tools only when necessary to answer the engineering request.
+engineering.wave.measure {"channel":index,"start_s":optionalSeconds,"end_s":optionalSeconds}: local original-sample measurements, units/provenance/quality, read-only background worker.
+engineering.wave.frames {"contains":optionalText,"errors_only":optionalBool,"offset":0,"limit":10}: actual decoded data frames and configuration provenance.
+engineering.calc.evaluate {"card":"lc|bandpass|q|rc|crc|converter","fields":{...}}: local deterministic calculation. Parameters must use canonical fields and SI units from the native calculator contract. Use calculator inspection for inputs, do not invent component values.
 instrument.list {} (discover connected device IDs, kinds and capabilities first);
 instrument.overview {} (cached device state and measurements);
 instrument.command {"device_id":ID,"command":...} (typed ControlCommand only): strings ScopeRun, ScopeStop, ScopeSingle, ScopeAutoset, ProbeStatus, BridgeInfo, DongleInfo; objects {"ScopeMeasure":{"channel":1,"meas_type":"Frequency"}}, {"ScopeChannel":{"channel":1,"enabled":true}}, {"ScopeScale":{"channel":1,"volts_per_div":1}}, {"ScopeTimebase":0.001}, {"ScopeTrigger":{"source":"CH1","level":1,"slope":"POS"}}, {"SourceVoltage":{"channel":1,"value":5}}, {"SourceCurrent":{"channel":1,"value":1}}, {"SourceOutput":{"channel":1,"enabled":false}}, {"LoadInput":false}, {"LoadMode":"CC"}, {"LoadLevel":{"mode":"CC","value":1}};
@@ -28,7 +38,7 @@ instrument.capture {"device_id":ID} (screen capture to the GUI, job completion a
 instrument.waveform_source {"device_id":ID} (capture full source, save to host-owned project evidence directory; await completion and use returned metadata/metrics);
 parse.line {"text":"one Qi ASK/FSK line"}; parse.metrics {"text":"AA55 metric frame"}; convert.radix {"input":"255","source_base":10,"target_base":16};
 test.status {} (current serial test state); log.brief {} (cached serial metrics); ui.calc.get {} (calculator state).
-Serial start/stop and instrument control/capture require device-control permission and no active test. Serial status, device lists, cached state and analysis queries are read-only and do not require control permission. Existing connected devices only; never connect guessed addresses. Never invent power setpoints/limits or perform a destructive flash/reset; ask for unspecified settings. No raw SCPI, shell, file paths, erase or arbitrary serial bytes. Platform calls run through the existing device worker. A queue acknowledgement is not completion; unknown/timeout is not success. At most six platform calls per user task/sample; results are supplied automatically for continued reasoning. Do not repeat a failed or unknown output-changing command. Use only fields named above. The host rejects unsupported calls."#
+Serial start/stop and instrument control/capture require device-control permission and no active test. Serial status, device lists, cached state and analysis queries are read-only and do not require control permission. Existing connected devices only; never connect guessed addresses. Never invent power setpoints/limits or perform a destructive flash/reset; ask for unspecified settings. No raw SCPI, shell, file paths, erase or arbitrary serial bytes. Platform calls run through the existing device worker. A queue acknowledgement is not completion; unknown/timeout is not success. At most thirty-two platform calls per user task (monitor samples remain bounded); results are supplied automatically for continued reasoning. Do not repeat a failed or unknown output-changing command. Use only fields named above. The host rejects unsupported calls."#
 }
 
 fn keys(params: &Value, allowed: &[&str]) -> bool {
@@ -39,8 +49,25 @@ fn keys(params: &Value, allowed: &[&str]) -> bool {
 
 pub(super) fn validate(method: &str, params: &Value) -> Result<bool, String> {
     if library::is_local(method){library::validate(method,params)?;return Ok(false);}
+    if crate::ai::broker::supports(method) {
+        let tool=wiparse_core::engineering_agent::validate(&wiparse_core::engineering_agent::Call{method:method.into(),params:params.clone()})?;
+        return Ok(matches!(tool.effect,wiparse_core::engineering_agent::Effect::Device|wiparse_core::engineering_agent::Effect::Test));
+    }
+    if matches!(method,"serial.view"|"serial.search"|"serial.jump") {
+        let allowed=match method{"serial.view"=>vec![],"serial.search"=>vec!["view_id","query"],_=>vec!["view_id","line"]};
+        if !keys(params,&allowed)|| (method!="serial.view"&&params["view_id"].as_u64().is_none()) || (method=="serial.jump"&&!params["line"].as_u64().is_some_and(|n|n>0)) || (method=="serial.search"&&!params["query"].as_str().is_some_and(|s|!s.trim().is_empty()&&s.len()<=256&&!s.chars().any(char::is_control))){return Err("SERIAL.INVALID_NAVIGATION".into());}
+        return Ok(false);
+    }
     let invalid = || "AI.TOOL_INVALID: unsupported platform method or parameters".to_string();
     match method {
+        "agent.plan"|"agent.evidence"|"agent.help"|"agent.align"=>{wiparse_core::ai::workflow::validate_management(method,params)?;Ok(false)},
+        "engineering.inspect"=>{
+            if !keys(params,&["tool"])||!matches!(params["tool"].as_str(),Some("waveform"|"data_analysis"|"test_report"|"test_tool"|"calculator"|"instruments")){return Err(invalid());}Ok(false)
+        },
+        "engineering.wave.measure"|"engineering.wave.frames"|"engineering.calc.evaluate"=>{
+            let target=match method{"engineering.wave.measure"=>"wave.measure","engineering.wave.frames"=>"wave.frames",_=>"calc.evaluate"};
+            wiparse_core::engineering_agent::validate(&wiparse_core::engineering_agent::Call{method:target.into(),params:params.clone()})?;Ok(false)
+        },
         "serial.monitor.status"
         | "instrument.list"
         | "instrument.overview"
@@ -201,6 +228,28 @@ fn enqueue(
 }
 
 impl SerialToolPanel {
+    pub(crate) fn ai_platform_result_guard_valid(&self, guard: &AiGuard) -> bool {
+        let mut read_guard = guard.clone(); read_guard.controls = false;
+        self.ai_platform_guard_valid(&read_guard) && (!guard.controls || self.ai_chat.allow_automation)
+    }
+    pub(crate) fn ai_platform_guard_for(&self, guard: &AiGuard, method: &str, params: &Value) -> bool {
+        let mut read_guard = guard.clone(); read_guard.controls = false;
+        self.ai_platform_guard_valid(&read_guard) && (!guard.controls || self.ai_chat.allow_automation &&
+            (!self.ai_controls_locked(self.ai_test_locked) || wiparse_core::platform_api::interrupt_call(&wiparse_core::engineering_agent::Call {method:method.into(),params:params.clone()})))
+    }
+    /// Acknowledge only the host-dispatched source transition, never a user switch.
+    pub(crate) fn ai_accept_source_transition(&mut self, guard: &mut AiGuard) {
+        let state = self.ai_state(&guard.project,self.ai_test_locked);
+        guard.binding = serde_json::to_string(&state.binding).unwrap_or_default();
+        let scope = self.local_log_scope_key(&self.ai_chat);
+        self.ai_chat.conversation_source = Some((state.binding.source_id,state.binding.device));
+        if let Some(tool) = &mut self.ai_chat.tool { tool.guard.binding = guard.binding.clone(); tool.local_scope = scope.clone(); }
+        if let Some(run) = &mut self.ai_chat.run {
+            run.scope_key = scope; run.last_read = None; run.initial_evidence = None;
+            run.feedback = Some("HOST_SOURCE_TRANSITION: source changed by your approved call. Read the new source; prior evidence belongs to the previous source, never reuse its row coordinates.".into());
+        }
+        self.ai_chat.watch = None;
+    }
     pub(crate) fn ai_platform_guard_valid(&self, guard: &AiGuard) -> bool {
         !guard.cancelled.load(Ordering::Acquire)
             && serde_json::to_string(&self.ai_state(&guard.project, self.ai_test_locked).binding)
@@ -228,14 +277,30 @@ impl SerialToolPanel {
         automatic: bool,
     ) -> Result<(), String> {
         let controls = validate(&method, &params)?;
-        if library::is_local(&method)&&(automatic||chat.scope==DataScope::None){return Err("LOG.DATA_SCOPE: choose a manual log scope first".into());}
-        if chat.tool.is_some() || chat.tool_round >= 6 {
-            return Err("AI.TOOL_LIMIT: tool loop is busy or reached six calls".into());
+        let command_id=uuid::Uuid::new_v4().to_string();
+        let fingerprint=crate::ai::journal::command_fingerprint(&method,&params);
+        if controls && chat.run.as_ref().is_some_and(|r|r.uncertain.contains(&fingerprint))
+            && !wiparse_core::platform_api::interrupt_call(&wiparse_core::engineering_agent::Call{method:method.clone(),params:params.clone()}) {
+            if let Some(run)=chat.run.as_mut(){
+                run.pending_readback=Some((fingerprint.clone(),format!("{method} · {}",params)));
+            }
+            return Err("AI.OUTCOME_UNKNOWN: inspect the instrument before repeating this command".into());
         }
-        if controls && (!chat.allow_automation || self.ai_controls_locked(self.ai_test_locked)) {
+        if library::is_local(&method)&&(automatic||chat.scope==DataScope::None){return Err("LOG.DATA_SCOPE: choose a manual log scope first".into());}
+        if chat.tool.is_some() || chat.tool_round >= run::MAX_CALLS {
+            return Err("AI.TOOL_LIMIT: tool loop is busy or reached the bounded task call budget".into());
+        }
+        if controls && (!chat.allow_automation || chat.run.as_ref().is_some_and(|r|!r.control_cap) || self.ai_controls_locked(self.ai_test_locked) && !wiparse_core::platform_api::interrupt_call(&wiparse_core::engineering_agent::Call{method:method.clone(),params:params.clone()})) {
             return Err(
                 "AI.CONTROL_LOCKED: platform device control is disabled or test running".into(),
             );
+        }
+        if !automatic&&library::is_local(&method)&&params.get("cursor").is_none(){
+            let signature=format!("{}:{}:{}",method,params,self.ai_state(&chat.project,self.ai_test_locked).absolute_lines);
+            if let Some(run)=&mut chat.run{if run.last_read.as_ref()==Some(&signature){return Err("AI.NO_PROGRESS: identical read already completed; use prior evidence or a narrower query".into());}run.last_read=Some(signature);}
+        }
+        if controls && !automatic {
+            if let Some(run)=&chat.run {if let Some(j)=&run.journal{j.record(&run.id,"serial",&run.question,"awaiting_readback",&run.workflow,Some((&method,&json!({"state":"dispatching","command_id":command_id,"command_fingerprint":fingerprint,"device_id":params.get("device_id")}))));}}
         }
         if method == "instrument.capture" {
             params["wait"] = json!(true);
@@ -287,7 +352,30 @@ impl SerialToolPanel {
             controls,
             cancelled: Arc::new(AtomicBool::new(false)),
         };
-        let reply = if library::is_local(&method){
+        let reply = if matches!(method.as_str(),"serial.view"|"serial.search"|"serial.jump") {
+            if automatic{return Err("SERIAL.NAVIGATION_MANUAL_TASK_ONLY".into());}
+            if chat.scope!=DataScope::Current{return Err("SERIAL.NAVIGATION_REQUIRES_CURRENT_SCOPE: current-log navigation cannot map selection-relative or other-file line numbers".into());}
+            let tab=self.tabs.get_mut(self.active_tab).ok_or("SERIAL.NO_CURRENT_TAB")?;
+            let value=tab.ai_navigate(&method,&params)?;
+            let(tx,rx)=crossbeam_channel::bounded(1);let _=tx.send(crate::backend::invoke_ok(&method,value));ctx.request_repaint();Some(rx)
+        } else if method.starts_with("agent.") {
+            let run=chat.run.as_mut().ok_or("AGENT.NO_ACTIVE_TASK")?;
+            let result=match method.as_str(){
+                "agent.align"=>run.workflow.align(&params),
+                "agent.plan"=>run.workflow.update(params.clone()),
+                "agent.evidence"=>run.workflow.page(&params),
+                "agent.help"=>{
+                    let target=params["method"].as_str().unwrap();
+                    let allowed=run::functions(chat.scope,chat.allow_automation&&!self.ai_test_locked&&run.control_cap).into_iter().find(|f|f.name=="wiparse_call").unwrap();
+                    if !allowed.parameters["properties"]["method"]["enum"].as_array().unwrap().iter().any(|v|v==target){Err("AGENT.UNKNOWN_OR_UNAUTHORIZED_TOOL".into())}else{
+                        let help=if let Some(tool)=wiparse_core::engineering_agent::tool(target){tool.schema.to_owned()}else if target.starts_with("log."){library::catalog().to_owned()}else if target=="engineering.calc.evaluate"{wiparse_core::engineering_agent::CALC_SCHEMA.to_owned()}else{catalog().to_owned()};
+                        Ok(json!({"ok":true,"method":target,"schema":help,"validated_keys":wiparse_core::engineering_agent::tool(target).and_then(|t|wiparse_core::engineering_agent::declared_keys(t.method))}))
+                    }
+                },_=>Err("AGENT.UNKNOWN_MANAGEMENT_TOOL".into())
+            };
+            let mut value=result.unwrap_or_else(|e|json!({"ok":false,"error":e}));value["kind"]=json!("task_management");
+            let (tx,rx)=crossbeam_channel::bounded(1);let _=tx.send(InvokeReply{ok:value["ok"]!=false,cmd:method.clone(),error:value["error"].as_str().map(str::to_owned),data:value});Some(rx)
+        }else if library::is_local(&method){
             let key=self.local_log_scope_key(chat);
             chat.library.bind_scope(key);
             let mut files=Vec::new();let mut memory=None;
@@ -304,6 +392,13 @@ impl SerialToolPanel {
             }
             let range=if chat.scope==DataScope::Range{Some((chat.range_first.max(1),chat.range_last.max(chat.range_first.max(1))))}else{None};
             Some(chat.library.start_scoped(&method,params.clone(),files,memory,range,chat.scope==DataScope::Library,guard.cancelled.clone(),ctx.clone())?)
+        } else if method=="report.create" {
+            let run=chat.run.as_ref().ok_or("REPORT.NO_ACTIVE_TASK")?;
+            let evidence=params["evidence_ids"].as_array().ok_or("REPORT.MISSING_EVIDENCE")?.iter().map(|v|run.workflow.get(v.as_str().unwrap_or(""))).collect::<Result<Vec<_>,_>>()?;
+            let root=ctx.data(|d|d.get_temp::<PathBuf>(egui::Id::new("wiparse-ai-project-root"))).ok_or("REPORT.PROJECT_UNAVAILABLE")?;
+            Some(crate::ai::artifact::start(root,chat.project.clone(),params.clone(),evidence,guard.cancelled.clone(),ctx.clone(),|value|InvokeReply{ok:value["ok"]==true,cmd:"report.create".into(),error:value["error"].as_str().map(str::to_owned),data:value["data"].clone()})?)
+        } else if crate::ai::broker::supports(&method) {
+            Some(crate::ai::broker::enqueue(ctx,&method,params.clone(),guard.clone())?)
         } else if method.starts_with("serial.monitor.") {
             None
         } else {
@@ -326,7 +421,7 @@ impl SerialToolPanel {
             + Duration::from_secs(if method == "serial.monitor.start" {
                 15
             } else {
-                90
+                if method=="testing.wait" {600}else{90}
             });
         chat.tool = Some(ToolPending {
             reply,
@@ -338,7 +433,7 @@ impl SerialToolPanel {
             local_only:false,
             local_scope:self.local_log_scope_key(chat),
             deadline,
-            job: None,
+            command_id,job: None, job_session:None,
             next_poll: Instant::now(),
         });
         Ok(())
@@ -364,6 +459,13 @@ impl SerialToolPanel {
             Some(
                 json!({"ok":false,"error":"AI.TOOL_TIMEOUT","execution_state":"unknown; do not retry output-changing command"}),
             )
+        } else if tool.method=="serial.search" {
+            match self.tabs.get_mut(self.active_tab).ok_or_else(||"SERIAL.NO_CURRENT_TAB".to_owned()).and_then(|tab|tab.ai_navigate("serial.view",&json!({}))) {
+                Ok(value) if value["search_query"]!=tool.params["query"]=>Some(json!({"ok":false,"error":"SERIAL.SEARCH_CHANGED_BY_USER"})),
+                Ok(value) if value["search_pending"]==true=>None,
+                Ok(value)=>Some(json!({"ok":true,"data":value})),
+                Err(error)=>Some(json!({"ok":false,"error":error}))
+            }
         } else if tool.method.starts_with("serial.monitor.") {
             if tool.method == "serial.monitor.start" && !current.connection_confirmed {
                 if current.reception_requested {
@@ -396,8 +498,12 @@ impl SerialToolPanel {
                         tool.next_poll = Instant::now() + Duration::from_millis(250);
                         None
                     }
-                } else if let Some(job) = reply.data["job_id"].as_u64() {
+                } else if let Some(job) = reply.data["job_id"].as_u64().filter(|_|tool.method.starts_with("instrument.")) {
                     tool.job = Some(job);
+                    tool.job_session = reply.data["job_session"].as_str().map(str::to_owned);
+                    if let Some(run)=&chat.run {if let Some(j)=&run.journal {
+                        j.record(&run.id,"serial",&run.question,"awaiting_readback",&run.workflow,Some((&tool.method,&json!({"state":"accepted","command_id":tool.command_id,"command_fingerprint":crate::ai::journal::command_fingerprint(&tool.method,&tool.params),"job_id":job,"job_session":tool.job_session,"device_id":reply.data["device_id"]}))));
+                    }}
                     None
                 } else {
                     Some(json!({"ok":true,"data":reply.data}))
@@ -407,12 +513,24 @@ impl SerialToolPanel {
             }
         };
         if let Some(result) = result {
+            if result["ok"]==true && result["data"]["accepted"]!=true && tool.job.is_none() && validate(&tool.method,&tool.params)==Ok(true) {
+                if let Some(run)=&chat.run{if let Some(j)=&run.journal{
+                    j.record(&run.id,"serial",&run.question,"running",&run.workflow,Some((&tool.method,&json!({"state":"completed","command_id":tool.command_id}))));
+                }}
+            }
             tool.guard.cancelled.store(true, Ordering::Release);
+            if !tool.automatic { if let Some(run)=&mut chat.run {
+                run.workflow.record(&format!("S{}",chat.evidence_counter+1), &tool.method, &result);
+            }}
             let serialized = result.to_string();
             let result = if serialized.len() > 8000 {crate::ai::agent::bounded_evidence(result,0)}else{result};
             let local=library::is_local(&tool.method);
             let parameters=if local{json!({"query_id":result["data"]["query_id"],"offset":tool.params["offset"]})}else{tool.params.clone()};
-            let record = json!({"method":tool.method,"params":parameters,"result":result});
+            chat.evidence_counter=chat.evidence_counter.saturating_add(1);
+            let mut result=result;if tool.method.starts_with("agent."){result["kind"]=json!("task_management");}
+            let mut result=result;result["evidence_id"]=json!(format!("S{}",chat.evidence_counter));
+            let record=json!({"evidence_id":result["evidence_id"],"method":tool.method,"params":parameters,"result":result});
+            if let Some(i)=chat.entries.iter().rposition(|entry|entry.role=="tool"&&(entry.text==format!("执行中 · {}",tool.method)||entry.text==format!("Running · {}",tool.method))){chat.entries.remove(i);}
             chat.entry(
                 "tool",
                 if local {library::readable(&result,lang)}else{format!(
@@ -431,15 +549,17 @@ impl SerialToolPanel {
             );
             if let Some(entry) = chat.entries.last_mut() {
                 entry.automatic = tool.automatic;
+                entry.timeline = result["data"].get("timeline_analysis").cloned();
                 entry.error = result["ok"] == false;
             }
-            if !tool.automatic && !local {
+            if !tool.automatic && !local && !chat.config.as_ref().is_some_and(wiparse_core::ai::context::native) {
                 chat.history.push(AiMessage::User(bounded(
                     &format!("Verified platform result: {record}"),
                     8000,
                 )));
             }
-            if local{chat.tool_results.retain(|record|!record["method"].as_str().is_some_and(library::is_local));}
+            if !tool.automatic{if let Some(run)=&mut chat.run{run.workflow.record(result["evidence_id"].as_str().unwrap_or(""),&tool.method,&result);run.record(result.clone());}}
+            while chat.tool_results.len()>=8{chat.tool_results.remove(0);}
             chat.tool_results.push(record);
             if tool.local_only{
                 chat.status=label(lang,"本批本地处理结束（未调用AI）","Local analysis complete (no AI request)").into();chat.status_error=result["ok"]==false;return;
@@ -455,9 +575,10 @@ impl SerialToolPanel {
                 return;
             }
             if result["ok"] == false && tool.guard.controls {
-                chat.allow_automation = false;
+                chat.allow_automation = false;chat.revoke_controls();
                 chat.note("设备调用失败或状态未知，已关闭设备控制；AI将解释实际结果 / Device call failed or state unknown; controls disabled; AI will explain the result",true);
             }
+            if self.dispatch_queued_reads(ctx,chat,&tool.question){return;}
             let mut data = self
                 .ai_scoped_observation(if tool.automatic {
                     DataScope::Current
@@ -477,7 +598,7 @@ impl SerialToolPanel {
                     match enqueue(
                         &api,
                         "instrument.job.get",
-                        json!({"job_id":tool.job}),
+                        json!({"job_id":tool.job,"job_session":tool.job_session}),
                         query_guard,
                     ) {
                         Ok(rx) => tool.reply = Some(rx),

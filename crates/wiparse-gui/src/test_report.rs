@@ -4,6 +4,7 @@
 //! browser/PDF engine, which is out of scope for this egui shell.
 
 mod inline_images;
+mod ai_read;
 use inline_images::{local_image, parse_report_md};
 
 use crate::theme::{self as ui_theme, Tokens};
@@ -35,6 +36,9 @@ const MAX_MD_IMAGE_EDGE: u32 = 1600;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReportAction {
+    SourceLocation(PathBuf),
+    WaveWindow(PathBuf),
+    ToggleAi,
     None,
     Open {
         path: PathBuf,
@@ -149,6 +153,7 @@ fn preview_excerpt(preview: &PreviewKind) -> String {
 /// Cached Markdown for untrusted AI text. It never resolves local files or fetches images.
 pub(crate) struct TextMarkdown(MdDoc);
 mod chat_text;
+mod mermaid;
 impl TextMarkdown {
     pub(crate) fn new(source: &str) -> Self {
         Self(parse_md(source))
@@ -304,6 +309,7 @@ fn text_markdown_inline(ui: &mut egui::Ui, text: &str, size: f32, strong: bool, 
 }
 
 pub struct TestReportPanel {
+    pub(crate) ai_state: (bool, bool),
     project_id: String,
     new_project_id: String,
     projects: Vec<ProjectDoc>,
@@ -326,6 +332,7 @@ impl TestReportPanel {
     pub fn new(cfg: &AppConfig) -> Self {
         let project_id = sanitize_id(&cfg.apps.project.active_id, "default");
         Self {
+            ai_state: (false, false),
             project_id: project_id.clone(),
             new_project_id: String::new(),
             projects: Vec::new(),
@@ -595,6 +602,11 @@ impl TestReportPanel {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or_default();
+        if name.ends_with(".wiparse-wave.json") { *action=ReportAction::WaveWindow(path); return; }
+        if name.ends_with(".wiparse-location.json") {
+            *action=ReportAction::SourceLocation(path);
+            return;
+        }
         let view = open_view_for_file(view, view, name);
         self.selected = Some(path.clone());
         self.preview_title = path
@@ -813,15 +825,26 @@ impl TestReportPanel {
                     });
                 }
 
-                if ui_theme::secondary_btn_sized(
-                    ui,
-                    tokens,
-                    tr(lang, "report.add_test"),
-                    egui::vec2(ctrl_w, ui_theme::CTRL_H),
-                )
-                .clicked()
-                {
-                    self.add_test_open = !self.add_test_open;
+                let mut actions = |ui: &mut egui::Ui, width| {
+                    let size = egui::vec2(width, ui_theme::CTRL_H);
+                    if ui_theme::secondary_btn_sized(ui,tokens,tr(lang,"report.add_test"),size).clicked() {
+                        self.add_test_open = !self.add_test_open;
+                    }
+                    let title = match (lang,self.ai_state.1) {
+                        (Lang::Zh,true) => "AI 分析中", (Lang::Zh,false) => "AI 分析",
+                        (_,true) => "Analysing…", (_,false) => "AI analysis",
+                    };
+                    if ui.add_sized(size,egui::Button::new(title).selected(self.ai_state.0)).clicked() {
+                        action = ReportAction::ToggleAi;
+                    }
+                };
+                if ctrl_w >= 176. {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.;
+                        actions(ui,(ctrl_w-4.)*0.5);
+                    });
+                } else {
+                    actions(ui,ctrl_w);
                 }
 
                 if self.add_test_open {
@@ -3886,7 +3909,7 @@ mod tests {
 }
 
 impl TestReportPanel {
- pub(crate) fn agent_identity(&self)->String{format!("{}:{:?}",self.project_id,self.selected)}
+ pub(crate) fn agent_identity(&self)->String{let revision=self.selected.as_ref().and_then(|p|fs::metadata(p).ok()).map(|m|(m.len(),m.modified().ok()));format!("{}:{:?}:{:?}",self.project_id,self.selected,revision)}
  pub(crate) fn agent_index(&self,params:&serde_json::Value)->serde_json::Value{let offset=params["offset"].as_u64().unwrap_or(0) as usize;let limit=params["limit"].as_u64().unwrap_or(10).min(20) as usize;serde_json::json!({"ok":true,"data":{"project_id":self.project_id,"reports":self.agent_report_files().iter().skip(offset).take(limit).map(|(id,p)|serde_json::json!({"report_id":id,"source_id":wiparse_core::log_analysis::source_id_for_path(p).ok(),"name":p.file_name().map(|s|s.to_string_lossy())})).collect::<Vec<_>>(),"next_report_offset":if offset+limit<self.agent_report_files().len(){Some(offset+limit)}else{None},"total_reports":self.agent_report_files().len(),"total":self.index.tests.len(),"next_offset":if offset+limit<self.index.tests.len(){Some(offset+limit)}else{None},"tests":self.index.tests.iter().skip(offset).take(limit).map(|test|serde_json::json!({"id":test.id,"name":if test.name_zh.is_empty(){&test.name}else{&test.name_zh},"run_count":test.results.len(),"latest_ok":test.results.last().and_then(|r|r.ok),"latest_stamp":test.results.last().map(|r|&r.stamp)})).collect::<Vec<_>>()}})}
  pub(crate) fn agent_search(&self,params:&serde_json::Value,ctx:&egui::Context,cancel:std::sync::Arc<std::sync::atomic::AtomicBool>)->crate::ai::agent::HostReply{
   let preview=self.preview.clone();let path=self.selected.clone();let query=params["contains"].as_str().unwrap_or("").to_lowercase();let offset=params["offset"].as_u64().unwrap_or(0) as usize;let limit=params["limit"].as_u64().unwrap_or(6).min(12) as usize;

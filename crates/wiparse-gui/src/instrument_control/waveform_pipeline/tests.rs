@@ -67,7 +67,7 @@ fn waveform_source_pipeline_shares_all_channels_and_publishes_cached_metrics() {
         _ => unreachable!(),
     };
     let bus = crate::backend::EventBus::new();
-    publish_instrument_event(&bus, &event);
+    publish_instrument_event(&bus, &event, "fixture-epoch");
     let subscription = bus.subscribe(0).unwrap();
     let _ = subscription.recv().unwrap();
     let published: serde_json::Value = serde_json::from_str(&subscription.recv().unwrap()).unwrap();
@@ -398,7 +398,7 @@ fn waveform_source_million_point_ui_handoff_benchmark() {
     let old_ms = baseline.elapsed().as_secs_f64() * 1000.0;
     let bus = crate::backend::EventBus::new();
     let handoff = Instant::now();
-    publish_instrument_event(&bus, &prepared);
+    publish_instrument_event(&bus, &prepared, "fixture-epoch");
     panel.handle_event(&egui::Context::default(), prepared);
     let new_ms = handoff.elapsed().as_secs_f64() * 1000.0;
     assert!(Arc::ptr_eq(&shared[0].x, &panel.waveforms[&1].x));

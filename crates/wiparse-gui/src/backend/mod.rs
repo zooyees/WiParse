@@ -7,9 +7,9 @@
 //! - `GET  /v1/events`   NDJSON event stream
 
 mod capabilities;
-mod dispatch;
+pub(crate) mod dispatch;
 mod events;
-mod stateful;
+pub(crate) mod stateful;
 mod ui;
 
 pub use capabilities::capabilities_json;

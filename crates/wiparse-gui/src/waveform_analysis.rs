@@ -83,7 +83,15 @@ struct WaveBrowserFolder {
     files: Vec<(String, PathBuf)>,
 }
 
+#[derive(serde::Serialize,serde::Deserialize)]
+struct TraceWindow {
+    trace_sha256: String,
+    channel: String,
+    first_sample: usize,
+    last_sample: usize,
+}
 struct LoadedWave {
+    trace_sha256: String,
     path: PathBuf,
     label: String,
     trace: WaveformTrace,
@@ -118,6 +126,7 @@ struct ViewLineCache {
 
 /// Parsed channel payload from a background file load (colors assigned on UI thread).
 struct LoadedChannelDraft {
+    trace_sha256: String,
     trace: WaveformTrace,
     measures: WaveformMeasurements,
     overview: Arc<Vec<wiparse_core::wave_display::ScopeEnvelopeColumn>>,
@@ -225,6 +234,7 @@ pub struct WaveformAnalysisPanel {
     extent_dirty: bool,
     /// Background file parse in progress.
     pending_load: Option<PendingWaveLoad>,
+    report_window: Option<TraceWindow>,
     /// Background viewport LOD rebuild.
     pending_viewport: Option<PendingViewportBuild>,
     /// Latest pan/zoom request while a viewport job is already running.
@@ -299,6 +309,7 @@ impl WaveformAnalysisPanel {
             cached_extent: None,
             extent_dirty: true,
             pending_load: None,
+            report_window: None,
             pending_viewport: None,
             queued_viewport: None,
             deferred_viewport: None,
@@ -1251,6 +1262,7 @@ impl WaveformAnalysisPanel {
                 c
             });
             self.waves.push(LoadedWave {
+                trace_sha256: draft.trace_sha256,
                 path: path.to_path_buf(),
                 label: draft.label,
                 trace: draft.trace,
@@ -1340,10 +1352,14 @@ impl WaveformAnalysisPanel {
                         .and_then(|l| l.wave_range)
                     {
                         self.apply_final_measures((first, end), measures, extents);
+                        if let Some(window)=self.report_window.take() {
+                            if !self.show_trace_window(&window){self.status="所选文件的通道或采样内容与报告不一致".into();}
+                        }
                     }
                     self.pending_load = None;
                 }
                 WaveLoadEvent::Error(err) => {
+                    self.report_window=None;
                     self.pending_load = None;
                     self.status = format!(
                         "{} {}: {err}",
@@ -2379,6 +2395,7 @@ impl WaveformAnalysisPanel {
                     c
                 });
                 self.waves.push(LoadedWave {
+                trace_sha256: draft.trace_sha256,
                     path: path.to_path_buf(),
                     label: draft.label,
                     trace: draft.trace,
@@ -4319,6 +4336,7 @@ fn load_waveform_file_worker(path: &Path, tx: Sender<WaveLoadEvent>) {
             .map(|trace| {
                 let (overview, snap) = build_load_snapshot(&trace.x, &trace.y);
                 LoadedChannelDraft {
+                    trace_sha256: wiparse_core::engineering_wave::trace_digest(trace),
                     label: format!("{file_name} · {}", trace.channel),
                     trace: trace.clone(),
                     overview,
@@ -5838,21 +5856,58 @@ mod tests {
 }
 
 impl WaveformAnalysisPanel {
+ fn show_trace_window(&mut self, window:&TraceWindow)->bool {
+    let Some((index,wave))=self.waves.iter().enumerate().find(|(_,w)|w.trace_sha256==window.trace_sha256 && w.trace.channel==window.channel) else {return false};
+    if window.first_sample>window.last_sample {return false;}
+    let (Some(&a),Some(&b))=(wave.trace.x.get(window.first_sample),wave.trace.x.get(window.last_sample)) else {return false};
+    if !a.is_finite() || !b.is_finite() || b<a {return false;}
+    let pad=((b-a)*0.05).max(a.abs().max(b.abs())*f64::EPSILON*4.).max(1e-12);
+    self.selected=Some(index);
+    self.x1=Some(a);self.x2=Some(b);
+    let Some(ext)=self.document_extent().or_else(||self.data_extent()) else {return false};
+    self.fit_request=false;
+    self.pending_bounds=Some(PlotBounds::from_min_max([a-pad,ext.min()[1]],[b+pad,ext.max()[1]]));
+    self.last_x_range=Some((a-pad,b+pad));
+    self.status=format!("{} · #{} – #{} · SHA-256 ✓",window.channel,window.first_sample,window.last_sample);
+    true
+ }
+ pub(crate) fn open_report_window(&mut self,path:&Path,lang:Lang) {
+    use std::io::Read;
+    let parsed=(||{
+        let file=std::fs::File::open(path).ok()?;
+        if file.metadata().ok()?.len()>8192{return None;}
+        let window:TraceWindow=serde_json::from_reader(file.take(8193)).ok()?;
+        (window.trace_sha256.len()==64 && window.trace_sha256.bytes().all(|c|c.is_ascii_hexdigit()) && window.first_sample<=window.last_sample).then_some(window)
+    })();
+    let Some(window)=parsed else {self.status="无效的波形定位记录".into();return};
+    if self.show_trace_window(&window){return;}
+    if self.pending_load.is_some(){self.status="请在波形载入完成后重新打开定位链接".into();return;}
+    if let Some(source)=rfd::FileDialog::new().set_title("选择原始波形以核对采样摘要").pick_file(){
+        self.report_window=Some(window);self.start_load_path(source,lang);
+    }
+ }
  pub(crate) fn agent_identity(&self)->String{format!("{:?}:{}:{}:{:?}",self.waves.iter().map(|w|(w.trace.x.as_ptr() as usize,w.trace.y.as_ptr() as usize,w.trace.y.len())).collect::<Vec<_>>(),self.active_bus_lane,self.bus_decode_gen,settings_for_decode(&self.bus_settings,&self.uart_baud_text,&self.ddsss_fop_text,self.x1,self.x2))}
- pub(crate) fn agent_provenance(&self)->serde_json::Value{serde_json::json!({"generation":self.bus_decode_gen,"lane":self.active_bus_lane,"configuration":format!("{:?}",settings_for_decode(&self.bus_settings,&self.uart_baud_text,&self.ddsss_fop_text,self.x1,self.x2)),"source_binding":self.agent_identity(),"pending":self.pending_bus_decode.is_some()||self.bus_decode_dirty})}
+ pub(crate) fn agent_provenance(&self)->serde_json::Value{serde_json::json!({"clock_domain":"capture_local","external_alignment_verified":false,"generation":self.bus_decode_gen,"lane":self.active_bus_lane,"configuration":format!("{:?}",settings_for_decode(&self.bus_settings,&self.uart_baud_text,&self.ddsss_fop_text,self.x1,self.x2)),"source_binding":self.agent_identity(),"pending":self.pending_bus_decode.is_some()||self.bus_decode_dirty})}
  pub(crate) fn agent_tick(&mut self,lang:Lang){self.poll_pending_loads(lang);self.poll_pending_viewport();self.poll_pending_bus_decode();if self.bus_decode_dirty&&self.schedule_bus_decode(){self.bus_decode_dirty=false;}}
  pub(crate) fn agent_measure(&self,params:&serde_json::Value,ctx:&egui::Context,cancel:Arc<std::sync::atomic::AtomicBool>)->crate::ai::agent::HostReply{
-  let Some(wave)=params["channel"].as_u64().and_then(|i|self.waves.get(i as usize))else{return crate::ai::agent::HostReply::value(crate::ai::agent::failure("波形通道不存在"))};let trace=wave.trace.clone();let index=params["channel"].clone();
+  let Some(wave)=params["channel"].as_u64().and_then(|i|self.waves.get(i as usize))else{return crate::ai::agent::HostReply::value(crate::ai::agent::failure("波形通道不存在"))};let digest=wave.trace_sha256.clone();let trace=wave.trace.clone();let index=params["channel"].clone();
   let params=params.clone();let other=params["other_channel"].as_u64().and_then(|i|self.waves.get(i as usize)).map(|w|w.trace.clone());let provenance=self.agent_provenance();
-  crate::ai::agent::spawn_work(ctx,move||{match wiparse_core::engineering_wave::analyze(&trace,other.as_ref(),&params,&cancel){Ok(mut data)=>{data["channel_index"]=index;data["channel"]=serde_json::json!(trace.channel);data["trace_id"]=serde_json::json!(format!("trace-{:x}-{:x}",trace.x.as_ptr() as usize,trace.y.as_ptr() as usize));data["provenance"]=provenance;serde_json::json!({"ok":true,"data":data})},Err(e)=>crate::ai::agent::failure(e)}
+  crate::ai::agent::spawn_work(ctx,move||{match wiparse_core::engineering_wave::analyze(&trace,other.as_ref(),&params,&cancel){Ok(mut data)=>{data["source_window"]=serde_json::json!({"trace_sha256":digest,"channel":trace.channel,"first_sample":data["first_sample_index"],"last_sample":data["last_sample_index"]});data["channel_index"]=index;data["channel"]=serde_json::json!(trace.channel);data["trace_id"]=serde_json::json!(format!("trace-{:x}-{:x}",trace.x.as_ptr() as usize,trace.y.as_ptr() as usize));data["provenance"]=provenance;serde_json::json!({"ok":true,"data":data})},Err(e)=>crate::ai::agent::failure(e)}
   })
  }
  pub(crate) fn agent_frames(&self,params:&serde_json::Value)->serde_json::Value{
   if self.pending_bus_decode.is_some()||self.bus_decode_dirty{return serde_json::json!({"ok":false,"error":"协议解析正在更新，请等待完成"});}
   let Some(result)=&self.bus_result else{return serde_json::json!({"ok":false,"error":"当前没有协议解析结果，请先配置协议或调用wave.decode"})};
   let query=params["contains"].as_str().unwrap_or("").to_lowercase();let errors=params["errors_only"].as_bool().unwrap_or(false);let offset=params["offset"].as_u64().unwrap_or(0) as usize;let limit=params["limit"].as_u64().unwrap_or(10).min(20) as usize;
+  let signal=self.bus_overlay_channel().and_then(|i|self.waves.get(i)).filter(|w|w.x_monotonic);
+  let window=|start:f64,end:f64|signal.and_then(|w|{
+      let axis=&w.trace.x;
+      let first=axis.partition_point(|t|*t<start);
+      let after=axis.partition_point(|t|*t<=end);
+      (first<after).then(||serde_json::json!({"trace_sha256":w.trace_sha256,"channel":w.trace.channel,"first_sample":first,"last_sample":after-1}))
+  });
   let rows:Vec<_>=result.frames.iter().enumerate().filter(|(_,f)|protocol_view::is_data_frame(self.bus_settings.kind,f)&&(!errors||f.has_error())&&(query.is_empty()||f.summary.to_lowercase().contains(&query))).collect();
-  serde_json::json!({"ok":true,"data":{"protocol":self.bus_settings.kind.label(),"provenance":self.agent_provenance(),"protocol_statistics":{"all_data_frames":result.frames.iter().filter(|f|protocol_view::is_data_frame(self.bus_settings.kind,f)).count(),"integrity_error_frames":result.frames.iter().filter(|f|protocol_view::is_data_frame(self.bus_settings.kind,f)&&f.has_error()).count(),"ping_frames_excluded":self.bus_settings.kind==BusKind::Scp},"total_matches":rows.len(),"decoder_truncated":result.truncated,"decoder_error":result.error,"next_offset":if offset+limit<rows.len(){Some(offset+limit)}else{None},"frames":rows.iter().skip(offset).take(limit).map(|(i,f)|serde_json::json!({"index":i,"start_s":f.t_start,"end_s":f.t_end,"summary":f.summary,"integrity":integrity_text(f.error,true),"bytes":f.bytes.iter().take(128).collect::<Vec<_>>(),"bytes_total":f.bytes.len(),"fields":if f.bytes.len()<=256{explain_frame(self.bus_settings.kind,&result.frames,*i,true)}else{vec!["超长帧：未对截断内容重新解释字段".into()]}})).collect::<Vec<_>>()}})
+  serde_json::json!({"ok":true,"data":{"protocol":self.bus_settings.kind.label(),"provenance":self.agent_provenance(),"protocol_statistics":{"all_data_frames":result.frames.iter().filter(|f|protocol_view::is_data_frame(self.bus_settings.kind,f)).count(),"integrity_error_frames":result.frames.iter().filter(|f|protocol_view::is_data_frame(self.bus_settings.kind,f)&&f.has_error()).count(),"ping_frames_excluded":self.bus_settings.kind==BusKind::Scp},"total_matches":rows.len(),"decoder_truncated":result.truncated,"decoder_error":result.error,"next_offset":if offset+limit<rows.len(){Some(offset+limit)}else{None},"frames":rows.iter().skip(offset).take(limit).map(|(i,f)|serde_json::json!({"index":i,"source_window":window(f.t_start,f.t_end),"start_s":f.t_start,"end_s":f.t_end,"summary":f.summary,"integrity":integrity_text(f.error,true),"bytes":f.bytes.iter().take(128).collect::<Vec<_>>(),"bytes_total":f.bytes.len(),"fields":if f.bytes.len()<=256{explain_frame(self.bus_settings.kind,&result.frames,*i,true)}else{vec!["超长帧：未对截断内容重新解释字段".into()]}})).collect::<Vec<_>>()}})
  }
  pub(crate) fn agent_decode_status(&self,generation:u64)->serde_json::Value{if self.bus_decode_gen!=generation{return serde_json::json!({"ok":false,"error":"协议任务已被后续解析替换"});}if self.pending_bus_decode.is_some(){serde_json::json!({"_agent_wait":{"method":"wave.decode.result","params":{"generation":generation}}})}else{self.agent_frames(&serde_json::json!({"limit":6}))}}
  pub(crate) fn agent_decode(&mut self,params:&serde_json::Value,lang:Lang)->serde_json::Value{

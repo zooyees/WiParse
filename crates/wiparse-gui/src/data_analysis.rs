@@ -9,11 +9,17 @@
 //!    via `y_plot = raw * (y_scale / kind.ref_span()) + y_offset`.
 //! 5. Open file / Apply rules → parse & plot. Serial Live ingests RX lines.
 
+pub(crate) mod ai_extract;
+mod source_location;
+mod retained_rows;
+mod history;
+use history::Points as HistoryPoints;
+use wiparse_core::extract::{Record, Selector};
 use crate::theme::{self as ui_theme, Tokens};
 use crate::waveform_analysis::tek_channel_color;
 use crate::data_extract_cache::{
     self, downsample_minmax, file_content_fp, list_cached_extracts, live_cache_path,
-    live_flush_interval, load_wida, save_wida, WidaPayload, WidaSeriesData,
+    live_flush_interval, load_wida, WidaPayload,
 };
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use egui::{Color32, CornerRadius, Frame, Margin, RichText, Stroke, Vec2b};
@@ -23,7 +29,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+
 use wiparse_core::config::{load_config, save_config, AppConfig};
 use wiparse_core::i18n::{tr, tr_fmt, Lang};
 use wiparse_core::paths::project_path;
@@ -56,6 +62,7 @@ struct PlotDrawItem {
     color: Color32,
     line: Vec<[f64; 2]>,
     draw_dots: bool,
+    connect: bool,
 }
 
 /// Background open/parse job (keeps UI responsive with a spinner).
@@ -95,6 +102,9 @@ enum DataKind {
     Voltage,
     Current,
     Temperature,
+    Power,
+    Frequency,
+    Scalar,
 }
 
 impl DataKind {
@@ -103,6 +113,7 @@ impl DataKind {
             Self::Voltage => "mV",
             Self::Current => "mA",
             Self::Temperature => "\u{00B0}C",
+            Self::Power=>"W", Self::Frequency=>"Hz", Self::Scalar=>"—",
         }
     }
 
@@ -112,6 +123,7 @@ impl DataKind {
             Self::Voltage => 10_000.0, // mV
             Self::Current => 5_000.0,  // mA
             Self::Temperature => 50.0,
+            Self::Power=>100., Self::Frequency=>100_000., Self::Scalar=>1.,
         }
     }
 
@@ -120,11 +132,13 @@ impl DataKind {
             Self::Voltage => "voltage",
             Self::Current => "current",
             Self::Temperature => "temperature",
+            Self::Power=>"power", Self::Frequency=>"frequency", Self::Scalar=>"scalar",
         }
     }
 
     fn from_config_str(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
+            "power"=>Self::Power,"frequency"=>Self::Frequency, "scalar"=>Self::Scalar,
             "current" => Self::Current,
             "temperature" | "temp" => Self::Temperature,
             _ => Self::Voltage,
@@ -136,6 +150,7 @@ impl DataKind {
             Self::Voltage => tr(lang, "data.kind_voltage"),
             Self::Current => tr(lang, "data.kind_current"),
             Self::Temperature => tr(lang, "data.kind_temperature"),
+            Self::Power=>"功率 / Power".into(),Self::Frequency=>"频率 / Frequency".into(),Self::Scalar=>"原数值 / Raw".into(),
         }
     }
 
@@ -145,6 +160,7 @@ impl DataKind {
             Self::Voltage => Color32::from_rgb(0xF7, 0xD6, 0x18),
             Self::Current => Color32::from_rgb(0x3B, 0x82, 0xF6),
             Self::Temperature => Color32::from_rgb(0xFF, 0x9F, 0x0A),
+            Self::Power=>Color32::from_rgb(150,95,220),Self::Frequency=>Color32::from_rgb(30,170,150),Self::Scalar=>Color32::GRAY,
         }
     }
 
@@ -153,6 +169,7 @@ impl DataKind {
             Self::Voltage => "mV",
             Self::Current => "mA",
             Self::Temperature => "\u{00B0}C",
+            Self::Power=>"W", Self::Frequency=>"Hz", Self::Scalar=>"—",
         }
     }
 }
@@ -181,11 +198,12 @@ impl DataSource {
 
 #[derive(Clone)]
 struct DataSeries {
+    unit_override: Option<String>,
     label: String,
     color: Color32,
     kind: DataKind,
     /// Samples as (frame_index, native value) — at most one point per frame.
-    points: Vec<[f64; 2]>,
+    points: HistoryPoints,
     y_scale: f64,
     y_offset: f64,
     /// Native Y extents (raw values).
@@ -197,6 +215,7 @@ struct DataSeries {
 }
 
 pub struct DataAnalysisPanel {
+    source_view: Option<source_location::Viewer>,
     status: String,
     browser_dir: String,
     browser_scanned_dir: String,
@@ -212,6 +231,9 @@ pub struct DataAnalysisPanel {
 
     series: Vec<DataSeries>,
     agent_generation: u64,
+    extract_cache: Arc<std::sync::Mutex<ai_extract::ExtractCache>>,
+    imported_query: Option<String>,
+    imported_quality: Option<Value>,
     frame_count: usize,
     selected: Option<usize>,
     dragging_offset: Option<usize>,
@@ -219,8 +241,19 @@ pub struct DataAnalysisPanel {
 
     source: DataSource,
     live_cursor: usize,
+    discovered_fields: Vec<(String,String)>,
+    live_rules: Option<(Vec<String>, Result<Vec<Option<Selector>>,String>)>,
     live_tail: String,
     live_auto_fit: bool,
+    recent_view: bool,
+    export_job:Option<thread::JoinHandle<Result<String,String>>>,
+    export_message:Option<String>,
+    manual_y: bool,
+    history_error: Option<String>,
+    live_source_generation: Option<u64>,
+    gap_notice: Option<String>,
+    cache_job: Option<thread::JoinHandle<Result<Vec<HistoryPoints>, String>>>,
+    last_checkpoint: std::time::Instant,
     /// Set when live ingest added frames; cleared after UI observes it.
     live_plot_dirty: bool,
     live_session_id: String,
@@ -251,6 +284,8 @@ pub struct DataAnalysisPanel {
     load_progress_target: u8,
 }
 
+fn agent_display_unit(unit:&str)->Result<(DataKind,f64),String>{match unit{"V"=>Ok((DataKind::Voltage,1000.)),"mV"=>Ok((DataKind::Voltage,1.)),"A"=>Ok((DataKind::Current,1000.)),"mA"=>Ok((DataKind::Current,1.)),"C"|"°C"=>Ok((DataKind::Temperature,1.)),"W"=>Ok((DataKind::Power,1.)),"mW"=>Ok((DataKind::Power,0.001)),"Hz"=>Ok((DataKind::Frequency,1.)),"kHz"=>Ok((DataKind::Frequency,1000.)),_ if unit.len()<=32 && !unit.chars().any(char::is_control)=>Ok((DataKind::Scalar,1.)),_=>Err(format!("DATA.INVALID_UNIT: {}",unit))}}
+
 impl DataAnalysisPanel {
     pub fn new(cfg: &AppConfig) -> Self {
         let da = &cfg.apps.data_analysis;
@@ -269,19 +304,14 @@ impl DataAnalysisPanel {
         }
 
         let source = DataSource::from_config_str(&da.source);
-        let live_session_id = format!(
-            "{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0)
-        );
+        let live_session_id = uuid::Uuid::new_v4().to_string();
         let mut panel = Self {
             status: String::new(),
             browser_dir,
             browser_scanned_dir: String::new(),
             browser_folders: Vec::new(),
             last_open_path: None,
+            source_view:None,
             file_text: None,
             frame_header: da.frame_header.clone(),
             series_count,
@@ -289,13 +319,27 @@ impl DataAnalysisPanel {
             kinds,
             series: Vec::new(),
             agent_generation: 0,
+            extract_cache: Default::default(),
+            imported_query: None,
+            imported_quality:None,
             frame_count: 0,
             selected: None,
             dragging_offset: None,
             dragging_scale: None,
             source,
             live_cursor: 0,
+            discovered_fields:Vec::new(),
+            live_rules:None,
             live_tail: String::new(),
+            recent_view: false,
+            export_job:None,
+            export_message:None,
+            manual_y: false,
+            history_error: None,
+            live_source_generation: None,
+            gap_notice: None,
+            cache_job: None,
+            last_checkpoint:std::time::Instant::now(),
             live_auto_fit: matches!(source, DataSource::SerialLive),
             live_plot_dirty: false,
             live_session_id,
@@ -326,7 +370,7 @@ impl DataAnalysisPanel {
     }
 
     pub fn needs_repaint(&self) -> bool {
-        if self.pending_load.is_some() {
+        if self.pending_load.is_some() || self.cache_job.is_some() || self.export_job.is_some() {
             return true;
         }
         matches!(self.source, DataSource::SerialLive)
@@ -354,19 +398,42 @@ impl DataAnalysisPanel {
         self.live_cursor
     }
 
-    /// Cap initial catch-up so enabling Serial Live does not re-parse a huge log.
-    /// `dropped` is the live FIFO eviction count (absolute seq base).
-    pub fn prepare_live_poll(&mut self, total_lines: usize, dropped: usize) {
-        if !matches!(self.source, DataSource::SerialLive) {
-            return;
+    pub fn prepare_live_poll(
+        &mut self,
+        total: usize,
+        dropped: usize,
+        source: (u64, usize),
+        lang: Lang,
+    ) -> bool {
+        if !self.wants_live_serial() {return false;}
+        if self.last_checkpoint.elapsed() >= std::time::Duration::from_secs(1) && self.live_frames_since_flush>0 {
+            self.checkpoint_live(false);
         }
-        if self.live_cursor < dropped {
-            self.live_cursor = dropped;
+        let changed = self
+            .live_source_generation
+            .is_some_and(|old| old != source.0);
+        if changed || self.live_cursor > total || self.live_cursor < dropped {
+            let lost = dropped.saturating_sub(self.live_cursor);
+            let cursor = self.live_cursor;
+            self.clear_data(lang);
+            if self.history_error.is_some(){return false;}
+            self.live_cursor = dropped.max(source.1);
+            self.gap_notice = Some(if lost > 0 {
+                format!(
+                    "串口日志行 {}–{} 已移出接收缓冲区，本段从第 {} 行开始",
+                    cursor + 1,
+                    dropped,
+                    dropped + 1
+                )
+            } else {
+                "串口来源或日志已重置，已开始新的分析会话".into()
+            });
         }
-        const MAX_CATCHUP: usize = 2000;
-        if self.live_cursor == 0 && total_lines > MAX_CATCHUP {
-            self.live_cursor = total_lines - MAX_CATCHUP;
+        if self.live_source_generation.is_none() {
+            self.live_cursor = self.live_cursor.max(source.1);
         }
+        self.live_source_generation = Some(source.0);
+        true
     }
 
     /// Append serial RX lines; `next_cursor` becomes the new live cursor after ingest.
@@ -379,6 +446,9 @@ impl DataAnalysisPanel {
             return;
         }
 
+        if self.cache_job.as_ref().is_some_and(|job|job.is_finished()){self.finish_checkpoint();}
+        let header = self.frame_header.trim().to_owned();
+        if !header.is_empty(){
         if !self.live_tail.is_empty() && !self.live_tail.ends_with('\n') {
             self.live_tail.push('\n');
         }
@@ -386,22 +456,7 @@ impl DataAnalysisPanel {
             self.live_tail.push_str(line);
             self.live_tail.push('\n');
         }
-        const MAX_LIVE_TAIL: usize = 256 * 1024;
-        if self.live_tail.len() > MAX_LIVE_TAIL {
-            let mut cut = self.live_tail.len() - MAX_LIVE_TAIL / 2;
-            while cut < self.live_tail.len() && !self.live_tail.is_char_boundary(cut) {
-                cut += 1;
-            }
-            self.live_tail = self.live_tail[cut..].to_owned();
         }
-
-        let header = self.frame_header.trim().to_owned();
-        if header.is_empty() {
-            self.live_cursor = next_cursor;
-            self.status = tr(lang, "data.status_need_header");
-            return;
-        }
-
         let filters: Vec<String> = self.filters[..self.series_count]
             .iter()
             .map(|s| s.trim().to_owned())
@@ -415,27 +470,34 @@ impl DataAnalysisPanel {
 
         self.ensure_series_shells(lang);
 
-        let frames = split_frames(&self.live_tail, &header);
-        if frames.len() < 2 {
-            self.live_cursor = next_cursor;
-            if self.frame_count == 0 {
-                self.status = tr(lang, "data.status_live_wait");
-            }
-            return;
+        if self.live_rules.as_ref().is_none_or(|(rules,_)|rules!=&filters) {
+            let compiled=compile_filters(&filters.iter().map(String::as_str).collect::<Vec<_>>());
+            self.live_rules=Some((filters,compiled));
         }
-
-        let complete = &frames[..frames.len() - 1];
-        let remain = frames.last().copied().unwrap_or("");
+        let selectors=match &self.live_rules.as_ref().unwrap().1 {
+            Ok(v)=>v, Err(error)=>{self.status=error.clone();self.live_cursor=next_cursor;return;}
+        };
+        let frames;
+        let (complete, remain) = if header.is_empty() {
+            frames = lines.iter().map(String::as_str).collect::<Vec<_>>();
+            (frames.as_slice(), "")
+        } else {
+            frames = split_frames(&self.live_tail, &header);
+            let Some((last, complete)) = frames.split_last() else {
+                self.live_tail.clear();
+                self.live_cursor = next_cursor;
+                return;
+            };
+            (complete, *last)
+        };
         let base_fi = self.frame_count;
-        const MAX_LIVE_POINTS: usize = 200_000;
+
 
         for (rel, frame) in complete.iter().enumerate() {
             let x = (base_fi + rel) as f64;
-            for (si, filter) in filters.iter().enumerate() {
-                if filter.is_empty() {
-                    continue;
-                }
-                if let Some(value) = extract_first_filter_value(frame, filter) {
+            let record = Record::new(frame);
+            for (si, selector) in selectors.iter().enumerate() {
+                if let Some(value) = selected_number(selector.as_ref(), &record) {
                     let s = &mut self.series[si];
                     if s.points.is_empty() {
                         s.y_min = value;
@@ -445,18 +507,22 @@ impl DataAnalysisPanel {
                         s.y_max = s.y_max.max(value);
                     }
                     s.points.push([x, value]);
-                    if s.points.len() > MAX_LIVE_POINTS {
-                        let drop_n = s.points.len() - MAX_LIVE_POINTS;
-                        s.points.drain(..drop_n);
-                    }
+
                     s.disp_dirty = true;
                 }
             }
         }
 
+        for series in &mut self.series {
+            series.points.seal();
+        }
         let added = complete.len();
         self.frame_count = base_fi + added;
-        self.live_tail = remain.to_owned();
+        const MAX_PARTIAL_FRAME:usize=256*1024;
+        if remain.len()>MAX_PARTIAL_FRAME {
+            self.gap_notice=Some(format!("串口日志第 {next_cursor} 行存在超长未结束帧，已跳过该帧"));
+            self.live_tail.clear();
+        } else {self.live_tail = remain.to_owned();}
         self.live_cursor = next_cursor;
         self.live_plot_dirty = true;
         self.invalidate_lod();
@@ -473,8 +539,8 @@ impl DataAnalysisPanel {
         }
 
         self.live_frames_since_flush += added;
-        if self.live_frames_since_flush >= live_flush_interval() {
-            self.flush_live_cache();
+        if self.live_frames_since_flush >= live_flush_interval() && self.last_checkpoint.elapsed()>=std::time::Duration::from_millis(250) {
+            self.checkpoint_live(false);
         }
 
         let points: usize = self.series.iter().map(|s| s.points.len()).sum();
@@ -486,6 +552,11 @@ impl DataAnalysisPanel {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        if let Some(view)=&mut self.source_view {if !view.show(ui.ctx()) {self.source_view=None;}}
+        if self.cache_job.as_ref().is_some_and(|job|job.is_finished()) {self.finish_checkpoint();}
+        if self.export_job.as_ref().is_some_and(|job|job.is_finished()) {
+            self.export_message=Some(self.export_job.take().unwrap().join().unwrap_or_else(|_|Err("导出线程退出".into())).unwrap_or_else(|e|e));
+        }
         self.poll_pending_load(lang);
         if self.pending_load.is_some() {
             // Keep spinner animating even if this frame started before the job was queued.
@@ -568,13 +639,21 @@ impl DataAnalysisPanel {
                     if ui_theme::secondary_btn_sized(
                         ui,
                         tokens,
-                        tr(lang, "data.fit"),
+                        if self.wants_live_serial() { if lang==Lang::Zh {"全程".into()}else{"Full".into()} } else {tr(lang, "data.fit")},
                         egui::vec2(64.0, ui_theme::CTRL_H),
                     )
                     .clicked()
                     {
+                        self.manual_y = false;
+                        self.recent_view = false;
+                        self.live_auto_fit = self.wants_live_serial();
                         self.fit_request = true;
-                        self.live_auto_fit = false;
+                        self.pending_bounds = if self.live_auto_fit {self.live_fit_bounds()} else {None};
+                    }
+                    if self.wants_live_serial() && ui.selectable_label(self.live_auto_fit && self.recent_view, if lang==Lang::Zh {"最近 80 帧"}else{"Last 80"}).clicked() {
+                        self.live_auto_fit = true;
+                        self.recent_view = true;
+                        self.pending_bounds = self.live_fit_bounds();
                     }
                     let z = egui::vec2(36.0, ui_theme::CTRL_H);
                     if ui_theme::ghost_btn_sized(ui, tokens, "X+", z, false).clicked() {
@@ -646,6 +725,16 @@ impl DataAnalysisPanel {
                         .size(ui_theme::FONT_CAPTION)
                         .color(tokens.text_muted),
                 );
+                if ui.add_enabled(self.frame_count>0 && self.export_job.is_none(),egui::Button::new(if lang==Lang::Zh {"导出全程 CSV"}else{"Export full CSV"})).clicked(){
+                    if let Some(path)=rfd::FileDialog::new().set_file_name("capture.csv").add_filter("CSV",&["csv"]).save_file(){
+                        let curves=self.series.iter().map(|s|(s.label.clone(),s.unit_override.as_deref().unwrap_or(s.kind.unit()).to_string(),s.points.clone())).collect::<Vec<_>>();
+                        self.export_message=None;
+                        self.export_job=Some(thread::spawn(move||history::export_csv(&path,&curves).map(|_|format!("已导出 {}",path.display())).map_err(|e|format!("导出失败：{e}"))));
+                    }
+                }
+                if let Some(message)=&self.export_message {ui.label(message);}
+                if let Some(notice)=&self.gap_notice {ui.label(notice);}
+                if let Some(error)=&self.history_error { ui.colored_label(tokens.text_primary,error); }
                 let points: usize = self.series.iter().map(|s| s.points.len()).sum();
                 if self.frame_count > 0 {
                     ui.label(
@@ -676,7 +765,7 @@ impl DataAnalysisPanel {
                     egui::ComboBox::from_id_salt("data_source").selected_text(tr(lang,if self.source==DataSource::File{"data.source_file"}else{"data.source_serial"})).width(ui.available_width()).show_ui(ui,|ui|{ui.selectable_value(&mut self.source,DataSource::File,tr(lang,"data.source_file"));ui.selectable_value(&mut self.source,DataSource::SerialLive,tr(lang,"data.source_serial"));});
                     source_changed|=before!=self.source;
                 });
-                ui_theme::form_row(ui,&tr(lang,"data.frame_header"),|ui|{let r=ui.add_sized([ui.available_width(),ui_theme::CTRL_H],egui::TextEdit::singleline(&mut self.frame_header).hint_text("HDR / FRAME / ==="));apply_now|=r.lost_focus();r.on_hover_text(tr(lang,"data.frame_header_hint"));});
+                ui_theme::form_row(ui,&tr(lang,"data.frame_header"),|ui|{let r=ui.add_sized([ui.available_width(),ui_theme::CTRL_H],egui::TextEdit::singleline(&mut self.frame_header).hint_text(if lang==Lang::Zh{"留空按行"}else{"Blank: one row per line"}));apply_now|=r.lost_focus();r.on_hover_text(tr(lang,"data.frame_header_hint"));});
                 ui_theme::form_row(ui,&tr(lang,"data.series_count"),|ui|{let before=self.series_count;egui::ComboBox::from_id_salt("data_series_count").selected_text(self.series_count.to_string()).width(ui.available_width()).show_ui(ui,|ui|{for n in 1..=MAX_SERIES{ui.selectable_value(&mut self.series_count,n,n.to_string());}});apply_now|=before!=self.series_count;});
                 ui.add_space(2.);ui.separator();
                 for i in 0..self.series_count{
@@ -684,8 +773,17 @@ impl DataAnalysisPanel {
                         ui.horizontal(|ui|{
                             let(rect,_)=ui.allocate_exact_size(egui::vec2(8.,8.),egui::Sense::hover());ui.painter().rect_filled(rect,2,series_color(i));
                             ui.label(RichText::new(format!("{} {}",if lang==Lang::Zh{"数据"}else{"Series"},i+1)).strong());
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{let before=self.kinds[i];egui::ComboBox::from_id_salt("data_kind").width(68.).selected_text(self.kinds[i].short_axis()).show_ui(ui,|ui|{for k in [DataKind::Voltage,DataKind::Current,DataKind::Temperature]{ui.selectable_value(&mut self.kinds[i],k,format!("{} ({})",k.label(lang),k.short_axis()));}});apply_now|=before!=self.kinds[i];});
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{let before=self.kinds[i];egui::ComboBox::from_id_salt("data_kind").width(68.).selected_text(self.kinds[i].short_axis()).show_ui(ui,|ui|{for k in [DataKind::Voltage,DataKind::Current,DataKind::Temperature,DataKind::Power,DataKind::Frequency,DataKind::Scalar]{ui.selectable_value(&mut self.kinds[i],k,format!("{} ({})",k.label(lang),k.short_axis()));}});apply_now|=before!=self.kinds[i];});
                         });
+                        if self.source == DataSource::File && self.file_text.is_some() && !self.discovered_fields.is_empty() {
+                            ui.menu_button(if lang==Lang::Zh{"选择已识别字段"}else{"Detected fields"},|ui|{
+                                for (label,selector) in &self.discovered_fields {
+                                    if ui.button(format!("{label}  ·  {selector}")).clicked(){
+                                        self.filters[i]=selector.clone();apply_now=true;ui.close_menu();
+                                    }
+                                }
+                            });
+                        }
                         let edit=ui.add_sized([ui.available_width(),ui_theme::CTRL_H],egui::TextEdit::singleline(&mut self.filters[i]).hint_text(if lang==Lang::Zh{"提取字段，如 TEMP"}else{"Field, e.g. TEMP"}));apply_now|=edit.lost_focus();edit.on_hover_text(tr(lang,"data.filter_hint"));
                     });
                 }
@@ -862,7 +960,6 @@ impl DataAnalysisPanel {
             0.0
         };
 
-        self.ensure_display_mapped();
 
         let fit = self.fit_request;
         let pending = self.pending_bounds.take();
@@ -876,7 +973,7 @@ impl DataAnalysisPanel {
 
         let mut next_x_range = None;
         let mut next_y_range = None;
-        let x_label = tr(lang, "data.axis_x");
+        let x_label = if self.imported_seconds(){"时间 / s".into()}else{tr(lang, "data.axis_x")};
         let y_label = self.y_axis_label_for_plot(lang);
         let thresholds = self.threshold_display_lines();
         let selected = self.selected;
@@ -889,7 +986,7 @@ impl DataAnalysisPanel {
         let plot_width_px = plot_w.max(64.0);
 
         // Build draw lists outside the plot closure (no per-frame series.clone).
-        let (x0_hint, x1_hint) = self.last_x_range.unwrap_or_else(|| {
+        let (x0_hint, x1_hint) = pending_clamped.or(fit_bounds).map(|b|(b.min()[0],b.max()[0])).or(self.last_x_range).unwrap_or_else(|| {
             self.cached_extent
                 .map(|(a, b, _, _)| (a, b))
                 .unwrap_or((0.0, 1.0))
@@ -949,17 +1046,17 @@ impl DataAnalysisPanel {
                                         1.5_f32
                                     };
                                     let pts = PlotPoints::from_iter(item.line.iter().copied());
-                                    plot_ui.line(
+                                    if item.connect {plot_ui.line(
                                         Line::new(pts)
                                             .name(item.label.clone())
                                             .color(ui_theme::readable_on(item.color,plot_tokens.plot_bg))
                                             .width(width),
-                                    );
+                                    );}
                                     if item.draw_dots {
                                         let dots =
                                             PlotPoints::from_iter(item.line.iter().copied());
                                         plot_ui.points(
-                                            Points::new(dots).color(ui_theme::readable_on(item.color,plot_tokens.plot_bg)).radius(2.4_f32),
+                                            Points::new(dots).name(if item.connect {String::new()}else{item.label.clone()}).color(ui_theme::readable_on(item.color,plot_tokens.plot_bg)).radius(2.4_f32),
                                         );
                                     }
                                 }
@@ -999,8 +1096,16 @@ impl DataAnalysisPanel {
                                     }
                                 }
                             });
+                        let actual_bounds=response.transform.bounds();
+                        next_x_range=Some((actual_bounds.min()[0],actual_bounds.max()[0]));
+                        next_y_range=Some((actual_bounds.min()[1],actual_bounds.max()[1]));
                         plot_hovered = response.response.hovered();
                         plot_clicked = response.response.clicked();
+                        if live && (response.response.dragged() && ui.input(|i|i.pointer.delta().x != 0.0)
+                            || response.response.dragged_by(egui::PointerButton::Secondary)
+                            || plot_hovered && ui.input(|i| (ctrl && !shift && i.zoom_delta()!=1.0) || (!ctrl && i.smooth_scroll_delta.x!=0.0))) {
+                            self.live_auto_fit = false;
+                        }
                         plot_rect = Some(response.response.rect);
                     });
                 },
@@ -1070,15 +1175,13 @@ impl DataAnalysisPanel {
             if s.points.is_empty() {
                 continue;
             }
-            let val = if live {
-                s.points.last().map(|p| p[1])
-            } else if let Some(x) = cursor_x {
+            let val = if let Some(x) = cursor_x {
                 value_at_x(&s.points, x)
             } else {
                 s.points.last().map(|p| p[1])
             };
             let text = match val {
-                Some(v) => format!("{}{}", format_plain(v), s.kind.unit()),
+                Some(v) => format!("{}{}", format_plain(v), s.unit_override.as_deref().unwrap_or(s.kind.unit())),
                 None => "—".into(),
             };
             let label = if s.label.is_empty() {
@@ -1092,7 +1195,7 @@ impl DataAnalysisPanel {
             return;
         }
 
-        let mode = if live {
+        let mode = if live && cursor_x.is_none() {
             tr(lang, "data.readout_live")
         } else if cursor_x.is_some() {
             tr(lang, "data.readout_cursor")
@@ -1383,7 +1486,7 @@ impl DataAnalysisPanel {
                             (self.series[i].y_scale * factor).clamp(1e-12, 1e12);
                     }
                     self.selected = Some(i);
-                    self.live_auto_fit = false;
+                    self.manual_y = true;
                     extent_dirty = true;
                 }
             }
@@ -1397,7 +1500,7 @@ impl DataAnalysisPanel {
                 } else {
                     self.dragging_offset = Some(i);
                 }
-                self.live_auto_fit = false;
+                self.manual_y = true;
             }
         }
         if let Some(i) = self.dragging_scale {
@@ -1424,7 +1527,7 @@ impl DataAnalysisPanel {
                         self.series[i].y_offset = 0.0;
                     }
                     self.selected = Some(i);
-                    self.live_auto_fit = false;
+                    self.manual_y = true;
                     extent_dirty = true;
                 }
             }
@@ -1470,9 +1573,6 @@ impl DataAnalysisPanel {
 
     fn empty_plot_hint(&self, lang: Lang) -> String {
         if matches!(self.source, DataSource::SerialLive) {
-            if self.frame_header.trim().is_empty() {
-                return tr(lang, "data.status_need_header");
-            }
             let any_filter = self.filters[..self.series_count]
                 .iter()
                 .any(|f| !f.trim().is_empty());
@@ -1483,9 +1583,6 @@ impl DataAnalysisPanel {
         }
         if self.file_text.is_none() {
             return tr(lang, "data.plot_stub");
-        }
-        if self.frame_header.trim().is_empty() {
-            return tr(lang, "data.status_need_header");
         }
         let any_filter = self.filters[..self.series_count]
             .iter()
@@ -1499,9 +1596,19 @@ impl DataAnalysisPanel {
         tr(lang, "data.status_no_points")
     }
 
+    fn start_live_session(&mut self) {
+        self.live_session_id = uuid::Uuid::new_v4().to_string();
+        self.recent_view = false;
+        self.gap_notice = None;
+        self.live_source_generation = None;
+        self.manual_y = false;
+    }
+
     fn clear_data(&mut self, lang: Lang) {
+        self.imported_query=None;self.imported_quality=None;
         if matches!(self.source, DataSource::SerialLive) && self.frame_count > 0 {
             self.flush_live_cache();
+            if self.history_error.is_some(){return;}
         }
         self.last_open_path = None;
         self.file_text = None;
@@ -1524,6 +1631,7 @@ impl DataAnalysisPanel {
         self.pending_load = None;
         self.status = tr(lang, "data.status_cleared");
         if matches!(self.source, DataSource::SerialLive) {
+            self.start_live_session();
             self.live_auto_fit = true;
             self.status = tr(lang, "data.status_live_wait");
         }
@@ -1532,13 +1640,7 @@ impl DataAnalysisPanel {
     fn on_source_changed(&mut self, lang: Lang) {
         match self.source {
             DataSource::SerialLive => {
-                self.live_session_id = format!(
-                    "{}",
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0)
-                );
+                self.start_live_session();
                 for s in &mut self.series {
                     s.points.clear();
                     s.mapped.clear();
@@ -1566,7 +1668,9 @@ impl DataAnalysisPanel {
             DataSource::File => {
                 if self.frame_count > 0 {
                     self.flush_live_cache();
+                    if self.history_error.is_some(){self.source=DataSource::SerialLive;return;}
                 }
+                self.refresh_data_browser();
                 self.live_auto_fit = false;
                 self.live_tail.clear();
                 self.live_cursor = 0;
@@ -1589,6 +1693,7 @@ impl DataAnalysisPanel {
             DataSource::SerialLive => {
                 if self.frame_count > 0 {
                     self.flush_live_cache();
+                    if self.history_error.is_some(){return;}
                 }
                 for s in &mut self.series {
                     s.points.clear();
@@ -1598,6 +1703,7 @@ impl DataAnalysisPanel {
                     s.y_max = 0.0;
                 }
                 self.series.clear();
+                self.start_live_session();
                 self.agent_generation = self.agent_generation.wrapping_add(1);
         self.frame_count = 0;
                 self.live_tail.clear();
@@ -1616,8 +1722,8 @@ impl DataAnalysisPanel {
 
     fn pick_open_file(&mut self, lang: Lang) {
         let mut dialog = rfd::FileDialog::new()
-            .add_filter("Text", &["txt", "csv", "log"])
-            .add_filter("Extract", &["wida"])
+            .add_filter("Text", &["txt", "csv", "tsv", "jsonl", "ndjson", "log"])
+            .add_filter("Extract", &["wida","widalive"])
             .add_filter("All", &["*"]);
         if let Some(root) = self.resolve_browser_root() {
             dialog = dialog.set_directory(root);
@@ -1728,6 +1834,8 @@ impl DataAnalysisPanel {
             self.status = tr(lang, "data.status_loading_busy");
             return;
         }
+        self.imported_query=None;self.imported_quality=None;
+        if self.wants_live_serial() {self.flush_live_cache();if self.history_error.is_some(){return;}}
         self.source = DataSource::File;
         self.live_auto_fit = false;
         self.live_tail.clear();
@@ -1758,6 +1866,7 @@ impl DataAnalysisPanel {
     }
 
     fn start_reparse_job(&mut self, lang: Lang) {
+        if self.imported_query.is_some(){self.status="当前为AI提取数据集，请重新提取后导入，不能用帧筛选规则重解析。".into();return;}
         let Some(text) = self.file_text.clone() else {
             return;
         };
@@ -1766,15 +1875,6 @@ impl DataAnalysisPanel {
             return;
         }
         let header = self.frame_header.trim().to_owned();
-        if header.is_empty() {
-            self.series.clear();
-            self.agent_generation = self.agent_generation.wrapping_add(1);
-        self.frame_count = 0;
-            self.cached_extent = None;
-            self.invalidate_lod();
-            self.status = tr(lang, "data.status_need_header");
-            return;
-        }
         let filters = self.rules_filter_vec();
         if filters.iter().all(|f| f.is_empty()) {
             self.series.clear();
@@ -1868,17 +1968,15 @@ impl DataAnalysisPanel {
     }
 
     fn apply_load_ok(&mut self, ok: DataLoadOk, lang: Lang) {
+        self.imported_query=None;self.imported_quality=None;
         self.source = DataSource::File;
         self.live_auto_fit = false;
         if let Some(path) = ok.path {
             self.last_open_path = Some(path);
         }
+        self.discovered_fields = ok.file_text.as_ref().map(|text|wiparse_core::extract::discover(text)).unwrap_or_default();
         self.file_text = ok.file_text;
-        if let Some(h) = ok.frame_header {
-            if !h.is_empty() {
-                self.frame_header = h;
-            }
-        }
+        if let Some(h) = ok.frame_header {self.frame_header = h;}
         if let Some(filters) = ok.filters {
             while self.filters.len() < MAX_SERIES {
                 self.filters.push(String::new());
@@ -1899,10 +1997,11 @@ impl DataAnalysisPanel {
             .into_iter()
             .enumerate()
             .map(|(i, d)| DataSeries {
+                unit_override: None,
                 label: d.label,
                 color: series_color(i),
                 kind: d.kind,
-                points: d.points,
+                points: d.points.into(),
                 y_scale: d.y_scale,
                 y_offset: d.y_offset,
                 y_min: d.y_min,
@@ -1944,7 +2043,7 @@ impl DataAnalysisPanel {
             }
             s.mapped.clear();
             s.mapped.reserve(s.points.len());
-            for p in &s.points {
+            for p in s.points.iter() {
                 s.mapped
                     .push([p[0], display_y(p[1], s.y_scale, s.y_offset, s.kind)]);
             }
@@ -1965,10 +2064,16 @@ impl DataAnalysisPanel {
         if self.lod_key == Some(key) && self.lod_lines.len() == self.series.len() {
             return;
         }
-        self.ensure_display_mapped();
+        if !self.wants_live_serial() { self.ensure_display_mapped(); }
         let cols = ((pixel_w * LOD_POINTS_PER_PX).ceil() as usize).max(64);
         let mut lines = Vec::with_capacity(self.series.len());
         for s in &self.series {
+            if self.wants_live_serial() {
+                let mut points=s.points.visible(x0,x1,cols);
+                for p in &mut points {p[1]=display_y(p[1],s.y_scale,s.y_offset,s.kind);}
+                lines.push(points);
+                continue;
+            }
             if s.mapped.is_empty() {
                 lines.push(Vec::new());
                 continue;
@@ -1991,7 +2096,7 @@ impl DataAnalysisPanel {
             if s.points.is_empty() {
                 continue;
             }
-            let use_lod = s.mapped.len() > SKIP_DOTS_ABOVE
+            let use_lod = self.wants_live_serial() || s.mapped.len() > SKIP_DOTS_ABOVE
                 || s.mapped.len() as f32 > pixel_w * LOD_POINTS_PER_PX;
             let line = if use_lod {
                 self.lod_lines
@@ -2001,13 +2106,14 @@ impl DataAnalysisPanel {
             } else {
                 s.mapped.clone()
             };
-            let draw_dots = !use_lod && s.mapped.len() <= SKIP_DOTS_ABOVE;
+            let draw_dots = line.len() <= SKIP_DOTS_ABOVE && (!use_lod || self.wants_live_serial());
             out.push(PlotDrawItem {
                 index: i,
                 label: s.label.clone(),
                 color: s.color,
                 line,
-                draw_dots,
+                draw_dots:draw_dots||self.imported_quality.as_ref().is_some_and(|q|q["quality_complete"]!=true),
+                connect:self.imported_quality.as_ref().is_none_or(|q|q["quality_complete"]==true),
             });
         }
         out
@@ -2027,45 +2133,84 @@ impl DataAnalysisPanel {
             .collect()
     }
 
-    fn build_wida_payload(&self, source_key: &str, content_fp: &str) -> WidaPayload {
-        let series: Vec<WidaSeriesData> = self
+    fn flush_live_cache(&mut self) {
+        self.checkpoint_live(true);
+    }
+
+    fn checkpoint_live(&mut self, wait: bool) {
+        if self
+            .cache_job
+            .as_ref()
+            .is_some_and(|j| !wait && !j.is_finished())
+        {
+            return;
+        }
+        self.finish_checkpoint();
+        if self.frame_count == 0 || self.live_frames_since_flush == 0 {
+            return;
+        }
+        self.last_checkpoint=std::time::Instant::now();
+        let path = live_cache_path(&self.live_session_id);
+        let header = data_extract_cache::WidaHeader {
+            source_key: "serial:live".into(),
+            content_fp: self.live_session_id.clone(),
+            header: self.frame_header.clone(),
+            filters: self.rules_filter_vec(),
+            kinds: self.rules_kind_vec(),
+            frame_count: self.frame_count as u32,
+            series: self
+                .series
+                .iter()
+                .map(|s| data_extract_cache::WidaSeriesMeta {
+                    label: s.label.clone(),
+                    kind: s.kind.as_config_str().into(),
+                    y_scale: s.y_scale,
+                    y_offset: s.y_offset,
+                    y_min: s.y_min,
+                    y_max: s.y_max,
+                    n: s.points.len() as u32,
+                })
+                .collect(),
+        };
+        let mut points = self
             .series
             .iter()
-            .map(|s| WidaSeriesData {
-                label: s.label.clone(),
-                kind: s.kind.as_config_str().to_string(),
-                y_scale: s.y_scale,
-                y_offset: s.y_offset,
-                y_min: s.y_min,
-                y_max: s.y_max,
-                points: s.points.clone(),
-            })
-            .collect();
-        WidaPayload {
-            meta: data_extract_cache::WidaHeader {
-                source_key: source_key.to_owned(),
-                content_fp: content_fp.to_owned(),
-                header: self.frame_header.trim().to_owned(),
-                filters: self.rules_filter_vec(),
-                kinds: self.rules_kind_vec(),
-                frame_count: self.frame_count as u32,
-                series: Vec::new(),
-            },
-            series,
+            .map(|s| s.points.clone())
+            .collect::<Vec<_>>();
+        self.cache_job = Some(thread::spawn(move || {
+            for series in &mut points {
+                series
+                    .page_out()
+                    .map_err(|e| format!("历史分块写入失败：{e}"))?;
+            }
+            history::checkpoint(&path, &header, &points)
+                .map_err(|e| format!("历史缓存写入失败：{e}"))?;
+            Ok(points)
+        }));
+        self.live_frames_since_flush = 0;
+        if wait {
+            self.finish_checkpoint();
         }
     }
 
-    fn flush_live_cache(&mut self) {
-        if self.frame_count == 0 || self.series.iter().all(|s| s.points.is_empty()) {
-            self.live_frames_since_flush = 0;
+    fn finish_checkpoint(&mut self) {
+        let Some(job) = self.cache_job.take() else {
             return;
-        }
-        let path = live_cache_path(&self.live_session_id);
-        let payload = self.build_wida_payload("serial:live", &self.live_session_id);
-        if save_wida(&path, &payload).is_ok() {
-            self.live_frames_since_flush = 0;
-            // Refresh browser so the live extract appears under cache folder.
-            self.refresh_data_browser();
+        };
+        match job
+            .join()
+            .unwrap_or_else(|_| Err("历史写入线程退出".into()))
+        {
+            Ok(snapshot) => {
+                for (s, points) in self.series.iter_mut().zip(snapshot) {
+                    s.points.adopt_pages(points);
+                }
+                self.history_error = None;
+            }
+            Err(error) => {
+                self.live_frames_since_flush = self.frame_count;
+                self.history_error = Some(error);
+            }
         }
     }
 
@@ -2076,10 +2221,11 @@ impl DataAnalysisPanel {
             .collect();
         if self.series.len() != self.series_count {
             self.series.resize_with(self.series_count, || DataSeries {
+                unit_override: None,
                 label: String::new(),
                 color: Color32::WHITE,
                 kind: DataKind::Voltage,
-                points: Vec::new(),
+                points: HistoryPoints::default(),
                 y_scale: 1.0,
                 y_offset: 0.0,
                 y_min: 0.0,
@@ -2110,7 +2256,7 @@ impl DataAnalysisPanel {
 
     /// Stagger display offsets by kind (and within kind). Call after file reparse only.
     fn auto_layout_scales(&mut self) {
-        let mut groups: [Vec<usize>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+        let mut groups: [Vec<usize>; 6] = Default::default();
         for (i, s) in self.series.iter().enumerate() {
             if s.points.is_empty() {
                 continue;
@@ -2118,7 +2264,7 @@ impl DataAnalysisPanel {
             let gi = match s.kind {
                 DataKind::Voltage => 0,
                 DataKind::Current => 1,
-                DataKind::Temperature => 2,
+                DataKind::Temperature => 2,DataKind::Power=>3,DataKind::Frequency=>4,DataKind::Scalar=>5,
             };
             groups[gi].push(i);
         }
@@ -2172,7 +2318,7 @@ impl DataAnalysisPanel {
 
     fn active_kinds(&self) -> Vec<DataKind> {
         let mut out = Vec::new();
-        for kind in [DataKind::Voltage, DataKind::Current, DataKind::Temperature] {
+        for kind in [DataKind::Voltage, DataKind::Current, DataKind::Temperature,DataKind::Power,DataKind::Frequency,DataKind::Scalar] {
             if self
                 .series
                 .iter()
@@ -2262,7 +2408,7 @@ impl DataAnalysisPanel {
         let bounds = PlotBounds::from_min_max([nx0, ny0], [nx1, ny1]);
         self.pending_bounds = Some(self.clamp_view_bounds(bounds));
         self.fit_request = false;
-        self.live_auto_fit = false;
+        if zoom_x { self.live_auto_fit = false; } else { self.manual_y = true; self.last_y_range=Some((ny0,ny1)); }
     }
 
     /// Y zoom: selected series scale (like waveform), else global plot Y via request_zoom_axis.
@@ -2275,7 +2421,7 @@ impl DataAnalysisPanel {
                 if !s.points.is_empty() {
                     s.y_scale = (s.y_scale * zoom).clamp(1e-12, 1e12);
                     s.disp_dirty = true;
-                    self.live_auto_fit = false;
+                    self.manual_y = true;
                     self.invalidate_lod();
                     self.refresh_cached_extent();
                     return;
@@ -2303,9 +2449,16 @@ impl DataAnalysisPanel {
         }
         let window = LIVE_FIT_FRAMES.min(n);
         let x1 = (n as f64 - 1.0).max(0.0);
-        let x0 = (n.saturating_sub(window)) as f64;
-        let y0 = ext.min()[1];
-        let y1 = ext.max()[1];
+        let x0 = if self.recent_view {
+            n.saturating_sub(window) as f64
+        } else {
+            0.0
+        };
+        let (x0, x1) = if n == 1 { (-0.5, 0.5) } else { (x0, x1) };
+        let (y0, y1) = self
+            .last_y_range
+            .filter(|_| self.manual_y)
+            .unwrap_or((ext.min()[1], ext.max()[1]));
         Some(self.clamp_view_bounds(PlotBounds::from_min_max([x0, y0], [x1, y1])))
     }
 
@@ -2327,6 +2480,7 @@ impl DataAnalysisPanel {
             ymin = ymin.min(y0).min(y1);
             ymax = ymax.max(y0).max(y1);
         }
+        if xmin.is_finite() && self.wants_live_serial() { xmin=0.; xmax=self.frame_count.saturating_sub(1) as f64; }
         if !xmin.is_finite() {
             self.cached_extent = None;
             return;
@@ -2350,14 +2504,21 @@ impl DataAnalysisPanel {
 
     pub fn api_snapshot(&self) -> Value {
         json!({
+            "imported_query":self.imported_query,
+            "imported_quality":self.imported_quality,
             "browser_dir": self.browser_dir,
             "frame_header": self.frame_header,
+            "field_candidates": if self.source==DataSource::File && self.file_text.is_some(){self.discovered_fields.as_slice()}else{&[]},
+            "extract_rules": wiparse_core::extract::HELP,
             "series_count": self.series_count,
             "filters": self.filters[..self.series_count],
             "kinds": self.kinds[..self.series_count].iter().map(|k| k.as_config_str()).collect::<Vec<_>>(),
             "source": self.source.as_config_str(),
             "frames": self.frame_count,
             "live_cursor": self.live_cursor,
+            "history_error":self.history_error,
+            "capture_boundary":self.gap_notice,
+            "live_view":if !self.live_auto_fit {"manual"}else if self.recent_view {"recent"}else{"full"},
             "thresholds": {
                 "voltage": { "on": self.thr_voltage_on, "value": self.thr_voltage },
                 "current": { "on": self.thr_current_on, "value": self.thr_current },
@@ -2461,7 +2622,7 @@ fn layout_and_map_drafts_progress(
     lo: u8,
     hi: u8,
 ) {
-    let mut groups: [Vec<usize>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut groups: [Vec<usize>; 6] = Default::default();
     for (i, s) in series.iter().enumerate() {
         if s.points.is_empty() {
             continue;
@@ -2469,7 +2630,7 @@ fn layout_and_map_drafts_progress(
         let gi = match s.kind {
             DataKind::Voltage => 0,
             DataKind::Current => 1,
-            DataKind::Temperature => 2,
+            DataKind::Temperature => 2,DataKind::Power=>3,DataKind::Frequency=>4,DataKind::Scalar=>5,
         };
         groups[gi].push(i);
     }
@@ -2619,7 +2780,7 @@ fn load_file_worker(
     if path
         .extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("wida"))
+        .is_some_and(|e| e.eq_ignore_ascii_case("wida") || e.eq_ignore_ascii_case("widalive"))
     {
         send_progress(tx, 20);
         match load_wida(&path) {
@@ -2641,6 +2802,13 @@ fn load_file_worker(
         }
     };
     send_progress(tx, 12);
+    let detect = filters.iter().all(|s|s.trim().is_empty());
+    let candidates = if detect { wiparse_core::extract::discover(&text) } else { Vec::new() };
+    let (filters,kinds) = if candidates.is_empty() { (filters,kinds) } else {
+        let selectors:Vec<_> = candidates.iter().take(MAX_SERIES).map(|(_,s)|s.clone()).collect();
+        let kinds=vec!["scalar".into();selectors.len()];
+        (selectors,kinds)
+    };
     let fp = file_content_fp(&path);
     let cache_path = data_extract_cache::cache_path_for(&fp, &header, &filters, &kinds);
     if let Ok(payload) = load_wida(&cache_path) {
@@ -2656,17 +2824,9 @@ fn load_file_worker(
         }
     }
 
-    if header.trim().is_empty() {
-        send_done(Err("empty frame header".into()));
-        return;
-    }
     let filter_refs: Vec<&str> = filters.iter().map(|s| s.as_str()).collect();
-    if filter_refs.iter().all(|f| f.is_empty()) {
-        send_done(Err("empty filters".into()));
-        return;
-    }
     send_progress(tx, 15);
-    let parsed = parse_data_file_progress(&text, &header, &filter_refs, tx);
+    let parsed = match parse_data_file_progress(&text, &header, &filter_refs, tx) { Ok(v) => v, Err(e) => { send_done(Err(e)); return; } };
     send_progress(tx, 78);
     let frame_count = parsed.frame_count;
     let mut series: Vec<SeriesDraft> = parsed
@@ -2717,8 +2877,8 @@ fn load_file_worker(
         series,
         from_cache: false,
         frame_header: None,
-        filters: None,
-        kinds: None,
+        filters: Some(filters),
+        kinds: Some(kinds),
     }));
 }
 
@@ -2734,10 +2894,6 @@ fn reparse_text_worker(
         let _ = tx.send(LoadEvent::Done(r));
     };
     send_progress(tx, 3);
-    if header.trim().is_empty() {
-        send_done(Err("empty frame header".into()));
-        return;
-    }
     let filter_refs: Vec<&str> = filters.iter().map(|s| s.as_str()).collect();
     if filter_refs.iter().all(|f| f.is_empty()) {
         send_done(Err("empty filters".into()));
@@ -2761,7 +2917,7 @@ fn reparse_text_worker(
         }
     }
     send_progress(tx, 15);
-    let parsed = parse_data_file_progress(text.as_str(), &header, &filter_refs, tx);
+    let parsed = match parse_data_file_progress(text.as_str(), &header, &filter_refs, tx) { Ok(v) => v, Err(e) => { send_done(Err(e)); return; } };
     send_progress(tx, 78);
     let frame_count = parsed.frame_count;
     let mut series: Vec<SeriesDraft> = parsed
@@ -2819,12 +2975,23 @@ fn reparse_text_worker(
     }));
 }
 
+fn compile_filters(filters: &[&str]) -> Result<Vec<Option<Selector>>, String> {
+    filters.iter().map(|filter| {
+        if filter.is_empty() { Ok(None) } else { Selector::compile(filter, true, true).map(Some) }
+    }).collect()
+}
+
+fn selected_number(selector: Option<&Selector>, record: &Record<'_>) -> Option<f64> {
+    wiparse_core::extract::number(&selector?.first(record)?)
+}
+
 fn parse_data_file_progress(
     text: &str,
     header: &str,
     filters: &[&str],
     tx: &Sender<LoadEvent>,
-) -> ParsedData {
+) -> Result<ParsedData, String> {
+    let selectors = compile_filters(filters)?;
     // 15–45%: locate frames; 45–78%: extract series values.
     let frames = split_frames_progress(text, header, tx, 15, 45);
     let n = frames.len().max(1);
@@ -2832,11 +2999,9 @@ fn parse_data_file_progress(
     let step = (n / 40).max(1);
     for (fi, frame) in frames.iter().enumerate() {
         let x = fi as f64;
-        for (si, filter) in filters.iter().enumerate() {
-            if filter.is_empty() {
-                continue;
-            }
-            if let Some(value) = extract_first_filter_value(frame, filter) {
+        let record = Record::new(frame);
+        for (si, selector) in selectors.iter().enumerate() {
+            if let Some(value) = selected_number(selector.as_ref(), &record) {
                 series[si].push([x, value]);
             }
         }
@@ -2845,10 +3010,10 @@ fn parse_data_file_progress(
             send_progress(tx, pct.min(78));
         }
     }
-    ParsedData {
+    Ok(ParsedData {
         frame_count: frames.len(),
         series,
-    }
+    })
 }
 
 struct ParsedData {
@@ -2858,7 +3023,7 @@ struct ParsedData {
 
 fn parse_data_file(text: &str, header: &str, filters: &[&str]) -> ParsedData {
     let (tx, _rx) = unbounded::<LoadEvent>();
-    parse_data_file_progress(text, header, filters, &tx)
+    parse_data_file_progress(text, header, filters, &tx).unwrap()
 }
 
 fn split_frames<'a>(text: &'a str, header: &str) -> Vec<&'a str> {
@@ -2874,7 +3039,7 @@ fn split_frames_progress<'a>(
     hi: u8,
 ) -> Vec<&'a str> {
     if header.is_empty() {
-        return Vec::new();
+        return text.lines().collect();
     }
     let total = text.len().max(1);
     let report_every = (total / 50).max(64 * 1024);
@@ -2908,92 +3073,9 @@ fn split_frames_progress<'a>(
     frames
 }
 
-/// First `filter` + whitespace + number in `frame`.
-/// Token boundary: filter must not be mid-identifier (prev char not alphanumeric/_).
+#[cfg(test)]
 fn extract_first_filter_value(frame: &str, filter: &str) -> Option<f64> {
-    let mut search_from = 0;
-    while let Some(rel) = frame[search_from..].find(filter) {
-        let start = search_from + rel;
-        let abs = start + filter.len();
-        if !is_token_boundary_before(frame, start) {
-            search_from = abs;
-            continue;
-        }
-        let rest = &frame[abs..];
-        let trimmed = rest.trim_start_matches(|c: char| c == ' ' || c == '\t');
-        if trimmed.len() == rest.len() {
-            search_from = abs;
-            continue;
-        }
-        if let Some((value, _)) = parse_leading_number(trimmed) {
-            return Some(value);
-        }
-        search_from = abs;
-        if search_from >= frame.len() {
-            break;
-        }
-    }
-    None
-}
-
-fn is_token_boundary_before(text: &str, idx: usize) -> bool {
-    if idx == 0 {
-        return true;
-    }
-    let Some(prev) = text[..idx].chars().next_back() else {
-        return true;
-    };
-    !(prev.is_ascii_alphanumeric() || prev == '_')
-}
-
-fn parse_leading_number(s: &str) -> Option<(f64, usize)> {
-    let bytes = s.as_bytes();
-    if bytes.is_empty() {
-        return None;
-    }
-    let mut i = 0;
-    if bytes[0] == b'+' || bytes[0] == b'-' {
-        i = 1;
-    }
-    let start_digits = i;
-    let mut saw_digit = false;
-    let mut saw_dot = false;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'0'..=b'9' => {
-                saw_digit = true;
-                i += 1;
-            }
-            b'.' if !saw_dot => {
-                saw_dot = true;
-                i += 1;
-            }
-            b'e' | b'E' if saw_digit => {
-                i += 1;
-                if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
-                    i += 1;
-                }
-                let exp_start = i;
-                while i < bytes.len() && bytes[i].is_ascii_digit() {
-                    i += 1;
-                }
-                if i == exp_start {
-                    return None;
-                }
-                break;
-            }
-            _ => break,
-        }
-    }
-    if !saw_digit || i == start_digits {
-        return None;
-    }
-    let num = std::str::from_utf8(&bytes[..i]).ok()?;
-    let value: f64 = num.parse().ok()?;
-    if !value.is_finite() {
-        return None;
-    }
-    Some((value, i))
+    selected_number(Some(&Selector::compile(filter,true,true).ok()?), &Record::new(frame))
 }
 
 fn display_y(raw: f64, y_scale: f64, y_offset: f64, kind: DataKind) -> f64 {
@@ -3210,7 +3292,7 @@ fn format_plain(value: f64) -> String {
 }
 
 /// Sample at X: exact match or linear interpolate between neighboring frames.
-fn value_at_x(points: &[[f64; 2]], x: f64) -> Option<f64> {
+fn value_at_x(points: &HistoryPoints, x: f64) -> Option<f64> {
     if points.is_empty() {
         return None;
     }
@@ -3328,7 +3410,7 @@ fn is_data_source_ext(path: &Path) -> bool {
             .and_then(|e| e.to_str())
             .map(|e| e.to_ascii_lowercase())
             .as_deref(),
-        Some("txt" | "csv" | "log")
+        Some("txt" | "csv" | "tsv" | "jsonl" | "ndjson" | "log")
     )
 }
 
@@ -3397,6 +3479,17 @@ fn card_in_rect(
 mod tests {
     use super::*;
 
+    #[test]
+    fn file_and_live_extract_identical_rows_without_a_marker() {
+        let lines: Vec<String>=["id,note,VIN","1,\"a,b\",5.1","2,missing,","3,ok,5.3"].iter().map(|s|s.to_string()).collect();
+        let parsed=parse_data_file(&lines.join("\n"),"", &["csv:3"]);
+        let mut panel=DataAnalysisPanel::new(&AppConfig::default());
+        panel.source=DataSource::SerialLive;panel.frame_header.clear();panel.filters[0]="csv:3".into();panel.series_count=1;
+        panel.ingest_live_lines(&lines[..2],2,Lang::Zh);
+        panel.ingest_live_lines(&lines[2..],4,Lang::Zh);
+        assert_eq!(parsed.series[0],vec![[1.,5.1],[3.,5.3]]);
+        assert_eq!(panel.series[0].points,parsed.series[0]);assert_eq!(panel.frame_count,4);
+    }
     #[test]
     fn split_and_extract_basic() {
         let text = "\
@@ -3470,6 +3563,7 @@ VOLT 3.4
 struct AgentReducer{count:u64,invalid:u64,min:Option<f64>,max:Option<f64>,mean:f64,scale:f64,ssq:f64,above:u64}
 pub(crate) struct AgentDataStats{signature:String,cutoffs:Vec<usize>,edges:Vec<(Option<[f64;2]>,Option<[f64;2]>)>,series:usize,offset:usize,reducers:Vec<AgentReducer>}
 impl DataAnalysisPanel{
+ fn imported_seconds(&self)->bool {self.imported_query.is_some() && !self.imported_quality.as_ref().is_some_and(|q| q["provenance"]["x_axis"]=="record_index")}
  pub(crate) fn agent_identity(&self)->String{format!("{}:{:?}:{}:{:?}:{:?}",self.source==DataSource::SerialLive,self.last_open_path,self.series_count,self.filters,(self.agent_generation,&self.kinds))}
  pub(crate) fn agent_statistics(&self,job:&mut Option<AgentDataStats>,begin:bool)->Value{
   let signature=format!("{}:{:?}:{:?}",self.agent_identity(),self.series.iter().map(|s|(&s.label,s.kind)).collect::<Vec<_>>(),[(self.thr_voltage_on,self.thr_voltage),(self.thr_current_on,self.thr_current),(self.thr_temperature_on,self.thr_temperature)]);
@@ -3481,16 +3575,16 @@ impl DataAnalysisPanel{
    let value=series.points[job.offset][1];job.offset+=1;processed+=1;let stats=&mut job.reducers[job.series];if !value.is_finite(){stats.invalid+=1;continue;}
    stats.count+=1;stats.min=Some(stats.min.map_or(value,|v|v.min(value)));stats.max=Some(stats.max.map_or(value,|v|v.max(value)));stats.mean=stats.mean*(1.-1./stats.count as f64)+value/stats.count as f64;
    let magnitude=value.abs();if magnitude>0.{if stats.scale<magnitude{stats.ssq=1.+stats.ssq*(stats.scale/magnitude).powi(2);stats.scale=magnitude;}else{stats.ssq+=(magnitude/stats.scale).powi(2);}}
-   let threshold=match series.kind{DataKind::Voltage=>self.thr_voltage_on.then_some(self.thr_voltage),DataKind::Current=>self.thr_current_on.then_some(self.thr_current),DataKind::Temperature=>self.thr_temperature_on.then_some(self.thr_temperature)};if threshold.is_some_and(|limit|value>limit){stats.above+=1;}
+   let threshold=match series.kind{DataKind::Voltage=>self.thr_voltage_on.then_some(self.thr_voltage),DataKind::Current=>self.thr_current_on.then_some(self.thr_current),DataKind::Temperature=>self.thr_temperature_on.then_some(self.thr_temperature),_=>None};if threshold.is_some_and(|limit|value>limit){stats.above+=1;}
   }
   if job.series<self.series.len(){return json!({"_agent_wait":{"method":"data.statistics.result","params":{},"interval_ms":16}});}
-  json!({"ok":job.reducers.iter().any(|s|s.count>0),"data":{"coverage":"immutable cutoff of each curve at query start; appended samples excluded","raw_samples_uploaded":false,"x_axis":"frame index, not synchronized physical time","series":self.series.iter().zip(&job.reducers).enumerate().map(|(i,(series,stats))|json!({"index":i,"label":series.label,"unit":series.kind.unit(),"sample_count":stats.count,"invalid_samples":stats.invalid,"quality_complete":stats.count>0&&stats.invalid==0,"min":stats.min,"max":stats.max,"mean":(stats.count>0&&stats.mean.is_finite()).then_some(stats.mean),"rms":if stats.count>0{Some(stats.scale*(stats.ssq/stats.count as f64).sqrt())}else{None},"points":job.cutoffs[i],"new_points_excluded":series.points.len().saturating_sub(job.cutoffs[i]),"first_frame":series.points.first().map(|p|p[0]),"last_frame":job.cutoffs[i].checked_sub(1).and_then(|n|series.points.get(n)).map(|p|p[0]),"above_configured_upper_limit":match series.kind{DataKind::Voltage=>self.thr_voltage_on.then_some(stats.above),DataKind::Current=>self.thr_current_on.then_some(stats.above),DataKind::Temperature=>self.thr_temperature_on.then_some(stats.above)}})).collect::<Vec<_>>()}})
+  json!({"ok":job.reducers.iter().any(|s|s.count>0),"data":{"coverage":"immutable cutoff of each curve at query start; appended samples excluded","raw_samples_uploaded":false,"imported_quality":self.imported_quality,"x_axis":if self.imported_seconds(){"seconds from source timestamps; separate sources are not synchronized"}else{"frame index, not synchronized physical time"},"series":self.series.iter().zip(&job.reducers).enumerate().map(|(i,(series,stats))|json!({"index":i,"label":series.label,"unit":series.unit_override.as_deref().unwrap_or(series.kind.unit()),"sample_count":stats.count,"invalid_samples":stats.invalid,"quality_complete":stats.count>0&&stats.invalid==0&&self.imported_quality.as_ref().is_none_or(|q|q["quality_complete"]==true),"min":stats.min,"max":stats.max,"mean":(stats.count>0&&stats.mean.is_finite()).then_some(stats.mean),"rms":if stats.count>0{Some(stats.scale*(stats.ssq/stats.count as f64).sqrt())}else{None},"points":job.cutoffs[i],"new_points_excluded":series.points.len().saturating_sub(job.cutoffs[i]),"first_frame":series.points.first().map(|p|p[0]),"last_frame":job.cutoffs[i].checked_sub(1).and_then(|n|series.points.get(n)).map(|p|p[0]),"above_configured_upper_limit":match series.kind{DataKind::Voltage=>self.thr_voltage_on.then_some(stats.above),DataKind::Current=>self.thr_current_on.then_some(stats.above),DataKind::Temperature=>self.thr_temperature_on.then_some(stats.above),_=>None}})).collect::<Vec<_>>()}})
  }
 }
 
 #[cfg(test)]mod agent_statistics_tests{
  use super::*;
- #[test]fn all_points_are_reduced_once_and_missing_values_are_explicit(){let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.series_count=2;panel.ensure_series_shells(Lang::Zh);panel.series[0].points=vec![[0.,1.],[1.,2.],[2.,3.],[3.,f64::NAN]];panel.thr_voltage_on=true;panel.thr_voltage=2.;let mut job=None;let result=panel.agent_statistics(&mut job,true);let s=&result["data"]["series"][0];assert_eq!(s["sample_count"],3);assert_eq!(s["invalid_samples"],1);assert_eq!(s["mean"],2.);assert!((s["rms"].as_f64().unwrap()-(14f64/3.).sqrt()).abs()<1e-12);assert_eq!(s["above_configured_upper_limit"],1);assert_eq!(s["quality_complete"],false);let empty=&result["data"]["series"][1];assert!(empty["min"].is_null());assert!(empty["mean"].is_null());}
+ #[test]fn all_points_are_reduced_once_and_missing_values_are_explicit(){let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.series_count=2;panel.ensure_series_shells(Lang::Zh);panel.series[0].points=vec![[0.,1.],[1.,2.],[2.,3.],[3.,f64::NAN]].into();panel.thr_voltage_on=true;panel.thr_voltage=2.;let mut job=None;let result=panel.agent_statistics(&mut job,true);let s=&result["data"]["series"][0];assert_eq!(s["sample_count"],3);assert_eq!(s["invalid_samples"],1);assert_eq!(s["mean"],2.);assert!((s["rms"].as_f64().unwrap()-(14f64/3.).sqrt()).abs()<1e-12);assert_eq!(s["above_configured_upper_limit"],1);assert_eq!(s["quality_complete"],false);let empty=&result["data"]["series"][1];assert!(empty["min"].is_null());assert!(empty["mean"].is_null());}
  #[test]fn incremental_statistics_reject_replaced_sources(){let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.series_count=2;panel.ensure_series_shells(Lang::Zh);panel.series[0].points=(0..50000).map(|i|[i as f64,5.]).collect();let mut job=None;let result=panel.agent_statistics(&mut job,true);assert!(result.get("_agent_wait").is_some());panel.series[0].points[0]=[0.,99.];assert_eq!(panel.agent_statistics(&mut job,false)["ok"],false);}
 }
 
@@ -3500,4 +3594,207 @@ impl DataAnalysisPanel{
  use super::*;
  #[test]fn live_append_reallocation_does_not_change_snapshot_cutoff(){let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.source=DataSource::SerialLive;panel.series_count=1;panel.ensure_series_shells(Lang::Zh);panel.series[0].points=(0..60000).map(|i|[i as f64,2.]).collect();let identity=panel.agent_identity();let mut job=None;assert!(panel.agent_statistics(&mut job,true).get("_agent_wait").is_some());panel.series[0].points.extend((60000..90000).map(|i|[i as f64,100.]));assert_eq!(identity,panel.agent_identity());let result=loop{let r=panel.agent_statistics(&mut job,false);if r.get("_agent_wait").is_none(){break r;}};assert_eq!(result["data"]["series"][0]["sample_count"],60000);assert_eq!(result["data"]["series"][0]["mean"],2.);assert_eq!(result["data"]["series"][0]["new_points_excluded"],30000);}
  #[test]fn empty_curves_are_not_complete_measurements(){let panel=DataAnalysisPanel::new(&AppConfig::default());let mut job=None;let r=panel.agent_statistics(&mut job,true);assert_eq!(r["ok"],false);for series in r["data"]["series"].as_array().unwrap(){assert_eq!(series["quality_complete"],false);}}
+}
+
+impl DataAnalysisPanel {
+ pub(crate) fn agent_present(&mut self,d:&wiparse_core::log_analysis::timeline::Dataset,query:&str,lang:Lang)->Result<Value,String>{
+  if self.pending_load.is_some() || self.source==DataSource::SerialLive {return Err("DATA.DESTINATION_BUSY: stop live analysis or finish loading before importing".into());}
+  if d.rows.is_empty()||d.omitted>0{return Err("DATA.EMPTY_OR_TRUNCATED_DATASET".into());}
+  if d.rows.iter().any(|row|row.3.len()!=d.fields.len()){return Err("DATA.INVALID_ROW_WIDTH".into());}
+  let units=d.fields.iter().map(|f|agent_display_unit(&f.unit)).collect::<Result<Vec<_>,_>>()?;
+  let full=self.extract_cache.lock().ok().and_then(|cache|cache.full_curves(query,d));
+
+  let mut sources=Vec::new();for (id,_,_,_) in &d.rows{if !sources.contains(id){sources.push(id.clone());}}
+  if sources.len()*d.fields.len()>MAX_SERIES{return Err("DATA.TOO_MANY_SERIES: select fewer log sources or fields (maximum 8)".into());}
+  let mut series=Vec::new();
+  for id in &sources{for (i,field) in d.fields.iter().enumerate(){
+   let points:Vec<_>=d.rows.iter().filter(|r|&r.0==id).filter_map(|r|r.3[i].map(|y|[r.1,y*units[i].1])).collect();
+   if points.iter().any(|v|!v[0].is_finite()||!v[1].is_finite()){return Err("DATA.NONFINITE_CONVERSION".into());}
+   if points.is_empty(){continue;}
+   let low=points.iter().map(|p|p[1]).fold(f64::INFINITY,f64::min);let high=points.iter().map(|p|p[1]).fold(f64::NEG_INFINITY,f64::max);
+   series.push(DataSeries{unit_override:(units[i].0==DataKind::Scalar).then(||field.unit.clone()),label:format!("{}{} · {}",field.name,if units[i].0==DataKind::Scalar&&!field.unit.is_empty(){format!(" [{}]",field.unit)}else{String::new()},id.chars().take(8).collect::<String>()),color:series_color(series.len()),kind:units[i].0,points:full.as_ref().map(|curves|curves[i].clone()).unwrap_or_else(||points.into()),y_scale:1.,y_offset:0.,y_min:low,y_max:high,mapped:vec![],disp_dirty:true});
+  }}
+  if series.is_empty(){return Err("DATA.NO_VALID_VALUES".into());}
+  let indexed=d.provenance["x_axis"]=="record_index";
+  let file=(d.provenance["producer"]=="data.extract").then(||(self.file_text.clone(),self.last_open_path.clone()));
+  self.clear_data(lang);self.series_count=series.len();self.series=series;
+  for (i,s) in self.series.iter().enumerate(){self.filters[i]=s.label.clone();self.kinds[i]=s.kind;}
+  let missing=d.rows.iter().map(|r|r.3.iter().filter(|v|v.is_none()).count()).sum::<usize>();
+  let missing=d.provenance["missing_plotted_fields"].as_u64().unwrap_or(missing as u64);
+  self.imported_quality=Some(json!({"missing_field_values":missing,"provenance":d.provenance,"quality_complete":missing==0&&(indexed||d.provenance["sources"].as_array().is_some_and(|a|a.iter().all(|s|s["missing_timestamp_rows"]==0&&s["backward_rows"]==0)))}));
+  let records=d.provenance["plottable_rows"].as_u64().and_then(|n|usize::try_from(n).ok()).unwrap_or(d.rows.len());
+  self.frame_count=records;self.file_text=None;self.last_open_path=None;if let Some((text,path))=file{self.file_text=text;self.last_open_path=path;}self.imported_query=Some(query.into());
+  self.thr_voltage_on=false;self.thr_current_on=false;self.thr_temperature_on=false;
+  self.auto_layout_scales();self.fit_request=true;self.pending_bounds=None;self.cached_extent=None;self.lod_key=None;self.lod_lines.clear();
+  self.status=format!("AI提取 · {} 条记录 · {} 条曲线 · 横轴 {} · 缺失值未补齐",records,self.series.len(),if indexed{"记录序号"}else{"时间 / s"});
+  Ok(json!({"query_id":query,"presented":true,"records":records,"report_overview_rows":d.rows.len(),"series":self.series.len(),"raw_samples_uploaded":false,"x_unit":if indexed{"record_index"}else{"s"},"missing_values":"omitted, never filled; incomplete datasets use scatter rather than connecting gaps","source_ids":sources,"display_units":self.series.iter().map(|s|s.unit_override.as_deref().unwrap_or(s.kind.unit())).collect::<Vec<_>>()}))
+ }
+}
+
+#[cfg(test)]
+mod ai_dataset_flow_tests {
+ use super::*;
+ use wiparse_core::log_analysis::{Inventory,Source,Query,Scan};
+ use std::sync::atomic::AtomicBool;
+ fn dataset()->wiparse_core::log_analysis::timeline::Dataset {
+  let lines=(0..1000).map(|i|Arc::<str>::from(format!("t={i} VIN=5 IOUT=2"))).collect();
+  let source=Source::memory("synthetic",lines,1,0);
+  let query:Query=serde_json::from_value(json!({"samples":0,"timeline":{"timestamp_pattern":"t=(\\d+)","timestamp_unit":"ms","fields":[{"name":"VIN","pattern":"VIN=([0-9.]+)","unit":"V"},{"name":"IOUT","pattern":"IOUT=([0-9.]+)","unit":"A"}],"power_pair":["VIN","IOUT"],"max_points":8,"retain_dataset":true}})).unwrap();
+  let mut scan=Scan::new(Inventory{sources:vec![source],incomplete:false,issues:vec![]},query).unwrap();
+  assert!(scan.dataset().is_err());
+  scan.run_chunk(1024*1024,std::time::Duration::from_secs(5),&AtomicBool::new(false)).unwrap();
+  assert!(scan.report()["timeline_analysis"]["sources"][0]["points"].as_array().unwrap().len()<=8);
+  scan.dataset().unwrap()
+ }
+ #[test]fn actual_local_rows_not_model_summary_are_imported_with_physical_units(){
+  let d=dataset();assert_eq!(d.rows.len(),1000);
+  let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.source=DataSource::File;
+  let response=panel.agent_present(&d,"query",Lang::Zh).unwrap();assert_eq!(response["records"],1000);assert_eq!(response["series"],3);
+  assert_eq!(panel.series[0].points[999],[0.999,5000.]);assert_eq!(panel.series[1].points[999],[0.999,2000.]);assert_eq!(panel.series[2].points[999],[0.999,10.]);assert_eq!(panel.series[2].kind.unit(),"W");
+  let stats=panel.agent_statistics(&mut None,true);assert_eq!(stats["data"]["series"][2]["sample_count"],1000);assert!((stats["data"]["series"][2]["mean"].as_f64().unwrap()-10.).abs()<1e-10);
+ }
+ #[test]fn live_destination_and_malformed_rows_preserve_previous_curves(){
+  let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.source=DataSource::SerialLive;assert!(panel.agent_present(&dataset(),"q",Lang::Zh).is_err());
+  panel.source=DataSource::File;panel.agent_present(&dataset(),"old",Lang::Zh).unwrap();
+  let mut bad=dataset();bad.rows[0].3.clear();assert!(panel.agent_present(&bad,"new",Lang::Zh).is_err());assert_eq!(panel.imported_query.as_deref(),Some("old"));assert_eq!(panel.series[0].points.len(),1000);
+ }
+}
+
+impl Drop for DataAnalysisPanel {
+    fn drop(&mut self) {
+        if self.wants_live_serial() {
+            self.flush_live_cache();
+        }
+        if let Some(job) = self.export_job.take() {
+            let _ = job.join();
+        }
+    }
+}
+#[cfg(test)]
+mod live_history_tests {
+    use super::*;
+
+    #[test]
+    fn serial_generation_and_fifo_gaps_begin_separate_sessions() {
+        let mut panel = DataAnalysisPanel::new(&AppConfig::default());
+        panel.source = DataSource::SerialLive;
+        panel.prepare_live_poll(4000, 0, (10, 0), Lang::Zh);
+        assert_eq!(panel.live_cursor, 0);
+        panel.live_cursor = 20;
+        let session = panel.live_session_id.clone();
+        panel.prepare_live_poll(4010, 100, (10, 0), Lang::Zh);
+        assert_ne!(session, panel.live_session_id);
+        assert_eq!(panel.live_cursor, 100);
+        assert!(panel.gap_notice.as_deref().unwrap().contains("21–100"));
+        panel.prepare_live_poll(4020, 100, (11, 4010), Lang::Zh);
+        assert_eq!(panel.live_cursor, 4010);
+    }
+
+    #[test]
+    fn full_recent_and_manual_views_with_sparse_data() {
+        let mut panel = DataAnalysisPanel::new(&AppConfig::default());
+        panel.source = DataSource::SerialLive;
+        panel.series_count = 1;
+        panel.live_auto_fit = true;
+        panel.ensure_series_shells(Lang::Zh);
+        panel.series[0].points.push([0., 2.]);
+        for n in [1, 79, 80, 81, 1000] {
+            panel.frame_count = n;
+            panel.refresh_cached_extent();
+            let bounds = panel.live_fit_bounds().unwrap();
+            assert!(bounds.min()[0] <= 0. && bounds.max()[0] >= (n - 1) as f64);
+            assert!(bounds.width() > 0.);
+        }
+        panel.recent_view = true;
+        let bounds = panel.live_fit_bounds().unwrap();
+        assert_eq!(bounds.min()[0], 920.);
+        assert_eq!(bounds.max()[0], 999.);
+        panel.last_x_range = Some((5., 15.));
+        panel.request_zoom_axis(true, 0.5);
+        assert!(!panel.live_auto_fit);
+        let frozen = panel.pending_bounds.unwrap();
+        panel.frame_header.clear();
+        panel.filters[0] = "csv:1".into();
+        panel.ingest_live_lines(&["7".into()], 1, Lang::Zh);
+        assert_eq!(panel.pending_bounds.unwrap().min(), frozen.min());
+        assert_eq!(panel.pending_bounds.unwrap().max(), frozen.max());
+        panel.live_frames_since_flush = 0;
+    }
+
+    #[test]
+    fn eight_series_preserve_early_spikes_across_checkpoint_and_resume() {
+        let mut panel = DataAnalysisPanel::new(&AppConfig::default());
+        panel.source = DataSource::SerialLive;
+        panel.series_count = 8;
+        panel.ensure_series_shells(Lang::Zh);
+        let n = 200_117;
+        for s in &mut panel.series {
+            s.points = (0..n)
+                .map(|i| [i as f64, if i == 17 { 900. } else { 2. }])
+                .collect();
+            s.points.seal();
+        }
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("session.widalive");
+        let mut points = panel
+            .series
+            .iter()
+            .map(|s| s.points.clone())
+            .collect::<Vec<_>>();
+        for s in &mut points {
+            s.page_out().unwrap();
+        }
+        let mut header = data_extract_cache::WidaHeader {
+            source_key: "serial:live".into(),
+            content_fp: "test".into(),
+            header: String::new(),
+            filters: vec![],
+            kinds: vec![],
+            frame_count: n as u32,
+            series: (0..8)
+                .map(|_| data_extract_cache::WidaSeriesMeta {
+                    label: "v".into(),
+                    kind: "voltage".into(),
+                    y_scale: 1.,
+                    y_offset: 0.,
+                    y_min: 2.,
+                    y_max: 900.,
+                    n: n as u32,
+                })
+                .collect(),
+        };
+        history::checkpoint(&file, &header, &points).unwrap();
+        let csv = root.path().join("capture.csv");
+        history::export_csv(&csv, &[("VIN".into(), "mV".into(), points[0].clone())]).unwrap();
+        let csv = fs::read_to_string(csv).unwrap();
+        assert_eq!(csv.lines().count(), n + 1);
+        assert_eq!(csv.lines().nth(18), Some("17,\"VIN\",\"mV\",900"));
+        let mut job = None;
+        let mut stats = panel.agent_statistics(&mut job, true);
+        while stats.get("_agent_wait").is_some() {
+            stats = panel.agent_statistics(&mut job, false);
+        }
+        for series in stats["data"]["series"].as_array().unwrap() {
+            assert_eq!(series["sample_count"], n);
+            assert_eq!(series["max"], 900.0);
+        }
+        for (i, p) in points.iter_mut().enumerate() {
+            let overview = p.visible(0., n as f64, 900);
+            assert!(overview.contains(&[17., 900.]));
+            assert!(overview.windows(2).all(|w| w[0][0] < w[1][0]));
+            assert_eq!(value_at_x(p, 17.), Some(900.));
+            assert!(p.visible(15., 20., 900).contains(&[17., 900.]));
+            p.push([n as f64, 13.]);
+            header.series[i].n += 1;
+        }
+        header.frame_count += 1;
+        history::checkpoint(&file, &header, &points).unwrap();
+        let restored = load_wida(&file).unwrap();
+        assert_eq!(restored.meta.frame_count as usize, n + 1);
+        for s in restored.series {
+            assert_eq!(s.points.len(), n + 1);
+            assert_eq!(s.points[17], [17., 900.]);
+            assert_eq!(s.points.last().unwrap(), &[n as f64, 13.]);
+        }
+    }
 }
