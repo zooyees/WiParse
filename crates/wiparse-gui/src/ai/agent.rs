@@ -62,15 +62,15 @@ struct Message {
     text: String,
     markdown: crate::test_report::TextMarkdown,
 }
+use super::execution::{HostItem,ProtocolRecovery};
+
 struct Waiting {
     origin: Call,
     task: String,
     dispatched: bool,
     request: HostCall,
     at: Instant,
-    receiver: Option<crossbeam_channel::Receiver<Value>>,
-    poll: Option<Call>,
-    next: Instant,
+    item: HostItem,
 }
 #[derive(Clone)]
 struct QueuedQuestion{
@@ -129,7 +129,7 @@ pub(crate) struct Session {
     batch_outputs: Vec<Value>,
     incomplete_progress: Option<(Vec<String>,u64)>,
     evidence_sequence: u64,
-    repair_attempted: bool,
+    recovery_policy: ProtocolRecovery,
     awaiting_input:bool,
     first_evidence_ms: Option<u64>,
     repairs: usize,
@@ -182,7 +182,7 @@ impl Default for Session {
             native_pending: None, batch_remaining:VecDeque::new(),batch_outputs:Vec::new(),incomplete_progress:None,
             native_rounds: vec![],
             evidence_sequence: 0,
-            repair_attempted: false,
+            recovery_policy: Default::default(),
             awaiting_input:false, first_evidence_ms:None, repairs:0, confirmations:0,
             watched: Default::default(),
             background_test: None,
@@ -275,9 +275,7 @@ impl Session {
                         internal: true,
                     },
                     at,
-                    receiver: None,
-                    poll: None,
-                    next: Instant::now(),
+                    item: HostItem::default(),
                 };
                 let matched = status["completed_run_identity"] == key;
                 self.record_step(&wait,json!({"ok":matched&&status["process_exit_code"]==0,"state":if matched {"completed"}else{"outcome_unknown"},"run_id":key,"process_completed":matched,"formal_verdict":"consult test report; exit status is not product verdict","status":status}),"后台测试已结束");
@@ -342,8 +340,10 @@ impl Session {
         self.config = Some(config.clone());
     }
     pub(crate) fn report_evidence(&self,p:&Value)->Result<Vec<Value>,String>{
+        self.workflow.validate_conclusion(&format!("{}\n{}",p["title"],p["markdown"]))?;
         p["evidence_ids"].as_array().ok_or("REPORT.MISSING_EVIDENCE")?.iter().map(|id|{
-            let evidence=self.workflow.get(id.as_str().ok_or("REPORT.INVALID_EVIDENCE")?)?;
+            let id=id.as_str().ok_or("REPORT.INVALID_EVIDENCE")?;
+            let evidence=super::journal::report_input(self.journal.as_ref(),&self.workflow,id)?;
             if !self.evidence_allowed(evidence["method"].as_str().unwrap_or("")){return Err("REPORT.EVIDENCE_SCOPE_DENIED".into());}Ok(evidence)
         }).collect()
     }
@@ -357,12 +357,17 @@ impl Session {
                 wait.dispatched = true;
             }
         }
-        if let Some(r)=&request {
-            if !r.internal && contract::validate(&r.call).is_ok_and(|t|matches!(t.effect,Effect::Device|Effect::Test)){
-                self.checkpoint("awaiting_readback",Some((&r.call.method,&json!({"state":"dispatching","command_fingerprint":crate::ai::journal::command_fingerprint(&r.call.method,&r.call.params),"command_id":r.id,"device_id":r.call.params.get("device_id")}))));
-            }
-        }
         request
+    }
+    pub(crate) fn dispatch_checkpoint(&self,r:&HostCall)->Result<(),String> {
+        if !r.internal && contract::validate(&r.call).is_ok_and(|t|matches!(t.effect,Effect::Device|Effect::Test)) {
+            if self.journal.as_ref().map(|j|j.needs_readback(&r.call.method,&r.call.params)).transpose()?.unwrap_or(false)
+                && !wiparse_core::platform_api::interrupt_call(&r.call) {
+                return Err("AI.OUTCOME_UNKNOWN: check device state before reissue".into());
+            }
+            self.checkpoint("awaiting_readback",Some((&r.call.method,&json!({"state":"dispatching","command_fingerprint":crate::ai::journal::command_fingerprint(&r.call.method,&r.call.params),"command_id":r.id,"device_id":r.call.params.get("device_id")}))));
+        }
+        Ok(())
     }
     pub fn owns_test(&self, key: Option<&str>) -> bool {
         key.is_some()
@@ -442,10 +447,8 @@ impl Session {
         {
             return;
         }
-        if let Some(rx) = reply.receiver {
-            self.waiting.as_mut().unwrap().receiver = Some(rx);
-        } else {
-            self.accept_host(reply.value);
+        if let Some(value) = self.waiting.as_mut().unwrap().item.attach(reply) {
+            self.accept_host(value);
         }
     }
     pub fn host_transition(&mut self, context: ContextState) {
@@ -490,7 +493,7 @@ impl Session {
             let dispatched = wait.dispatched;
             let effect = contract::validate(&wait.origin).ok().map(|t| t.effect);
             let unknown = dispatched && matches!(effect, Some(Effect::Device | Effect::Test));
-            self.record_step(&wait, json!({"ok":false,"state":if unknown {"outcome_unknown"} else {"cancelled"},"reason":reason,"dispatched":dispatched,"pending_call":wait.request.call,"job":wait.poll}), if unknown {"结果未确认：请核对设备"} else {"已取消"});
+            self.record_step(&wait, json!({"ok":false,"state":if unknown {"outcome_unknown"} else {"cancelled"},"reason":reason,"dispatched":dispatched,"pending_call":wait.request.call,"job":wait.item.continuation}), if unknown {"结果未确认：请核对设备"} else {"已取消"});
         }
         if self.started.is_some(){self.checkpoint(outcome,None);}
         self.outgoing.clear();
@@ -525,16 +528,20 @@ impl Session {
             dispatched: false,
             request: request.clone(),
             at: Instant::now(),
-            receiver: None,
-            poll: None,
-            next: Instant::now(),
+            item: HostItem::default(),
         });
         if request.call.method.starts_with("agent.") {
             let value=match request.call.method.as_str(){
+                "agent.recipe" if request.call.params["evidence_id"].as_str().and_then(|id|self.workflow.citation_method(id)).is_some_and(|m|self.evidence_allowed(m))=>self.workflow.run_recipe(&request.call.params),
                 "agent.align" if self.evidence_allowed("wave.frames") && self.evidence_allowed("log.analyze") => self.workflow.align(&request.call.params),
                 "agent.plan"=>self.workflow.update(request.call.params.clone()),
                 "agent.evidence"=>self.workflow.page(&request.call.params).and_then(|e|if e["method"].as_str().is_some_and(|m|self.evidence_allowed(m)){Ok(e)}else{Err("AGENT.EVIDENCE_OUT_OF_SCOPE".into())}),
-                "agent.help"=>contract::tool(request.call.params["method"].as_str().unwrap()).map(|t|json!({"ok":true,"method":t.method,"schema":if t.method.starts_with("calc."){format!("{}\n{}",t.schema,contract::CALC_SCHEMA)}else{t.schema.into()},"effect":t.effect,"validated_keys":contract::declared_keys(t.method)})).ok_or("AGENT.UNKNOWN_TOOL".into()),
+                "agent.help"=>{
+                    let name=request.call.params["method"].as_str().unwrap();
+                    if let Some(recipe)=wiparse_core::ai::workflow::recipe(name){Ok(recipe)}else{
+                        contract::tool(name).map(|t|json!({"ok":true,"method":t.method,"schema":if t.method.starts_with("calc."){format!("{}\n{}",t.schema,contract::CALC_SCHEMA)}else{t.schema.into()},"effect":t.effect,"validated_keys":contract::declared_keys(t.method)})).ok_or("AGENT.UNKNOWN_TOOL".into())
+                    }
+                },
                 _=>Err("AGENT.UNKNOWN_MANAGEMENT_TOOL".into())
             }.unwrap_or_else(|error|json!({"ok":false,"error":error}));
             self.accept_host(value);
@@ -558,7 +565,7 @@ impl Session {
             return;
         }
         let Some(context) = &self.context else { return };
-        let native = self.config.as_ref().is_some_and(wiparse_core::ai::context::native);
+        let native = !self.recovery_policy.json_fallback && service.native_tools_enabled();
         let catalog = if native { "Tool method names are in the function schema. Use agent.help for exact parameters.".into() } else { contract::catalog(
             &context.page,
             self.cross_tools,
@@ -583,8 +590,8 @@ impl Session {
         let mut request=AiRequest{purpose:format!("{}\n{}\nNative transport accepts up to four independent read-only queries in one response. Ask for report pages together only when their coordinates are already known. Submit mutations, plans and dependent work separately. JSON transport accepts one call at a time. Follow the active transport contract. Relevant read-only analysis is already authorized; do not ask the user to say scan/start/continue. A plan without a call is not completion.",format!("{}\n{}\n{}",if native {wiparse_core::ai::context::NATIVE}else{contract::CONTRACT},wiparse_core::ai::workflow::GUIDANCE,wiparse_core::ai::workflow::profile(&context.page)),catalog),text:json!({"task_id":self.task,"user_request":self.question,"page":context.page,"project":context.project,"permissions":{"read_current_data":self.read_data,"cross_tools":self.cross_tools,"application_changes":self.application,"device_and_test_actions":"explicit operator confirmation per concrete action"},"verified_evidence":self.observations.iter().filter(|e|e["scope"]["binding"]==context.binding&&e["tool"].as_str().is_some_and(|m|self.evidence_allowed(m))).collect::<Vec<_>>(),"workflow":self.workflow.state(),"evidence_index":if self.read_data{self.evidence_index()}else{Value::Null},"budget":{"round":self.round,"max_rounds":self.max_rounds},"testing_active":context.testing}).to_string()};
         let functions=wiparse_core::ai::tools::host_functions(contract::TOOLS.iter().filter(|t| (self.cross_tools||matches!(t.page,"any"|"current")||t.page==context.page)&& (self.read_data||t.effect==Effect::LocalCompute) &&(self.application||t.effect!=Effect::Application)).map(|t|t.method).collect());
         let mut host_context=None;
-        if native {if let Ok(mut payload)=serde_json::from_str::<Value>(&request.text){payload["verified_evidence"]=json!({"details":"native tool messages or agent.evidence"});request.text=payload.to_string();}let (base,base_history)=self.native_base.get_or_insert_with(||(request.clone(),history.clone()));if request.text!=base.text{let mut update=serde_json::from_str::<Value>(&request.text).unwrap();update.as_object_mut().unwrap().remove("user_request");host_context=Some(update.to_string());}request=base.clone();history=base_history.clone();}
-        match service.submit_agent(request, history,wiparse_core::ai::tools::Conversation{host_context,functions,rounds:self.native_rounds.clone()}) {
+        if native {if !self.native_rounds.is_empty(){if let Ok(mut payload)=serde_json::from_str::<Value>(&request.text){payload["verified_evidence"]=json!({"details":"native tool messages or agent.evidence"});request.text=payload.to_string();}}let (base,base_history)=self.native_base.get_or_insert_with(||(request.clone(),history.clone()));if request.text!=base.text{let mut update=serde_json::from_str::<Value>(&request.text).unwrap();update.as_object_mut().unwrap().remove("user_request");host_context=Some(update.to_string());}request=base.clone();history=base_history.clone();}
+        match if native {service.submit_agent(request, history,wiparse_core::ai::tools::Conversation{host_context,functions,rounds:self.native_rounds.clone()})} else {service.submit_conversation(request,history)} {
             Ok(task) => {
                 self.stream_preview=None;
                 self.model = Some(task);
@@ -608,7 +615,7 @@ impl Session {
         self.prompt.clear();
         self.round = 0;self.repairs=0;self.confirmations=0;self.first_evidence_ms=None;
         self.native_rounds.clear();
-        self.repair_attempted = false;
+        self.recovery_policy=Default::default();
         self.watched.clear();
         self.plan.clear();
         if !continuing{self.workflow.new_task();self.workflow.bind_request(&self.question);}else{self.workflow.amend_request(&question);}self.usage=Default::default();self.native_base=None;
@@ -631,43 +638,25 @@ impl Session {
         self.error = true;
     }
     fn accept_host(&mut self, value: Value) {
-        if value["ok"]==true{self.repair_attempted=false;}
         let Some(mut wait) = self.waiting.take() else {
             return;
         };
-        wait.receiver = None;
-        if let Some(next) = value.get("_agent_wait") {
-            let Some(method) = next["method"].as_str() else {
-                self.finish_error("宿主返回了无效的异步状态。");
-                return;
-            };
-            if method=="instrument.result" && wait.poll.is_none() {
-                self.checkpoint("awaiting_readback",Some((&wait.origin.method,&json!({"state":"accepted","command_id":wait.request.id,"command_fingerprint":crate::ai::journal::command_fingerprint(&wait.origin.method,&wait.origin.params),"job_id":next["params"]["job_id"],"job_session":next["params"]["job_session"],"device_id":next["params"]["device_id"]}))));
-            }
-            wait.poll = Some(Call {
-                method: method.into(),
-                params: next["params"].clone(),
-            });
-            wait.next = Instant::now()
-                + Duration::from_millis(
-                    next["interval_ms"].as_u64().unwrap_or(250).clamp(16, 1000),
-                );
-            self.waiting = Some(wait);
-            return;
+        if !wait.request.internal && value["_agent_wait"]["method"]=="instrument.result" {
+            let job=&value["_agent_wait"]["params"];
+            self.checkpoint("awaiting_readback",Some((&wait.origin.method,&json!({"state":"accepted","command_id":wait.request.id,"command_fingerprint":crate::ai::journal::command_fingerprint(&wait.origin.method,&wait.origin.params),"job_id":job["job_id"],"job_session":job["job_session"],"device_id":job["device_id"]}))));
         }
+        let Some(value)=wait.item.advance(value,&wait.request.call,wait.request.internal) else {
+            self.waiting=Some(wait);
+            return;
+        };
         let method = wait.origin.method.clone();
-        if value["state"] == "pending" || value["data"]["state"] == "pending_or_unknown" {
-            wait.poll = Some(wait.request.call.clone());
-            wait.next = Instant::now() + Duration::from_millis(250);
-            self.waiting = Some(wait);
-            return;
-        }
         if method == "testing.run" && value["ok"] != false {
             self.owned_test = true;
         }
         if self.context.as_ref().is_some_and(|c|c.project==wait.request.context.project&&c.binding==wait.request.context.binding) {
-            self.workflow.record(&format!("E{}",self.evidence_sequence+1), &method, &value);
+            self.workflow.record_call(&format!("E{}",self.evidence_sequence+1), &method, &wait.origin.params, &value);
         }
+        if value["ok"]==true {self.recovery_policy.made_progress();}
         let data = bounded_evidence(value, 0);
         let status = if data["ok"] == false {
             "失败 / 状态未确认"
@@ -689,8 +678,8 @@ impl Session {
         let id = format!("E{}", self.evidence_sequence);
         let method = wait.origin.method.clone();
         if self.first_evidence_ms.is_none()&&data["ok"]==true&&!method.starts_with("agent.")&&self.task==wait.task{self.first_evidence_ms=self.started.map(|t|t.elapsed().as_millis() as u64);}
-        if self.context.as_ref().is_some_and(|c|c.project==wait.request.context.project&&c.binding==wait.request.context.binding){self.workflow.record(&id,&method,&data);}
-        if self.task==wait.task && wait.poll.is_none() && data["ok"]==true && data["data"]["accepted"]!=true && contract::validate(&wait.origin).is_ok_and(|t|matches!(t.effect,Effect::Device|Effect::Test)){
+        if self.context.as_ref().is_some_and(|c|c.project==wait.request.context.project&&c.binding==wait.request.context.binding){self.workflow.record_call(&id,&method,&wait.origin.params,&data);}
+        if self.task==wait.task && wait.item.continuation.is_none() && data["ok"]==true && data["data"]["accepted"]!=true && contract::validate(&wait.origin).is_ok_and(|t|matches!(t.effect,Effect::Device|Effect::Test)){
             self.checkpoint("running",Some((&method,&json!({"state":"completed","command_id":wait.request.id}))));
         }
         if self.task==wait.task{self.checkpoint("running",Some((&method,&json!({"result":data,"ok":data["ok"],"evidence_id":id}))));}
@@ -739,44 +728,20 @@ impl Session {
             );
             return;
         }
-        let host = self
-            .waiting
-            .as_ref()
-            .and_then(|wait| wait.receiver.as_ref())
-            .and_then(|rx| match rx.try_recv() {
-                Ok(value) => Some(value),
-                Err(crossbeam_channel::TryRecvError::Disconnected) => {
-                    Some(failure("AGENT.WORKER_DISCONNECTED"))
-                }
-                Err(_) => None,
-            });
-        if let Some(value) = host {
-            self.accept_host(value);
-        }
-        if self
-            .waiting
-            .as_ref()
-            .is_some_and(|wait| wait.at.elapsed() > Duration::from_secs(if wait.origin.method=="testing.wait" {600}else{90}))
-        {
+        if self.waiting.as_ref().is_some_and(|w| w.at.elapsed() >= super::execution::timeout(&w.origin.method)) {
             self.finish_error("工具超过等待时限仍未确认完成；不会重试设备动作，请核对设备状态。");
             return;
         }
-        if let Some(wait) = &mut self.waiting {
-            if wait.poll.is_some()
-                && wait.receiver.is_none()
-                && Instant::now() >= wait.next
-                && self.outgoing.is_empty()
-            {
-                let call = wait.poll.take().unwrap();
-                let request = HostCall {
-                    id: wait.request.id.clone(),
-                    call,
-                    context: wait.request.context.clone(),
-                    cancelled: self.cancel.clone(),
-                    internal: true,
-                };
-                wait.request = request.clone();
-                self.outgoing.push_back(request);
+        if let Some(value)=self.waiting.as_mut().and_then(|w|w.item.receive()) {
+            self.accept_host(value);
+        }
+        if self.outgoing.is_empty() {
+            if let Some(wait)=&mut self.waiting {
+                if let Some(call)=wait.item.take_due(Instant::now()) {
+                    let request=HostCall { id:wait.request.id.clone(),call,context:wait.request.context.clone(),cancelled:self.cancel.clone(),internal:true };
+                    wait.request=request.clone();
+                    self.outgoing.push_back(request);
+                }
             }
         }
         let model = self
@@ -810,16 +775,19 @@ impl Session {
                             let c=&message.calls[0];let p=serde_json::from_str::<Value>(&c.arguments).ok();
                             match (c.name.as_str(),p){
                                 ("wiparse_call"|"wiparse_log_files"|"wiparse_log_analyze"|"wiparse_log_events"|"wiparse_log_timeline"|"wiparse_plan"|"wiparse_evidence"|"wiparse_help"|"wiparse_report_read",Some(_))=>match wiparse_core::ai::tools::normalized(c){Ok((method,params))=>contract::parse(&json!({"reply":"","call":{"method":method,"params":params}}).to_string()),Err(_)=>Err("AGENT.INVALID_NATIVE_ARGUMENTS".into())},
-                                ("wiparse_answer",Some(p)) if p["evidence_ids"].as_array().is_none_or(|ids|ids.iter().any(|id|id.as_str().is_none_or(|s|self.workflow.get(s).ok().and_then(|v|v["method"].as_str().map(|m|self.evidence_allowed(m)))!=Some(true))))=>Err("AGENT.INVALID_EVIDENCE_REFERENCES".into()),
+                                ("wiparse_answer",Some(p)) if p["evidence_ids"].as_array().is_none_or(|ids|ids.iter().any(|id|id.as_str().is_none_or(|s|!self.workflow.citation_method(s).is_some_and(|m|self.evidence_allowed(m)))))=>Err("AGENT.INVALID_EVIDENCE_REFERENCES".into()),
                                 ("wiparse_answer",Some(p)) if matches!(p["status"].as_str(),Some("completed"|"needs_input"))=>contract::parse(&json!({"reply":p["reply"],"status":p["status"]}).to_string()),
                                 _=>Err("AGENT.INVALID_NATIVE_CALL".into())
                             }
                         }
                     }else if !wiparse_core::ai::workflow::is_read_confirmation_loop(&reply.text)&&!reply.text.trim().starts_with('{')&&!reply.text.trim().starts_with("```"){contract::parse(&json!({"reply":reply.text}).to_string())}else if !reply.text.trim().starts_with('{')&&!reply.text.trim().starts_with("```"){Err("AGENT.STRUCTURED_RESULT_REQUIRED: use a host tool or wiparse_answer; a future plan is not completion".into())}else{contract::parse(&reply.text)};
-                    match proposed {
+                    match proposed.and_then(|mut answer|{
+                        if answer.call.is_none(){self.workflow.validate_conclusion(&answer.reply)?;self.workflow.append_table_result(&mut answer.reply);}
+                        Ok(answer)
+                    }) {
                         Err(error) => {
-                            if !self.repair_attempted {
-                                self.repairs+=1;self.repair_attempted = true;
+                            if self.recovery_policy.retry(service.native_tools_enabled(),&error) {
+                                self.repairs+=1;
                                 self.message("assistant",format!("工具请求格式无效，未执行操作：{error}。请按工具契约重新生成一次请求。"));
                                 self.resume_model = true;
                             } else {
@@ -901,6 +869,13 @@ impl Session {
                                     {
                                         self.finish_error("测试正在占用设备，当前设备操作被锁定。");
                                         return;
+                                    }
+                                    if let Some(j)=&self.journal {
+                                        match j.needs_readback(&call.method,&call.params) {
+                                            Ok(true)=>{let key=crate::ai::journal::command_fingerprint(&call.method,&call.params);if !self.uncertain.contains(&key){self.uncertain.push(key);}},
+                                            Err(e)=>{self.finish_error(&format!("设备操作记录读取失败：{e}"));return;},
+                                            Ok(false)=>{}
+                                        }
                                     }
                                     self.confirmations+=1;self.approval = Some(call);
                                     self.status = "等待确认具体操作，尚未执行。".into();
@@ -1000,7 +975,7 @@ impl Session {
                 status["status"].as_str().unwrap_or("")
             ));
         }
-        if !busy {if let Some(j)=&self.journal{if let Some(recovery)=j.menu(ui){self.prompt=recovery.draft.clone();self.recovery=Some(recovery);}}}
+        if !busy {if let Some(j)=&self.journal{j.menu(ui,"global");if let Some(recovery)=j.poll_recovery(ui.ctx(),"global"){self.prompt=recovery.draft.clone();self.recovery=Some(recovery);}}}
         crate::ai::journal::show_progress(ui,&self.workflow);
         if !self.plan.is_empty() && self.workflow.progress().is_empty() {
             egui::CollapsingHeader::new(text(lang, "任务计划", "Task plan"))

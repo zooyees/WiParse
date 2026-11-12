@@ -5798,7 +5798,7 @@ dependencies = [
 
 [[package]]
 name = "wiparse-cli"
-version = "1.2.4"
+version = "1.2.5"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5812,7 +5812,7 @@ dependencies = [
 
 [[package]]
 name = "wiparse-core"
-version = "1.2.4"
+version = "1.2.5"
 dependencies = [
  "chrono",
  "crossbeam-channel",
@@ -5841,11 +5841,12 @@ dependencies = [
 
 [[package]]
 name = "wiparse-gui"
-version = "1.2.4"
+version = "1.2.5"
 dependencies = [
  "bytemuck",
  "chrono",
  "crossbeam-channel",
+ "csv",
  "dirs",
  "eframe",
  "egui",
@@ -5858,6 +5859,7 @@ dependencies = [
  "resvg",
  "rfd",
  "rusqlite",
+ "same-file",
  "serde",
  "serde_json",
  "tempfile",
@@ -5866,13 +5868,14 @@ dependencies = [
  "tracing-subscriber",
  "ureq",
  "uuid",
+ "windows",
  "winresource",
  "wiparse-core",
 ]
 
 [[package]]
 name = "wiparse-service"
-version = "1.2.4"
+version = "1.2.5"
 dependencies = [
  "chrono",
  "serde",

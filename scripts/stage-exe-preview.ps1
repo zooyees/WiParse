@@ -22,7 +22,7 @@ foreach($pair in @(@('wiparse-gui.exe','WiParse.exe'),@('wiparse.exe','WiParse-C
 Copy-PreviewTree (Join-Path $repo 'test-tools') (Join-Path $output 'test-tools')
 New-Item -ItemType Directory -Path (Join-Path $output 'docs/reviews') -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo 'docs/reviews/engineering-agent-candidate-2026-11-11.md') -Destination (Join-Path $output 'docs/reviews')
-foreach ($name in @("engineering-agent-$version.md",'ai-wiparse-engineering-fit-2026-11-11.md','ai-agent-intelligence-review-2026-11-10.md')) {
+foreach ($name in @("engineering-agent-$version.md","wiparse-codex-agent-gap-2026-11-12.md",'ai-wiparse-engineering-fit-2026-11-11.md','ai-agent-intelligence-review-2026-11-10.md')) {
  $path=Join-Path $repo "docs/reviews/$name"
  if(Test-Path -LiteralPath $path){Copy-Item -LiteralPath $path -Destination (Join-Path $output 'docs/reviews')}
 }
@@ -54,7 +54,7 @@ foreach($name in @('WiParse.exe','WiParse-CLI.exe','WiParse-Service.exe','WiPars
  try{$hashes[$name]=[BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant()}
  finally{$stream.Dispose();$sha.Dispose()}
 }
-$manifest=@{kind='exe_preview';version=$version;created_at=[DateTime]::UtcNow.ToString('o');zip_created=$false;industrial_approved=$false;binary_sha256=$hashes}
+$manifest=@{commit=(git -C $repo rev-parse HEAD);kind='exe_preview';version=$version;created_at=[DateTime]::UtcNow.ToString('o');zip_created=$false;industrial_approved=$false;binary_sha256=$hashes}
 [IO.File]::WriteAllText((Join-Path $output 'preview-manifest.json'),($manifest|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
 $global:LASTEXITCODE=0
 Write-Output (Join-Path $output 'bin/WiParse.exe')

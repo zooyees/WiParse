@@ -24,7 +24,7 @@ pub(super) fn catalog() -> &'static str {
 serial.view {}: inspect current serial log view ID, absolute 1-based row range and search status. serial.search {view_id:actualID,query:string}: apply the existing log search UI and show matching rows; result search_pending means background search has not finished, inspect serial.view later. serial.jump {view_id:actualID,line:positiveInteger}: highlight and scroll current log to original 1-based file/absolute live row, pausing tail follow without stopping capture. These reversible UI actions need no device-control grant, only a manual current-log scope. Never use selection-relative rows or another file's lines. First inspect view identity; use log.analyze for full evidence searches and then jump to a verified row. No serial transmit, edits or capture stop.
 To extract and display serial data: inspect log schema, call log.analyze timeline with retain_dataset:true, finish its cursor, then data.present {query_id:returnedQueryID}; the host imports actual local points into the data analysis page. Do not pass model-generated arrays.
 Discover the complete published platform API with platform.catalog {filter,offset,limit}; then invoke an exact listed method using platform.invoke {method,params}. Catalogue params are examples, never defaults. Device/file/test mutations require concrete confirmation. Never guess targets or credentials. If service_required is true, report unavailable services honestly.
-Canonical shared host tools also available: wave.channels/measure/timing/frames/decode/view, data.inspect/statistics/present, calc.inspect/evaluate/apply, report.inspect/search/create/open, testing.inspect/status/cases/propose/wait. Use agent.help {method:...} for the exact canonical schema. Reversible view/calculator/decoder operations require actual user intent; never change a protocol by guessing. testing.wait waits locally on an actual run_id; do not consume model calls polling. Testing execution/apply remains in the global Agent with its concrete action confirmation. For requested report files, report.create {title,markdown,evidence_ids:[actualIDs]} saves portable Markdown/JSON and real-series PNG/CSV; call report.open {report_id:returnedUUID} to show it in WiParse. Never invent evidence IDs or local file paths.
+Canonical shared host tools also available: wave.channels/measure/timing/frames/decode/view, data.inspect/statistics/present, calc.inspect/evaluate/apply, report.inspect/read/search/create/open, testing.inspect/status/cases/propose/wait. Use agent.help {method:...} for the exact canonical schema. Reversible view/calculator/decoder operations require actual user intent; never change a protocol by guessing. testing.wait waits locally on an actual run_id; do not consume model calls polling. Testing execution/apply remains in the global Agent with its concrete action confirmation. For requested report files, report.create {title,markdown,evidence_ids:[actualIDs]} saves portable Markdown/JSON and real-series PNG/CSV; call report.open {report_id:returnedUUID} to show it in WiParse. Never invent evidence IDs or local file paths.
 serial.monitor.status {} (actual CURRENT source status, read-only; not a global aggregate);
 serial.monitor.start {} / serial.monitor.stop {} (control permission required; CURRENT live source only, no port/baud overrides; start waits for actual connection, stop confirms reception stopped and explicitly reports asynchronous port release). Prefer these over legacy serial actions for multi-step workflows: after the host result you may discover a scope and stop it, without guessing success;
 engineering.inspect {"tool":"waveform"|"data_analysis"|"test_report"|"test_tool"|"calculator"|"instruments"}: relevant current-project tool context with source identity; cached context is not fresh measurement. Use other tools only when necessary to answer the engineering request.
@@ -60,7 +60,7 @@ pub(super) fn validate(method: &str, params: &Value) -> Result<bool, String> {
     }
     let invalid = || "AI.TOOL_INVALID: unsupported platform method or parameters".to_string();
     match method {
-        "agent.plan"|"agent.evidence"|"agent.help"|"agent.align"=>{wiparse_core::ai::workflow::validate_management(method,params)?;Ok(false)},
+        "agent.plan"|"agent.evidence"|"agent.help"|"agent.align"|"agent.recipe"=>{wiparse_core::ai::workflow::validate_management(method,params)?;Ok(false)},
         "engineering.inspect"=>{
             if !keys(params,&["tool"])||!matches!(params["tool"].as_str(),Some("waveform"|"data_analysis"|"test_report"|"test_tool"|"calculator"|"instruments")){return Err(invalid());}Ok(false)
         },
@@ -114,7 +114,8 @@ pub(super) fn validate(method: &str, params: &Value) -> Result<bool, String> {
             Ok(true)
         }
         "instrument.command" => {
-            if !keys(params, &["device_id", "command"]) || params["device_id"].as_u64().is_none() {
+            wiparse_core::engineering_agent::scope_verification(params)?;
+            if !keys(params, &["device_id", "command","verify"]) || params["device_id"].as_u64().is_none() {
                 return Err(invalid());
             }
             let command = &params["command"];
@@ -279,7 +280,10 @@ impl SerialToolPanel {
         let controls = validate(&method, &params)?;
         let command_id=uuid::Uuid::new_v4().to_string();
         let fingerprint=crate::ai::journal::command_fingerprint(&method,&params);
-        if controls && chat.run.as_ref().is_some_and(|r|r.uncertain.contains(&fingerprint))
+        let previous_unknown=if controls {
+            chat.run.as_ref().and_then(|r|r.journal.as_ref()).map(|j|j.needs_readback(&method,&params)).transpose()?.unwrap_or(false)
+        } else {false};
+        if controls && (previous_unknown || chat.run.as_ref().is_some_and(|r|r.uncertain.contains(&fingerprint)))
             && !wiparse_core::platform_api::interrupt_call(&wiparse_core::engineering_agent::Call{method:method.clone(),params:params.clone()}) {
             if let Some(run)=chat.run.as_mut(){
                 run.pending_readback=Some((fingerprint.clone(),format!("{method} · {}",params)));
@@ -302,7 +306,9 @@ impl SerialToolPanel {
         if controls && !automatic {
             if let Some(run)=&chat.run {if let Some(j)=&run.journal{j.record(&run.id,"serial",&run.question,"awaiting_readback",&run.workflow,Some((&method,&json!({"state":"dispatching","command_id":command_id,"command_fingerprint":fingerprint,"device_id":params.get("device_id")}))));}}
         }
-        if method == "instrument.capture" {
+        let canonical_instrument=crate::ai::broker::has_instrument_executor(ctx,&method);
+        if params.get("verify").is_some() && method=="instrument.command" && !canonical_instrument{return Err("DEVICE.VERIFICATION_HOST_REQUIRED".into());}
+        if method == "instrument.capture" && !canonical_instrument {
             params["wait"] = json!(true);
         }
         if method == "instrument.waveform_source" {
@@ -361,13 +367,14 @@ impl SerialToolPanel {
         } else if method.starts_with("agent.") {
             let run=chat.run.as_mut().ok_or("AGENT.NO_ACTIVE_TASK")?;
             let result=match method.as_str(){
+                "agent.recipe"=>run.workflow.run_recipe(&params),
                 "agent.align"=>run.workflow.align(&params),
                 "agent.plan"=>run.workflow.update(params.clone()),
                 "agent.evidence"=>run.workflow.page(&params),
                 "agent.help"=>{
                     let target=params["method"].as_str().unwrap();
                     let allowed=run::functions(chat.scope,chat.allow_automation&&!self.ai_test_locked&&run.control_cap).into_iter().find(|f|f.name=="wiparse_call").unwrap();
-                    if !allowed.parameters["properties"]["method"]["enum"].as_array().unwrap().iter().any(|v|v==target){Err("AGENT.UNKNOWN_OR_UNAUTHORIZED_TOOL".into())}else{
+                    if let Some(recipe)=wiparse_core::ai::workflow::recipe(target){Ok(recipe)}else if !allowed.parameters["properties"]["method"]["enum"].as_array().unwrap().iter().any(|v|v==target){Err("AGENT.UNKNOWN_OR_UNAUTHORIZED_TOOL".into())}else{
                         let help=if let Some(tool)=wiparse_core::engineering_agent::tool(target){tool.schema.to_owned()}else if target.starts_with("log."){library::catalog().to_owned()}else if target=="engineering.calc.evaluate"{wiparse_core::engineering_agent::CALC_SCHEMA.to_owned()}else{catalog().to_owned()};
                         Ok(json!({"ok":true,"method":target,"schema":help,"validated_keys":wiparse_core::engineering_agent::tool(target).and_then(|t|wiparse_core::engineering_agent::declared_keys(t.method))}))
                     }
@@ -394,10 +401,11 @@ impl SerialToolPanel {
             Some(chat.library.start_scoped(&method,params.clone(),files,memory,range,chat.scope==DataScope::Library,guard.cancelled.clone(),ctx.clone())?)
         } else if method=="report.create" {
             let run=chat.run.as_ref().ok_or("REPORT.NO_ACTIVE_TASK")?;
-            let evidence=params["evidence_ids"].as_array().ok_or("REPORT.MISSING_EVIDENCE")?.iter().map(|v|run.workflow.get(v.as_str().unwrap_or(""))).collect::<Result<Vec<_>,_>>()?;
+            run.workflow.validate_conclusion(&format!("{}\n{}",params["title"],params["markdown"]))?;
+            let evidence=params["evidence_ids"].as_array().ok_or("REPORT.MISSING_EVIDENCE")?.iter().map(|v|crate::ai::journal::report_input(run.journal.as_ref(),&run.workflow,v.as_str().unwrap_or(""))).collect::<Result<Vec<_>,_>>()?;
             let root=ctx.data(|d|d.get_temp::<PathBuf>(egui::Id::new("wiparse-ai-project-root"))).ok_or("REPORT.PROJECT_UNAVAILABLE")?;
             Some(crate::ai::artifact::start(root,chat.project.clone(),params.clone(),evidence,guard.cancelled.clone(),ctx.clone(),|value|InvokeReply{ok:value["ok"]==true,cmd:"report.create".into(),error:value["error"].as_str().map(str::to_owned),data:value["data"].clone()})?)
-        } else if crate::ai::broker::supports(&method) {
+        } else if canonical_instrument || crate::ai::broker::supports(&method) {
             Some(crate::ai::broker::enqueue(ctx,&method,params.clone(),guard.clone())?)
         } else if method.starts_with("serial.monitor.") {
             None
@@ -417,12 +425,7 @@ impl SerialToolPanel {
         if let Some(entry) = chat.entries.last_mut() {
             entry.automatic = automatic;
         }
-        let deadline = Instant::now()
-            + Duration::from_secs(if method == "serial.monitor.start" {
-                15
-            } else {
-                if method=="testing.wait" {600}else{90}
-            });
+        let deadline = Instant::now() + crate::ai::execution::timeout(&method);
         chat.tool = Some(ToolPending {
             reply,
             guard,
@@ -520,7 +523,7 @@ impl SerialToolPanel {
             }
             tool.guard.cancelled.store(true, Ordering::Release);
             if !tool.automatic { if let Some(run)=&mut chat.run {
-                run.workflow.record(&format!("S{}",chat.evidence_counter+1), &tool.method, &result);
+                run.workflow.record_call(&format!("S{}",chat.evidence_counter+1), &tool.method, &tool.params, &result);
             }}
             let serialized = result.to_string();
             let result = if serialized.len() > 8000 {crate::ai::agent::bounded_evidence(result,0)}else{result};
@@ -528,7 +531,7 @@ impl SerialToolPanel {
             let parameters=if local{json!({"query_id":result["data"]["query_id"],"offset":tool.params["offset"]})}else{tool.params.clone()};
             chat.evidence_counter=chat.evidence_counter.saturating_add(1);
             let mut result=result;if tool.method.starts_with("agent."){result["kind"]=json!("task_management");}
-            let mut result=result;result["evidence_id"]=json!(format!("S{}",chat.evidence_counter));
+            let mut result=result;result["method"]=json!(tool.method);result["evidence_id"]=json!(format!("S{}",chat.evidence_counter));
             let record=json!({"evidence_id":result["evidence_id"],"method":tool.method,"params":parameters,"result":result});
             if let Some(i)=chat.entries.iter().rposition(|entry|entry.role=="tool"&&(entry.text==format!("执行中 · {}",tool.method)||entry.text==format!("Running · {}",tool.method))){chat.entries.remove(i);}
             chat.entry(

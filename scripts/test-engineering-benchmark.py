@@ -24,6 +24,22 @@ def verify(root):
     runner = [sys.executable, "-c", 'import json; from pathlib import Path; Path("values.csv").write_text("5.0"); print(json.dumps(dict(answer="5.0 V",artifacts=["values.csv"],total_tokens=20)))']
     for arm in ("baseline", "candidate"):
         module("run")["run"](frozen / "operator", root / arm, arm, "fixture", "holdout", 20, runner)
+    # The child may fail or time out after an already billed request.
+    import uuid
+    ledger=root/"usage.jsonl"
+    first, second = str(uuid.uuid4()), str(uuid.uuid4())
+    records=[dict(request_id=first,phase="started"),dict(request_id=first,phase="response",total_tokens=37)]
+    ledger.write_text("\n".join(map(json.dumps,records+[records[-1]])),encoding="utf-8")
+    observe=module("run")["request_usage"]
+    assert observe(ledger)["total_tokens"]==37
+    with ledger.open("a",encoding="utf-8") as out:out.write("\n"+json.dumps(dict(request_id=second,phase="started")))
+    partial=observe(ledger)
+    assert partial["known_tokens"]==37 and partial["total_tokens"] is None and partial["requests"]==2
+    emitter = 'import os,json,uuid,time,sys; from pathlib import Path; key=str(uuid.uuid4()); ledger=Path(os.environ["WIPARSE_BENCHMARK_USAGE_FILE"]); ledger.write_text(json.dumps(dict(request_id=key,phase="started"))+"\\n"+json.dumps(dict(request_id=key,phase="response",total_tokens=23))+"\\n"); '
+    for name,suffix in [("failed","sys.exit(2)"),("killed","time.sleep(6)")]:
+        module("run")["run"](frozen/"operator",root/name,name,"fixture","holdout",2,[sys.executable,"-c",emitter+suffix])
+        result=json.loads((root/name/"results.jsonl").read_text())
+        assert result["total_tokens"]==23 and result["status"]==("timeout" if name=="killed" else "runner_error")
     review = module("review")
     blind = root / "blind"
     review["prepare"](frozen, [root / "baseline", root / "candidate"], blind)

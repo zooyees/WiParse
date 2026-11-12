@@ -370,7 +370,7 @@ impl SerialAiChat {
             if data["platform_results"].as_array().is_some_and(|results|results.iter().any(|result|result["method"].as_str().is_some_and(library::is_local))){library["last_analysis"]=serde_json::Value::Null;}
             data["local_log_library"]=library;
         }
-        let fallback = self.run.as_ref().is_some_and(|r|r.json_fallback);
+        let fallback = self.run.as_ref().is_some_and(|r|r.recovery_policy.json_fallback);
         let native = !automatic && !fallback && self.config.as_ref().is_some_and(wiparse_core::ai::context::native);
         let tools=if native { String::new() } else if !automatic && self.scope!=DataScope::None{
             format!("{}\n{}",platform::catalog(),library::catalog())

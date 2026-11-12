@@ -1,6 +1,6 @@
 {
   "schema_version": "wiparse.wireless-plugin/1",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "id": "wireless-charge-validation",
   "name": "Wireless Charge Validation",
   "name_zh": "无线充电自动检验",
@@ -9,7 +9,7 @@
   "config": "station.json",
   "report_name": "WirelessCharge",
   "report_name_zh": "无线充电检验",
-  "description": "Contract S1: dry-run/replay, product rules and traceable coverage. Live stimulus blocked until SW/DG safety integration is validated.",
+  "description": "Contract S1: dry-run/replay, product rules and traceable coverage. Supports fenced live station execution with independent protection feedback and approved configuration.",
   "capabilities": [
     "preflight",
     "run",

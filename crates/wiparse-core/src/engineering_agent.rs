@@ -48,8 +48,9 @@ pub const TOOLS:&[Tool]=&[
  Tool{method:"platform.catalog",title:"查询平台完整能力目录",page:"any",effect:Effect::Read,schema:"{filter?:string,offset?:0,limit?:12}; discover registered GUI/API/service capabilities and actual parameter examples; examples are not defaults or permission; service-required calls may be offline"},
  Tool{method:"platform.invoke",title:"调用平台功能",page:"any",effect:Effect::Read,schema:"{method:exactCatalogMethod,params:object}; calls same host implementation as GUI/API; inspect platform.catalog first, never invent path/device/parameter. Effects and permission are determined by nested method; dangerous operations need concrete confirmation; accepted/background is not completed. No arbitrary shell."},
  Tool{method:"agent.align",title:"按观测边界对齐日志与波形",page:"any",effect:Effect::Read,schema:"{log_id,frame_id,source_id,first_frame,last_frame,log_time_s}; use log.analyze timeline with confirmed boundary markers and wave.frames evidence. Frame indices mark corresponding starts. Optional calibration:{first_pair_error_s,last_pair_error_s,residual_rate_bound_ppm}; supply only operator/calibration-backed bounds including both clocks, otherwise omit. Conditional interpolation only; never assert synchronization or causality without verified external calibration."},
- Tool{method:"agent.plan",title:"更新任务进度",page:"any",effect:Effect::LocalCompute,schema:"{steps:[{id,title,state:pending|running|done|blocked,deliverable?:analysis|curve|present_curve|calculation|report|operation|report_file|protocol|cycle_duration,evidence_ids?:[actualID],reason?:string}]}; max12 steps; completed steps require actual successful evidence; blocked needs reason; never drop unresolved goals"},
+ Tool{method:"agent.plan",title:"更新任务进度",page:"any",effect:Effect::LocalCompute,schema:"{steps:[{id,title,state:pending|running|done|blocked,deliverable?:analysis|curve|present_curve|calculation|report|operation|report_file|protocol|frame_reference|cycle_duration|table_limits,basis?:observed|inferred|hypothesis|unavailable,target?:{device_id?,channel?,source_id?,action?,start_s?,end_s?,field?,unit?,source_version?},evidence_ids?:[actualID],reason?:string}]}; max12 steps; completed steps require actual successful evidence; instrument operation steps require target.device_id; blocked needs reason; never drop unresolved goals"},
  Tool{method:"agent.evidence",title:"召回任务证据",page:"any",effect:Effect::Read,schema:"{evidence_id:string,offset?:byteOffsetFromNextOffset}; same bound task/session evidence index; not a fresh measurement"},
+ Tool{method:"agent.recipe",title:"执行工程证据配方",page:"any",effect:Effect::Read,schema:"{recipe:recipe.charge_loss|recipe.pwm_dead_time|recipe.adapter_compatibility,evidence_id,limits_s?:[min,max]}; supply current successful log.analyze with events, wave.timing with both channels, or report.read of linked adapter-matrix.json respectively. PWM requires specified limits in seconds."},
  Tool{method:"agent.help",title:"查询工具用法",page:"any",effect:Effect::LocalCompute,schema:"{method:string}; exact schema and engineering constraints of an available host tool"},
  Tool{method:"evidence.get",title:"读取历史证据",page:"any",effect:Effect::Read,schema:"{id:E-number}; same project, unique evidence ID; explicit expired response; historical result is not current device state"},
  Tool{method:"page.inspect",title:"读取本页资料",page:"current",effect:Effect::Read,schema:"{}; cached bounded evidence from the current page"},
@@ -74,7 +75,7 @@ pub const TOOLS:&[Tool]=&[
  Tool{method:"data.statistics",title:"统计数据曲线",page:"data_analysis",effect:Effect::Read,schema:"{}; local full-range statistics, no raw samples uploaded"},
  Tool{method:"report.create",title:"生成证据报告",page:"any",effect:Effect::LocalCompute,schema:"{title:string,markdown:string,evidence_ids:[actualID]}; 1..16 retained evidence IDs, host allocates portable project directory and writes Markdown/JSON/actual-series PNG+CSV; no arbitrary paths; report is AI analysis, not a product pass verdict"},
  Tool{method:"report.open",title:"打开AI报告",page:"test_report",effect:Effect::Application,schema:"{report_id:hostUUID}; only generated report in current project; displays Markdown and inline curve images"},
- Tool{method:"report.read",title:"分页读取当前报告正文",page:"test_report",effect:Effect::Read,schema:"{report_id?:actualIndexedIDOrCreatedUUID,attachment?:linkedDataFilename,start_line?:1,start_byte?:0,limit?:80}; selected text report or report.inspect indexed ID, limit 1..200; actual source/line evidence, next_line + next_byte (pass as start_byte), line_complete and encoding flags; long lines are lossless fragments; 16MiB scan budget per call; use report.search for larger files. Images are not decoded."},
+ Tool{method:"report.read",title:"分页读取当前报告正文",page:"test_report",effect:Effect::Read,schema:"{report_id?:actualIndexedIDOrCreatedUUID,scan?:{column:exactHeader,subtract_column?:sameUnitHeader,where?:{column:stageHeader,equals:exactStage},unit?:sourceUnit,min?:inclusive,max?:inclusive,delimiter?:commaOrTabOrSemicolon,max_rows?:optionalSegmentSize,cursor?:scanContinuation},attachment?:linkedDataFilename,cursor?:next_cursor,start_line?:1,start_byte?:0,limit?:80}; selected text report or report.inspect indexed ID, limit 1..200; actual source/line evidence, next_line + next_byte (pass as start_byte), line_complete and encoding flags; long lines are lossless fragments; use next_cursor for direct continuation on the same attachment, without start_line or start_byte. PNG and JPEG return local OCR text and pixel dimensions; raw waveform values require calibrated samples."},
  Tool{method:"report.inspect",title:"读取测试结果索引",page:"test_report",effect:Effect::Read,schema:"{offset?:0,limit?:10}; current project; limit 1..20"},
  Tool{method:"report.search",title:"检索当前报告证据",page:"test_report",effect:Effect::Read,schema:"{contains?:string,report_ids?:[id],limit?:6,cursor?:hostToken}; full local open report or up to8 indexed report IDs; 1GiB/15sec slices; cursor alone; actual line evidence and coverage; image pixels unavailable"},
  Tool{method:"testing.wait",title:"等待实际测试完成",page:"test_tool",effect:Effect::Read,schema:"{run_id:string,timeout_seconds?:5..600}; host waits for this exact existing run, no model polling; process completion is not a formal pass verdict"},
@@ -92,6 +93,7 @@ pub const TOOLS:&[Tool]=&[
  Tool{method:"calc.inspect",title:"读取计算器输入与结果",page:"calculator",effect:Effect::Read,schema:"{}; calculations are not physical measurements"},
  Tool{method:"calc.evaluate",title:"本地计算工程参数",page:"any",effect:Effect::LocalCompute,schema:"{card:lc|bandpass|q|rc|crc|converter,fields:object}; use existing calculator engine; no UI mutation"},
  Tool{method:"calc.apply",title:"应用计算器参数",page:"calculator",effect:Effect::Application,schema:"{card:string,fields:object}; same schema as calc.evaluate, changes current calculator"},
+ Tool{method:"instrument.readback",title:"读取仪器操作的核对记录",page:"instruments",effect:Effect::Read,schema:"{device_id:connectedDevice,command:originalTypedCommand}; historical driver/operator/independent readback records for this instrument and exact command; never a fresh measurement"},
  Tool{method:"instrument.list",title:"读取已连接仪表",page:"instruments",effect:Effect::Read,schema:"{}; existing sessions only, never invent device IDs"},
  Tool{method:"instrument.command",title:"执行仪表操作",page:"instruments",effect:Effect::Device,schema:"{device_id:integer,command:typedObject}; use WiParse typed ControlCommand; only scope run/stop/single/autoset/channel/trigger/measurement and source/load typed controls; no SCPI, flashing or erase; waits for job completion"},
  Tool{method:"instrument.capture",title:"抓取示波器截图",page:"instruments",effect:Effect::Device,schema:"{device_id:integer}; preview capture only, no file paths; waits for actual job result"},
@@ -130,12 +132,43 @@ pub fn parse(text: &str) -> Result<Answer, String> {
     }
     Ok(answer)
 }
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopeVerification{
+    pub device_id:u64, pub channel:u8, pub meas_type:crate::instrument::ScopeMeasType,
+    pub min:f64, pub max:f64, pub uncertainty:f64, pub window_ms:u64
+}
+pub fn scope_verification(p:&Value)->Result<Option<ScopeVerification>,String>{
+    let Some(v)=p.get("verify") else{return Ok(None)};
+    let r:ScopeVerification=serde_json::from_value(v.clone()).map_err(|e|e.to_string())?;
+    if r.device_id==0 || Some(r.device_id)==p["device_id"].as_u64() || !(1..=8).contains(&r.channel) ||
+        ![r.min,r.max,r.uncertainty].into_iter().all(f64::is_finite) || r.min>r.max || r.uncertainty<0. || !(100..=60000).contains(&r.window_ms){
+        return Err("DEVICE.INVALID_INDEPENDENT_VERIFICATION".into());
+    }
+    Ok(Some(r))
+}
+
 pub fn validate(call: &Call) -> Result<Tool, String> {
     let mut definition = tool(&call.method).ok_or("AGENT.UNKNOWN_TOOL")?;
     if call.method=="report.read" {
         let p=call.params.as_object().ok_or("REPORT.INVALID_READ")?;
-        if p.keys().any(|k|!matches!(k.as_str(),"report_id"|"attachment"|"start_line"|"start_byte"|"limit")) || p.get("start_line").is_some_and(|v|!v.as_u64().is_some_and(|n|(1..=1_000_000).contains(&n))) || p.get("limit").is_some_and(|v|!v.as_u64().is_some_and(|n|(1..=200).contains(&n))) {return Err("REPORT.INVALID_READ".into());}
-        if p.get("start_byte").is_some_and(|v| !v.as_u64().is_some_and(|n|n<=16*1024*1024)){return Err("REPORT.INVALID_READ".into());}
+        if p.keys().any(|k|!matches!(k.as_str(),"report_id"|"attachment"|"cursor"|"start_line"|"start_byte"|"limit"|"scan")) || p.get("start_line").is_some_and(|v|!v.as_u64().is_some_and(|n|n>0)) || p.get("limit").is_some_and(|v|!v.as_u64().is_some_and(|n|(1..=200).contains(&n))) {return Err("REPORT.INVALID_READ".into());}
+        if let Some(scan)=p.get("scan") {
+            if !scan.as_object().is_some_and(|o|o.keys().all(|k|matches!(k.as_str(),"column"|"min"|"max"|"delimiter"|"cursor"|"max_rows"|"where"|"subtract_column"|"unit")))
+                || !scan["column"].as_str().is_some_and(|s|!s.is_empty() && s.len()<=256)
+                || ["subtract_column","unit"].iter().any(|k|scan.get(k).is_some_and(|v|!v.as_str().is_some_and(|s|!s.is_empty() && s.len()<=256)))
+                || scan.get("where").is_some_and(|v|v.as_object().is_none_or(|o|o.len()!=2) || ["column","equals"].iter().any(|k|v[k].as_str().is_none_or(|s|s.is_empty()||s.len()>256)))
+                || ["limit","start_byte","start_line","cursor"].iter().any(|k|p.contains_key(*k))
+                || scan["min"].is_null() && scan["max"].is_null()
+                || ["min","max"].iter().any(|k|scan.get(k).is_some_and(|v|v.as_f64().is_none()))
+                || scan["min"].as_f64().zip(scan["max"].as_f64()).is_some_and(|(a,b)|a>b)
+                || scan.get("delimiter").is_some_and(|v|!matches!(v.as_str(),Some(","|"\t"|";")))
+                || scan.get("max_rows").is_some_and(|v|!v.as_u64().is_some_and(|n|(1..=250000).contains(&n)))
+                || scan.get("cursor").is_some_and(|v|!v.as_str().is_some_and(|s|s.len()<=256 && !s.is_empty())) {
+                return Err("REPORT.INVALID_SCAN".into());
+            }
+        }
+        if p.get("start_byte").is_some_and(|v| !v.is_u64()) || p.get("cursor").is_some_and(|v| !v.as_str().is_some_and(|s| !s.is_empty() && s.len()<=96) || p.contains_key("start_byte") || p.contains_key("start_line")){return Err("REPORT.INVALID_READ".into());}
         if p.get("report_id").is_some_and(|v|!v.as_str().is_some_and(|s|uuid::Uuid::parse_str(s).is_ok() || s.starts_with("report-")&&s.len()==23&&s[7..].bytes().all(|b|b.is_ascii_hexdigit()))) {return Err("REPORT.INVALID_ID".into());}
         if p.get("attachment").is_some_and(|v|!v.as_str().is_some_and(|s|!s.is_empty() && s.len()<=180 && s.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'.'|b'_'|b'-')) && !s.starts_with('.'))){return Err("REPORT.INVALID_ATTACHMENT".into());}
         return Ok(definition);
@@ -291,7 +324,7 @@ pub fn validate(call: &Call) -> Result<Tool, String> {
                 return Err("AGENT.PROTOCOL_AND_SIGNAL_REQUIRED".into());
             }
         }
-        "instrument.command" | "instrument.capture" => {
+        "instrument.command" | "instrument.readback" | "instrument.capture" => {
             if !object
                 .get("device_id")
                 .and_then(Value::as_u64)
@@ -299,7 +332,8 @@ pub fn validate(call: &Call) -> Result<Tool, String> {
             {
                 return Err("AGENT.DEVICE_REQUIRED".into());
             }
-            if call.method == "instrument.command" && !object.contains_key("command") {
+            if call.method=="instrument.command"{scope_verification(&call.params)?;}
+            if call.method != "instrument.capture" && !object.contains_key("command") {
                 return Err("AGENT.COMMAND_REQUIRED".into());
             }
         }
@@ -397,7 +431,8 @@ fn parameter_keys(method:&str)-> &'static [&'static str] {
         "log.analyze"=> &["source_ids","contains","exclude","require_all","case_sensitive","pattern","first_line","last_line","context","samples","group","numeric","events",
             "timeline","discover","cursor"],
         "calc.evaluate" | "calc.apply" => &["card", "fields"],
-        "instrument.command" => &["device_id", "command"],
+        "instrument.command" => &["device_id","command","verify"],
+        "instrument.readback" => &["device_id","command"],
         "instrument.capture" => &["device_id"],
         _ => &[],
     }
@@ -570,7 +605,7 @@ fn validate_calculation(params: &Value) -> Result<(), String> {
     Ok(())
 }
 
-pub const INSTRUMENT_SCHEMA: &str = r#"Typed instrument.command command examples: "ScopeRun", "ScopeStop", "ScopeSingle", "ScopeAutoset"; {"ScopeMeasure":{"channel":1,"meas_type":"Frequency"}}, {"ScopeChannel":{"channel":1,"enabled":true}}, {"ScopeScale":{"channel":1,"volts_per_div":1}}, {"ScopeTimebase":0.001}, {"ScopeTrigger":{"source":"CH1","level":1,"slope":"POS"}}, {"SourceVoltage":{"channel":1,"value":5}}, {"SourceCurrent":{"channel":1,"value":1}}, {"SourceOutput":{"channel":1,"enabled":false}}, {"LoadInput":false}, {"LoadMode":"CC"}, {"LoadLevel":{"mode":"CC","value":1}}. These examples explain schema, NEVER provide authorization or intended setpoints; ask the user for values. Discover IDs via instrument.list before an action."#;
+pub const INSTRUMENT_SCHEMA: &str = r#"Typed instrument.command command examples: "ScopeRun", "ScopeStop", "ScopeSingle", "ScopeAutoset"; {"ScopeMeasure":{"channel":1,"meas_type":"Frequency"}}, {"ScopeChannel":{"channel":1,"enabled":true}}, {"ScopeScale":{"channel":1,"volts_per_div":1}}, {"ScopeTimebase":0.001}, {"ScopeTrigger":{"source":"CH1","level":1,"slope":"POS"}}, {"SourceVoltage":{"channel":1,"value":5}}, {"SourceCurrent":{"channel":1,"value":1}}, {"SourceOutput":{"channel":1,"enabled":false}}, {"LoadInput":false}, {"LoadMode":"CC"}, {"LoadLevel":{"mode":"CC","value":1}}. These examples explain schema, NEVER provide authorization or intended setpoints; ask the user for values. Discover IDs via instrument.list before an action. Optional verify:{device_id:independentScopeID,channel,meas_type,min,max,uncertainty,window_ms} acquires one instrument reading after completion. Limits and uncertainty use base SI; window is host readback latency, not a calibrated acquisition timestamp."#;
 
 #[cfg(test)]
 mod validation_tests {

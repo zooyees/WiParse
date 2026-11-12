@@ -19,6 +19,7 @@ pub(crate) fn command_fingerprint(method:&str,params:&Value)->String {
     if let Some(fields)=payload.as_object_mut(){for transient in ["timeout_s","timeout_ms","command_id"]{fields.remove(transient);}}
     wiparse_core::update::hex_sha256(json!([method,payload]).to_string().as_bytes())
 }
+#[derive(Clone)]
 pub(crate) struct Recovery {
     pub(crate) project: String,
     pub(crate) draft: String,
@@ -33,19 +34,55 @@ impl Recovery {
     }
     pub(crate) fn checkpoint_reports(&self,journal:&Journal,id:&str,entry:&str,workflow:&Workflow) {
         for (report,_) in &self.reports {
-            let hash=self.state["saved_reports"].as_array().into_iter().flatten().filter_map(Value::as_str)
-                .filter_map(|s|serde_json::from_str::<Value>(s).ok()).find(|r|r["report_id"]==report.as_str())
-                .and_then(|r|r["report_sha256"].as_str().map(str::to_owned));
-            if let Some(sha)=hash {
+            let reference=self.state["saved_reports"].as_array().into_iter().flatten().filter_map(Value::as_str)
+                .filter_map(|s|serde_json::from_str::<Value>(s).ok()).find(|r|r["report_id"]==report.as_str());
+            if let Some(sha)=reference {
                 journal.record(id,entry,&self.question,"resumed",workflow,Some(("report.create",&json!({
-                    "report_id":report,"report_sha256":sha,"evidence_id":format!("restored-report-{report}")
+                    "report_id":report,"report_sha256":sha["report_sha256"],"manifest_sha256":sha["manifest_sha256"],"evidence_id":format!("restored-report-{report}")
                 }))));
             }
         }
     }
     pub(crate) fn origin(&self)->&str {self.state["previous_task_id"].as_str().unwrap_or("")}
 }
+pub(crate) fn report_input(journal:Option<&Journal>,workflow:&Workflow,id:&str)->Result<Value,String>{
+    if let Ok(v)=workflow.report_input(id){return Ok(v);}
+    let reference=workflow.restored_input(id).ok_or("REPORT.EVIDENCE_EXPIRED_OR_CHANGED")?;
+    let journal=journal.filter(|j|j.accessible()).ok_or("REPORT.JOURNAL_UNAVAILABLE")?;
+    let db=Connection::open_with_flags(&journal.path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e|e.to_string())?;
+    let (bytes,digest):(Vec<u8>,String)=db.query_row("SELECT receipt,digest FROM report_inputs WHERE task=?1 AND evidence=?2",
+        params![reference["task"].as_str(),reference["id"].as_str()],|r|Ok((r.get(0)?,r.get(1)?))).map_err(|e|e.to_string())?;
+    if reference["sha256"]!=digest || wiparse_core::update::hex_sha256(&bytes)!=digest{return Err("REPORT.EVIDENCE_DIGEST_CHANGED".into());}
+    let mut result:Value=serde_json::from_slice(&bytes).map_err(|e|e.to_string())?;
+    result["historical"]=json!(true);result["evidence_id"]=json!(id);Ok(result)
+}
 impl Journal {
+    /// The previous task may have closed without ever observing the worker's result.
+    /// Query by operation across tasks in this project, including older journal files.
+    pub(crate) fn needs_readback(&self, method:&str, p:&Value)->Result<bool,String> {
+        // Instrument writes use the device service's durable reservation keyed by physical identity.
+        if method=="instrument.command" || (method=="platform.invoke" && p["method"]=="instrument.command")
+            || !self.path.exists() {return Ok(false);}
+        if !self.accessible() {return Err("AGENT.JOURNAL_UNAVAILABLE".into());}
+        let db=Connection::open_with_flags(&self.path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e|e.to_string())?;
+        db.query_row("SELECT EXISTS(
+            SELECT 1 FROM observations d
+            WHERE json_extract(d.reference,'$.state')='dispatching'
+            AND json_extract(d.reference,'$.command_fingerprint')=?1
+            AND NOT EXISTS(SELECT 1 FROM observations r WHERE r.seq>d.seq AND (
+              (json_extract(r.reference,'$.state')='readback_acknowledged'
+               AND json_extract(r.reference,'$.command_fingerprint')=?1)
+              OR (r.task=d.task AND json_extract(r.reference,'$.state')='completed'
+               AND json_extract(r.reference,'$.command_id')=json_extract(d.reference,'$.command_id'))
+              OR (r.task=d.task AND json_extract(r.reference,'$.state')='completed' AND EXISTS(
+                SELECT 1 FROM observations a WHERE a.task=d.task AND a.seq BETWEEN d.seq AND r.seq
+                AND json_extract(a.reference,'$.state')='accepted'
+                AND json_extract(a.reference,'$.command_id')=json_extract(d.reference,'$.command_id')
+                AND json_extract(a.reference,'$.job_id')=json_extract(r.reference,'$.job_id')
+                AND json_extract(a.reference,'$.job_session')=json_extract(r.reference,'$.job_session'))))))",
+            [command_fingerprint(method,p)],|row|row.get(0)).map_err(|e|e.to_string())
+    }
     pub(crate) fn for_project(ctx: &Context, project: &str) -> Option<Self> {
         let root = ctx.data(|d| d.get_temp::<PathBuf>(egui::Id::new("wiparse-ai-project-root")))?;
         let directory = wiparse_core::project::project_dir(&root, project);
@@ -57,6 +94,37 @@ impl Journal {
         })
     }
 
+    pub(crate) fn at(root:&Path, project:&str)->Self {
+        Self{path:wiparse_core::project::project_dir(root,project).join("agent-tasks.sqlite3")}
+    }
+    fn reader(&self)->Result<Connection,String>{
+        if !self.accessible(){return Err("AGENT.JOURNAL_UNAVAILABLE".into());}
+        Connection::open_with_flags(&self.path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e|e.to_string())
+    }
+    pub(crate) fn verify_report(&self,dir:&Path,id:&str)->Result<(),String>{
+        let db=self.reader()?;
+        let receipt:String=db.query_row("SELECT reference FROM observations WHERE json_extract(reference,'$.report_id')=?1 AND json_extract(reference,'$.report_sha256') IS NOT NULL ORDER BY (json_extract(reference,'$.manifest_sha256') IS NOT NULL) DESC, seq ASC LIMIT 1",[id],|r|r.get(0)).map_err(|_|"缺少创建时的报告凭据".to_owned())?;
+        super::artifact::verify_bundle(dir,&serde_json::from_str(&receipt).map_err(|e|e.to_string())?)
+    }
+    pub(crate) fn replay(&self,p:&Value)->Result<Value,String>{
+        let limit=p["limit"].as_u64().unwrap_or(32).clamp(1,128) as usize;
+        if !self.path.exists() && p.get("task_id").is_none(){return Ok(json!({"tasks":[]}));}
+        let db=self.reader()?;
+        if let Some(id)=p.get("task_id"){
+            let id=id.as_str().filter(|v|!v.is_empty() && v.len()<=128).ok_or("AGENT.INVALID_TASK_ID")?;
+            let (entry,phase,progress):(String,String,String)=db.query_row("SELECT entry,phase,progress FROM tasks WHERE id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(|e|e.to_string())?;
+            let after=p["after_seq"].as_i64().unwrap_or(0);
+            let mut q=db.prepare("SELECT seq,reference FROM observations WHERE task=?1 AND seq>?2 ORDER BY seq LIMIT ?3").map_err(|e|e.to_string())?;
+            let rows=q.query_map(params![id,after,limit+1],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?))).map_err(|e|e.to_string())?;
+            let mut observations=Vec::new();let mut next=None;
+            for row in rows{let (seq,s)=row.map_err(|e|e.to_string())?;if observations.len()==limit{next=observations.last().map(|v:&Value|v["seq"].clone());break;}
+                observations.push(json!({"seq":seq,"receipt":serde_json::from_str::<Value>(&s).map_err(|e|e.to_string())?}));}
+            return Ok(json!({"task_id":id,"entry":entry,"phase":phase,"checkpoint":serde_json::from_str::<Value>(&progress).map_err(|e|e.to_string())?,"observations":observations,"next_after_seq":next}));
+        }
+        let mut q=db.prepare("SELECT id,entry,phase,updated FROM tasks ORDER BY updated DESC,id LIMIT ?1").map_err(|e|e.to_string())?;
+        let rows=q.query_map([limit],|r|Ok(json!({"task_id":r.get::<_,String>(0)?,"entry":r.get::<_,String>(1)?,"phase":r.get::<_,String>(2)?,"updated":r.get::<_,i64>(3)?}))).map_err(|e|e.to_string())?;
+        Ok(json!({"tasks":rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?}))
+    }
     fn accessible(&self) -> bool {
         let Some(project) = self.path.parent() else {
             return false;
@@ -94,9 +162,26 @@ impl Journal {
         db.busy_timeout(std::time::Duration::from_millis(100))?;
         let tx = db.transaction()?;
         tx.execute_batch("CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,entry TEXT NOT NULL,question TEXT NOT NULL,phase TEXT NOT NULL,progress TEXT NOT NULL,updated INTEGER NOT NULL);
-            CREATE TABLE IF NOT EXISTS observations(task TEXT NOT NULL,seq INTEGER PRIMARY KEY,reference TEXT NOT NULL); CREATE INDEX IF NOT EXISTS observations_by_task ON observations(task,seq);")?;
+            CREATE TABLE IF NOT EXISTS observations(task TEXT NOT NULL,seq INTEGER PRIMARY KEY,reference TEXT NOT NULL); CREATE INDEX IF NOT EXISTS observations_by_task ON observations(task,seq);
+            CREATE INDEX IF NOT EXISTS observations_by_operation ON observations(json_extract(reference,'$.command_fingerprint'),json_extract(reference,'$.state'),seq);")?;
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS report_inputs(task TEXT,evidence TEXT,digest TEXT NOT NULL,receipt BLOB NOT NULL,PRIMARY KEY(task,evidence))")?;
+        let mut snapshot=workflow.checkpoint();
+        for evidence in workflow.report_input_ids(){
+            use rusqlite::OptionalExtension;
+            let existing=tx.query_row("SELECT digest FROM report_inputs WHERE task=?1 AND evidence=?2",params![id,evidence],|r|r.get::<_,String>(0)).optional()?;
+            let digest=match existing{
+                Some(digest)=>digest,
+                None=>{
+                    let Ok(v)=workflow.report_input(evidence) else{continue};
+                    let bytes=serde_json::to_vec(&v).map_err(|e|rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                    let sha=wiparse_core::update::hex_sha256(&bytes);
+                    tx.execute("INSERT INTO report_inputs VALUES(?1,?2,?3,?4)",params![id,evidence,sha,bytes])?;sha
+                }
+            };
+            snapshot["report_input_refs"][evidence]=json!({"task":id,"id":evidence,"sha256":digest});
+        }
         tx.execute("INSERT INTO tasks VALUES(?1,?2,?3,?4,?5,unixepoch()) ON CONFLICT(id) DO UPDATE SET question=excluded.question,phase=excluded.phase,progress=excluded.progress,updated=excluded.updated",
-            params![id,entry,question,phase,workflow.state().to_string()])?;
+            params![id,entry,question,phase,snapshot.to_string()])?;
         if let Some(reference) = reference {
             tx.execute(
                 "INSERT INTO observations(task,reference) VALUES(?1,?2)",
@@ -123,6 +208,7 @@ impl Journal {
             for key in [
                 "report_id",
                 "report_sha256",
+                "manifest_sha256",
                 "previous_task_id",
                 "evidence_id",
                 "source_id",
@@ -145,6 +231,15 @@ impl Journal {
                     .filter(|x| x.is_number() || x.as_str().is_some_and(|s| s.len() <= 256))
                 {
                     r[key] = x.clone();
+                }
+            }
+            if method=="agent.recipe" {
+                for key in ["recipe","recipe_version","evidence_id","source_method","product_verdict"]{
+                    if let Some(value)=data.get(key){r[key]=value.clone();}
+                }
+                if let Some(findings)=data.get("findings"){
+                    let raw=findings.to_string();r["findings_sha256"]=json!(wiparse_core::update::hex_sha256(raw.as_bytes()));
+                    if raw.len()<=32768{r["findings"]=findings.clone();}else{r["findings_omitted_bytes"]=json!(raw.len());}
                 }
             }
             r
@@ -225,8 +320,23 @@ impl Journal {
         })
         .collect()
     }
-    pub(crate) fn menu(&self, ui: &mut egui::Ui) -> Option<Recovery> {
-        let mut draft = None;
+    fn recovery_key(&self,entry:&str)->egui::Id{
+        egui::Id::new(("verify-report-bundle",&self.path,entry))
+    }
+    pub(crate) fn poll_recovery(&self,ctx:&Context,entry:&str)->Option<Recovery>{
+        let key=self.recovery_key(entry);
+        let rx=ctx.data(|d|d.get_temp::<crossbeam_channel::Receiver<Recovery>>(key))?;
+        match rx.try_recv(){
+            Ok(item)=>{ctx.data_mut(|d|d.remove::<crossbeam_channel::Receiver<Recovery>>(key));Some(item)}
+            Err(crossbeam_channel::TryRecvError::Empty)=>None,
+            Err(_)=>{ctx.data_mut(|d|d.remove::<crossbeam_channel::Receiver<Recovery>>(key));None}
+        }
+    }
+    pub(crate) fn menu(&self,ui:&mut egui::Ui,entry:&str){
+        let pending=self.recovery_key(entry);
+        if ui.data(|d|d.get_temp::<crossbeam_channel::Receiver<Recovery>>(pending).is_some()){
+            ui.weak("正在核验任务工件…");return;
+        }
         ui.menu_button("任务记录",|ui|{
             // Read once per opening, including empty results.
             let id=ui.id().with((&self.path,"journal-list"));
@@ -243,24 +353,30 @@ impl Journal {
                 Ok(rows)=>{for (entry,question,phase,state) in rows {
                     ui.horizontal_wrapped(|ui|{
                         ui.weak(format!("{entry} · {phase}"));
+                        if let Some(id)=state["previous_task_id"].as_str(){
+                            if ui.small_button("复制任务 ID").on_hover_text(id).clicked(){ui.ctx().copy_text(id.to_owned());}
+                        }
                         if ui.button(question.chars().take(40).collect::<String>()).on_hover_text(&question).clicked(){
+                            let ctx=ui.ctx().clone();
+                            let receipts=ctx.data(|d|d.get_temp::<(String,crate::instrument_control::InstrumentReceipts)>(egui::Id::new("wiparse-ai-instrument-receipts")));
+                            let dir=self.path.parent().unwrap().to_owned();
+                            let(tx,rx)=crossbeam_channel::bounded(1);
+                            ui.data_mut(|d|d.insert_temp(pending,rx));
+                            std::thread::spawn(move||{
                             let remaining=state["open_goals"].as_array().into_iter().flatten().filter_map(Value::as_str).collect::<Vec<_>>().join("、");
                             let refs=state["references"].as_array().into_iter().flatten().filter_map(Value::as_str).collect::<Vec<_>>().join("\n");
-                            let dir=self.path.parent().unwrap();
+                            let mut problems=Vec::new();
                             let project=dir.file_name().unwrap().to_string_lossy().into_owned();
                             let reports=state["saved_reports"].as_array().into_iter().flatten().filter_map(Value::as_str)
                                 .filter_map(|raw|serde_json::from_str::<Value>(raw).ok()).filter_map(|reference|{
                                     let id=reference["report_id"].as_str()?;
                                     uuid::Uuid::parse_str(id).ok()?;
                                     let root=dir.canonicalize().ok()?.join("ai-reports").join(id);
-                                    let path=root.join("report.md").canonicalize().ok()?;
-                                    if path.parent()!=Some(root.as_path()) {return None;}
-                                    let expected=reference["report_sha256"].as_str()?;
-                                    wiparse_core::update::verify_file_sha256(&path,expected).ok()?;
+                                    if let Err(error)=super::artifact::verify_bundle(&root,&reference){problems.push(format!("{id}: {error}"));return None;}
                                     Some((id.to_owned(),reference["evidence_id"].as_str().unwrap_or("").to_owned()))
                                 }).collect::<Vec<_>>();
                             let report_ids=reports.iter().map(|(id,_)|id.as_str()).collect::<Vec<_>>().join("、");
-                            let receipts=ui.ctx().data(|d|d.get_temp::<(String,crate::instrument_control::InstrumentReceipts)>(egui::Id::new("wiparse-ai-instrument-receipts")));
+                            let issues=problems.join("\n");
                             let mut uncertain=state["unacknowledged"].as_array().into_iter().flatten().filter_map(Value::as_str)
                                 .filter_map(|raw|serde_json::from_str::<Value>(raw).ok()).filter_map(|r|r["command_fingerprint"].as_str().map(str::to_owned)).collect::<Vec<_>>();
                             let jobs=state["outstanding_jobs"].as_array().into_iter().flatten().filter_map(Value::as_str)
@@ -272,17 +388,17 @@ impl Journal {
                                 json!({"method":job["tool"],"job_id":job["job_id"],"device_id":job["device_id"],
                                     "outcome":completed.map_or("unknown_readback_required",|r|if r.ok{"driver_completed"}else{"driver_failed"}),"physical_verified":false})
                               }).collect::<Vec<_>>();
-                            let text=format!("继续调查。原始目标：{question}\n上次未决交付：{remaining}\n已校验报告正文：{report_ids}\n设备任务回执：{}\n历史定位信息（须核验来源）：{refs}\n从未决步骤继续；设备动作先读回，不重发历史命令。",json!(jobs));
+                            let text=format!("继续调查。原始目标：{question}\n上次未决交付：{remaining}\n已校验报告及附件：{report_ids}\n需复核的工件：{issues}\n设备任务回执：{}\n历史定位信息（须核验来源）：{refs}\n从未决步骤继续；设备动作先读回，不重发历史命令。",json!(jobs));
                             let mut text=text;
                             if text.len()>15000 {let mut end=15000;while !text.is_char_boundary(end){end-=1;}text.truncate(end);}
-                            draft=Some(Recovery{project,draft:text,question,state,reports,uncertain});
+                            let _=tx.send(Recovery{project,draft:text,question,state,reports,uncertain});ctx.request_repaint();
+                            });
                             ui.close_menu();
                         }
                     });
                 }}
             }
         });
-        draft
     }
 }
 
@@ -316,6 +432,26 @@ pub(crate) fn show_progress(ui: &mut egui::Ui, w: &Workflow) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_task_can_check_prior_writes_without_restoring_the_original_chat() {
+        let dir=tempfile::tempdir().unwrap();
+        let journal=Journal{path:dir.path().join("agent.sqlite3")};
+        let flow=Workflow::default();
+        let p=json!({"port":"COM8"});
+        let key=command_fingerprint("serial.start",&p);
+        let record=|task,event:Value| journal.record(task,"serial","run","running",&flow,Some(("serial.start",&event)));
+        record("old",json!({"state":"dispatching","command_id":"A","command_fingerprint":key}));
+        assert!(journal.needs_readback("serial.start",&p).unwrap());
+        assert!(!journal.needs_readback("serial.start",&json!({"port":"COM9"})).unwrap());
+        record("new",json!({"state":"readback_acknowledged","command_fingerprint":key}));
+        assert!(!journal.needs_readback("serial.start",&p).unwrap());
+        record("new",json!({"state":"dispatching","command_id":"B","command_fingerprint":key}));
+        record("new",json!({"state":"completed","command_id":"A"}));
+        assert!(journal.needs_readback("serial.start",&p).unwrap());
+        record("new",json!({"state":"completed","command_id":"B"}));
+        assert!(!journal.needs_readback("serial.start",&p).unwrap());
+    }
 
     #[test]
     fn repeated_resume_preserves_unknown_writes_until_branch_readback() {
@@ -368,4 +504,21 @@ mod tests {
         assert!(!rows[0].3.to_string().contains("test-secret"));
         std::fs::remove_dir_all(root).unwrap();
     }
+    #[test] fn replay_and_archived_receipt_survive_reopen(){
+        let root=tempfile::tempdir().unwrap();let j=Journal::at(root.path(),"demo");
+        std::fs::create_dir_all(j.path.parent().unwrap()).unwrap();
+        let mut w=Workflow::default();
+        w.record("E1","calc.evaluate",&json!({"ok":true,"data":{"result":17}}));
+        w.update(json!({"steps":[{"id":"s","state":"done","title":"calculate","evidence_ids":["E1"]}]})).unwrap();
+        j.record("task-a","serial","calculate","done",&w,Some(("calc.evaluate",&json!({"ok":true,"evidence_id":"E1"}))));
+        for n in 0..110{w.record(&format!("x{n}"),"page.inspect",&json!({"ok":true}));}
+        assert!(w.get("E1").is_err());assert_eq!(w.report_input("E1").unwrap()["result"]["data"]["result"],17);
+        let r=j.replay(&json!({"task_id":"task-a"})).unwrap();
+        let mut restored=Workflow::default();restored.resume_checkpoint(&r["checkpoint"],"calculate",&[]);
+        assert_eq!(report_input(Some(&j),&restored,"prior-E1").unwrap()["result"]["data"]["result"],17);
+        assert_eq!(r["observations"][0]["receipt"]["evidence_id"],"E1");
+        let db=Connection::open(&j.path).unwrap();db.execute("UPDATE report_inputs SET receipt=x'00'",[]).unwrap();
+        assert!(report_input(Some(&j),&restored,"prior-E1").is_err());
+    }
+
 }

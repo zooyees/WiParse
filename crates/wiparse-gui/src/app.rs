@@ -1133,6 +1133,7 @@ impl eframe::App for WiParseApp {
         ctx.data_mut(|data| {
             data.insert_temp(egui::Id::new("wiparse-ai-platform-bridge"),self.api.clone());
             data.insert_temp(egui::Id::new("wiparse-ai-instrument-receipts"),self.instruments.receipt_source());
+            data.insert_temp(egui::Id::new("wiparse-ai-project-id"),self.test_tool.current_project_id().to_owned());
             data.insert_temp(egui::Id::new("wiparse-ai-project-root"),self.test_tool.data_root_path());
         });
         self.serial.tick_ai(ctx, self.lang, self.test_tool.current_project_id(), &self.cfg.ai, self.test_tool.running_plugin_id().is_some());

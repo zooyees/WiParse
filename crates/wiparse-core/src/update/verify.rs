@@ -33,7 +33,7 @@ pub fn verify_file_sha256(path: &Path, expected_hex: &str) -> Result<(), VerifyE
     Ok(())
 }
 
-fn hex_sha256_file(path: &Path) -> Result<String, io::Error> {
+pub fn hex_sha256_file(path: &Path) -> Result<String, io::Error> {
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 256 * 1024];

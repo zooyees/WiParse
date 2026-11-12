@@ -68,9 +68,14 @@ export function loadBundle(root, args={}) {
 export function preflightBundle(b, capabilities={implemented:[],industrial_approved:false}) {
   const blocking=[];
   if(b.args.mode==='live') {
-    // SW-01/03 and DG capture are not integrated yet. No legacy bypass or speculative power command.
-    blocking.push('INTEGRATION.LIVE_BACKEND_NOT_VALIDATED');
-    const required=new Set(b.cases.flatMap(c=>c.required_capabilities));
+    // Match the approved station configuration and its independent watchdog before allowing a case.
+    const live=b.station.live;
+    if(!live?.resource || !b.station.station_id || b.station.station_id==='UNCOMMISSIONED' ||
+        capabilities.live_contract!=='wiparse.fenced-wireless/1' || capabilities.station_id!==b.station.station_id ||
+        capabilities.approved_station_sha256!==b.hashes.station || capabilities.watchdog_verified!==true)
+      blocking.push('INTEGRATION.LIVE_BACKEND_NOT_VALIDATED');
+    if(!b.cases.every(c=>c.capture_plan?.timing_budget_approved===true))blocking.push('TIMING.NOT_APPROVED');
+    const required=new Set(['device.lease.acquire','device.lease.release','capture.arm','capture.status','dongle.capture.start','stimulus.apply','station.safe_stop','check.evaluate',...b.cases.flatMap(c=>c.required_capabilities)]);
     for(const c of required) if(!capabilities.implemented?.includes(c)) blocking.push(`CAPABILITY.MISSING:${c}`);
     if(!b.limits.approved || b.limits.simulation_only) blocking.push('LIMITS.NOT_PRODUCT_APPROVED');
     if(!b.station.protection.verified || !b.station.protection.stop_sequence_approved) blocking.push('SAFETY.NOT_VERIFIED');

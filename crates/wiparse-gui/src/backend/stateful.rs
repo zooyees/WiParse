@@ -39,6 +39,11 @@ pub fn drain_api_requests(bridge: &ApiBridge, mut host: UiHost<'_>) -> bool {
                 .try_send(err(&req.method, "request expired before execution"));
             continue;
         }
+        if req.ai_guard.is_some() && req.method == "instrument.command" {
+            let result = host.instruments.agent_command(&host.test_tool.data_root_path(), &req.params);
+            let _ = req.reply.try_send(result);
+            continue;
+        }
         persist |= handle(bridge, &mut host, req);
     }
     let (port, baud) = host.serial.current_port_baud();
@@ -48,6 +53,11 @@ pub fn drain_api_requests(bridge: &ApiBridge, mut host: UiHost<'_>) -> bool {
 }
 
 pub(crate) fn handle(bridge: &ApiBridge, host: &mut UiHost<'_>, req: PendingRequest) -> bool {
+    if req.method=="agent.tasks" {
+        let journal=crate::ai::journal::Journal::at(&host.test_tool.data_root_path(),&host.test_tool.current_project_id());
+        std::thread::spawn(move||{let result=match journal.replay(&req.params){Ok(v)=>ok("agent.tasks",v),Err(e)=>err("agent.tasks",&e)};let _=req.reply.try_send(result);});
+        return false;
+    }
     if req.method.starts_with("engineering.") {
         let method=req.method.clone();
         if req.ai_guard.is_none(){let _=req.reply.try_send(err(&method,"AI.GUARD_REQUIRED"));return false;}

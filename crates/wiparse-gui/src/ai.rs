@@ -1,5 +1,6 @@
 //! Shared provider settings, conversation and bounded engineering tasks.
 pub(crate) mod agent;
+pub(crate) mod execution;
 pub(crate) mod journal;
 pub(crate) mod broker;
 pub(crate) mod artifact;

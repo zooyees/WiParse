@@ -1,3 +1,4 @@
+mod screenshot;
 use super::*;
 use serde_json::{json,Value};
 use std::{io::{BufRead,BufReader,Read},sync::{Arc,atomic::{AtomicBool,Ordering}}};
@@ -24,21 +25,59 @@ impl TestReportPanel {
                     let base=path.parent().ok_or("REPORT.NO_DIRECTORY")?.canonicalize().map_err(|e|e.to_string())?;
                     let target=base.join(name).canonicalize().map_err(|e|e.to_string())?;
                     if target.parent()!=Some(base.as_path()) || !path_in_project_jail(&root,&project,&target){return Err("REPORT.ATTACHMENT_OUTSIDE_SCOPE".into());}
-                    let mut file=std::fs::File::open(&path).map_err(|e|e.to_string())?;
-                    let mut input=Vec::new();
-                    std::io::Read::by_ref(&mut file).take(4*1024*1024+1).read_to_end(&mut input).map_err(|e|e.to_string())?;
-                    if input.len()>4*1024*1024{return Err("REPORT.ATTACHMENT_INDEX_TOO_LARGE".into());}
-                    if !links_attachment(&String::from_utf8_lossy(&input),name){return Err("REPORT.ATTACHMENT_NOT_LINKED".into());}
+                    let file=std::fs::File::open(&path).map_err(|e|e.to_string())?;
+                    if !linked_in_reader(BufReader::new(file),name,&cancel)?{return Err("REPORT.ATTACHMENT_NOT_LINKED".into());}
                     Ok(target)
                 };
                 match attachment(){Ok(path)=>path,Err(e)=>return crate::ai::agent::failure(e)}
             }else{path};
+            if path.extension().and_then(|e|e.to_str()).is_some_and(|s|matches!(s.to_ascii_lowercase().as_str(),"png"|"jpg"|"jpeg")){
+                if p.get("scan").is_some(){return crate::ai::agent::failure("REPORT.CSV_REQUIRED");}
+                return match screenshot::inspect(&path,&cancel){Ok(data)=>json!({"ok":true,"data":data}),Err(e)=>crate::ai::agent::failure(e)};
+            }
             if !path.extension().and_then(|e|e.to_str()).is_some_and(|e|matches!(e.to_lowercase().as_str(),"md"|"markdown"|"txt"|"log"|"csv"|"json"|"jsonl")) {return crate::ai::agent::failure("REPORT.TEXT_REQUIRED: image pixels are not available to this text model");}
-            match read_page(&path,p["start_line"].as_u64().unwrap_or(1),p["limit"].as_u64().unwrap_or(80),p["start_byte"].as_u64().unwrap_or(0),&cancel){Ok(v)=>json!({"ok":true,"data":v}),Err(e)=>crate::ai::agent::failure(e)}
+            if let Some(rule)=p.get("scan"){return match paging::scan_table(&path,rule,&cancel){
+                Ok(mut v)=>{v["source_id"]=json!(path.file_name().unwrap_or_default().to_string_lossy());json!({"ok":true,"data":v})},Err(e)=>crate::ai::agent::failure(e)
+            };}
+            if p["attachment"]=="adapter-matrix.json" && !["cursor","start_line","start_byte","limit"].iter().any(|k|p.get(k).is_some()){
+                if let Ok(file)=fs::File::open(&path){
+                    let mut bytes=Vec::new();
+                    if file.take(131073).read_to_end(&mut bytes).is_ok() && bytes.len()<=131072 {
+                        if let Ok(matrix)=serde_json::from_slice::<Value>(&bytes){
+                            if let Some(rows)=matrix["rows"].as_array().filter(|a|a.len()<=500){
+                                return json!({"ok":true,"data":{"source_id":"adapter-matrix.json","sha256":wiparse_core::update::hex_sha256(&bytes),"adapter_rows":rows,"mode":matrix["mode"],"reached_eof":true,"coverage":{"complete":true}}});
+                            }
+                        }
+                    }
+                }
+            }
+            match read_page_at(&path,p["cursor"].as_str(),p["start_line"].as_u64().unwrap_or(1),p["limit"].as_u64().unwrap_or(80),p["start_byte"].as_u64().unwrap_or(0),&cancel){Ok(v)=>json!({"ok":true,"data":v}),Err(e)=>crate::ai::agent::failure(e)}
         })
     }
 }
 
+// Keep Markdown paragraph and inline-code boundaries. Discard fenced bodies as they stream in.
+fn linked_in_reader(mut reader:impl BufRead,name:&str,cancel:&AtomicBool)->Result<bool,String>{
+    let mut line=String::new();
+    let mut block=String::new();
+    let mut fence=None;
+    loop {
+        if cancel.load(Ordering::Relaxed){return Err("AGENT.CANCELLED".into());}
+        line.clear();
+        let eof=reader.read_line(&mut line).map_err(|e|e.to_string())?==0;
+        if let Some((ch,n))=fence {
+            if is_fence_close(line.trim(),ch,n){fence=None;}
+        } else {
+            let open=parse_fence_open(line.trim());
+            if eof || line.trim().is_empty() || open.is_some() {
+                if block.contains("](") && links_attachment(&block,name){return Ok(true);}
+                block.clear();
+                fence=open.map(|(ch,n,_)|(ch,n));
+            }else{block.push_str(&line);}
+        }
+        if eof{return Ok(false);}
+    }
+}
 fn links_attachment(markdown:&str,name:&str)->bool {
     let inline=|line:&str| {
         let chars=line.chars().collect::<Vec<_>>();
@@ -69,32 +108,12 @@ fn links_attachment(markdown:&str,name:&str)->bool {
     })
 }
 
-fn read_page(path:&Path,start:u64,limit:u64,start_byte:u64,cancel:&AtomicBool)->Result<Value,String> {
-    if start==0||start>1_000_000||limit==0||limit>200||start_byte>16*1024*1024{return Err("REPORT.INVALID_READ".into());}
-    let file=fs::File::open(path).map_err(|e|e.to_string())?;
-    let before=file.metadata().map_err(|e|e.to_string())?;
-    let mut reader=BufReader::new(file.take(16*1024*1024+1));
-    let mut raw=Vec::new();let mut rows=Vec::new();let mut line=0;let mut bytes=0;let mut payload=0;let mut eof=false;let mut next=None;let mut next_byte=0;
-    loop {
-        if cancel.load(Ordering::Acquire){return Err("AGENT.CANCELLED".into());}
-        raw.clear();let n=reader.read_until(b'\n',&mut raw).map_err(|e|e.to_string())?;
-        bytes+=n;
-        if bytes>16*1024*1024{return Err("REPORT.READ_BUDGET: use report.search for large reports".into());}
-        if n==0{eof=true;break;}
-        line+=1;if line<start{continue;}
-        if rows.len()>=limit as usize {next=Some(line);break;}
-        let text=String::from_utf8_lossy(&raw);let text=text.trim_end_matches(['\r','\n']);
-        let begin=if line==start{start_byte as usize}else{0};
-        if begin>text.len()||!text.is_char_boundary(begin){return Err("REPORT.INVALID_BYTE_CURSOR: use next_line and next_byte together".into());}
-        let mut end=text.len().min(begin+4096);while !text.is_char_boundary(end){end-=1;}
-        if payload+end-begin>16*1024&&!rows.is_empty(){next=Some(line);break;}
-        payload+=end-begin;
-        rows.push(json!({"line":line,"text":&text[begin..end],"start_byte":begin,"next_byte":if end<text.len(){Some(end)}else{None},"truncated":false,"line_complete":end==text.len(),"encoding_lossy":matches!(String::from_utf8_lossy(&raw),std::borrow::Cow::Owned(_))}));
-        if end<text.len(){next=Some(line);next_byte=end;break;}
-    }
-    let after=fs::metadata(path).map_err(|e|e.to_string())?;
-    if before.len()!=after.len()||before.modified().ok()!=after.modified().ok(){return Err("REPORT.SOURCE_CHANGED: read again".into());}
-    Ok(json!({"file":path.file_name().map(|s|s.to_string_lossy()),"source_id":wiparse_core::log_analysis::source_id_for_path(path).ok(),"start_line":start,"lines":rows,"next_line":next,"next_byte":next_byte,"reached_eof":eof,"source_bytes":before.len(),"scope":"report text page; linked images/waveforms have not been inspected"}))
+mod paging;
+use paging::read_page_at;
+
+#[cfg(test)]
+fn read_page(path:&Path,start:u64,limit:u64,start_byte:u64,cancel:&AtomicBool)->Result<Value,String>{
+    read_page_at(path,None,start,limit,start_byte,cancel)
 }
 
 #[cfg(test)]mod tests {
@@ -145,5 +164,17 @@ mod attachment_tests {
         assert!(links_attachment("## Data\n\n- [CSV](data.csv)", "data.csv"));
         assert!(!links_attachment("```md\n[CSV](data.csv)\n```", "data.csv"));
         assert!(!links_attachment("Example `[CSV](data.csv)`", "data.csv"));
+    }
+}
+
+#[cfg(test)]
+mod large_parent {
+    use super::*;
+    #[test] fn late_link_is_resolved_while_code_is_excluded(){
+        let mut md="\x60\x60\x60log\n".to_owned();
+        for _ in 0..4100{md.push_str(&"x".repeat(1024));md.push('\n');}
+        md.push_str("[fake](secret.csv)\n\x60\x60\x60\n\n[values](data.csv)\n");
+        assert!(!linked_in_reader(md.as_bytes(),"secret.csv",&AtomicBool::new(false)).unwrap());
+        assert!(linked_in_reader(md.as_bytes(),"data.csv",&AtomicBool::new(false)).unwrap());
     }
 }

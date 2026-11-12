@@ -30,12 +30,17 @@ tiny_http = "0.12"
 bytemuck = "1"
 memmap2 = "0.9"
 tempfile = "3"
+same-file = "1"
+csv = "1"
 rusqlite = { workspace = true }
 # ICO app icon + PNG/JPEG report/scope captures. Avoid default-features (AVIF/EXR/…).
 image = { version = "0.25", default-features = false, features = ["ico", "png", "jpeg"] }
 
 mermaid-rs-renderer = { version = "=0.3.1", default-features = false }
 resvg = { version = "0.47", default-features = false, features = ["text", "system-fonts"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Graphics_Imaging", "Media_Ocr", "Security_Cryptography", "Storage_Streams", "Foundation_Collections", "Globalization"] }
 
 [build-dependencies]
 winresource = "0.1"

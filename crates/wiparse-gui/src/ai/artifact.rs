@@ -75,25 +75,61 @@ fn source_links(dir:&Path,dataset:&wiparse_core::log_analysis::timeline::Dataset
     Ok(links)
 }
 
+pub(crate) fn archive_dataset(root:&Path,project:&str,query:&str,dataset:Arc<wiparse_core::log_analysis::timeline::Dataset>,text:Arc<String>,table:Option<Arc<tempfile::NamedTempFile>>,cancel:&AtomicBool)->Result<Value,String>{
+    let p=json!({"title":"数据提取记录","markdown":"","dataset_archive":true});
+    let input=json!({"method":"data.extract","evidence_id":"source","result":{"data":{"query_id":query}}});
+    let mut r=create_with_dataset(root,project,&p,&[input],cancel,Some((query.into(),dataset,text,table)))?;
+    r.as_object_mut().unwrap().remove("relative_path");r.as_object_mut().unwrap().remove("open_tool");
+    r["query_id"]=json!(query);Ok(r)
+}
+fn dataset_dir(root:&Path,project:&str,id:&str)->Result<PathBuf,String>{
+    let project_dir=report_path(root,project,id)?.ancestors().nth(3).unwrap().to_owned();
+    let base=project_dir.join("agent-datasets");
+    if base.exists() && base.canonicalize().map_err(|e|e.to_string())?.parent()!=Some(project_dir.canonicalize().map_err(|e|e.to_string())?.as_path()){return Err("REPORT.ARCHIVE_OUTSIDE_PROJECT".into());}
+    let dir=base.join(id);
+    if dir.exists() && dir.canonicalize().map_err(|e|e.to_string())?.parent()!=Some(base.canonicalize().map_err(|e|e.to_string())?.as_path()){return Err("REPORT.ARCHIVE_OUTSIDE_PROJECT".into());}Ok(dir)
+}
 fn create_with_dataset(root:&Path,project:&str,p:&Value,evidence:&[Value],cancel:&AtomicBool,dataset:Option<(String,Arc<wiparse_core::log_analysis::timeline::Dataset>,Arc<String>,Option<Arc<tempfile::NamedTempFile>>)>)->Result<Value,String>{
+    let conclusion=format!("{}\n{}",p["title"].as_str().unwrap_or(""),p["markdown"].as_str().unwrap_or(""));
+    if wiparse_core::ai::workflow::asserted_table_pass(&conclusion) && evidence.iter().any(|e|e["method"]=="report.read"){
+        let mut matched=false;
+        for e in evidence.iter().filter(|e|e["method"]=="report.read"){
+            let data=e["result"].get("data").unwrap_or(&e["result"]);
+            if data["violations"].is_u64(){
+                matched=true;
+                if wiparse_core::ai::workflow::table_verdict(data)!="PASS"{return Err("REPORT.TABLE_VERDICT_CONFLICT".into());}
+            }
+        }
+        if !matched{return Err("REPORT.COMPLETE_SCAN_REQUIRED".into());}
+    }
     for e in evidence{
         let result=&e["result"];let data=result.get("data").unwrap_or(result);
-        if e["method"]=="data.extract" && data["query_id"].is_string() && !dataset.as_ref().is_some_and(|(id,_,_,_)|Some(id.as_str())==data["query_id"].as_str()){
+        if e["method"]=="data.extract" && data["query_id"].is_string() && data["dataset_archive"]["query_id"]!=data["query_id"] && !dataset.as_ref().is_some_and(|(id,_,_,_)|Some(id.as_str())==data["query_id"].as_str()){
             return Err("REPORT.FILE_DATASET_EXPIRED: extract the current file again and cite its new evidence ID".into());
         }
     }
     let mut attached=false;
-    let id=uuid::Uuid::new_v4().to_string();let path=report_path(root,project,&id)?;let dir=path.parent().unwrap();
+    let id=uuid::Uuid::new_v4().to_string();let path=report_path(root,project,&id)?;let archive_dir;let dir=if p["dataset_archive"]==true {archive_dir=dataset_dir(root,project,&id)?;archive_dir.as_path()}else{path.parent().unwrap()};
     if cancel.load(Ordering::Acquire){return Err("REPORT.CANCELLED".into());}
     fs::create_dir_all(dir.parent().unwrap()).map_err(|e|e.to_string())?;
     // Resolve again after creation, rejecting redirection of project parents.
     report_path(root,project,&id)?;
-    fs::create_dir(dir).map_err(|e|e.to_string())?;
+    let destination=dir;
+    let staging=tempfile::Builder::new().prefix(".building-").tempdir_in(dir.parent().unwrap()).map_err(|e|e.to_string())?;
+    let dir=staging.path();
     let mut md=format!("# {}\n\n{}\n\n## 可核验证据\n\n以下为本地工具输出；AI解释不替代原始测试判定。\n\n[工具证据 JSON](evidence.json)\n\n",p["title"].as_str().unwrap(),p["markdown"].as_str().unwrap());
     let mut curves=0;
     for (n,e) in evidence.iter().enumerate(){
         md.push_str(&format!("- `{}` · `{}`\n",e["evidence_id"].as_str().unwrap_or(""),e["method"].as_str().unwrap_or("")));
         let result=&e["result"];let data=result.get("data").unwrap_or(result);
+        if data["violations"].is_u64() && e["method"]=="report.read"{
+            let verdict=wiparse_core::ai::workflow::table_verdict(data);
+            md.push_str(&format!("  列 {}，规则 {}，有效 {} 行，无效 {} 行，越限 {} 行，覆盖完整 {}。**{}**\n",
+                data["column"],data["rule"],data["valid"],data["invalid"],data["violations"],data["coverage"]["complete"],verdict));
+            for row in data["violation_samples"].as_array().into_iter().flatten(){
+                md.push_str(&format!("  - 第 {} 行，实测 {}\n",row["line"],row["value"]));
+            }
+        }
         let windows=data.get("source_window").map(|w|("测量采样区间".to_owned(),w)).into_iter()
             .chain(data["frames"].as_array().into_iter().flatten().filter_map(|f|Some((format!("协议帧 #{}",f["index"].as_u64()?),f.get("source_window")?))));
         for (i,(label,window)) in windows.enumerate() {
@@ -103,6 +139,23 @@ fn create_with_dataset(root:&Path,project:&str,p:&Value,evidence:&[Value],cancel
             md.push_str(&format!("  - [{label}]({name}) · #{} – #{}\n",window["first_sample"],window["last_sample"]));
         }
         if let Some(coverage)=data.get("coverage"){md.push_str(&format!("  覆盖：`{coverage}`\n"));}
+        let archive=&data["dataset_archive"];
+        if archive["report_id"].is_string() && e["method"]=="data.extract" {
+            if archive["query_id"]!=data["query_id"]{return Err("REPORT.DATASET_ID_MISMATCH".into());}
+            let saved=dataset_dir(root,project,archive["report_id"].as_str().unwrap())?.canonicalize().map_err(|e|e.to_string())?;
+            verify_bundle(&saved,archive)?;
+            let metadata:Value=serde_json::from_slice(&fs::read(saved.join("manifest.json")).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+            let mut chart_md=fs::read_to_string(saved.join("report.md")).map_err(|e|e.to_string())?;
+            for (name,entry) in metadata["files"].as_object().ok_or("REPORT.INVALID_MANIFEST")?{
+                if cancel.load(Ordering::Acquire){return Err("REPORT.CANCELLED".into());}
+                if name=="report.md"{continue;}
+                let dest=format!("extract-{n}-{name}");
+                fs::copy(saved.join(name),dir.join(&dest)).map_err(|e|e.to_string())?;
+                wiparse_core::update::verify_file_sha256(&dir.join(&dest),entry["sha256"].as_str().unwrap_or("")).map_err(|e|e.to_string())?;
+                chart_md=chart_md.replace(&format!("]({name})"),&format!("]({dest})"));
+            }
+            md.push_str(&chart_md);curves+=archive["curves"].as_u64().unwrap_or(0) as usize;continue;
+        }
         if let Some((id,d,source_text,full_table))=&dataset {
             if !attached && matches!(e["method"].as_str(),Some("data.extract"|"data.present")) && data["query_id"].as_str()==Some(id) {
                 if let Some(hash)=d.provenance["decoded_text_sha256"].as_str(){md.push_str(&format!("\n解码后文本 SHA-256：`{hash}`\n"));}
@@ -171,8 +224,47 @@ fn create_with_dataset(root:&Path,project:&str,p:&Value,evidence:&[Value],cancel
     fs::write(dir.join("evidence.json"),serde_json::to_vec_pretty(evidence).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
     if cancel.load(Ordering::Acquire){return Err("REPORT.CANCELLED: incomplete unpublished artifact directory retained".into());}
     let report_sha256=wiparse_core::update::hex_sha256(md.as_bytes());
-    fs::write(&path,md).map_err(|e|e.to_string())?;
-    Ok(json!({"report_id":id,"report_sha256":report_sha256,"relative_path":format!("projects/{project}/ai-reports/{id}/report.md"),"curves":curves,"evidence_count":evidence.len(),"portable":true,"open_tool":"report.open"}))
+    fs::write(dir.join("report.md"),md).map_err(|e|e.to_string())?;
+    let mut files=std::collections::BTreeMap::new();
+    for entry in fs::read_dir(dir).map_err(|e|e.to_string())? {
+        if cancel.load(Ordering::Relaxed){return Err("REPORT.CANCELLED".into());}
+        let path=entry.map_err(|e|e.to_string())?.path();
+        let name=path.file_name().unwrap().to_string_lossy().into_owned();
+        let digest=wiparse_core::update::hex_sha256_file(&path).map_err(|e|e.to_string())?;
+        files.insert(name,json!({"bytes":path.metadata().map_err(|e|e.to_string())?.len(),"sha256":digest,"type":path.extension().and_then(|s|s.to_str())}));
+    }
+    let manifest=serde_json::to_vec(&json!({"version":1,"files":files})).map_err(|e|e.to_string())?;
+    let manifest_sha256=wiparse_core::update::hex_sha256(&manifest);
+    fs::write(dir.join("manifest.json"),manifest).map_err(|e|e.to_string())?;
+    if cancel.load(Ordering::Acquire){return Err("REPORT.CANCELLED".into());}
+    fs::rename(dir,destination).map_err(|e|e.to_string())?;
+    Ok(json!({"report_id":id,"report_sha256":report_sha256,"manifest_sha256":manifest_sha256,"relative_path":format!("projects/{project}/ai-reports/{id}/report.md"),"curves":curves,"evidence_count":evidence.len(),"portable":true,"open_tool":"report.open"}))
+}
+/// Verify against the digest persisted at creation, including after moving the project.
+pub(super) fn verify_bundle(dir:&Path,receipt:&Value)->Result<(),String>{
+    let check=|name:&str|->Result<PathBuf,String>{
+        if name.starts_with('.') || !name.bytes().all(|c|c.is_ascii_alphanumeric() || matches!(c,b'.'|b'-'|b'_')){
+            return Err(format!("{name}: invalid filename"));
+        }
+        let path=dir.join(name).canonicalize().map_err(|e|format!("{name}: {e}"))?;
+        if path.parent()!=Some(dir) {return Err(format!("{name}: outside report directory"));}
+        Ok(path)
+    };
+    wiparse_core::update::verify_file_sha256(&check("report.md")?,receipt["report_sha256"].as_str().unwrap_or("")).map_err(|e|format!("report.md: {e}"))?;
+    let expected=receipt["manifest_sha256"].as_str().ok_or("旧版报告正文已核验，附件创建时未记录摘要")?;
+    let manifest=check("manifest.json")?;
+    if manifest.metadata().map_err(|e|e.to_string())?.len()>1024*1024{return Err("manifest.json: invalid manifest size".into());}
+    let bytes=fs::read(manifest).map_err(|e|e.to_string())?;
+    if wiparse_core::update::hex_sha256(&bytes)!=expected{return Err("manifest.json: digest mismatch".into());}
+    let m:Value=serde_json::from_slice(&bytes).map_err(|e|e.to_string())?;
+    let files=m["files"].as_object().ok_or("REPORT.INVALID_MANIFEST")?;
+    let mut failures=Vec::new();
+    for (name,meta) in files{
+        if let Err(error)=check(name).and_then(|p|wiparse_core::update::verify_file_sha256(&p,meta["sha256"].as_str().unwrap_or("")).map_err(|e|format!("{name}: {e}"))){
+            failures.push(error);
+        }
+    }
+    if failures.is_empty(){Ok(())}else{Err(failures.join("、"))}
 }
 fn chart(points:&[Option<(f64,f64)>])->image::RgbImage{
     use image::Rgb;
@@ -203,4 +295,33 @@ fn chart(points:&[Option<(f64,f64)>])->image::RgbImage{
  assert!(report_path(&root,"../outside",result["report_id"].as_str().unwrap()).is_err());
  fs::remove_dir_all(root).unwrap();
  }
+}
+
+#[cfg(test)]
+mod bundle_regression {
+    use super::*;
+    #[test] fn archived_series_can_be_exported_without_a_live_dataset(){
+        use wiparse_core::log_analysis::timeline::{Dataset,Field};
+        let root=tempfile::tempdir().unwrap();
+        let dataset=Dataset{fields:vec![Field{name:"VIN".into(),unit:"V".into(),pattern:String::new(),scale:1.}],
+            rows:vec![("src".into(),0.,1,vec![Some(5.)])],omitted:0,provenance:json!({"source_coordinate":"source_line_1based"})};
+        let cancel=AtomicBool::new(false);
+        let receipt=archive_dataset(root.path(),"demo","query",Arc::new(dataset),Arc::new("VIN=5".into()),None,&cancel).unwrap();
+        let ev=json!({"method":"data.extract","evidence_id":"E1","ok":true,"result":{"data":{"query_id":"query","dataset_archive":receipt}}});
+        let report=create(root.path(),"demo",&json!({"title":"VIN","markdown":"scope"}),&[ev],&cancel).unwrap();
+        assert_eq!(report["curves"],1);
+        let md=report_path(root.path(),"demo",report["report_id"].as_str().unwrap()).unwrap();
+        assert!(fs::read_to_string(md).unwrap().contains("extract-0-dataset-0-0.png"));
+    }
+    #[test] fn portable_bundle_tracks_attachment_replacement_and_rename(){
+        let root=tempfile::tempdir().unwrap();
+        let receipt=create(root.path(),"demo",&json!({"title":"Test","markdown":"Results"}),&[json!({"ok":true,"method":"calc.evaluate","result":{"ok":true,"data":{"value":3}}})],&AtomicBool::new(false)).unwrap();
+        let path=report_path(root.path(),"demo",receipt["report_id"].as_str().unwrap()).unwrap();
+        let moved=root.path().join("moved");fs::rename(path.parent().unwrap(),&moved).unwrap();let dir=moved.canonicalize().unwrap();
+        verify_bundle(&dir,&receipt).unwrap();
+        fs::rename(dir.join("evidence.json"),dir.join("renamed.json")).unwrap();
+        assert!(verify_bundle(&dir,&receipt).unwrap_err().contains("evidence.json"));
+        fs::write(dir.join("evidence.json"),"[]").unwrap();assert!(verify_bundle(&dir,&receipt).is_err());
+        fs::write(dir.join("report.md"),"changed").unwrap();assert!(verify_bundle(&dir,&receipt).unwrap_err().contains("report.md"));
+    }
 }

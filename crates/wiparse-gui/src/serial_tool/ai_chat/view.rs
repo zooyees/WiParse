@@ -132,11 +132,17 @@ impl SerialAiChat {
                 {
                     actions.push(UiAction::Close);
                 }
+                let journal=crate::ai::journal::Journal::for_project(ui.ctx(),&state.binding.project);
+                if !self.working(){
+                    if let Some(recovery)=journal.as_ref().and_then(|j|j.poll_recovery(ui.ctx(),"serial")){
+                        self.prompt=recovery.draft.clone();self.recovery=Some(recovery);
+                    }
+                }
                 ui.menu_button("…", |ui| {
                     if self.working() && self.run.is_some() && ui.add_enabled(!self.prompt.trim().is_empty(),egui::Button::new(label(lang,"用输入内容纠正当前任务","Steer current task with draft"))).clicked(){
                         actions.push(UiAction::Correct(self.prompt.clone()));ui.close_menu();
                     }
-                    if !self.working(){if let Some(j)=crate::ai::journal::Journal::for_project(ui.ctx(),&state.binding.project){if let Some(recovery)=j.menu(ui){self.prompt=recovery.draft.clone();self.recovery=Some(recovery);}}}
+                    if !self.working(){if let Some(j)=&journal{j.menu(ui,"serial");}}
                     ui.menu_button(label(lang,"日志选项与预处理","Log options and processing"),|ui|{ui.set_width((ui.ctx().screen_rect().width()-24.0).clamp(180.0,260.0));self.library_controls(ui,lang,actions);});
                     if ui
                         .button(label(lang, "AI 服务设置…", "AI service settings…"))

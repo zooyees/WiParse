@@ -17,7 +17,17 @@ def score(rows):
     margin = z * math.sqrt(p*(1-p)/n + z*z/(4*n*n)) / scale
     times = sorted(row["elapsed_ms"] for row in rows)
     have_cost = all(row["total_tokens"] is not None for row in rows)
-    return dict(tasks=n, correct=correct, rate=p, wilson_95=[middle-margin, middle+margin],
+    known=[r for r in rows if r["total_tokens"] is not None]
+    known_correct=sum(r["correct"] for r in known)
+    metered=[r for r in rows if r.get("usage_source")=="request_ledger"]
+    requests=sum(r["requests"] for r in metered)
+    reported=sum(r["reported_requests"] for r in metered)
+    observed=[r["known_tokens"] for r in metered if r.get("known_tokens") is not None]
+    return dict(metered_tasks=len(metered), ledger_requests=requests, ledger_reported_requests=reported,
+                request_usage_coverage=reported/requests if requests else None,
+                ledger_observed_tokens=sum(observed) if observed else None, usage_task_coverage=len(known)/n, known_cost_tasks=len(known), known_cost_correct=known_correct,
+                known_subset_tokens_per_correct=sum(r["total_tokens"] for r in known)/known_correct if known_correct else None,
+                tasks=n, correct=correct, rate=p, wilson_95=[middle-margin, middle+margin],
                 critical_failures=dict(critical), missing_usage=sum(row["total_tokens"] is None for row in rows),
                 tokens_per_correct=sum(row["total_tokens"] for row in rows)/correct if have_cost and correct else None,
                 elapsed_ms_p50=times[math.ceil(.5*n)-1], elapsed_ms_p95=times[math.ceil(.95*n)-1])

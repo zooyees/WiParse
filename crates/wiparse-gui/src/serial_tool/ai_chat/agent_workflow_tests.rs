@@ -549,5 +549,5 @@ fn repeated_native_stalls_switch_this_task_to_json_and_keep_scan_result() {
     while p.ai_chat.working()&&Instant::now()<deadline{p.tick_ai(&ctx,Lang::Zh,"agent-test".into(),&config,false);thread::sleep(Duration::from_millis(3));}
     worker.join().unwrap();assert!(!p.ai_chat.status_error,"{}",p.ai_chat.status);
     assert_eq!(p.ai_chat.run.as_ref().unwrap().phase,"completed");assert_eq!(p.ai_chat.tool_round,1);
-    assert!(!run::Run::new().json_fallback);
+    assert!(!run::Run::new().recovery_policy.json_fallback);
 }

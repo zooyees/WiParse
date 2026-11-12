@@ -9,6 +9,29 @@ fn reply(r: crate::backend::InvokeReply) -> Value {
 fn wait(method: &str, params: Value) -> Value {
     json!({"_agent_wait":{"method":method,"params":params,"interval_ms":100}})
 }
+fn scope_observation(plan:&Value,job:&Value,start:i64,end:i64)->Value{
+    use wiparse_core::instrument::ScopeMeasType;
+    let v=&plan["verify"];
+    let metric=serde_json::from_value::<ScopeMeasType>(v["meas_type"].clone()).ok();
+    let raw=job["detail"]["response"].as_str().unwrap_or("");
+    let reading=metric.and_then(|m|{
+        let prefix=format!("CH{} {}: ",v["channel"].as_u64()?,m.label());
+        let (digits,unit)=raw.strip_prefix(&prefix)?.split_once(' ')?;
+        let (prefix,base)=unit.trim().split_at_checked(unit.trim().len().checked_sub(m.base_unit().len())?)?;
+        if base!=m.base_unit(){return None;}
+        let scale=match prefix{""=>1.,"m"=>1e-3,"µ"|"μ"|"u"=>1e-6,"n"=>1e-9,"p"=>1e-12,"k"=>1e3,"M"=>1e6,"G"=>1e9,_=>return None};
+        let value=digits.parse::<f64>().ok()?*scale;
+        (job["ok"]==true && value.is_finite() && value.abs()<1e35 && end>=start &&
+            end-start<=v["window_ms"].as_i64()?).then_some(value)
+    });
+    let (lo,hi,u)=(v["min"].as_f64(),v["max"].as_f64(),v["uncertainty"].as_f64());
+    let comparison=match (reading,lo,hi,u){(Some(x),Some(lo),Some(hi),Some(u)) if x+u<lo || x-u>hi=>"outside",
+        (Some(x),Some(lo),Some(hi),Some(u)) if x-u>=lo && x+u<=hi=>"inside",_=>"unknown"};
+    json!({"kind":"independent_scope_display_reading","source":plan["source"],"observer":plan["observer"],"channel":v["channel"],
+        "metric":v["meas_type"],"unit":metric.map(|m|m.base_unit()),"value":reading,"display_response":raw,"display_comparison":comparison,"rule":v,
+        "job_id":job["job_id"],"job_session":job["job_session"],"host_read_window_utc_ms":[start,end],"physical_verified":false,
+        "scope":"Instrument display precision; acquisition timestamp, probe wiring and calibration are not established by a query."})
+}
 impl WiParseApp {
     fn agent_context(&self) -> ContextState {
         let project = self.test_tool.current_project_id().to_owned();
@@ -82,6 +105,7 @@ impl WiParseApp {
                 return HostReply::value(agent::failure(error));
             }
         }
+        if let Err(error)=session.dispatch_checkpoint(r) {return HostReply::value(agent::failure(error));}
         let project = self.test_tool.current_project_id().to_owned();
         let value = match method {
             "platform.catalog"=>wiparse_core::platform_api::catalog(p),
@@ -239,6 +263,9 @@ impl WiParseApp {
                     agent::failure("测试运行已被替换，停止等待旧运行")
                 }
             }
+            "instrument.readback"=>match self.instruments.agent_readback(&self.test_tool.data_root_path(),p){
+                Ok(data)=>json!({"ok":true,"data":data}),Err(error)=>agent::failure(error)
+            },
             "instrument.list" => {
                 json!({"ok":true,"data":self.instruments.api_list(self.lang,&json!({}))})
             }
@@ -246,6 +273,9 @@ impl WiParseApp {
                 match SerialToolPanel::validate_agent_instrument(method, p).and_then(|v|self.instruments.agent_validate_device(p,method=="instrument.capture").map(|_|v)) {
                     Err(error) => agent::failure(error),
                     Ok(_) => {
+                        let verification=if p.get("verify").is_some(){match self.instruments.independent_scope(p){
+                            Ok(v)=>v,Err(e)=>return HostReply::value(agent::failure(e)),
+                        }}else{Value::Null};
                         let inventory = self.instruments.api_list(self.lang, &json!({}));
                         if !inventory["devices"].as_array().is_some_and(|devices| {
                             devices.iter().any(|d| {
@@ -255,12 +285,12 @@ impl WiParseApp {
                             agent::failure("所选设备不在当前已连接会话中")
                         } else {
                             let result = if method == "instrument.command" {
-                                self.instruments.api_command(p)
+                                self.instruments.agent_command(&self.test_tool.data_root_path(),p)
                             } else {
                                 self.instruments.agent_capture(p)
                             };
                             if result.ok {
-                                wait("instrument.result", json!({"job_id":result.data["job_id"],"job_session":result.data["job_session"],"device_id":result.data["device_id"]}))
+                                wait("instrument.result", json!({"job_id":result.data["job_id"],"job_session":result.data["job_session"],"device_id":result.data["device_id"],"verification_plan":verification}))
                             } else {
                                 reply(result)
                             }
@@ -272,6 +302,20 @@ impl WiParseApp {
                 let result = self.instruments.api_job_get(p);
                 if result.ok && result.data["state"] == "pending_or_unknown" {
                     wait("instrument.result", p.clone())
+                } else if result.ok && result.data["device_id"]!=p["device_id"] {
+                    agent::failure("DEVICE.RECEIPT_IDENTITY_MISMATCH")
+                } else if result.ok && !p["verification_plan"].is_null() && result.data["ok"]==true {
+                    let plan=&p["verification_plan"];
+                    let started=chrono::Utc::now().timestamp_millis();
+                    let receipt=self.instruments.api_command(&plan["read"]);
+                    if !receipt.ok {json!({"ok":false,"data":{"job":result.data,"command_completed":true,"measurement_error":receipt.error}})}
+                    else{wait("instrument.result",json!({"job_id":receipt.data["job_id"],"job_session":receipt.data["job_session"],"device_id":plan["read"]["device_id"],"observation_plan":plan,"origin":result.data,"started":started}))}
+                } else if result.ok && p["observation_plan"].is_object(){
+                    let plan=&p["observation_plan"];
+                    let end=chrono::Utc::now().timestamp_millis();
+                    let measurement=scope_observation(plan,&result.data,p["started"].as_i64().unwrap_or(0),end);
+                    let saved=InstrumentControlPanel::save_measurement(&self.test_tool.data_root_path(),plan,&p["origin"],&measurement);
+                    json!({"ok":saved.is_ok() && measurement["value"].is_number(),"data":{"job":p["origin"],"command_completed":true,"physical_verified":false,"measurement":measurement,"archive_error":saved.err()}})
                 } else if result.ok {
                     json!({"ok":result.data["ok"],"data":{"command_completed":result.data["ok"],"physical_verified":false,"verification":"Device API job completion only; setpoint readback and physical tolerance not verified. Use an explicit measurement.","job":result.data}})
                 } else {
@@ -294,8 +338,8 @@ pub(super) struct SerialBroker {
 struct BrokerPending {
     origin: crate::ai::broker::Request,
     request: HostCall,
-    receiver: Option<crossbeam_channel::Receiver<Value>>,
-    next: std::time::Instant,
+    item: crate::ai::execution::HostItem,
+    started: bool,
     target_page: String,
     target_binding: Value,
     approved: bool,
@@ -323,7 +367,7 @@ impl WiParseApp {
                 let page=wiparse_core::engineering_agent::validate(&wiparse_core::engineering_agent::Call{method:origin.method.clone(),params:origin.params.clone()}).map_or("any",|t|t.page).to_owned();
                 let request=HostCall{id:uuid::Uuid::new_v4().to_string(),call:wiparse_core::engineering_agent::Call{method:origin.method.clone(),params:origin.params.clone()},context:context.clone(),cancelled:origin.guard.cancelled.clone(),internal:false};
                 broker.session.set_context(context.clone());
-                broker.pending=Some(BrokerPending{origin,request,receiver:None,next:Instant::now(),target_binding:target_binding(&context,&page),target_page:page,approved:false});
+                broker.pending=Some(BrokerPending{origin,request,item:Default::default(),started:false,target_binding:target_binding(&context,&page),target_page:page,approved:false});
             }
         }
         if let Some(mut pending)=broker.pending.take() {
@@ -331,7 +375,7 @@ impl WiParseApp {
             let context=self.agent_context();
             let validated=wiparse_core::engineering_agent::validate(&wiparse_core::engineering_agent::Call{method:pending.origin.method.clone(),params:pending.origin.params.clone()});
             let permission=validated.as_ref().is_ok_and(|t|!matches!(t.effect,wiparse_core::engineering_agent::Effect::Device|wiparse_core::engineering_agent::Effect::Test)||pending.origin.guard.controls);
-            let stale=context.project!=pending.origin.guard.project || !(if pending.receiver.is_some() || pending.request.internal {self.serial.ai_platform_result_guard_valid(&pending.origin.guard)}else{self.serial.ai_platform_guard_for(&pending.origin.guard,&pending.origin.method,&pending.origin.params)})
+            let stale=context.project!=pending.origin.guard.project || !(if pending.started {self.serial.ai_platform_result_guard_valid(&pending.origin.guard)}else{self.serial.ai_platform_guard_for(&pending.origin.guard,&pending.origin.method,&pending.origin.params)})
                 || target_binding(&context,&pending.target_page)!=pending.target_binding;
             let mut result=if pending.request.cancelled.load(Ordering::Acquire)||stale {Some(agent::failure("AI.CANCELLED_OR_STALE"))}
                 else if !permission {Some(agent::failure("AI.CONTROL_LOCKED_OR_INVALID_TOOL"))}
@@ -347,29 +391,28 @@ impl WiParseApp {
                 });
             }
             if declined{result=Some(agent::failure("PLATFORM.USER_DECLINED"));}
-            if result.is_none() && (!review||pending.approved) && now>=pending.next {
-                if let Some(rx)=&pending.receiver {
-                    match rx.try_recv(){Ok(v)=>{result=Some(v);pending.receiver=None;},Err(crossbeam_channel::TryRecvError::Disconnected)=>result=Some(agent::failure("AI.HOST_WORKER_DISCONNECTED")),_=>{}}
-                }else {
+            if result.is_none() && (!review||pending.approved) {
+                let continuation=pending.item.take_due(now);
+                let dispatch=!pending.started || continuation.is_some();
+                if let Some(call)=continuation {
+                    pending.request.call=call;
+                    pending.request.internal=true;
+                }
+                let received=if dispatch {
+                    pending.started=true;
                     let response=self.agent_dispatch(ctx,&mut broker.session,&pending.request);
-                    if pending.origin.method=="platform.invoke" && matches!(pending.origin.params["method"].as_str(),Some("ui.serial.open"|"ui.serial.close"|"ui.serial.clear"|"ui.serial.tab"|"serial.select"|"serial.monitor.start"|"serial.monitor.stop")) {
+                    if !pending.request.internal && pending.origin.method=="platform.invoke" && matches!(pending.origin.params["method"].as_str(),Some("ui.serial.open"|"ui.serial.close"|"ui.serial.clear"|"ui.serial.tab"|"serial.select"|"serial.monitor.start"|"serial.monitor.stop")) {
                         self.serial.ai_accept_source_transition(&mut pending.origin.guard);
                     }
-                    if response.receiver.is_some(){pending.receiver=response.receiver;}else{result=Some(response.value);}
-                    // Only successful host dispatch may change its own view/configuration binding.
                     pending.target_binding=target_binding(&self.agent_context(),&pending.target_page);
+                    pending.item.attach(response)
+                } else { pending.item.receive() };
+                if let Some(value)=received {
+                    result=pending.item.advance(value,&pending.request.call,pending.request.internal);
                 }
             }
             if let Some(value)=result {
-                if let Some(wait)=value.get("_agent_wait") {
-                    let method=wait["method"].as_str().unwrap_or("");
-                    if matches!(method,"wave.decode.result"|"data.statistics.result"|"testing.result"|"instrument.result"|"serial.ready") {
-                        pending.request.call=wiparse_core::engineering_agent::Call{method:method.into(),params:wait["params"].clone()};pending.request.internal=true;
-                        pending.next=now+Duration::from_millis(100);broker.pending=Some(pending);
-                    }else {let _=pending.origin.reply.try_send(crate::backend::invoke_err(&pending.origin.method,"AI.INVALID_HOST_CONTINUATION"));}
-                }else{
-                    let _=pending.origin.reply.try_send(crate::backend::InvokeReply{ok:value["ok"]!=false,cmd:pending.origin.method.clone(),error:value["error"].as_str().map(str::to_owned),data:value["data"].clone()});
-                }
+                let _=pending.origin.reply.try_send(crate::backend::InvokeReply{ok:value["ok"]!=false,cmd:pending.origin.method.clone(),error:value["error"].as_str().map(str::to_owned),data:value["data"].clone()});
             }else{broker.pending=Some(pending);}
         }
         if broker.pending.is_some()||!broker.rx.is_empty(){self.waveform.agent_tick(self.lang);self.test_tool.agent_tick(self.lang);ctx.request_repaint_after(Duration::from_millis(50));}
@@ -383,6 +426,12 @@ impl WiParseApp {
   if r.cancelled.load(Ordering::Acquire){return HostReply::value(agent::failure("PLATFORM.CANCELLED"));}
   if let Err(e)=wiparse_core::engineering_agent::validate(&r.call){return HostReply::value(agent::failure(e));}
   let method=r.call.params["method"].as_str().unwrap().to_owned();let params=r.call.params["params"].clone();
+  if method=="instrument.command" {
+      let result=self.instruments.agent_command(&self.test_tool.data_root_path(),&params);
+      return HostReply::value(if result.ok {
+          wait("instrument.result",result.data)
+      } else { reply(result) });
+  }
   let(tx,rx)=crossbeam_channel::bounded(1);
   if wiparse_core::platform_api::is_stateful(&method){
    let request=crate::backend::PendingRequest{method:method.clone(),params,reply:tx,deadline:std::time::Instant::now()+std::time::Duration::from_secs(90),ai_guard:None};

@@ -1,6 +1,6 @@
 # 无线充电自动检验插件
 
-版本 0.1.1，兼容 WiParse 1.1.30 和 Node 18 以上。依据总契约 S1 与插件规格 PL-01 至 PL-12。本版交付离线编排和规则回放，实物刺激流程尚未接通；不属于 G2 至 G4 工业验收系统。
+插件通过 WiParse 自动化服务运行配置检查、回放、实采记录核对及已批准工位的受控测试。内置服务的能力清单见 system.capabilities。
 
 ## 运行
 
@@ -29,7 +29,13 @@ node test-tools/runner.mjs --plugin wireless-charge-validation --lifecycle stop 
 
 ADP/CHG 和安全/追溯等 `integrity` 标量是模拟契约占位，不能替代实际刺激、量测、测量系统分析或审批。模板中的步骤、时间预算和 pre/post 窗尚未批准，只用于描述集成需求。smoke 保留高风险保护和历史故障项；其他四个 suite 均列出全矩阵。它们当前均执行一次离线回放，不代表已实现 soak 长稳或生产节拍测试。
 
-live 模式固定拒绝 `INTEGRATION.LIVE_BACKEND_NOT_VALIDATED`。预检额外列出缺少的 capture.arm/status、dongle.capture.start、stimulus.apply、station.safe_stop、设备验证、正式限值、保护顺序、DUT身份和 G4 批准。不会使用旧 GUI API 绕过独占服务，不打开 USB/VISA/串口，不发 I2C SCAN 或 DAP halt。不自动更换连接或重试未知输出命令。
+### 实机工位接入
+
+工位服务通过已有本机令牌认证接口声明 live_contract=wiparse.fenced-wireless/1、工位 ID、审核过的 station.json SHA-256、看门狗核验状态和实际方法清单。配置中的 station.live.resource 对应唯一夹具。产品限值、保护及停止顺序、角色绑定和采样时间预算分别批准。默认配置保留 UNCOMMISSIONED。
+
+每个用例独立获取租约。宿主按 capture.arm、dongle.capture.start、capture.status、stimulus.apply 顺序调用。响应必须对应本次工位、用例、运行、尝试、DUT 序列号和固件。加电前回读示波器已布防、Dongle 就绪、初态安全和保护健康。输出命令带唯一 ID，迟到或丢失回执不重发。采集返回同一 capture_id 的观测、原文、源坐标和摘要。完成、超时和取消均进入 station.safe_stop，收到独立安全反馈后释放租约。工位固件负责看门狗、掉线保护及断电后的恢复。
+
+当前仓库附带的设备服务未声明该实机契约。内置站点和合成测试不能取得产品验收资格。连接用户工位后仍需验证实物接线、独立反馈、掉线安全和同步误差。
 
 ## 结果与故障处理
 

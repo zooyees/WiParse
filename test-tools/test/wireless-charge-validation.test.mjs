@@ -170,3 +170,54 @@ test('project recording preserves raw evidence and does not send instrument or e
   assert(fs.readFileSync(result.summary_md,'utf8').includes('(recorded-evidence.json)'));
   assert.throws(()=>loadBundle(root,{mode:'recorded',capture_id:'../test'}),/INVALID_ID/);
 }));
+
+test('a cancelled live stimulus is never retried; safe-stop feedback precedes lease release',async()=>{
+  const {captureCase}=await import('../plugins/wireless-charge-validation/lib/live.mjs');
+  const b=bundle('live');b.station.live={resource:'commissioning-fixture'};
+  const calls=[];let cancelled=false;
+  const request=async(method,p)=>{
+    calls.push(method);
+    if(method==='device.lease.acquire')return {resource:p.resource,lease_token:'fence',session_epoch:'epoch'};
+    if(method==='capture.arm')return {...p,capture_id:'capture'};
+    if(method==='dongle.capture.start')return {...p,ready:true};
+    if(method==='capture.status')return {...p,armed:true,protection_healthy:true,watchdog_active:true,safe_before_stimulus:true};
+    if(method==='stimulus.apply'){cancelled=true;return {...p,feedback_verified:true};}
+    if(method==='station.safe_stop')return {...p,outputs_safe:true,feedback_verified:true};
+    if(method==='device.lease.release')return {released:true};
+    throw Error(method);
+  };
+  await assert.rejects(captureCase(b,b.cases[0],{run_id:'r',attempt_id:'a',dut:{serial:'x',firmware:'y'}},request,()=>{if(cancelled)throw Error('RUN.CANCELLED');}),/RUN.CANCELLED/);
+  assert.deepEqual(calls.slice(-3),['stimulus.apply','station.safe_stop','device.lease.release']);
+  assert.equal(calls.filter(c=>c==='stimulus.apply').length,1);
+});
+
+test('commissioned station contract archives evidence and evaluates the measured case',async()=>temporary(async(dir)=>{
+  const b=bundle('live'),scenario=b.cases[0];b.cases=[scenario];b.args.dut_serial='test-dut';b.args.dut_firmware='test-fw';
+  b.station.live={resource:'fixture'};b.station.station_id='contract-fixture';b.station.g4_approved=false;b.suite.industrial=false;
+  b.limits.approved=true;b.limits.simulation_only=false;scenario.capture_plan.timing_budget_approved=true;
+  b.station.protection={verified:true,stop_sequence_approved:true};b.station.bindings=Object.fromEntries(scenario.roles.map(k=>[k,{verified:true}]));
+  const caps={implemented:[...scenario.required_capabilities,'device.lease.release'],live_contract:'wiparse.fenced-wireless/1',station_id:b.station.station_id,approved_station_sha256:b.hashes.station,watchdog_verified:true};
+  const observations=readDocument(root,'tests/fixtures/gold.json').value.cases[scenario.id];
+  const evidence={};
+  for(const o of Object.values(observations))for(const k of o.measurement.evidence_refs){
+    const raw=JSON.stringify(o.measurement.value);evidence[k]={source:'fixture-data',coordinate:'sample_0based',position:0,capture_id:'C',raw,sha256:hash(raw)};
+  }
+  let armed=false;
+  const client={async invoke(){return caps;},async request(route,{method,params:p}){
+    const identity=Object.fromEntries(['case_id','run_id','attempt_id','station_id','dut_serial','firmware'].map(k=>[k,p[k]]));
+    switch(method){
+      case 'device.lease.acquire':return {resource:p.resource,lease_token:'token',session_epoch:'epoch'};
+      case 'capture.arm':return {...identity,capture_id:'C'};
+      case 'dongle.capture.start':return {...identity,capture_id:'C',ready:true};
+      case 'capture.status':if(armed)return {...identity,capture_id:'C',protection_healthy:true,state:'complete',simulation_only:false,quality_validated:true,observations,evidence};
+        return {...identity,capture_id:'C',armed:true,watchdog_active:true,protection_healthy:true,safe_before_stimulus:true};
+      case 'stimulus.apply':armed=true;return {...identity,capture_id:'C',command_id:p.command_id,feedback_verified:true};
+      case 'station.safe_stop':return {...identity,outputs_safe:true,feedback_verified:true};
+      case 'device.lease.release':return {released:true};
+      default:return mockClient.request(route,{method,params:p});
+    }
+  }};
+  const run=await execute(b,{root,dir,client});assert.equal(run.execution_status,'completed',JSON.stringify(run.errors));assert.equal(run.validation_verdict,'PASS');
+  assert.equal(run.product_verdict,'INCONCLUSIVE');assert.equal(run.station_activity.at(-1).method,'device.lease.release');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir,'replay-input.json'))).captures[scenario.id].capture_id,'C');
+}));

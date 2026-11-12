@@ -11,7 +11,7 @@ mod version;
 pub use fetch::{fetch_manifest, FetchError};
 
 pub use manifest::{UpdateManifest, UpdatePackage, UpdateTarget};
-pub use verify::{hex_sha256, verify_file_sha256, VerifyError};
+pub use verify::{hex_sha256_file, hex_sha256, verify_file_sha256, VerifyError};
 pub use version::{compare_versions, is_newer_version, parse_semver, VersionCmp};
 
 use crate::config::UpdateConfig;

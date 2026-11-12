@@ -106,6 +106,7 @@ pub fn method_catalog() -> Vec<Value> {
         json!({"method": "instrument.command", "params": {"device_id": 1, "command": {"ProbeRttStart": {"up_channel": 0}}}, "stateful": true}),
         json!({"method": "ui.instrument.select", "params": {"overview": true}, "stateful": true}),
         json!({"method": "ui.report.open", "params": {"path": "D:/data/projects/default/tests/example-smoke/runs/x/artifacts/logs/hub.log"}, "stateful": true}),
+        json!({"method":"agent.tasks","stateful":true,"params":{"limit":32},"description":"List shared project task IDs, or replay one task with task_id and after_seq."}),
         json!({"method": "ui.project.list", "params": {}, "stateful": true}),
         json!({"method": "ui.project.select", "params": {"id": "default"}, "stateful": true}),
         json!({"method": "ui.project.create", "params": {"id": "lot-1", "name": "Lot 1"}, "stateful": true}),
@@ -176,6 +177,7 @@ pub fn is_stateful(method: &str) -> bool {
             | "ui.calc.set"
             | "ui.instrument.select"
             | "ui.report.browser"
+            | "agent.tasks"
             | "ui.report.open"
             | "ui.project.list"
             | "ui.project.select"
@@ -216,7 +218,7 @@ pub fn is_stateful(method: &str) -> bool {
 /// Defaults to explicit confirmation for new methods until classified.
 pub fn effect(method:&str)->crate::engineering_agent::Effect {
  use crate::engineering_agent::Effect::*;
- if matches!(method,"system.version"|"system.ui.state"|"ui.state"|"serial.ports"|"serial.monitor.status"|"serial.status"|"serial.read"|"log.tabs.list"|"log.lines.get"|"log.brief"|"parse.line"|"parse.metrics"|"session.list"|"session.show"|"wave.session"|"scope.list"|"instrument.list"|"instrument.overview"|"instrument.job.get"|"ui.calc.get"|"ui.project.list"|"test.status"|"convert.expr"|"convert.radix"|"automation.capabilities"|"device.capabilities"|"job.get"|"check.evaluate"|"time.mapping.fit"|"time.mapping.convert"|"ui.test_tool.config.list"|"ui.test_tool.config.get"|"ui.test_tool.config.archives"|"ui.test_tool.project.get"|"ui.test_tool.result.get"|"ui.test_tool.matrix.get"|"ui.test_tool.preflight.state"|"ui.data.get"){return Read;}
+ if matches!(method,"agent.tasks"|"system.version"|"system.ui.state"|"ui.state"|"serial.ports"|"serial.monitor.status"|"serial.status"|"serial.read"|"log.tabs.list"|"log.lines.get"|"log.brief"|"parse.line"|"parse.metrics"|"session.list"|"session.show"|"wave.session"|"scope.list"|"instrument.list"|"instrument.overview"|"instrument.job.get"|"ui.calc.get"|"ui.project.list"|"test.status"|"convert.expr"|"convert.radix"|"automation.capabilities"|"device.capabilities"|"job.get"|"check.evaluate"|"time.mapping.fit"|"time.mapping.convert"|"ui.test_tool.config.list"|"ui.test_tool.config.get"|"ui.test_tool.config.archives"|"ui.test_tool.project.get"|"ui.test_tool.result.get"|"ui.test_tool.matrix.get"|"ui.test_tool.preflight.state"|"ui.data.get"){return Read;}
  if matches!(method,"ui.show"|"ui.panels"|"ui.prefs"|"ui.serial.filter"|"ui.serial.name"|"ui.wave.select"|"ui.wave.bus"|"ui.wave.cursor"|"ui.wave.fit"|"ui.calc.set"|"ui.instrument.select"|"ui.data.configure"|"ui.data.view"){return Application;}
  if matches!(method,"instrument.scan"|"instrument.connect"|"instrument.connect_all"|"instrument.disconnect"|"instrument.command"|"instrument.measure"|"instrument.capture"|"instrument.waveform"|"serial.select"|"serial.monitor.start"|"serial.monitor.stop"|"serial.send"|"scope.wave"){return Device;}
  Test

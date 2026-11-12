@@ -315,6 +315,8 @@ pub struct TestReportPanel {
     projects: Vec<ProjectDoc>,
     index: IndexedProject,
     selected: Option<PathBuf>,
+    project_root: Option<PathBuf>,
+    integrity: Option<(PathBuf,std::sync::Arc<std::sync::OnceLock<String>>)>,
     preview_title: String,
     return_report: Option<PathBuf>,
     preview: Option<PreviewKind>,
@@ -342,6 +344,7 @@ impl TestReportPanel {
                 tests: Vec::new(),
             },
             selected: None,
+            project_root: None, integrity: None,
             preview_title: String::new(),
             return_report: None,
             preview: None,
@@ -375,6 +378,7 @@ impl TestReportPanel {
                 serde_json::json!(self.selected.as_ref().map(|p| p.display().to_string())),
             );
             obj.insert("status".into(), serde_json::json!(self.status));
+            obj.insert("integrity".into(),serde_json::json!(self.integrity_status()));
             obj.insert("file_count".into(), serde_json::json!(self.file_count()));
         }
         tree
@@ -492,6 +496,7 @@ impl TestReportPanel {
     }
 
     fn rebuild_index(&mut self, data_root: &Path, plugins: &[PluginMeta]) {
+        self.project_root=Some(data_root.to_owned());
         let doc = ensure_project(data_root, &self.project_id, None);
         self.project_id = doc.id.clone();
         self.refresh_project_list(data_root);
@@ -1126,6 +1131,7 @@ impl TestReportPanel {
             .inner_margin(Margin::symmetric(6, 6))
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
+                if let Some(status)=self.integrity_status(){ui.small(status);if self.integrity.as_ref().is_some_and(|(_,v)|v.get().is_none()){ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));}}
                 let title = if self.preview_title.is_empty() {
                     tr(lang, "report.viewer_title")
                 } else {
@@ -1355,7 +1361,25 @@ impl TestReportPanel {
         }
     }
 
+    fn integrity_status(&self)->Option<&str>{
+        self.integrity.as_ref().filter(|(p,_)|self.selected.as_ref()==Some(p)).map(|(_,v)|v.get().map(String::as_str).unwrap_or("正在核验报告及附件…"))
+    }
     fn open_report(&mut self, path: PathBuf, lang: Lang) {
+        self.integrity=None;
+        if let (Some(root),Some(id))=(&self.project_root,path.parent().and_then(Path::file_name).and_then(|s|s.to_str())){
+            if let Ok(expected)=crate::ai::artifact::report_path(root,&self.project_id,id){
+                if expected.canonicalize().ok().is_some_and(|p|Some(p)==path.canonicalize().ok()){
+                    let result=std::sync::Arc::new(std::sync::OnceLock::new());
+                    self.integrity=Some((path.clone(),result.clone()));
+                    let journal=crate::ai::journal::Journal::at(root,&self.project_id);
+                    let id=id.to_owned();
+                    std::thread::spawn(move||{
+                        let checked=expected.parent().unwrap().canonicalize().map_err(|e|e.to_string()).and_then(|dir|journal.verify_report(&dir,&id));
+                        let _=result.set(match checked{Ok(())=>"正文与附件完整性已核验".to_owned(),Err(e)=>format!("报告完整性未确认 · {e}")});
+                    });
+                }
+            }
+        }
         self.selected = Some(path.clone());
         self.preview_title = path
             .file_name()

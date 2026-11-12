@@ -17,6 +17,26 @@ pub fn measurement(request: &AiRequest, history: &[AiMessage], tools: Option<&to
         "usage":usage,"measurement":"UTF-8 bytes are not tokens; usage is provider-reported only"})
 }
 
+/// Optional request ledger for a benchmark invocation. The start record survives a killed runner.
+pub(super) struct BenchmarkRequest(Option<(std::path::PathBuf,uuid::Uuid)>);
+impl BenchmarkRequest {
+    pub(super) fn start()->Self{
+        let r=Self(std::env::var_os("WIPARSE_BENCHMARK_USAGE_FILE").map(|path|(path.into(),uuid::Uuid::new_v4())));
+        r.event("started",Value::Null);r
+    }
+    pub(super) fn usage(&self,u:&Value){
+        let mut cost=usage::Usage::default();cost.record(u);self.event("response",json!(cost.total_tokens));
+    }
+    fn event(&self,phase:&str,cost:Value){
+        use std::io::Write;
+        if let Some((path,id))=&self.0 {
+            let line=format!("{}\n",json!({"request_id":id,"phase":phase,"total_tokens":cost}));
+            if let Err(error)=std::fs::OpenOptions::new().append(true).create(true).open(path).and_then(|mut f|f.write_all(line.as_bytes())){
+                tracing::warn!(%error,"benchmark usage ledger unavailable");
+            }
+        }
+    }
+}
 #[cfg(test)] mod tests {
     use super::*;
     #[test] fn metrics_exclude_content_and_unknown_usage_is_not_zero() {

@@ -14,8 +14,7 @@ pub(super) struct Run {
     pub control_cap: bool,
     pub repairs:usize,
     pub first_evidence_ms:Option<u64>,
-    pub repair_count: u8,
-    pub json_fallback: bool,
+    pub recovery_policy:crate::ai::execution::ProtocolRecovery,
     pub evidence_sequence: u64,
     pub native_pending: Option<tools::Assistant>,
     pub native_outputs: Vec<serde_json::Value>,
@@ -39,7 +38,7 @@ impl Run {
             started: Instant::now(),
             phase: "reading",
             control_cap: true,
-            repairs:0,first_evidence_ms:None,repair_count: 0,json_fallback:false,
+            repairs:0,first_evidence_ms:None,recovery_policy:Default::default(),
             evidence_sequence: 0,
             native_pending: None,
             native_outputs: vec![],
@@ -65,7 +64,7 @@ impl Run {
     pub fn record(&mut self, result: serde_json::Value) {
         if let Some(j)=&self.journal{j.record(&self.id,"serial",&self.question,"running",&self.workflow,Some((result["method"].as_str().unwrap_or("serial observation"),&result)));}
         if result["ok"] == true {
-            self.repair_count = 0;
+            self.recovery_policy.made_progress();
             if self.first_evidence_ms.is_none()&&result["kind"]!="task_management"{self.first_evidence_ms=Some(self.started.elapsed().as_millis() as u64);}
         }
         if let Some(id) = result["evidence_id"]
@@ -110,6 +109,7 @@ pub(super) fn functions(scope: DataScope, controls: bool) -> Vec<tools::Function
         "agent.plan",
         "agent.evidence",
         "agent.help",
+        "agent.recipe",
         "engineering.inspect",
         "engineering.wave.measure",
         "engineering.wave.frames",

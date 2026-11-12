@@ -1,6 +1,7 @@
 //! Unified VISA instrument workbench.
 
 mod workbench;
+mod agent_commands;
 mod waveform_pipeline;
 use waveform_pipeline::{PipelineJob, SourceRequest};
 
@@ -479,6 +480,7 @@ pub struct InstrumentControlPanel {
     next_job_id: u64,
     job_results: Vec<InstrumentJobResult>,
     completed_jobs: InstrumentReceipts,
+    agent_commands: agent_commands::AgentCommands,
     last_rtt: Instant,
     rtt_pending: HashSet<u64>,
 }
@@ -556,6 +558,7 @@ impl InstrumentControlPanel {
             next_job_id: 1,
             job_results: Vec::new(),
             completed_jobs: InstrumentReceipts::default(),
+            agent_commands: Default::default(),
             last_rtt: Instant::now(),
             rtt_pending: HashSet::new(),
         };
@@ -662,6 +665,7 @@ impl InstrumentControlPanel {
     }
 
     pub fn pump_with_bus(&mut self, ctx: &egui::Context, bus: Option<&crate::backend::EventBus>) {
+        self.agent_commands.show_review(ctx);
         let results_before = self.job_results.len();
         let frame_budget = Instant::now();
         while frame_budget.elapsed() < Duration::from_millis(4) {
@@ -806,6 +810,7 @@ impl InstrumentControlPanel {
                 self.clear_busy();
             }
         }
+        self.agent_commands.completed(job_id,ok);
         let mut detail_budget=16*1024;
         self.completed_jobs.record(InstrumentJobResult {
             job_id,ok,kind:kind.into(),device_id,
@@ -1347,6 +1352,7 @@ impl InstrumentControlPanel {
                 }
             }
             Event::Disconnected(id) => {
+                self.agent_commands.disconnected(id);
                 if self.busy_device == Some(id) {
                     self.clear_busy();
                 }

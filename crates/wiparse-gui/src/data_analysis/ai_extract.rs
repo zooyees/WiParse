@@ -69,6 +69,7 @@ impl DataAnalysisPanel {
                 d.insert_temp(egui::Id::new("ai-file-dataset"), Arc::downgrade(&cache))
             });
         }
+        let storage=ctx.data(|d|d.get_temp::<std::path::PathBuf>(egui::Id::new("wiparse-ai-project-root")).zip(d.get_temp::<String>(egui::Id::new("wiparse-ai-project-id"))));
         spawn_work(ctx, move || {
             let header = params["header"].as_str().unwrap_or("");
             let Some(fields) = params["fields"].as_array() else {
@@ -239,8 +240,15 @@ impl DataAnalysisPanel {
             let plotted_values = dataset.rows.iter().any(|r| r.3.iter().any(Option::is_some));
             let omitted = dataset.omitted;
             let mut query = None;
+            let mut archive_receipt=None;
             if retain && plotted_values && omitted == 0 {
                 let id = uuid::Uuid::new_v4().to_string();
+                let dataset=Arc::new(dataset);
+                if let Some((root,project))=&storage{
+                    match crate::ai::artifact::archive_dataset(root,project,&id,dataset.clone(),text.clone(),full_table.clone(),&cancel){
+                        Ok(reference)=>archive_receipt=Some(reference),Err(e)=>return failure(&format!("DATA.ARCHIVE_FAILED: {e}"))
+                    }
+                }
                 let Ok(mut slot) = cache.lock() else {
                     return failure("DATA.CACHE_UNAVAILABLE");
                 };
@@ -250,12 +258,12 @@ impl DataAnalysisPanel {
                 *slot = ExtractCache {
                     source: Arc::downgrade(&text),
                     query: id.clone(),
-                    dataset: Some(Arc::new(dataset)),
+                    dataset: Some(dataset),
                     full_table,curves:curves.map(Arc::new),
                 };
                 query = Some(id);
             }
-            json!({"ok":issue.is_none(),"error":issue,"data":{"source":source,"decoded_text_sha256":decoded_sha256,"records_scanned":records,"fields":fields,"complete":true,"recognition":if matched{"matched"}else{"no_numeric_evidence"},"coverage":{"complete":true,"bytes_scanned":text.len(),"skipped_header_records":u64::from(skipped)},"query_id":query,"overview":overview,"plottable_rows":plottable_rows,"bucket_records":width,"dataset_omitted_rows":omitted,"plot_unavailable":retain && query.is_none(),"missing_timestamp_rows":missing_time,"backward_timestamp_rows":backward_time,"x_axis":axis,"units":"source numeric values, no unit conversion","raw_uploaded":false}})
+            json!({"ok":issue.is_none(),"error":issue,"data":{"source":source,"decoded_text_sha256":decoded_sha256,"records_scanned":records,"fields":fields,"complete":true,"recognition":if matched{"matched"}else{"no_numeric_evidence"},"coverage":{"complete":true,"bytes_scanned":text.len(),"skipped_header_records":u64::from(skipped)},"query_id":query,"dataset_archive":archive_receipt,"overview":overview,"plottable_rows":plottable_rows,"bucket_records":width,"dataset_omitted_rows":omitted,"plot_unavailable":retain && query.is_none(),"missing_timestamp_rows":missing_time,"backward_timestamp_rows":backward_time,"x_axis":axis,"units":"source numeric values, no unit conversion","raw_uploaded":false}})
         })
     }
 }

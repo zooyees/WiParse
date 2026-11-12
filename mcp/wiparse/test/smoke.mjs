@@ -23,6 +23,7 @@ try {
   const list=await client.listTools();assert.equal(list.tools.length,6);
   assert(list.tools.some(t=>t.name==='wiparse_ui'));
   for(const [op,params,method] of [
+    ['agent.tasks',{task_id:'example',after_seq:10,limit:8},'agent.tasks'],
     ['show',{tab:'test_report'},'ui.show'],
     ['project.select',{id:'default'},'ui.project.select'],
     ['report.open',{path:'C:/demo/projects/default/tests/ScopeSerialDemo/runs/20261013_231510/artifacts/reports/summary.md'},'ui.report.open'],
@@ -34,7 +35,7 @@ try {
   }
   const hubOps=['config.list','config.get','config.create','config.save','config.duplicate','config.archive','config.restore','config.import','config.export','config.batch','config.archives','config.validate','matrix.get','preflight.state','project.get','project.save','project.validate','project.migration.preview','project.migration.commit','result.get'];
   for(const op of hubOps){const params={plugin:'hub-workspace-demo',limit:5};const reply=await client.callTool({name:'wiparse_ui',arguments:{op:`test_tool.${op}`,params}});assert.equal(JSON.parse(reply.content[0].text).ok,true);assert.deepEqual(received.at(-1),{method:`ui.test_tool.${op}`,params});}
-  console.log(JSON.stringify({ok:true,mcp_version:version,tool_count:list.tools.length,report_dispatch_checks:4,hub_dispatch_checks:hubOps.length,backend:'local mock; no hardware'},null,2));
+  console.log(JSON.stringify({ok:true,mcp_version:version,tool_count:list.tools.length,task_replay_dispatch_checks:1,report_dispatch_checks:4,hub_dispatch_checks:hubOps.length,backend:'local mock; no hardware'},null,2));
 } finally {
   await client.close();await transport.close();
   await new Promise(resolve=>mock.close(resolve));

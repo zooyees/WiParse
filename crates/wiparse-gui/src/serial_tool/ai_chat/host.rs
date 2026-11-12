@@ -219,7 +219,7 @@ impl SerialToolPanel {
                     if !pending.automatic && decoded.finalized {
                         if let Some(message)=&reply.tool_message{if message.calls.first().is_some_and(|c|c.name=="wiparse_answer"){
                             let p:serde_json::Value=serde_json::from_str(&message.calls[0].arguments).unwrap_or_default();
-                            let valid=p["evidence_ids"].as_array().is_some_and(|ids|(decoded.needs_input||chat.scope==DataScope::None||!ids.is_empty())&&ids.iter().all(|id|id.as_str().is_some_and(|id|chat.run.as_ref().is_some_and(|run|run.workflow.get(id).is_ok()))));
+                            let valid=p["evidence_ids"].as_array().is_some_and(|ids|(decoded.needs_input||chat.scope==DataScope::None||!ids.is_empty())&&ids.iter().all(|id|id.as_str().is_some_and(|id|chat.run.as_ref().is_some_and(|run|run.workflow.citation_method(id).is_some()))));
                             if !valid{decoded.finalized=false;decoded.error=Some("AI.EVIDENCE_REFERENCE_REQUIRED: cite actual evidence IDs returned by host tools".into());}
                         }}
                     }
@@ -231,6 +231,11 @@ impl SerialToolPanel {
                         ctx.request_repaint();
                         return;
                     }
+                    if !pending.automatic && decoded.finalized {
+                        if let Some(error)=chat.run.as_ref().and_then(|r|r.workflow.validate_conclusion(&decoded.reply).err()){
+                            decoded.finalized=false;decoded.error=Some(error);
+                        }else if let Some(run)=&chat.run {run.workflow.append_table_result(&mut decoded.reply);}
+                    }
                     if !pending.automatic&&decoded.finalized {
                         let goals=chat.run.as_ref().map_or_else(Vec::new,|r|r.workflow.open_goals());
                         if !decoded.needs_input&&!goals.is_empty(){decoded.finalized=false;decoded.error=Some(format!("AGENT.UNFINISHED_OUTCOMES: {}. Complete actual work then update agent.plan, or mark genuine blockers with reasons.",goals.join("; ")));}
@@ -240,15 +245,10 @@ impl SerialToolPanel {
                         let reason=decoded.error.as_deref().unwrap_or("AI.NO_ACTION: working reply omitted the tool call");
                         chat.entry("tool",format!("协议诊断 · {reason}\n结束标记 {:?}，工具调用 {} 个。",reply.finish_reason,reply.tool_message.as_ref().map_or(0,|m|m.calls.len())));
                         let native=chat.config.as_ref().is_some_and(wiparse_core::ai::context::native);
-                        if let Some(run)=chat.run.as_mut().filter(|r|r.repair_count<3){
-                            run.repair_count+=1;
+                        let retry=chat.run.as_mut().is_some_and(|r|r.recovery_policy.retry(native,reason));
+                        if let Some(run)=chat.run.as_mut().filter(|_|retry){
                             run.repairs+=1;
-                            // A rejected response has dispatched no actions. Retry only the model
-                            // turn, retaining the bound source, completed calls and host permissions.
-                            if native && run.repair_count>=2 && !run.json_fallback && !reason.starts_with("AGENT.UNFINISHED_OUTCOMES"){
-                                run.json_fallback=true;
-                            }
-                            let recovery=protocol::recovery(native && !run.json_fallback);
+                            let recovery=protocol::recovery(native && !run.recovery_policy.json_fallback);
                             run.feedback=Some(format!("{recovery} Last validation: {reason}. Available evidence IDs: {:?}. Open goals: {:?}.",run.evidence_ids,run.workflow.open_goals()));
                             let mut data=self.ai_scoped_observation(chat.scope).unwrap_or_else(|_|json!({}));
                             data["platform_results"]=json!(chat.tool_results);

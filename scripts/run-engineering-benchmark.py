@@ -9,6 +9,35 @@ import uuid
 from pathlib import Path
 
 
+def request_usage(path):
+    if not path.exists():
+        return None
+    requests = {}
+    corrupt = False
+    with path.open("rb") as stream:
+        for raw in stream:
+            try:
+                event = json.loads(raw)
+                key = str(uuid.UUID(event["request_id"]))
+                phase = event["phase"]
+                if phase not in ("started", "response"):
+                    raise ValueError("unknown phase")
+                old = requests.setdefault(key, None)
+                if phase == "response":
+                    cost = event.get("total_tokens")
+                    if cost is not None and (type(cost) is not int or cost < 0):
+                        raise ValueError("invalid usage")
+                    if old is not None and old != cost:
+                        raise ValueError("inconsistent duplicate")
+                    requests[key] = cost
+            except (ValueError, KeyError, TypeError, UnicodeError):
+                corrupt = True
+    known = [v for v in requests.values() if v is not None]
+    return dict(usage_source="request_ledger", requests=len(requests), reported_requests=len(known),
+                ledger_corrupt=corrupt, known_tokens=sum(known) if known else None,
+                total_tokens=sum(known) if known and len(known)==len(requests) and not corrupt else None)
+
+
 def run(operator_dir, destination, arm, version, split, timeout, command):
     operator_dir = operator_dir.resolve(strict=True)
     tasks=json.loads((operator_dir/"tasks.json").read_text(encoding="utf-8-sig"))
@@ -33,12 +62,14 @@ def run(operator_dir, destination, arm, version, split, timeout, command):
             verified.append(dict(source,path=str(path)))
         request=dict(task,sources=verified)
         request.pop("rubric_sha256")
+        ledger=case_dir/"request-usage.jsonl"
+        runner_env=dict(os.environ,WIPARSE_BENCHMARK_USAGE_FILE=str(ledger.resolve()))
         started=time.monotonic()
         status="failed"
         with (case_dir/"answer.json").open("xb") as out,(case_dir/"runner.log").open("xb") as err:
             try:
                 invocation=subprocess.run(command,input=json.dumps(request,ensure_ascii=False).encode("utf-8"),
-                    cwd=case_dir,stdout=out,stderr=err,timeout=timeout,check=False,shell=False)
+                    cwd=case_dir,env=runner_env,stdout=out,stderr=err,timeout=timeout,check=False,shell=False)
                 status="delivered" if invocation.returncode==0 else "runner_error"
             except subprocess.TimeoutExpired:
                 status="timeout"
@@ -59,6 +90,9 @@ def run(operator_dir, destination, arm, version, split, timeout, command):
                 if type(cost) is int and cost>=0:result["total_tokens"]=cost
             except (ValueError,AttributeError,UnicodeError):
                 result["status"]="invalid_delivery"
+        result["usage_source"]="answer" if result["total_tokens"] is not None else "unknown"
+        observed=request_usage(ledger)
+        if observed is not None:result.update(observed)
         with (destination/"results.jsonl").open("a",encoding="utf-8") as summary:
             summary.write(json.dumps(result,ensure_ascii=False)+"\n")
             summary.flush()

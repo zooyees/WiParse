@@ -229,6 +229,9 @@ impl AiService {
             running: Arc::new(AtomicUsize::new(0)),
         }
     }
+    pub fn native_tools_enabled(&self) -> bool {
+        context::native(&self.config.read().unwrap_or_else(|e| e.into_inner()))
+    }
     pub fn configure(&self, config: AiConfig) {
         *self.config.write().unwrap_or_else(|e| e.into_inner()) = config;
     }
@@ -402,6 +405,7 @@ fn complete(
     if !key.is_empty() {
         post = post.set("Authorization", &format!("Bearer {key}"));
     }
+    let benchmark=telemetry::BenchmarkRequest::start();
     let response = match post.send_json(body) {
         Ok(r) if (200..300).contains(&r.status()) => r,
         Ok(r) => return Err(AiError::Http(r.status())),
@@ -411,6 +415,7 @@ fn complete(
     };
     if config.stream {
         let reply = streaming::read(config, response.into_reader(), &cancelled, &progress)?;
+        benchmark.usage(&reply.usage);
         if let Some(message) = &reply.tool_message {
             if !tools.is_some_and(|t| message.calls.iter().all(|c| t.functions.iter().any(|f|f.name == c.name))) { return Err(AiError::Response); }
         }
@@ -426,6 +431,7 @@ fn complete(
         return Err(AiError::Response);
     }
     let value: Value = serde_json::from_slice(&bytes).map_err(|_| AiError::Response)?;
+    benchmark.usage(&value["usage"]);
     let reply=parse_reply(config,value)?;
     if let Some(message)=&reply.tool_message{
         if !tools.is_some_and(|t|message.calls.iter().all(|c|t.functions.iter().any(|f|f.name==c.name))){return Err(AiError::Response);}
