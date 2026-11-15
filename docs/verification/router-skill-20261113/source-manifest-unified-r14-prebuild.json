@@ -1,0 +1,3519 @@
+{
+  "scope": "tracked and nonignored source, local patched dependencies, icons, test samples, evaluation, MCP, packaging and build configuration; excludes user configuration, runtime data and external toolchain contents",
+  "git_head": "f533791231d7a41adac0b13d4d0984157b2b2f93",
+  "created_utc": "2026-11-15T07:25:39.469239+00:00",
+  "environment": {
+    "os": "Windows-10-10.0.26200-SP0",
+    "arch": "AMD64",
+    "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+    "cargo": "cargo 1.97.0 (c980f4866 2026-06-30)",
+    "node": "v24.15.0",
+    "python": "3.10.2",
+    "reviewed_monitor_flag": null,
+    "cargo_locked": true,
+    "cargo_offline": true,
+    "profile": "release"
+  },
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 623,
+      "sha256": "2668fee805d8dddb9fd69598620483279773f4d6e0e8dd6f593f4c568253c0f9"
+    },
+    {
+      "path": "Cargo.lock",
+      "bytes": 164362,
+      "sha256": "2fc8b0e8387935e96bc40e3127ed561af6c026ff2dd03834fa56f23d8ae8484d"
+    },
+    {
+      "path": "Cargo.toml",
+      "bytes": 1439,
+      "sha256": "b7c9e51fe9d79a2741664b52dbd68b332481930c8b1b356d841980e651a848d0"
+    },
+    {
+      "path": "Icon/WiParse.ico",
+      "bytes": 826534,
+      "sha256": "506b5bcea050965d2d823d1094afd5eafa888f124b5c7f7793e742a34c8b037d"
+    },
+    {
+      "path": "config.default.json",
+      "bytes": 2432,
+      "sha256": "883905d629ebb5282071628500bb49522afa897693712317016939dca0f5d5e0"
+    },
+    {
+      "path": "crates/wiparse-cli/Cargo.toml",
+      "bytes": 522,
+      "sha256": "e9e457becb1a0e40c8d31c8e55b3bcd48586595de57200cb8694757f21079b0c"
+    },
+    {
+      "path": "crates/wiparse-cli/src/attach.rs",
+      "bytes": 3706,
+      "sha256": "989a2dd1d8824d216a7049d1152e09adc2e8cf9e5497f4d70e21a2a9dc71184e"
+    },
+    {
+      "path": "crates/wiparse-cli/src/hw.rs",
+      "bytes": 3299,
+      "sha256": "5e0aa58d350cbb01cf9b41c8f1a8ccb0bee7744f23b4d8cfb7ceefda7eab9222"
+    },
+    {
+      "path": "crates/wiparse-cli/src/main.rs",
+      "bytes": 91088,
+      "sha256": "454ff870ed8ce80e40d10a8d01d87a04a11605dddb4404f0d460fbd6211f4433"
+    },
+    {
+      "path": "crates/wiparse-cli/src/output.rs",
+      "bytes": 1756,
+      "sha256": "aebd87f92772d6234e5106952a0572d109f68644105a9f339b2e3037644a1789"
+    },
+    {
+      "path": "crates/wiparse-core/Cargo.toml",
+      "bytes": 1448,
+      "sha256": "ca480300a5d5e58952334273fe17fd468210ce015d56108397cbe60b16126a1c"
+    },
+    {
+      "path": "crates/wiparse-core/examples/inspect_bus.rs",
+      "bytes": 1365,
+      "sha256": "1a7c2e1fda59f705d7b798daa432c2d8acb0abdbfce853c8e47b4666c62bcfca"
+    },
+    {
+      "path": "crates/wiparse-core/src/ai.rs",
+      "bytes": 77124,
+      "sha256": "5a18b3069277a0ba3bacf98042e2625d0e157481dd6db2b6da0b264f57ed57f0"
+    },
+    {
+      "path": "crates/wiparse-core/src/ai/context.rs",
+      "bytes": 5112,
+      "sha256": "321aa53b28b7ddbbc6995f61a46dd8b942108f8b4aca73a16db51760dca35cc6"
+    },
+    {
+      "path": "crates/wiparse-core/src/ai/skills.rs",
+      "bytes": 32606,
+      "sha256": "e157d5f00cb7994769b33ca65648a12e3283bb3a8155907c3af74b33efcfe0ac"
+    },
+    {
+      "path": "crates/wiparse-core/src/ai/source_lease.rs",
+      "bytes": 15224,
+      "sha256": "2c37d8ec85c0fd7390e51fb1e59a52b407f4d40631630f63efbded3127adb1c7"
+    },
+    {
+      "path": "crates/wiparse-core/src/ai/streaming.rs",
+      "bytes": 6524,
+      "sha256": "33ebf4f7f3169f99f68f8c120a4043c4d4efdee8eb57903df8bc79207975cc1e"
+    },
+    {
+      "path": "crates/wiparse-core/src/ai/telemetry.rs",
+      "bytes": 2979,
+      "sha256": "427769da4d3a283617a7f5706b3a404d1e2244bb2f24a0a55cc4192e5bd985b9"
+    },
+    {
+      "path": "crates/wiparse-core/src/ai/tools.rs",
+      "bytes": 18378,
+      "sha256": "f7d0034444112af861840f8add6189542e645d41e1b257cd9a856aeff4266b26"
+    },
+    {
+      "path": "crates/wiparse-core/src/ai/usage.rs",
+      "bytes": 3515,
+      "sha256": "31d0c16f099b579adc21314060e11ac16f8c4de9a7b8041be53eadb293a1d12c"
+    },
+    {
+      "path": "crates/wiparse-core/src/ai/workflow.rs",
+      "bytes": 155062,
+      "sha256": "fea517c4d1fef8f6ceacbe00013147f5f0ff778498796e19924b7c8986b975f3"
+    },
+    {
+      "path": "crates/wiparse-core/src/ai/workflow/plot.rs",
+      "bytes": 10190,
+      "sha256": "a32b0d1aef735f94fd196f24c99ca71ce2bf7d30f543f240f20988ad11260912"
+    },
+    {
+      "path": "crates/wiparse-core/src/automation/analysis.rs",
+      "bytes": 13807,
+      "sha256": "a65ee3805d2b1b8ec68c8a7e53e2ed4688b222636858534febf6be3505d7ad6b"
+    },
+    {
+      "path": "crates/wiparse-core/src/automation/capture_window.rs",
+      "bytes": 4908,
+      "sha256": "c09c820fff6e80ca797ed27c37eab7c31bac5f2800be0da1f21d2f6b3e252032"
+    },
+    {
+      "path": "crates/wiparse-core/src/automation/contracts.rs",
+      "bytes": 6285,
+      "sha256": "47e675e640ec17e8cd506b3bbcbdbbac4e200ba273a7d2d47c637dec3d4f59c9"
+    },
+    {
+      "path": "crates/wiparse-core/src/automation/mod.rs",
+      "bytes": 178,
+      "sha256": "82709e3efa72ac5608622c345a6167f692349f3238c62b4262b62da7f10d4f3b"
+    },
+    {
+      "path": "crates/wiparse-core/src/automation/stream.rs",
+      "bytes": 4025,
+      "sha256": "bbd64e9ee68c15f6ab6d428b441015c8954b2773067de8a2877d4721822bc06b"
+    },
+    {
+      "path": "crates/wiparse-core/src/automation/time.rs",
+      "bytes": 6918,
+      "sha256": "ce606fc93eb850de4eb3a759486b95f1b256a90ed7d22e836fbb9d893c6947d2"
+    },
+    {
+      "path": "crates/wiparse-core/src/bridge.rs",
+      "bytes": 25745,
+      "sha256": "118c97c4a693f5aca433b691a1982b68438245a5b07aa2cb6236941b42c5d832"
+    },
+    {
+      "path": "crates/wiparse-core/src/brief.rs",
+      "bytes": 17229,
+      "sha256": "1c21b550c5676c9bf75fe21c4e19f4dbbcc7730b4e4998dd353c394091ede33d"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/charging.rs",
+      "bytes": 2698,
+      "sha256": "faf92f185e2dca3ac6109ff32f5ede658dd4f36a9cfcbcbcecbc3f454754c270"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/ddsss.rs",
+      "bytes": 59424,
+      "sha256": "34948741153e0ffab1713c195210bf18f0163e6693283179e2122688787e6213"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/digital.rs",
+      "bytes": 10982,
+      "sha256": "66339562943e2e0492803d426cd1b741f994b8855b2e4af980c2d5c9e00d949a"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/fields.rs",
+      "bytes": 60581,
+      "sha256": "702ef48acaa500fc299333602623c7d1658c3b0b03fe1bf835ba338bf2ded3f9"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/i2c.rs",
+      "bytes": 32743,
+      "sha256": "88d524c0e23d9a2c59b3746c09f73ea1b87ec7e08b5ca407b78bb3e5b4c9a11f"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/i2s.rs",
+      "bytes": 15086,
+      "sha256": "80d7dd8abd61a54e42243fe42c660b7924af5782bc17b3b0d61c18f8965d3fe0"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/mod.rs",
+      "bytes": 17993,
+      "sha256": "8d7464107c048f3e91785c7059e6b84cdedb4a04a36cd71901f436b8f289eb6e"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/scp.rs",
+      "bytes": 37334,
+      "sha256": "3bdcd1e6699e28f122d2e2737c706482721acae1a9d29aec716c1d47ddb37fec"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/spi.rs",
+      "bytes": 26173,
+      "sha256": "268f884f5309aac051c98182c913fbe787a786f5b40967e819d834bf77381015"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/uart.rs",
+      "bytes": 21144,
+      "sha256": "0376f4cc2156e165b871473b73cc6f6a113d862b5aa774bd3c07864b802a0821"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/ufcs.rs",
+      "bytes": 8621,
+      "sha256": "8103c622de80746a806e55c79a5fe553e55290ee228775c9dc3dbcc323b39218"
+    },
+    {
+      "path": "crates/wiparse-core/src/bus_decode/usb_pd.rs",
+      "bytes": 13565,
+      "sha256": "37ecda6e78fb60c08b01ff16a96cbfcfac870857b7ea484e3417d15db283a441"
+    },
+    {
+      "path": "crates/wiparse-core/src/charge_state.rs",
+      "bytes": 3283,
+      "sha256": "b8b6d297b8153d44b83f13a6458da14974fc18ac6f24eddb4782c6587cccaf1b"
+    },
+    {
+      "path": "crates/wiparse-core/src/config.rs",
+      "bytes": 23136,
+      "sha256": "b8af4a1aa96c76a023402115d7925cbd34daa083dce258c864d047a713b9728d"
+    },
+    {
+      "path": "crates/wiparse-core/src/db.rs",
+      "bytes": 7339,
+      "sha256": "6e95b5ed0f313db49c0b1f0f8fe7451d532e56643b0d48163bcda8e0e0ade140"
+    },
+    {
+      "path": "crates/wiparse-core/src/dongle.rs",
+      "bytes": 31716,
+      "sha256": "e272d301c8e021244f7235ee6c8376714c155aa539e65e2d5a8128ed185b9a04"
+    },
+    {
+      "path": "crates/wiparse-core/src/engineering_agent.rs",
+      "bytes": 52411,
+      "sha256": "d483b2a8473555cb2f58b4a060452d873e83995d5ca48a459082f9455941c96f"
+    },
+    {
+      "path": "crates/wiparse-core/src/engineering_wave.rs",
+      "bytes": 14103,
+      "sha256": "86566eb5218c9810e3fc725153166add98f9723a3c277fe28118f9f765fca553"
+    },
+    {
+      "path": "crates/wiparse-core/src/evidence.rs",
+      "bytes": 10785,
+      "sha256": "084cab24bcf25f5eb55c7a9d7b9f9ab1dfed32582305e4afdae7ad338b13741b"
+    },
+    {
+      "path": "crates/wiparse-core/src/extract.rs",
+      "bytes": 14695,
+      "sha256": "3fca4c1fbe2d3de08e3add38ab8e3d38d2b5298ec054bb7bdcf3466c7b72c09f"
+    },
+    {
+      "path": "crates/wiparse-core/src/i18n.rs",
+      "bytes": 46713,
+      "sha256": "dc16701ae34fe1dc389cb75683cbe664e94a0e03b0b6471384eed69e85f210b6"
+    },
+    {
+      "path": "crates/wiparse-core/src/instrument/drivers.rs",
+      "bytes": 139399,
+      "sha256": "86fb235fffd6c0fea93d47141fc9a5f11735a5109874b99e0b15a134565bc69a"
+    },
+    {
+      "path": "crates/wiparse-core/src/instrument/mod.rs",
+      "bytes": 26959,
+      "sha256": "925e0cec9c7b21fde31989f86ea58ac9f98b4f8dbefbeb64ba48d53a8f301cf4"
+    },
+    {
+      "path": "crates/wiparse-core/src/instrument/recording.rs",
+      "bytes": 3620,
+      "sha256": "babd3b76dc68fdbfc240c1725c8547d839763fdad3cdbd48866e68b582fee5a8"
+    },
+    {
+      "path": "crates/wiparse-core/src/lib.rs",
+      "bytes": 744,
+      "sha256": "d9b7d7aead102e5ac8f5c41b802be619c13cea0b13d9bf6a0533c76d69df0bc5"
+    },
+    {
+      "path": "crates/wiparse-core/src/log/file.rs",
+      "bytes": 13919,
+      "sha256": "f4fa37a3ec10a85db056d6524ff90a3203f4ac90d3144ccaaa7b1d5e39352989"
+    },
+    {
+      "path": "crates/wiparse-core/src/log/filter.rs",
+      "bytes": 5633,
+      "sha256": "24545ce4ae50cc6396a2b01fdde111f0c46db1ae91f89c27316ae8010baf01e6"
+    },
+    {
+      "path": "crates/wiparse-core/src/log/live.rs",
+      "bytes": 6332,
+      "sha256": "7c28d47645885d2e8b717809d592dac63af44533e993c87770c6936d9fc4b0e7"
+    },
+    {
+      "path": "crates/wiparse-core/src/log/mod.rs",
+      "bytes": 521,
+      "sha256": "9f8e071e316031e0e729f986e8423de295a71ef71de069f380e53857bfb13086"
+    },
+    {
+      "path": "crates/wiparse-core/src/log/store.rs",
+      "bytes": 656,
+      "sha256": "2e2acb996bee89eed49fb9f5ef8c7065a175da6e2ed30130632420ea43c9f498"
+    },
+    {
+      "path": "crates/wiparse-core/src/log_analysis.rs",
+      "bytes": 55314,
+      "sha256": "22bfb2e7300e4a02538a91de42d3d96837e925e0220d9d9c82bcead4fe2644c7"
+    },
+    {
+      "path": "crates/wiparse-core/src/log_analysis/events.rs",
+      "bytes": 10063,
+      "sha256": "14950fcfec4b2dd11d8fd78cb4e2ccac7c8c2772679c12ef9c19459eef5c431c"
+    },
+    {
+      "path": "crates/wiparse-core/src/log_analysis/structure.rs",
+      "bytes": 6535,
+      "sha256": "2c0a4119e97d33628cc98cf91fb94247650c14a64111a001bbb52becbd141229"
+    },
+    {
+      "path": "crates/wiparse-core/src/log_analysis/timeline.rs",
+      "bytes": 23176,
+      "sha256": "5b98d2a5bd23b014cbb99ca383cfb641276511db4f19d457b0738802a36517e5"
+    },
+    {
+      "path": "crates/wiparse-core/src/marketplace/catalog.rs",
+      "bytes": 2697,
+      "sha256": "327b2a864aab1dd4aefe7ce755771be685b16cbbb9e70e95c0d892cf589ca78a"
+    },
+    {
+      "path": "crates/wiparse-core/src/marketplace/install_path.rs",
+      "bytes": 2352,
+      "sha256": "67dfe66c949a8baf51e7bce86fdbe1839ad95f1d50875ccc37bc71b900828350"
+    },
+    {
+      "path": "crates/wiparse-core/src/marketplace/mod.rs",
+      "bytes": 7478,
+      "sha256": "a117d746170c9a5927d202c928a24878799a0f55215c8c2e4d61690279f0b088"
+    },
+    {
+      "path": "crates/wiparse-core/src/marketplace/trust.rs",
+      "bytes": 6609,
+      "sha256": "21bdff19893f234a52c981868e97ae1ce155ab16cafacae43edec89afed8a8a1"
+    },
+    {
+      "path": "crates/wiparse-core/src/mdns_browse.rs",
+      "bytes": 14304,
+      "sha256": "656b92b7ec52dbe76378e3e5f9df723b504a795484ed51a3608fc02959947485"
+    },
+    {
+      "path": "crates/wiparse-core/src/metrics.rs",
+      "bytes": 2236,
+      "sha256": "acccc25a7af4d01fa5b285b8778ece454742395c007253b0dc3de1172081b053"
+    },
+    {
+      "path": "crates/wiparse-core/src/native_lib.rs",
+      "bytes": 4353,
+      "sha256": "444a195c281ce71d2bacfe3d1531cd2ed872cf2e3a6c0bb74b627350dccf92af"
+    },
+    {
+      "path": "crates/wiparse-core/src/paths.rs",
+      "bytes": 3926,
+      "sha256": "47fe56f4f0b9b7962d9d7fba079e5c4e4f529a547d0ad5a9dd247e2397a144bc"
+    },
+    {
+      "path": "crates/wiparse-core/src/platform_api.rs",
+      "bytes": 22301,
+      "sha256": "b747793e9c6550eb4b106a79683ecface667946851f76a6a9f8d7b5d696f810e"
+    },
+    {
+      "path": "crates/wiparse-core/src/probe.rs",
+      "bytes": 23042,
+      "sha256": "11a4a6a773db5d288a2f722e4e638a106f16b17ca3bef8e9a73ea95bc21c80c6"
+    },
+    {
+      "path": "crates/wiparse-core/src/project.rs",
+      "bytes": 49877,
+      "sha256": "44b5a31b367e0597a578191fab80925ab5d551aa91b6f6c977c022131cdd6d04"
+    },
+    {
+      "path": "crates/wiparse-core/src/protocol/decode.rs",
+      "bytes": 55952,
+      "sha256": "763ea5aec5b12c1481e7a8d0d9bcd73c7763a745f5ae9f2937da500d21edfdc3"
+    },
+    {
+      "path": "crates/wiparse-core/src/protocol/defs.rs",
+      "bytes": 22002,
+      "sha256": "2da3e77b3944323757fb485e854e8b09c56ff5d3b84b29f9dbe45237622d4284"
+    },
+    {
+      "path": "crates/wiparse-core/src/protocol/line.rs",
+      "bytes": 4555,
+      "sha256": "d62f9bc58f95a2394d6c746e4fb736a754142e280e6af533bef96602f4317ef5"
+    },
+    {
+      "path": "crates/wiparse-core/src/protocol/mod.rs",
+      "bytes": 338,
+      "sha256": "401bdb389e35f30ca6de4286d644a87a22eed8740038284f4926b1c25d7bdeea"
+    },
+    {
+      "path": "crates/wiparse-core/src/protocol/tooltip.rs",
+      "bytes": 5171,
+      "sha256": "d3d636d7ce5f19fc68357c71c50824d26e3260a87e460c903d2560d2fd140755"
+    },
+    {
+      "path": "crates/wiparse-core/src/rigol_wfm.rs",
+      "bytes": 20797,
+      "sha256": "35f785a777b8ca3d870d5128bf9fd342ab514a776d13eb6d9e7d783bc597bb6d"
+    },
+    {
+      "path": "crates/wiparse-core/src/scope/binary.rs",
+      "bytes": 10075,
+      "sha256": "c730e4db3a4e547eee1148ed75bb273c594203e0de128c23d49223ddf08b5878"
+    },
+    {
+      "path": "crates/wiparse-core/src/scope/client.rs",
+      "bytes": 31958,
+      "sha256": "0e5700e428a19c8a7b1c50d85e56257d4ea53728fe56b8fc5767168710a25ccc"
+    },
+    {
+      "path": "crates/wiparse-core/src/scope/mod.rs",
+      "bytes": 852,
+      "sha256": "469f48137aae98227787ed4933c8c0c672afc649a592108e93608d01423069f5"
+    },
+    {
+      "path": "crates/wiparse-core/src/scope/visa.rs",
+      "bytes": 22415,
+      "sha256": "7d56e6f2839b44c3eb4c56de058bc3664ce6ede2accfca9d0a6ed7f19c22a569"
+    },
+    {
+      "path": "crates/wiparse-core/src/scope/visa_hotplug_tests.rs",
+      "bytes": 3445,
+      "sha256": "e31bf9e911e66ef8360c0aad074ce78df16b538a27aa69ddf867ed847a24ccbf"
+    },
+    {
+      "path": "crates/wiparse-core/src/serial.rs",
+      "bytes": 25415,
+      "sha256": "933c26d9d1f2ed885f47da7913a049c0b2b4f1db750858bc31c15cb0faa7b3a5"
+    },
+    {
+      "path": "crates/wiparse-core/src/serial_windows.rs",
+      "bytes": 5565,
+      "sha256": "3d49f502b1cbc9c557fa0e6f627d31b67342a6b67a388285f6f5eeb436ddac1b"
+    },
+    {
+      "path": "crates/wiparse-core/src/serial_winusb.rs",
+      "bytes": 12505,
+      "sha256": "1eaf299ccac3e1f7b898f7b669b0343957224231b543e4c48b7eaf09660efe71"
+    },
+    {
+      "path": "crates/wiparse-core/src/serial_winusb_win.rs",
+      "bytes": 20705,
+      "sha256": "579564eb8d094920cf971b883b789dd975214f4e8ed4ea680bc45abe438a146b"
+    },
+    {
+      "path": "crates/wiparse-core/src/testrun.rs",
+      "bytes": 34592,
+      "sha256": "d68369b6525f0596f2ac84c96e464b813ceb2dd16e0960a558c53ae288eff90f"
+    },
+    {
+      "path": "crates/wiparse-core/src/update/fetch.rs",
+      "bytes": 774,
+      "sha256": "fc8250567b5dce9126e6b1b5b2d086e5f0c759109e87c01570bdef3fdc26c9c6"
+    },
+    {
+      "path": "crates/wiparse-core/src/update/manifest.rs",
+      "bytes": 1553,
+      "sha256": "98ae710e6ba7653fb36ef3442d719fd433cea98d7ef6367c45cac7ebb22599d4"
+    },
+    {
+      "path": "crates/wiparse-core/src/update/mod.rs",
+      "bytes": 2579,
+      "sha256": "47cd143a3d82c7f186198b775137d29688d407837261eb12f0a30090a2c23d32"
+    },
+    {
+      "path": "crates/wiparse-core/src/update/verify.rs",
+      "bytes": 1460,
+      "sha256": "a59f9cac57654ee315b4b37663ea3d2bb88bc988a3cd8ba69730a4467695ae22"
+    },
+    {
+      "path": "crates/wiparse-core/src/update/version.rs",
+      "bytes": 1416,
+      "sha256": "40e0b9da54bcf6c7aab1b212c9d12745624496665702a0c8093fd8b36c329d95"
+    },
+    {
+      "path": "crates/wiparse-core/src/usb.rs",
+      "bytes": 9646,
+      "sha256": "362bc7a3ee3279fd51f4b47272e235e72320cd2a99acc47fba3a181c9df5be85"
+    },
+    {
+      "path": "crates/wiparse-core/src/wave.rs",
+      "bytes": 6598,
+      "sha256": "e533a25490e5de4ceab758f4869745f0d1e327e8315a1280d4a1091edf9ae388"
+    },
+    {
+      "path": "crates/wiparse-core/src/wave_display.rs",
+      "bytes": 30449,
+      "sha256": "ff92db402c44340a0a9c8337cc88b35f118eb7aaaa75e6a8cd7743aba0466eea"
+    },
+    {
+      "path": "crates/wiparse-core/src/waveform_file.rs",
+      "bytes": 74028,
+      "sha256": "9bef1cccb5c9327850850701187af0fb86d534232dad91293feadc9d439c39ef"
+    },
+    {
+      "path": "crates/wiparse-core/tests/skill_test_run_binding.rs",
+      "bytes": 1536,
+      "sha256": "2fe6d8636df348f64dbb636d3b720c83f5f1bdba8beacb58af94d540d597610e"
+    },
+    {
+      "path": "crates/wiparse-gui/Cargo.toml",
+      "bytes": 1544,
+      "sha256": "d2f1052991c0cb5ad0e42473565d02f72815f83a29be35d8ae74e3025ada4699"
+    },
+    {
+      "path": "crates/wiparse-gui/build.rs",
+      "bytes": 720,
+      "sha256": "f0540b4d04a53d55eca28a75eebf59225c873dcca296d5a32a2a1c3eb82a36d5"
+    },
+    {
+      "path": "crates/wiparse-gui/src/agent_host.rs",
+      "bytes": 66122,
+      "sha256": "9e50c5a99e2cc126c589173ff21bddef74b1d02b4f104fb4b2c170e0afdd8079"
+    },
+    {
+      "path": "crates/wiparse-gui/src/ai.rs",
+      "bytes": 69522,
+      "sha256": "e5ca284d9ebaa098c0bf4752120baf3ed9a28fa7183b208827c8d07fdd9b3418"
+    },
+    {
+      "path": "crates/wiparse-gui/src/ai/agent.rs",
+      "bytes": 192092,
+      "sha256": "db133e3b189fb2b6e2dba3739066c1f350d9c201bb48a01e78480d61853ec51a"
+    },
+    {
+      "path": "crates/wiparse-gui/src/ai/agent/read_batch.rs",
+      "bytes": 6628,
+      "sha256": "37c65ec2f18fc05b9e772bfc86e21aecbd6208958a14f2d86b8d2cbb39bf7125"
+    },
+    {
+      "path": "crates/wiparse-gui/src/ai/agent/remediation_tests.rs",
+      "bytes": 11456,
+      "sha256": "5cee672a83cf1b474c70078a5b793e58b645b4db048201e99c7176701e1efed7"
+    },
+    {
+      "path": "crates/wiparse-gui/src/ai/agent/report_view.rs",
+      "bytes": 9249,
+      "sha256": "48143bd9dce2aeef18a8be289293feeaaa32bd44b673ad8a34759a2f62bd16de"
+    },
+    {
+      "path": "crates/wiparse-gui/src/ai/artifact.rs",
+      "bytes": 25503,
+      "sha256": "8f8f8f299702b9b1493c1a2c06aaf656eab342b2c12b9c319e0e6239469db7bb"
+    },
+    {
+      "path": "crates/wiparse-gui/src/ai/broker.rs",
+      "bytes": 4913,
+      "sha256": "cf7585b99131465e43b2e1ad48462677cb0f394156a9250eaa8f4ef317c3a1bf"
+    },
+    {
+      "path": "crates/wiparse-gui/src/ai/execution.rs",
+      "bytes": 22615,
+      "sha256": "35f539173284f5b2427de8b4796cf141bb31827704d5989a08e21ab5fe731285"
+    },
+    {
+      "path": "crates/wiparse-gui/src/ai/journal.rs",
+      "bytes": 49863,
+      "sha256": "d85481d8323aca2e6ab6b87e2593c362b63e77660d9197eddd62ee3919f288fc"
+    },
+    {
+      "path": "crates/wiparse-gui/src/ai/report.rs",
+      "bytes": 2968,
+      "sha256": "6f3aa2e12e04c6fd2442dbc070ba5271f357184be6194e264e97ebeb6d84fc06"
+    },
+    {
+      "path": "crates/wiparse-gui/src/app.rs",
+      "bytes": 82269,
+      "sha256": "ac72f7f787214b7ef044d3e2ed005d7cc16cf7052996a347501b1c9c0684b758"
+    },
+    {
+      "path": "crates/wiparse-gui/src/backend/capabilities.rs",
+      "bytes": 70,
+      "sha256": "9935302bf71cc15dddc2fb2b303c14a1ce4bb8b9472e10a38d3c563150b29e33"
+    },
+    {
+      "path": "crates/wiparse-gui/src/backend/dispatch.rs",
+      "bytes": 15708,
+      "sha256": "6883d5fb21516c5a869e7c72ca98090aedd0cd70888ced8ccfdd9b9d090bfa53"
+    },
+    {
+      "path": "crates/wiparse-gui/src/backend/events.rs",
+      "bytes": 5227,
+      "sha256": "f15cf4b833dbf46722b082fc93faab5933276eca44beed25471293ab0ec951d1"
+    },
+    {
+      "path": "crates/wiparse-gui/src/backend/mod.rs",
+      "bytes": 14512,
+      "sha256": "b44074f8ef86d05ed622b8a1e66f5c7ede6dff96d65bd7c15bbe60e38c0fed6c"
+    },
+    {
+      "path": "crates/wiparse-gui/src/backend/stateful.rs",
+      "bytes": 16845,
+      "sha256": "2037d4f69a863ec0d834ad29c2f18f537fed8aae7bcca40e7d66a68afa323c3f"
+    },
+    {
+      "path": "crates/wiparse-gui/src/backend/ui.rs",
+      "bytes": 14769,
+      "sha256": "4f1ea28defa02df91a356644f3942d86d84147bbb2fd30e3f886efe26da5180e"
+    },
+    {
+      "path": "crates/wiparse-gui/src/calculator.rs",
+      "bytes": 106919,
+      "sha256": "fda24db94411575729233e29b913bd9379392ba19ae091383c4c35060786df53"
+    },
+    {
+      "path": "crates/wiparse-gui/src/converter.rs",
+      "bytes": 38454,
+      "sha256": "a30e7c3a687071322dd7f0d06f563cdb580ea1507e3652f61951923202b75458"
+    },
+    {
+      "path": "crates/wiparse-gui/src/data_analysis.rs",
+      "bytes": 197546,
+      "sha256": "b87d43d8916e9d72ee22da4043edbd4313f4adfe28eb5bdabf42022c169c34e7"
+    },
+    {
+      "path": "crates/wiparse-gui/src/data_analysis/ai_extract.rs",
+      "bytes": 19940,
+      "sha256": "bdf1a9ed2dda58a1cbd0cdf5d36b2f86e1b0a6803be560e666a4f8ec6a96418f"
+    },
+    {
+      "path": "crates/wiparse-gui/src/data_analysis/history.rs",
+      "bytes": 15683,
+      "sha256": "3e99c392a30417a2c1bc18160e86bad15083ad614298530b77026f439fe9efc4"
+    },
+    {
+      "path": "crates/wiparse-gui/src/data_analysis/retained_rows.rs",
+      "bytes": 2701,
+      "sha256": "b48cc0ff075f028f15b24d3426a508940151aa755df31b6ee648aa10ef07ed92"
+    },
+    {
+      "path": "crates/wiparse-gui/src/data_analysis/reviewed_data.rs",
+      "bytes": 10365,
+      "sha256": "8fa3237c72103ac2c7e70986add2f0fc58e19aa6b7c713eb2a5633178ad3f203"
+    },
+    {
+      "path": "crates/wiparse-gui/src/data_analysis/source_location.rs",
+      "bytes": 5030,
+      "sha256": "0a083025332a87ac4267df7c057398763be6015c6ba487129b46445e30abf569"
+    },
+    {
+      "path": "crates/wiparse-gui/src/data_extract_cache.rs",
+      "bytes": 12614,
+      "sha256": "f22d1773b6125753eb509fa0a87a48954065661361a5d7c9d2c2d39388a4144e"
+    },
+    {
+      "path": "crates/wiparse-gui/src/error_log.rs",
+      "bytes": 5237,
+      "sha256": "999448f713404e34f90fb74160deb173d0f5d3ac202bfcad00891d5791b865fe"
+    },
+    {
+      "path": "crates/wiparse-gui/src/fonts.rs",
+      "bytes": 1500,
+      "sha256": "85f1651c9e04d2b6704af36d7604da4ba5addb3a2f8f068a835f7c18ad67e554"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control.rs",
+      "bytes": 301664,
+      "sha256": "d85448d0c9549ec3ae6660a6fb223492f0581d991e072e4fc6b0310ba5229cd3"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/agent_commands.rs",
+      "bytes": 22767,
+      "sha256": "21f5ce0ea562c5cf1f98e5db316b88b24cb1ca90d70e059c338c6d58d6195351"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/secure_output.rs",
+      "bytes": 15048,
+      "sha256": "b935b01c4177f426907fd432c0c7a36fa0879e08a46603279564b5fcc9f685e3"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/waveform_pipeline.rs",
+      "bytes": 11748,
+      "sha256": "6e37c2ce5c0c04378fa2c874a2cd56733333b1f5aa57cd0367f50581486b42ab"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/waveform_pipeline/tests.rs",
+      "bytes": 17543,
+      "sha256": "8cb2e169acfda6d1c4ac80b64439aafe9d77876a71601f8152cb2d0b2933175b"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/workbench.rs",
+      "bytes": 44374,
+      "sha256": "7ab778a5c0812ce65a712e05b8bb38307ac8218209c68d6f97380d2d0db99969"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/workbench/channels.rs",
+      "bytes": 29210,
+      "sha256": "64603cf7f2fe31234506ac4ec471bb9ee833fd9b09e45809aef9d11a83cd664a"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/workbench/controls.rs",
+      "bytes": 23891,
+      "sha256": "69112ca7fd47b0c7a95a7ea49f9f8fab5f1e06224b79a99508f6bee0ed3e12c3"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/workbench/design.rs",
+      "bytes": 16950,
+      "sha256": "3f2f954b26d9926bd9623ed7a4c681145d95a72d8e5c0acdcc50dd29560bdbe2"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/workbench/flat.rs",
+      "bytes": 23967,
+      "sha256": "534e729f0a6a09ffa274c8740af4a6f4622e4a72f7f632680ff260ca1553eef9"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/workbench/navigation.rs",
+      "bytes": 17076,
+      "sha256": "bfb01d583d4d335dec0dab5c9ab37155382c9c7821a1381562447951cdaf683f"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/workbench/ports.rs",
+      "bytes": 8898,
+      "sha256": "30c83192d5e384019c5dffebecb5b894d1bbf0da4c9eae9c45556c379362fc6e"
+    },
+    {
+      "path": "crates/wiparse-gui/src/instrument_control/workbench/scope_layout.rs",
+      "bytes": 24403,
+      "sha256": "f5cf18627a7fc24b64aa0372da78fd99053e625f29b1787a6579c1390695225f"
+    },
+    {
+      "path": "crates/wiparse-gui/src/log_tab.rs",
+      "bytes": 116218,
+      "sha256": "054dfc99a0b99864f3e5811ff32caeea92ef5b40369fa29ec095ee215cf66501"
+    },
+    {
+      "path": "crates/wiparse-gui/src/log_view.rs",
+      "bytes": 89752,
+      "sha256": "e45c204d6ad32f90f72314e8d98fb3c53e145acf858299e07cdfa73644aaf6b9"
+    },
+    {
+      "path": "crates/wiparse-gui/src/main.rs",
+      "bytes": 4531,
+      "sha256": "72edec784049153ffd1bfdbdc7cd5a998e2aa485a3c757f04ca90225dcbc317f"
+    },
+    {
+      "path": "crates/wiparse-gui/src/market_jobs.rs",
+      "bytes": 10922,
+      "sha256": "acb8b84efbc1cb27070a9e5d28cab90d72d97de8cf81d22f23106297ebf97fd5"
+    },
+    {
+      "path": "crates/wiparse-gui/src/plot/mod.rs",
+      "bytes": 320,
+      "sha256": "72c0d72b4589844eb970ab35f8972d31c47a2667c3a636330f685d7a9ea7581c"
+    },
+    {
+      "path": "crates/wiparse-gui/src/plot/scope_columns.rs",
+      "bytes": 19397,
+      "sha256": "1171bd390d1b35a1da636a61b7cd2178fdbacabecc19699414a7c94ac0a12a64"
+    },
+    {
+      "path": "crates/wiparse-gui/src/plot/text_label.rs",
+      "bytes": 6012,
+      "sha256": "9f38f3255281ef5eb44d6291ee1442d5bc457124a869a91a04d8f0f287a12815"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool.rs",
+      "bytes": 176051,
+      "sha256": "194f96c97d83a73b977aff3aef2a973c691d9c104cc5e7364df53e73d6256180"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat.rs",
+      "bytes": 56687,
+      "sha256": "93e647fc14de74254edac5197b0124509f8ae54d326e3297bd379c69b7b6ff4a"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat/agent_workflow_tests.rs",
+      "bytes": 44659,
+      "sha256": "dfb1ff98284d9a4335605fbb2ac6e026bd3d23857a42228351e899e21b669ec3"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat/alerts.rs",
+      "bytes": 10015,
+      "sha256": "72ce991741c1cdc21b5699f8885c487575819f60d4506557f4ca71a400e808ae"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat/host.rs",
+      "bytes": 97743,
+      "sha256": "2ecf5f965a14449005616da884af4a5031693c0018b43722930fe0a2994d8c95"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat/library.rs",
+      "bytes": 29406,
+      "sha256": "bee04cde21560d0a5eca6879acfc28ef06cf94dfa797953f2530559aab1ee00c"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat/live_eval.rs",
+      "bytes": 5962,
+      "sha256": "f24d3c9af3bbf34036d4bb3b9038ed280763f5fe588c43516b06fa41030e6f3b"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat/monitor_review.rs",
+      "bytes": 4038,
+      "sha256": "3031ce9b44578bfd99ad36076ffd786ba57b3c100b863685ca3a636a12d6d316"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat/platform.rs",
+      "bytes": 83199,
+      "sha256": "efc2e833517faab794aeef355ca9e99cc5962394b21de4e96cff4c66f5929336"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat/platform_tests.rs",
+      "bytes": 52190,
+      "sha256": "521901be6754cdff25127728d6c4834e7800abff1d8232854b34d831740d92a4"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat/protocol.rs",
+      "bytes": 17576,
+      "sha256": "c76b95c9362d26f48689ad9b57886cebb843518e92938d234149d9ed36e66fa3"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat/queue.rs",
+      "bytes": 10408,
+      "sha256": "05af1cd3460dacb23b1cbed0b9e1f90b331f0eed73122f96162432d34b64b5d9"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat/queue_tests.rs",
+      "bytes": 19967,
+      "sha256": "5091b6bbed6cb4c6847e4a1e0de8ad5011db6dbe4f7270c00881d3a1eb7bd94a"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat/responsiveness_tests.rs",
+      "bytes": 15401,
+      "sha256": "89606bd1dac3d9905b9e259b877915ca2b8b27deee9100788d814b186515cc66"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat/run.rs",
+      "bytes": 40443,
+      "sha256": "f4aa3a6641b1212321fa50ea70d4e15911ac84c22d424c7940b54b1f0c2acc96"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat/tests.rs",
+      "bytes": 73181,
+      "sha256": "506b44cb367069f6fc721ad651b7e0ff303a7fbb459e8d23276f9d966a8ee620"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat/timeline_view.rs",
+      "bytes": 8807,
+      "sha256": "a6b647d450e09bd8e0146bc2fe65974e2f8c89f5bf15d32a341c9e5363f82c84"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat/view.rs",
+      "bytes": 57613,
+      "sha256": "32345726ef15d76512829218e6ff4dc0cb8bcb825a7e7e03a3e3c7b821a88251"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/ai_chat/view_tests.rs",
+      "bytes": 25714,
+      "sha256": "ffa2c6f20e8b5df0b107209ed72a18bc06b36b8cda5b4f2d8d87c0daf72c41d2"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/dispatch_gate.rs",
+      "bytes": 15088,
+      "sha256": "99fc7a99076d9b2e94672f5a5587578d933093b3a431c4ccd8ecbba946a3ff77"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/sidebar.rs",
+      "bytes": 1963,
+      "sha256": "49dc1fdf44f600e5cf214430e0bed94a61d53a749a6d638bdfff3e751808e9fd"
+    },
+    {
+      "path": "crates/wiparse-gui/src/serial_tool/sidebar/tests.rs",
+      "bytes": 5323,
+      "sha256": "6d6a9114307d517525eac1b0702203a79c80419820b43c8bec6c4e4e230db713"
+    },
+    {
+      "path": "crates/wiparse-gui/src/tektronix.rs",
+      "bytes": 8610,
+      "sha256": "3d4f1cac7e93387c3994c3bb68218ad53359d0fbc93e51a23d0dd8feb1701f23"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_report.rs",
+      "bytes": 170227,
+      "sha256": "5b20758e38ba0fe3a7333f32e9644e9f77e9b544c43a077d247c1561aba021f5"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_report/ai_read.rs",
+      "bytes": 22021,
+      "sha256": "23442cea52e1ea8767b2d0d8d2997fdf52fcbdef408d4696e1ab23976e14bc2a"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_report/ai_read/paging.rs",
+      "bytes": 20620,
+      "sha256": "21d836e1812c7e1462c4f065a7f0d83949244f34601f3918ddf16ee2b911632c"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_report/ai_read/reviewed_preview.rs",
+      "bytes": 7659,
+      "sha256": "92429c10cde5cd7dfad806912bbb9addedec2ed1ac7f47ee52f7a33db718bce9"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_report/ai_read/screenshot.rs",
+      "bytes": 2387,
+      "sha256": "f9513f5b4ec7e18591076e216919fa95e24674a9c5d3243369247d9fcf773bac"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_report/chat_text.rs",
+      "bytes": 9881,
+      "sha256": "f7b73506191d19726159fef0a82db21c1ef28fc8906d4b9fa1584f2f8677fb44"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_report/inline_images.rs",
+      "bytes": 3827,
+      "sha256": "f0184008547a90fe23f00bbd8779488902fa9053765415b59a2c3149defd1fa9"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_report/inline_images/tests.rs",
+      "bytes": 9987,
+      "sha256": "b6b8156d3bfd80a9070d4c2d8382364fd97cdeb886cc5969bb81c06dd92292b4"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_report/mermaid.rs",
+      "bytes": 19013,
+      "sha256": "d0da007fa9d93dc74677a1a310fbc9c3b87b0f469f08b10fbbc018c656923a05"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_tool.rs",
+      "bytes": 202334,
+      "sha256": "93cdd3f42e187562030dc000b56bc78d8d899c7e5f5c52079c90cec6384bf33e"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_tool/line_trigger_editor.rs",
+      "bytes": 33059,
+      "sha256": "a25de2e17f5d66d67390aad0befebdd7eeefcab6ae20400154302e8ce6f778b0"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_tool/workspace.rs",
+      "bytes": 188352,
+      "sha256": "46d9eb75638d1bfdfcc5503f059d800317e033faf7a32582ad0dbd20a9c5237d"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_tool/workspace/chrome.rs",
+      "bytes": 13313,
+      "sha256": "e64ffbd5e982c35274a2d372b70b0f24512ad041944deebffbecedbc84b319d3"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_tool/workspace/chrome/tests.rs",
+      "bytes": 11618,
+      "sha256": "627ac615be9922eb34cf731b5643475f80539744ac2d499f1247bfebe3ecf6a9"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_tool/workspace/form_layout.rs",
+      "bytes": 18157,
+      "sha256": "452684ccf07bb19010b9489bcb3412ba11bf3e077ecb618b44cfb86261699763"
+    },
+    {
+      "path": "crates/wiparse-gui/src/test_tool/workspace/project_matrix.rs",
+      "bytes": 42973,
+      "sha256": "c560ec864397975baa2528b2a73b49e518438d6c3c40c1e1fdcf85017246804b"
+    },
+    {
+      "path": "crates/wiparse-gui/src/theme.rs",
+      "bytes": 34379,
+      "sha256": "d1539add6d16fef42419667f1925a4451af143269293ac9f11b38d5c6391fb0c"
+    },
+    {
+      "path": "crates/wiparse-gui/src/ui_audit.rs",
+      "bytes": 14638,
+      "sha256": "47e862edebb580e0d70be00476fe9c1afb1e8fd41abcbc9cde6347ad27bdb96e"
+    },
+    {
+      "path": "crates/wiparse-gui/src/update/mod.rs",
+      "bytes": 6795,
+      "sha256": "4b778c184f8e512aec965941e739dff751adcdafa084c90f3e6f884ac0dfd0eb"
+    },
+    {
+      "path": "crates/wiparse-gui/src/waveform_analysis.rs",
+      "bytes": 289946,
+      "sha256": "0c966325adaea1f1176a72f6c026c20cbf06594eacb81ee6d910f20328f0996b"
+    },
+    {
+      "path": "crates/wiparse-gui/src/waveform_analysis/protocol_view.rs",
+      "bytes": 34205,
+      "sha256": "8798ef7c00aabff833e20053b59db5e96f32775ed4d24e535f2066bdac1decdb"
+    },
+    {
+      "path": "crates/wiparse-gui/src/waveform_protocol_html.rs",
+      "bytes": 46562,
+      "sha256": "87c110f72a160838c75e7c0ea9b96e467adf4c1f46da26c0d4433e1f57fe814f"
+    },
+    {
+      "path": "crates/wiparse-gui/src/windows_icon.rs",
+      "bytes": 4045,
+      "sha256": "ee2388fc1c0d93a4eb9f7d3a2ab63773df61defb8e127cc4b9d62b2010aa7ba6"
+    },
+    {
+      "path": "crates/wiparse-service/Cargo.toml",
+      "bytes": 505,
+      "sha256": "f5feedc2a2d4529cf8be6265858834bbc8da807d798f1f05c94868309a923d89"
+    },
+    {
+      "path": "crates/wiparse-service/src/jobs.rs",
+      "bytes": 37721,
+      "sha256": "607326270bd345e1846a1672b82bb47a62db22282a7b2d5205ce9cf891016b0c"
+    },
+    {
+      "path": "crates/wiparse-service/src/main.rs",
+      "bytes": 5056,
+      "sha256": "01e28f7185fd9da64fafc0d1f5f8b5fdbb50547fc441224c9ad2af15b006be74"
+    },
+    {
+      "path": "crates/wiparse-service/src/storage.rs",
+      "bytes": 3513,
+      "sha256": "ba14b881deef84f67bdbf2e111350d3e84d158a11113bc404b7e046c6eb3f037"
+    },
+    {
+      "path": "crates/wiparse-service/src/wireless_ft4222.rs",
+      "bytes": 2193,
+      "sha256": "0d0273175c9b7a7bbc549fb757479104f26953b2c6decee451d1af4f1be4b7a8"
+    },
+    {
+      "path": "crates/wiparse-service/src/wireless_gate.rs",
+      "bytes": 13699,
+      "sha256": "2cb30fdf2ce97911d2d32d18dd562288a19253024c12489fe2e15fc69de3d9cd"
+    },
+    {
+      "path": "crates/wiparse-service/src/wireless_runtime.rs",
+      "bytes": 8452,
+      "sha256": "10d5797082d0e67d4bb119be98a3e3a054388484dcae86fa536b938ce480d39f"
+    },
+    {
+      "path": "crates/wiparse-service/src/wireless_station.rs",
+      "bytes": 36790,
+      "sha256": "d278c24761e475935b8c9a412e6a04fc9a32d9b12175d96ce71cff9033740f81"
+    },
+    {
+      "path": "crates/wiparse-service/src/wireless_uart_windows.rs",
+      "bytes": 3041,
+      "sha256": "db8bd20a0d66d53e0236e885b748b9ee949b2af86b1b04627d86b3111a75e6c3"
+    },
+    {
+      "path": "mcp/wiparse/.gitignore",
+      "bytes": 52,
+      "sha256": "8f913ad245a06e2727b671b8e753d9398aa45a045315cd94ffc4b4c362dc46ff"
+    },
+    {
+      "path": "mcp/wiparse/README.md",
+      "bytes": 4341,
+      "sha256": "b9ecdc7ce879030bb25ed87476fad8555936598c513c8c669031c2d604afad06"
+    },
+    {
+      "path": "mcp/wiparse/cursor.mcp.example.json",
+      "bytes": 237,
+      "sha256": "d71b7ed9e62af3167a6074ce89b6437fd70b4867c84259f6f08cc505ba153e5e"
+    },
+    {
+      "path": "mcp/wiparse/dist/http.d.ts",
+      "bytes": 570,
+      "sha256": "42ccce5e6c5dec9e89da00502a4e7e432ab6782aed9d8bc9613453dfe6c53ea5"
+    },
+    {
+      "path": "mcp/wiparse/dist/http.js",
+      "bytes": 1295,
+      "sha256": "454a1b99698a33214eb34d37bb03f952ee415c1ff2bf0d68e8a24d5364e4cf5e"
+    },
+    {
+      "path": "mcp/wiparse/dist/index.d.ts",
+      "bytes": 31,
+      "sha256": "43e818adf60173644896298637f47b01d5819b17eda46eaa32d0c7d64724d012"
+    },
+    {
+      "path": "mcp/wiparse/dist/index.js",
+      "bytes": 9682,
+      "sha256": "b96dbb35d8f8e26fcba9885a31e0efd93313ec381f3b6a9fe0c919b31352a53d"
+    },
+    {
+      "path": "mcp/wiparse/package-lock.json",
+      "bytes": 44035,
+      "sha256": "6613f136d19e1630461613c84c57f468fccfd71ce5711dec8f9833dade02783b"
+    },
+    {
+      "path": "mcp/wiparse/package.json",
+      "bytes": 613,
+      "sha256": "86b312de4b4facb14fb9c1beb1824e192752a4262985dfc7de74b7d8f4956d8d"
+    },
+    {
+      "path": "mcp/wiparse/setup-mcp.cmd",
+      "bytes": 135,
+      "sha256": "2b177f27aa323e53774fa057f4759f270841f4a2ab531a324e70d7fba0ad53fe"
+    },
+    {
+      "path": "mcp/wiparse/setup-mcp.ps1",
+      "bytes": 5848,
+      "sha256": "169ed374f7c4c0aee2e2284c4475d770da782eb7f3497b4eba2e397dc3c152bf"
+    },
+    {
+      "path": "mcp/wiparse/src/http.ts",
+      "bytes": 1587,
+      "sha256": "5e4e621d74baa4ed122cc5aa192bd7ccabed52c5038cba0605f625318729d428"
+    },
+    {
+      "path": "mcp/wiparse/src/index.ts",
+      "bytes": 9802,
+      "sha256": "02b54b6c217d65f07d06b1f5435b2f9704b9f3ad9ddc6fc5ca3520541ca89f1f"
+    },
+    {
+      "path": "mcp/wiparse/test/smoke.mjs",
+      "bytes": 3081,
+      "sha256": "9bc1f08c5409d69c61e59c6033ceb5c79380ac792bcee261dc9abd5e21fab9a0"
+    },
+    {
+      "path": "mcp/wiparse/tsconfig.json",
+      "bytes": 286,
+      "sha256": "aa110f6d9fb8769abb7b378ba71f31d97eda8ba7f297680281d20315a89d66e6"
+    },
+    {
+      "path": "packaging/update/apply-update.ps1",
+      "bytes": 2976,
+      "sha256": "ffc845a7ca0a45b7be87d4741d52c8ead653b66b1c287bc47b2847fdfcda245d"
+    },
+    {
+      "path": "packaging/update/latest.json.example",
+      "bytes": 565,
+      "sha256": "26ed04673d881ce77903f56e801a7f5c12c23d6ccb2f83ca04bc5e3ebdbe086f"
+    },
+    {
+      "path": "packaging/update/publish-release.ps1",
+      "bytes": 1549,
+      "sha256": "cfaf6398666704849179fa36afac3943c953c904fd286d7b56efbaf3dc95e3dd"
+    },
+    {
+      "path": "sample_waveforms/DS1307Z/tek0000CH1.isf",
+      "bytes": 200467,
+      "sha256": "a5e598ffbd72ead98b9ec8ee343b62bcbbe682fa23b10cf9f5aaf221180413d1"
+    },
+    {
+      "path": "sample_waveforms/DS1307Z/tek0000CH2.isf",
+      "bytes": 200464,
+      "sha256": "4e3d183b0dc49915ed5f9698f55a5c5b1c2d89fce67c9537f0395ca8757f6b4e"
+    },
+    {
+      "path": "sample_waveforms/RF/tek0002NRM.isf",
+      "bytes": 4535,
+      "sha256": "9ae296a9c37a09ca0d81bf7b353b0b1a49ba895202e879d4869bc30cf8c2d17e"
+    },
+    {
+      "path": "sample_waveforms/Rigol_WFM_4ch/DHO824-ch1234.wfm",
+      "bytes": 82882,
+      "sha256": "8db69b8478c32e7111131867c949026830c4c739d66265e63ac5b56d3f433047"
+    },
+    {
+      "path": "sample_waveforms/Rigol_WFM_4ch/DS1054Z-CH1UartCH2OffCh3SquareCh4Sine.wfm",
+      "bytes": 123725,
+      "sha256": "24fb25931fea0957beffe0507219c758285c085f4cec4e0be0bffaf7c302eff4"
+    },
+    {
+      "path": "sample_waveforms/Rigol_WFM_4ch/DS1204B-A.wfm",
+      "bytes": 41380,
+      "sha256": "7003c107c80612fd6b600f24e45764f62d141f8a94fbd66950737d1a936e7235"
+    },
+    {
+      "path": "sample_waveforms/Rigol_WFM_4ch/DS4024-A.wfm",
+      "bytes": 1457068,
+      "sha256": "e8dd0f5495b7d036c0672453b094e60a488690e94fc87983beaa26f4c1db8e5c"
+    },
+    {
+      "path": "sample_waveforms/Rigol_WFM_4ch/MSO1104.wfm",
+      "bytes": 1203725,
+      "sha256": "88cb9ac6b0e53d737257e503de0a902abd628ee0a6bed8f575222484fdb7e114"
+    },
+    {
+      "path": "sample_waveforms/Tektronix_WFM/AM_1Mhz.wfm",
+      "bytes": 15528,
+      "sha256": "5325da1be865512b90bc69e8341be18d12fbe0b30f6fae8b67762c4b48046525"
+    },
+    {
+      "path": "sample_waveforms/Tektronix_WFM/analog_waveform.wfm",
+      "bytes": 101081,
+      "sha256": "20e58a5c0d5f22b6fd294125c529ae0d29e880d76f886933ef98305a82fc169a"
+    },
+    {
+      "path": "sample_waveforms/Tektronix_WFM/data_test_waveform.wfm",
+      "bytes": 3081,
+      "sha256": "668b7460a2a31c70a26dae1c8176762040594478bba3592f496cdf932ca675bc"
+    },
+    {
+      "path": "sample_waveforms/Tektronix_WFM/tek_4ch_sine_square_tri_saw.wfm",
+      "bytes": 17008,
+      "sha256": "cfa5ad3ee33597bddf99e14868ed56683f638c50203dad878531dfd8b5804f36"
+    },
+    {
+      "path": "scripts/append-serial-resource-comparison.py",
+      "bytes": 3023,
+      "sha256": "a6465f3cf23a0c841bfc270d4d795844ced3a8ec016688cee4af8e9680816474"
+    },
+    {
+      "path": "scripts/archive-portable-release.py",
+      "bytes": 4553,
+      "sha256": "f71c7e7348f068c534478fcf7fb16699db4754bd43fba41dea9c0c14b5bc836e"
+    },
+    {
+      "path": "scripts/backup-current-version.py",
+      "bytes": 2566,
+      "sha256": "8eb3c0f282a765b522990209d01b293f15ec3040f83f032fd25967feca9bef34"
+    },
+    {
+      "path": "scripts/benchmark-engineering-agent.py",
+      "bytes": 3034,
+      "sha256": "804b5954ad096c9e278963e8bf6af3a74f954042666c38ff0e54143c069a0733"
+    },
+    {
+      "path": "scripts/collect-windows-crash.ps1",
+      "bytes": 3336,
+      "sha256": "a8c8c0bca4a53129b2add39f0d69a8e8e8fe18d242518bdc46aa1d1e1b0279e9"
+    },
+    {
+      "path": "scripts/compare-engineering-agent.py",
+      "bytes": 4289,
+      "sha256": "3c864a0a25b3daba2d743ea38b39bb447ed7a4a35ebbf82f16ec803a42ed8d4f"
+    },
+    {
+      "path": "scripts/deploy-marketplace.ps1",
+      "bytes": 4238,
+      "sha256": "c33065b7bcd74ef92737b156d3aec3b290ea76ad35ba60529deb43be84de3d14"
+    },
+    {
+      "path": "scripts/deploy-marketplace.sh",
+      "bytes": 2188,
+      "sha256": "4d87d89372606bf5bba2d9323bb7d439311b046099b9ac316e6228de1670c405"
+    },
+    {
+      "path": "scripts/freeze-engineering-benchmark.py",
+      "bytes": 4258,
+      "sha256": "c21a4893d0cda4c52f614e597024ac930187cc1a7cdadce1007bce8678f8582c"
+    },
+    {
+      "path": "scripts/freeze-hub-release.py",
+      "bytes": 2679,
+      "sha256": "a9f200f1e6da8e1b402cdf6866a3899334f4d3db8d08be6386f53a4b8ce844af"
+    },
+    {
+      "path": "scripts/gen_tek_4ch_wfm.py",
+      "bytes": 5870,
+      "sha256": "0cc9bac0d2ade4f6518ea6b1f347590b05c2e0a0681b8340d31fe7aa60032b09"
+    },
+    {
+      "path": "scripts/generate-fpga-hub-demo.mjs",
+      "bytes": 5862,
+      "sha256": "b92be9fdafbe83da0c741ea2e8a9e10bddaf2fcb587306e075c57c92327f38b6"
+    },
+    {
+      "path": "scripts/generate-scope-report-demo.mjs",
+      "bytes": 3964,
+      "sha256": "086552ea56055be0c2ba77383a65ded3ae606e750f155a87124270f4aaea4a76"
+    },
+    {
+      "path": "scripts/generate-scope-report-demo.py",
+      "bytes": 3850,
+      "sha256": "09df07e574101e486301a9393ac6684d2f8a9861bd98defa34af2ed5aec47265"
+    },
+    {
+      "path": "scripts/local-marketplace-sim.mjs",
+      "bytes": 6030,
+      "sha256": "62da2188264f11edd7acf1a3f98a6bce2548e6d4dd8d104f8224c6d6e93197ac"
+    },
+    {
+      "path": "scripts/measure-serial-resources.py",
+      "bytes": 7221,
+      "sha256": "2c85b4e57900b2c8f10911a729c3d1a5529d7b69fe0b6f4953c01442db33f907"
+    },
+    {
+      "path": "scripts/package-marketplace-demo.ps1",
+      "bytes": 21986,
+      "sha256": "01ae2ba3732c74a92caa9526ffd2f8ec02ac1e5458c1a735fb8926b6b03c3223"
+    },
+    {
+      "path": "scripts/package-marketplace-demo.sh",
+      "bytes": 4088,
+      "sha256": "deaa86a5670545cc420217c2c0f3b48d27e008b8a05375b09f6812f9fd10a39b"
+    },
+    {
+      "path": "scripts/package-portable-release.py",
+      "bytes": 11317,
+      "sha256": "cfd3de589c08ef3640efa164702df303cbd73b0034818b6393bc8f5a1b5326d5"
+    },
+    {
+      "path": "scripts/record-project-preview-verification.py",
+      "bytes": 3434,
+      "sha256": "c0a3fcbd5816003e0c8c9ffabc8686a5f74054e7c91d784cf6fa5f39ce23c955"
+    },
+    {
+      "path": "scripts/record-release-verification.py",
+      "bytes": 13461,
+      "sha256": "eb67d22b68368fa230b2981cbd068d8b93adcf975dc82cf08ee3c2cbcb08b857"
+    },
+    {
+      "path": "scripts/record-wireless-verification.py",
+      "bytes": 2209,
+      "sha256": "4c58ddc2bad63f1e1df7698c8036c9d73243307b54981e1d59d19675c8232669"
+    },
+    {
+      "path": "scripts/render-ui-audit.py",
+      "bytes": 2978,
+      "sha256": "0cc40665f52ed1eabe6cc65ece7033f2d963dc8b8a3b82c0eb586bd50de883e7"
+    },
+    {
+      "path": "scripts/review-engineering-benchmark.py",
+      "bytes": 6325,
+      "sha256": "2d25dfcb04956719d8a274ce37ae4302a5439503cfc052d792e191b4f07b1c02"
+    },
+    {
+      "path": "scripts/run-engineering-benchmark.py",
+      "bytes": 5722,
+      "sha256": "5fbd048298d70ac7de6e32563e68cee6c6c656f3f20c6626ac8ea5dca7a782d9"
+    },
+    {
+      "path": "scripts/seed-marketplace-plugins.mjs",
+      "bytes": 7638,
+      "sha256": "9729300abe7454544e35fd95704d391c5d0e6298ed794fd30d4525050218d221"
+    },
+    {
+      "path": "scripts/stage-exe-preview.ps1",
+      "bytes": 5923,
+      "sha256": "5ca8f09de09811bf43b18a79c4fc6e90aaa673e8b20ce729568e86572979049a"
+    },
+    {
+      "path": "scripts/start-ui-demo.ps1",
+      "bytes": 2769,
+      "sha256": "e7f0a7902779cef2ac09253a7edce1afcd659ad216ef808fa2057006456fa8f2"
+    },
+    {
+      "path": "scripts/summarize-ai-tasks.py",
+      "bytes": 5421,
+      "sha256": "28fe7c269c7fa3095a006192584fbbce6a69e6745acd94ee140b8d95948090e3"
+    },
+    {
+      "path": "scripts/sync-ftdi-dlls.ps1",
+      "bytes": 1954,
+      "sha256": "3c17d8171f7d614088e5b66a4b7f3ba031f6731a2928febecde37af3f7f43277"
+    },
+    {
+      "path": "scripts/test-engineering-benchmark.py",
+      "bytes": 3794,
+      "sha256": "c8c1b80b9ee76b889ca81eb410e75a058c09db4b3d107b96fefcd9c8c8509f08"
+    },
+    {
+      "path": "scripts/upgrade-fpga-demo.mjs",
+      "bytes": 1249,
+      "sha256": "691dced2a051eff81e0012c478066b65472da247e2847b4132639a42fc7a7aba"
+    },
+    {
+      "path": "scripts/verify-all-channel-package.py",
+      "bytes": 1437,
+      "sha256": "863828286113aae394668bc43b13b97f653a84bc75ef5ebabaf669b70f04c758"
+    },
+    {
+      "path": "scripts/verify-flat-instrument-package.py",
+      "bytes": 1417,
+      "sha256": "5145f643519f24d0fbdd0b4156fd90dcbe930d06670df505f5d220fe1a79ce64"
+    },
+    {
+      "path": "scripts/verify-fpga-controls.ps1",
+      "bytes": 5880,
+      "sha256": "b5b417815972613672bd3524cb42d00412f594d9ee4dfebb71c36f3205945b7e"
+    },
+    {
+      "path": "scripts/verify-fpga-resource-pressure.mjs",
+      "bytes": 2012,
+      "sha256": "b7a569215cafb7671325dcc53350c19aa387106900ceea786388f211275c4cd5"
+    },
+    {
+      "path": "scripts/verify-fpga-upgrade.mjs",
+      "bytes": 5696,
+      "sha256": "68546de8a42dcde975055b7e5bb0c4576dcc11aa24aa4fd3ddf5ab6e6aaae3d3"
+    },
+    {
+      "path": "scripts/verify-hub-package.py",
+      "bytes": 4693,
+      "sha256": "32f986a5f8782c74f8f0ba3fc74efe95991ddb70487c427cd50b6fa1f774585f"
+    },
+    {
+      "path": "scripts/verify-hub-release.ps1",
+      "bytes": 8699,
+      "sha256": "18ac1c4edc7ef7c85032b7a4524497a723b4dd0458fa4e91eb6bc54a77e3e752"
+    },
+    {
+      "path": "scripts/verify-instrument-reconnect.ps1",
+      "bytes": 4408,
+      "sha256": "5c85ce4524b9e507a8c366383e4e57a221554bfe19e2d6d97c4a68d6f7651020"
+    },
+    {
+      "path": "scripts/verify-instrument-workspace-package.py",
+      "bytes": 1540,
+      "sha256": "3c57b01caca37e832b4bfebbc92460a0e615391cbde05193a4298775e5aa2573"
+    },
+    {
+      "path": "scripts/verify-portable-runtime.ps1",
+      "bytes": 3742,
+      "sha256": "eb219808b2538b3dc311e9837714d665268fb726f6a19201df537791c62c7dad"
+    },
+    {
+      "path": "scripts/verify-release-contents.py",
+      "bytes": 2366,
+      "sha256": "00f0c0af73f733882f29d0a4f27c5d243414dbc1fc55e8d5f61c8ff145e15403"
+    },
+    {
+      "path": "scripts/verify-serial-ai-runtime.py",
+      "bytes": 5906,
+      "sha256": "7e616f783af2a2ed351128651bf364b3f8f4d3fa840525c519df671737ce8c1f"
+    },
+    {
+      "path": "scripts/verify-serial-trigger-ui.ps1",
+      "bytes": 4498,
+      "sha256": "57bd6f0100d6081ef6e5076592391bec0db7b651e30bc7cc106a98bad4d4d109"
+    },
+    {
+      "path": "scripts/verify-system-audit-package.py",
+      "bytes": 1420,
+      "sha256": "0619c51472291830c6f611977479e1ef9274f5ca3a1b5ef39313964fd0351a75"
+    },
+    {
+      "path": "scripts/verify-ui-package.py",
+      "bytes": 2613,
+      "sha256": "7aca479f5ad095651ca090291f953d047260b53b4092d098a92e60750728d21c"
+    },
+    {
+      "path": "scripts/verify-ui-release.ps1",
+      "bytes": 9150,
+      "sha256": "d2079396611bfe85931903c3e79baebfab2257b9673fdc654e355f22dcdcf900"
+    },
+    {
+      "path": "scripts/verify-waveform-source-pipeline.py",
+      "bytes": 7061,
+      "sha256": "1c390645f4143317ae01c4b8cb73682e562b486f2ff815280d302823b11c468e"
+    },
+    {
+      "path": "scripts/verify-wireless-plugin-package.py",
+      "bytes": 1938,
+      "sha256": "b71fd2ad21da35260bc53398b26188ef2de121e2d82b05a5e15e1fe5e88aba18"
+    },
+    {
+      "path": "scripts/verify-workbench-package.py",
+      "bytes": 1170,
+      "sha256": "a658860023f6114b651a2c735ef4751afdf5a6a3fc67ec684a2c84e12152ec1f"
+    },
+    {
+      "path": "scripts/write-portable-archive.ps1",
+      "bytes": 1563,
+      "sha256": "a2311a2ff915d620a2167a8a3fc8e853fc2443d8ab10c5f57f117ff654c28eb3"
+    },
+    {
+      "path": "test-tools/PLUGIN_SPEC.md",
+      "bytes": 14876,
+      "sha256": "82006e3ffcdff597fb49cba66fee12246b6048fd532f7c7f2ab153d5fbeee174"
+    },
+    {
+      "path": "test-tools/README.md",
+      "bytes": 4120,
+      "sha256": "8a54bc70927135a72dcae530a663ff8bb1d92272403f1a57c57cbc7481de00ca"
+    },
+    {
+      "path": "test-tools/examples/hub-workspace-demo-five.config-bundle.json",
+      "bytes": 2220,
+      "sha256": "6daaf2012321169a7f1e27246960e614aa061adac662898a7fb13ce6cdc618f8"
+    },
+    {
+      "path": "test-tools/hub-workspace.mjs",
+      "bytes": 7147,
+      "sha256": "cda779a08e10b4ec32efad109d8274934756878c3dea4c167fa0dc00be4e6a40"
+    },
+    {
+      "path": "test-tools/lib/automation-client.mjs",
+      "bytes": 2060,
+      "sha256": "ee51e8ee953006ff5f9ae0553ac6604d22934a08cb00f8d0631d090c1c890c43"
+    },
+    {
+      "path": "test-tools/lib/host/fpga-host-adapter.mjs",
+      "bytes": 30299,
+      "sha256": "efa2d7e7292eb2a5a5501b0981fb7879b3d8c295a4144469f616f809b80047ae"
+    },
+    {
+      "path": "test-tools/lib/hub/common.mjs",
+      "bytes": 4978,
+      "sha256": "84dea32f167b47e897ff3eec3e430329859eae22813bfc15263d07e9f80b1de2"
+    },
+    {
+      "path": "test-tools/lib/hub/config-store.mjs",
+      "bytes": 23631,
+      "sha256": "d2ced5337f16d0bc9a3ea35e4dfc77efaee473b963d8213e3980150a17d462d2"
+    },
+    {
+      "path": "test-tools/lib/hub/configure-worker.mjs",
+      "bytes": 2606,
+      "sha256": "437406e6e2a71c95f9dd8d0e7016891522dfa1608e1cf7d60179de8f7ba799e8"
+    },
+    {
+      "path": "test-tools/lib/hub/file-inspect.mjs",
+      "bytes": 2258,
+      "sha256": "c0ec140266864319039a556b9f144af67be0d1fb4c6be5e339d5142d36505e55"
+    },
+    {
+      "path": "test-tools/lib/hub/manifest.mjs",
+      "bytes": 8601,
+      "sha256": "d158d7b4ac97911ee78c064fc89bcf524d8860eda0c11715220a3520014e251c"
+    },
+    {
+      "path": "test-tools/lib/hub/matrix.mjs",
+      "bytes": 7057,
+      "sha256": "85433b85e0e6ae3fc5fd1e71247f2c7bca94e9c74746bbd4cb0d9f26af022da5"
+    },
+    {
+      "path": "test-tools/lib/hub/project-config.mjs",
+      "bytes": 8233,
+      "sha256": "6712081b631c41e2ffe0ebf3103ccfd8dbf9b1b60d0e17d111e9b85b493ceeb2"
+    },
+    {
+      "path": "test-tools/lib/hub/project-files.mjs",
+      "bytes": 9964,
+      "sha256": "d8fdd1a9d354aa380e68f41abd80da20d8d377dfcc52a36d1817a658b1d6c36d"
+    },
+    {
+      "path": "test-tools/lib/hub/result-details.mjs",
+      "bytes": 2762,
+      "sha256": "ab7408487513e5138b26c36ec8259ec9c5af7cf78ffc6565e26e32c5983b2674"
+    },
+    {
+      "path": "test-tools/lib/hub/retry.mjs",
+      "bytes": 997,
+      "sha256": "69133b8769d5e7e614bf56d27fff0e6c903377ce44d206b968e767d69a2d7fd4"
+    },
+    {
+      "path": "test-tools/lib/hub/run-binding.mjs",
+      "bytes": 6089,
+      "sha256": "b53d889495927ab026cf59e63e398215bc27d9d8590c973bc773fb4936e9f779"
+    },
+    {
+      "path": "test-tools/lib/hub/run-control.mjs",
+      "bytes": 1355,
+      "sha256": "47bba848d957905cded5e88dc068d52844561c8fdb73fc1e388c709a17240b67"
+    },
+    {
+      "path": "test-tools/lib/hub/schema.mjs",
+      "bytes": 8160,
+      "sha256": "2554fb84804a4f68112ef0d4fb7a49b54b8176feb090ca6be6cd5007f6d8fa1a"
+    },
+    {
+      "path": "test-tools/lib/line-triggers.mjs",
+      "bytes": 7584,
+      "sha256": "b9f3464caba907086f0043f8345fc28e083cbdeec527d4142e93f3025950ddc1"
+    },
+    {
+      "path": "test-tools/lib/marketplace-client.mjs",
+      "bytes": 4145,
+      "sha256": "542224ef21b23664a6b40365a5e2b219b84ce91ca075df9a7bbb296732701adc"
+    },
+    {
+      "path": "test-tools/lib/marketplace-install.mjs",
+      "bytes": 11029,
+      "sha256": "6c9d4148f8d9382694c781bb03e2b0905b8fc6d6e2696bb8a911d4c8cf384c7e"
+    },
+    {
+      "path": "test-tools/lib/marketplace-registry.mjs",
+      "bytes": 7940,
+      "sha256": "a17b068ea69dd0fe44efa8f49bb75b8a101d10cc6ac636bd2c55b43d4c554073"
+    },
+    {
+      "path": "test-tools/lib/marketplace-trust.mjs",
+      "bytes": 11296,
+      "sha256": "1472271503197f309d927caa9b812ceb605ad491b3d4f4a73360a0586ebe5072"
+    },
+    {
+      "path": "test-tools/lib/plugin-contract.mjs",
+      "bytes": 32799,
+      "sha256": "7abffcd84612bfed82fa30c8c6198b9b63bfb990e7fbc99d59e9aa401b3ca14c"
+    },
+    {
+      "path": "test-tools/lib/plugin-contract.test.mjs",
+      "bytes": 15564,
+      "sha256": "a799f8e60df263c4460431574159736307b81d71f5af33d1ecc0b603221664b3"
+    },
+    {
+      "path": "test-tools/lib/plugin-session.mjs",
+      "bytes": 5639,
+      "sha256": "8919d2db5971bc189651779db61bf9da32894d5e70aedaa496c5bb195bb42f81"
+    },
+    {
+      "path": "test-tools/lib/plugin-session.test.mjs",
+      "bytes": 2623,
+      "sha256": "faec9feeb6c6f6f062bfb7d27dc7e4926ade3eb0b3b06dc0b535fe2556c71f83"
+    },
+    {
+      "path": "test-tools/lib/winusb-host.cs",
+      "bytes": 25886,
+      "sha256": "9782b7f62175a3e1abd1513b03c2666d01a379bae875db239c81cd7029effad5"
+    },
+    {
+      "path": "test-tools/lib/wiparse-if-channel.mjs",
+      "bytes": 19371,
+      "sha256": "f7584704df3c6677c5a9beeeabc72478c334856f481044675a9a3f570f16ce49"
+    },
+    {
+      "path": "test-tools/lib/wiparse-if-net.mjs",
+      "bytes": 6803,
+      "sha256": "561a190aadeac20c327387bcca7b21e73672a3aa4865cd9248b83dd117603cd3"
+    },
+    {
+      "path": "test-tools/lib/wiparse-if-usb.mjs",
+      "bytes": 9045,
+      "sha256": "664950716995296e22528591718983470e8fc113841b85e646c6b0c2058b8120"
+    },
+    {
+      "path": "test-tools/lib/wiparse-if.mjs",
+      "bytes": 21946,
+      "sha256": "a83db9370ea11d9d132d435346b6680f4e32f71cc0f3de0db88f15e572786284"
+    },
+    {
+      "path": "test-tools/lib/wiparse-if.test.mjs",
+      "bytes": 9941,
+      "sha256": "6aa42fe047a7a450560c8dcccba9bc4578de4b74c91092f12c0ebb6310498568"
+    },
+    {
+      "path": "test-tools/lib/wiparse-sdk.mjs",
+      "bytes": 8257,
+      "sha256": "44c6e61dbaf5a59ffb8ca3c041d550ca0c29d0c45d3457c03e9ae1aa0946d692"
+    },
+    {
+      "path": "test-tools/marketplace.mjs",
+      "bytes": 8486,
+      "sha256": "0028bceff128194549275205a4cd9ee2589077263bd79787b3c2274964d5fda3"
+    },
+    {
+      "path": "test-tools/package-lock.json",
+      "bytes": 3148,
+      "sha256": "99cb6c103be207b3d8a31540c5aa5da80134de548646f5b60cc82059b3916d83"
+    },
+    {
+      "path": "test-tools/package.json",
+      "bytes": 755,
+      "sha256": "0a53cf6d30bddf4777de249e16779c5ea5acd021b3bac6f77585548f004ba637"
+    },
+    {
+      "path": "test-tools/plugins/README.md",
+      "bytes": 1070,
+      "sha256": "4c6f55fa0b367b8bcdf55df8d2339b27127a81cec20e84f4aff5a52d8c204610"
+    },
+    {
+      "path": "test-tools/plugins/example-smoke/index.mjs",
+      "bytes": 3149,
+      "sha256": "a15e483ac77d9fc9acfff952f1b5199a37f0de3a8c7c6c9895923fc5ede521c0"
+    },
+    {
+      "path": "test-tools/plugins/example-smoke/plugin.json",
+      "bytes": 1606,
+      "sha256": "ce657259ae07381c2c47743d68bd741e451efcb45ab7d842d04ac27c49c81cd4"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/HOST_HANDOFF.json",
+      "bytes": 1514,
+      "sha256": "c7139a4b0cafceabb679888b29ed90790b2d3be6ed220ea78ba658be80017226"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/INTEGRATION_HANDOFF.md",
+      "bytes": 10985,
+      "sha256": "40eb15d62a60f52cbaf1387b8ec2af2ed02a80359aff48c9593c79139a8ed460"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/PLUGIN_FREEZE.json",
+      "bytes": 17103,
+      "sha256": "497f2e8917075cbd01b2b38ae6d6546033328c6359846bc2116a50bce6694344"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/PROJECT_UPGRADE_0.5.0.md",
+      "bytes": 5506,
+      "sha256": "7eb84132def3d2cc128192d69b469298ecd795885ef07bd8179da93a3b23db44"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/README.md",
+      "bytes": 12411,
+      "sha256": "e4d505ab84da068e7a7eaecaa1db6cb6b85c4b76e8f2b78f36da0e43061472b6"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/REMEDIATION_EVIDENCE.md",
+      "bytes": 8636,
+      "sha256": "dd667bcf19d29a0875ee4a9f9b7fe43f66ae6ed4ca900d45d7b12f14724afc2d"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/assets/simulation-waveform.png",
+      "bytes": 4333,
+      "sha256": "5f660afa1ee6e3716f7aac231dfe6d2c9ff170c530369044b43b421ee4a974ea"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/plugin-regression-0.5.0-2026-10-18.json",
+      "bytes": 5977,
+      "sha256": "46182ece40bb6e33945a50ad8bf6b45d944f55f65c97dbae52d52f487fc41159"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/plugin-regression-0.5.0-2026-10-18.log",
+      "bytes": 13578,
+      "sha256": "add6f9a94daa76df1df13083226061b0526a348fc197e66c75f6b7d65d6bcd20"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/plugin-regression-2026-10-18.json",
+      "bytes": 3007,
+      "sha256": "47d16723d05b17249b1aef2c1117e3dc26dcbb865432480b6c19b0193bd19f39"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/plugin-regression-2026-10-18.log",
+      "bytes": 11726,
+      "sha256": "7ba05b865c73edec33ef396639fa85711b46f8835a4ec0c2fb8213d2f867750f"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/startup-stop-2026-10-18.log",
+      "bytes": 972,
+      "sha256": "0e0aa62aa6d77592dd630dbd554cc8012b21f85eeadf088e217095c0edf07d60"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/evidence/ui-contract-2026-10-18.log",
+      "bytes": 403,
+      "sha256": "bc4c14066dec1598f498ace8a58cb3dda3a1a73ad045cb130625d57e81578521"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/freeze.mjs",
+      "bytes": 3101,
+      "sha256": "16c78a3d22a6ef6a8f850519e6b94d7dc395beab62cf64b50a66df442986703d"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/generate-schemas.mjs",
+      "bytes": 24852,
+      "sha256": "0e1700bc0fbf3bbb89192e71bb0463ee5aaa237a663bdd4a8b81f81214102238"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/index.mjs",
+      "bytes": 30397,
+      "sha256": "2aaf2433d1b5ec73795baa45d7a0b0b480a584d4edb6c35035fd831813f99892"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/ai-adapter.mjs",
+      "bytes": 2116,
+      "sha256": "4098962bf1164df626b28a3721e47ac47ef2c7fc3a3aed6acb2533c132882311"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/common.mjs",
+      "bytes": 1794,
+      "sha256": "82c64bd46fa1bbbc1f36b9446c057658339439b7885ba3d0cc6da46cafe8c751"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/config-loader.mjs",
+      "bytes": 8129,
+      "sha256": "f85431af7057e1f4a8cddb5a01ea972b1430f14940b302d432d1a72681d3ae79"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/demo-fixtures.mjs",
+      "bytes": 898,
+      "sha256": "d57547233be1a29d6822e9b1f12c4f3e38e91eb8982c56bc2ee04e499c372d16"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/diagnostics.mjs",
+      "bytes": 2819,
+      "sha256": "c39fef8e64f393887cfe5722b30f62707db234b917cc5246ca2c911e6abe3ee8"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/firmware.mjs",
+      "bytes": 1316,
+      "sha256": "a1a5eec6e9cc354cd20756d14753727ff8517eb313d2874b8cb486b51a98a687"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/host-adapter.mjs",
+      "bytes": 1019,
+      "sha256": "b8d0e09bb61ef41633deec35feabded0641368d994f721361a316456e31359b5"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/io-guard.mjs",
+      "bytes": 3893,
+      "sha256": "8d880cea46b9719fade4f01cb0288f3f5d4bfea58920e149b9624be75bf8ccc3"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/log-capture.mjs",
+      "bytes": 1445,
+      "sha256": "ce70ad627335948eb25560da985b6c7255b1cb4ef3fb6a9a245a45efb1f8eb0e"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/project-config.mjs",
+      "bytes": 5685,
+      "sha256": "358405c8436e131e98e588e9433b04a3b3e221b8cb32570e9e1b1d73a9fb1d72"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/project-declarations.mjs",
+      "bytes": 4897,
+      "sha256": "65f79a1a9ad2bdcc632f8af47fcd55e4559506fd2699f9b532cf7e7aaedd2060"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/project-migration.mjs",
+      "bytes": 5140,
+      "sha256": "57a9ba5ce1e09e583842710d1c84a7db9135155e330967c4c16bd337ff8265cb"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/report.mjs",
+      "bytes": 4715,
+      "sha256": "c4b7bf372616a31ecddbca40af23353872e34f3007d7721e1900804ea1dd9a23"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/resource-resolver.mjs",
+      "bytes": 894,
+      "sha256": "b2613f30b0d550a50d907d909183b4330551d7483921ba2620ef36568ec8d0cc"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/rule-contract.mjs",
+      "bytes": 4561,
+      "sha256": "55ff8542126df1b9511821c9e74c4bc4df457c7687f6bb4381d8a7630b879031"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/rule-executor.mjs",
+      "bytes": 899,
+      "sha256": "3b415351751655638f3b27b5549ccea62170fb5a45611c727809cc18b16ddc46"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/rule-worker.mjs",
+      "bytes": 260,
+      "sha256": "a54cfabea3d44c1d87c513eff22381bf51ffbf982783cab40ab011c58359d98c"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/rules.mjs",
+      "bytes": 2829,
+      "sha256": "a7e0dd4ca3942bcb4727500569d2b14c8f2156eb59e0a276e354878bf882cfe1"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/run-control.mjs",
+      "bytes": 790,
+      "sha256": "7d7c95b885441a25b5591edd5aaa82a5bd7a78fbc2d88df583b8fac5fc52d107"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/scheduler.mjs",
+      "bytes": 4411,
+      "sha256": "e6c0c52011b4568f0954639989f3df63ca0672b332124f7499e683af2abed97c"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/lib/simulation-adapter.mjs",
+      "bytes": 3061,
+      "sha256": "98c06085152d49a02cbcceefeaa8c7192f87309c71c3c8a1fd1829dc5f2e6ef0"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/planning/README.md",
+      "bytes": 3916,
+      "sha256": "dda8aac440cc079bf2d2de93e5b576db5811e8346d4f25c19d0682fe81f64bbb"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/planning/build-project-proposal.mjs",
+      "bytes": 5769,
+      "sha256": "1705a1bf5d13e2721d0e60f215b56e7e1ddd16ed3b2e5de7bcca3f13309b6151"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/planning/legacy-config-differences.json",
+      "bytes": 16068,
+      "sha256": "f66cdcee2406723f5327e8bf72df14dea68e22ee6f8c4fcb816f457369505681"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/planning/project.schema.proposal.json",
+      "bytes": 32159,
+      "sha256": "a8c539daca0ed49bb3a7dc41a904cca8c34ddaa9e4416e73bd5fb02813846c9b"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/planning/project.ui.proposal.json",
+      "bytes": 27917,
+      "sha256": "9f7be9cb8b7d4a7e158ee77e91236ea159c02520c34a8542e2da74df570e7b4e"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/plugin.json",
+      "bytes": 6516,
+      "sha256": "33db033deea054cb7a082385cb476b263d6a7508e5a585fd2a35df1237cc3313"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/fpga-matrix-status.schema.json",
+      "bytes": 3458,
+      "sha256": "b063563bc7e9a2d551b80ead072e5737787ceb22d249b76ef7d1889530afc8b5"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/fpga-test-case.legacy.schema.json",
+      "bytes": 59871,
+      "sha256": "72a28fab04d10c4d9dd288583291ab16791d1e4cb8f9194601ca2994c818308e"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/fpga-test-case.schema.json",
+      "bytes": 34634,
+      "sha256": "126d89d1df9749f696f0c5b100266af198cfdb9f4ab13d336c55828ac5339a73"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/fpga-test-case.ui.json",
+      "bytes": 67299,
+      "sha256": "4c565432d53a9ef3b6a3a667c348226b3da927a77e25fd95b99a26dfe72dbb38"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/project.schema.json",
+      "bytes": 34909,
+      "sha256": "a05612075a8bcbbfde8e447f2eeb87f18a98146e15809c39cca4ab83fa3a3bda"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/schemas/project.ui.json",
+      "bytes": 27942,
+      "sha256": "65479df0ada07019d3d732c6e193757588397fb2ec1bc59beb0f8b3192f0fd80"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/station.json",
+      "bytes": 294,
+      "sha256": "26a76fbffabf800af7ad077655d86c0814f0d3707d8296d3937cddca83b138c0"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/draft-save.test.mjs",
+      "bytes": 2320,
+      "sha256": "b93581ca799f310cbfec6ebc25f45769553ee933641db01a938dd1cc3e44d0cf"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/fault-matrix.test.mjs",
+      "bytes": 23362,
+      "sha256": "0ceceb248703ddae6d99bef8e9d9f4fc473cab1875b7e9e7bc5cc64bee838d0c"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/fixtures/legacy-demo-cases.json",
+      "bytes": 58726,
+      "sha256": "1b68afddbafb10e5b16138194e23bfda33ba779a5e33da429a3344e86c08e66c"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/fixtures/project-fixture.mjs",
+      "bytes": 1825,
+      "sha256": "20f97c5fe877d48e51f7788b0d7dfaa0ab0c3be03f3e7a99ca3ab774f48ac044"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/hub-integration.test.mjs",
+      "bytes": 5457,
+      "sha256": "5999750b0ba5aaf704f548118381021dc6bf64ddc5fbaca24ff3e901567a466d"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/plugin.test.mjs",
+      "bytes": 7463,
+      "sha256": "4d80b83cc6f707313af00d1c33a8bda933e4460e1bfef09367fb0e05ea3133a7"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/project-config.test.mjs",
+      "bytes": 3655,
+      "sha256": "b694a61bb5adf008738bae0620e5761857ead1fd8c8af0446b6867fa30d1fdf8"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/project-hub.test.mjs",
+      "bytes": 4948,
+      "sha256": "fe0851c138ab5f990487711d967f32051636b424f0a2d237930b115d7eccde6e"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/project-migration.test.mjs",
+      "bytes": 3754,
+      "sha256": "0746713a09bfad69ce677f2ce8c45f7560726bfaca0c2a847a20dd673126c2dd"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/project-runtime.test.mjs",
+      "bytes": 6101,
+      "sha256": "0cf579da82e07f134c1946513f738c17e40cf863a344f99b03644767a09b97af"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/recipe-seed.test.mjs",
+      "bytes": 9086,
+      "sha256": "e2f270d5da5d5d4c71e546086e3c4f05a7357b34a4b0d30ef4e6b6007c93a325"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/review-055.test.mjs",
+      "bytes": 8031,
+      "sha256": "c1bc8dac3bedb77a40aadd9da9fe726c5924216131916cca9c31f5b942f03fe3"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/ui-contract.test.mjs",
+      "bytes": 5738,
+      "sha256": "903fb94e354ab437c724e1d6790e019c375330e5c53ca5360d03689c30d76bbb"
+    },
+    {
+      "path": "test-tools/plugins/fpga-firmware-test/test/upgrade.test.mjs",
+      "bytes": 13949,
+      "sha256": "6dbd65afc6f99919f3885aad05e4b129136e38d4ab2a3e62001515680e472ba4"
+    },
+    {
+      "path": "test-tools/plugins/hub-workspace-demo/config.schema.json",
+      "bytes": 1156,
+      "sha256": "fc3ffc39f1a275e4698f5c2a14b998d861331cc37604b337687ddaab7951c571"
+    },
+    {
+      "path": "test-tools/plugins/hub-workspace-demo/config.ui.json",
+      "bytes": 279,
+      "sha256": "062592745a6b05917e31b3ec5fca8e0b5b9c292cbe78a0e4683a0947d56c36d8"
+    },
+    {
+      "path": "test-tools/plugins/hub-workspace-demo/index.mjs",
+      "bytes": 2411,
+      "sha256": "d7d763d49e37f1fd8f9b1d17d8bafd322d8d6f7011a4f4614ed0db7de59590fb"
+    },
+    {
+      "path": "test-tools/plugins/hub-workspace-demo/plugin.json",
+      "bytes": 1054,
+      "sha256": "09d91473533c7c1f9aa7c03af1c08369dca11d3fe187f5f6f8afa99cec69c3d3"
+    },
+    {
+      "path": "test-tools/plugins/scope-serial-monitor/README.md",
+      "bytes": 6125,
+      "sha256": "168530bf1f0116ff3875c93a1c9c4d81e95743733ffee97f65976b11cbfbee6f"
+    },
+    {
+      "path": "test-tools/plugins/scope-serial-monitor/hud.ps1",
+      "bytes": 7070,
+      "sha256": "ce42a95f620ec4e3e00c1397373cc2ad40a31612d448e1078552940d86528ad6"
+    },
+    {
+      "path": "test-tools/plugins/scope-serial-monitor/index.mjs",
+      "bytes": 3244,
+      "sha256": "94cb2afab0b201eb91b0854139b8318834a063a91dfe6b7218c120815cb08b8a"
+    },
+    {
+      "path": "test-tools/plugins/scope-serial-monitor/loop.mjs",
+      "bytes": 44924,
+      "sha256": "940012166b86d2e1185cdd198dd999ae8475e1074bd1ec9a841b7efea406c9b0"
+    },
+    {
+      "path": "test-tools/plugins/scope-serial-monitor/plugin.json",
+      "bytes": 8425,
+      "sha256": "42bf99f4d8c5d259df8b8cc792820fd02a3b91debca1ca25e5912081545140a1"
+    },
+    {
+      "path": "test-tools/plugins/scope-serial-monitor/start.ps1",
+      "bytes": 5007,
+      "sha256": "4335eb813d5cd15ee675ebcdc663b38143c2364fe55d90b4260e875daf36339e"
+    },
+    {
+      "path": "test-tools/plugins/scope-serial-monitor/station.json",
+      "bytes": 3329,
+      "sha256": "5cefb13649517e222633278508dd161aa0582be6799e25e138ccf718f2cfe8cf"
+    },
+    {
+      "path": "test-tools/plugins/scope-serial-monitor/stop.ps1",
+      "bytes": 3933,
+      "sha256": "ee2a799057c53f82ab0a89a4be6559532a661b0688170ef9e38a8012a97defc8"
+    },
+    {
+      "path": "test-tools/plugins/wiparse-dap/README.md",
+      "bytes": 1548,
+      "sha256": "0dbb927dc1a50e5ce91b1719d49d569dec78d7fe4926cd072029c8f543596fc9"
+    },
+    {
+      "path": "test-tools/plugins/wiparse-dap/index.mjs",
+      "bytes": 12322,
+      "sha256": "98773fd2211ee2f67194d668e56cafc76943e00e89a4c79e205c6f2ab823744c"
+    },
+    {
+      "path": "test-tools/plugins/wiparse-dap/plugin.json",
+      "bytes": 12064,
+      "sha256": "1d94a5c0cbeb2513f64f9864ed332b56462570c841235a3b99d05e372841a46e"
+    },
+    {
+      "path": "test-tools/plugins/wiparse-dap/station.json",
+      "bytes": 1334,
+      "sha256": "5e84740b3b476102e2e4866280290777d0a9f818117d676f58ddeb322919c3e5"
+    },
+    {
+      "path": "test-tools/plugins/wiparse-i2c-rpc/README.md",
+      "bytes": 1489,
+      "sha256": "782a6260b8aa722291e7a5ab5df2777c05634a0a27bb7cb661b6b9f4a51ee42d"
+    },
+    {
+      "path": "test-tools/plugins/wiparse-i2c-rpc/index.mjs",
+      "bytes": 9748,
+      "sha256": "6f2025e98bc280819caffa485a79a43dedf5616f8fd5d9439cc917eeedc1441a"
+    },
+    {
+      "path": "test-tools/plugins/wiparse-i2c-rpc/plugin.json",
+      "bytes": 8783,
+      "sha256": "878eb6f9f9dcd6b503d3c0c328b9e2b2752877f2c80a49a94f7989f3b0baed13"
+    },
+    {
+      "path": "test-tools/plugins/wiparse-i2c-rpc/station.json",
+      "bytes": 1145,
+      "sha256": "503c01e35c474b5bce8315cd4d9193034b66d5164fc7bc288dd2c4f780cfe6e1"
+    },
+    {
+      "path": "test-tools/plugins/wiparse-netcfg/README.md",
+      "bytes": 2448,
+      "sha256": "bd21d7bb3d555dd73511b3873dd82310971e61669b17ea348306fdb5cf358904"
+    },
+    {
+      "path": "test-tools/plugins/wiparse-netcfg/index.mjs",
+      "bytes": 11700,
+      "sha256": "9ef7654f387e09d58c996cb2aa563d0672a3d272165486e424d36f1e73b83c80"
+    },
+    {
+      "path": "test-tools/plugins/wiparse-netcfg/plugin.json",
+      "bytes": 8354,
+      "sha256": "044b0ddc24218e77801e3e42c56d6791f2a378bf51e25b7f42536c4b0a93063b"
+    },
+    {
+      "path": "test-tools/plugins/wiparse-netcfg/station.json",
+      "bytes": 1134,
+      "sha256": "558b4e1e5d15091a08c881e5fb823bd1695dbb0c4df1ed66af481ab7ba4319ff"
+    },
+    {
+      "path": "test-tools/plugins/wiparse-uart-bridge/README.md",
+      "bytes": 1333,
+      "sha256": "ed1b686aba09ee404f28375af2be3b32508111d665f5f3ed731498f0f4643969"
+    },
+    {
+      "path": "test-tools/plugins/wiparse-uart-bridge/index.mjs",
+      "bytes": 12816,
+      "sha256": "fabdd758d0ea04455ae848195c2de9e8e78de3a57ab9f455e8b800e5a548039b"
+    },
+    {
+      "path": "test-tools/plugins/wiparse-uart-bridge/plugin.json",
+      "bytes": 10125,
+      "sha256": "d3011e319d98e654549e3a6fc39d9381ca2b10c73cefd45d6fda3f5e0fb03336"
+    },
+    {
+      "path": "test-tools/plugins/wiparse-uart-bridge/station.json",
+      "bytes": 1277,
+      "sha256": "08a0d05d0a95c7d2e72db440224ce5d678907e4d6db7ee580e9e51b162b24142"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/README.md",
+      "bytes": 8160,
+      "sha256": "2ea1fada4ace466a645e32aa061374ca69bd2759880c9d0dca2d3e32ce3e84cf"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/catalogs/adapters.json",
+      "bytes": 861,
+      "sha256": "ec770ed5fe02dc90d6f9ae7b7ce5382b29a60a4b2d074a5e8aaa920b81c20a64"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/catalogs/cables.json",
+      "bytes": 227,
+      "sha256": "3f59b08f6ba5dabfaebd602d841feec9855aaf446bf8d146b9b8f085eca485fd"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/catalogs/receivers.json",
+      "bytes": 348,
+      "sha256": "f5384731c98ceb04e4fb1a64fb0ebb37e655d0beb221ffba144510e577186085"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/index.mjs",
+      "bytes": 4073,
+      "sha256": "51ee695297fc542368158cc224141cde647dbbde29bd237ee25e9f90fefc936a"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/lib/compare-runs.mjs",
+      "bytes": 2883,
+      "sha256": "57b6c0a905d9fb6009604f330eaf3f0f6fb35bfd7675c06ba743cb14423daed9"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/lib/config.mjs",
+      "bytes": 7496,
+      "sha256": "3b81676aeb5883b8e4faef49d4b24f77f7d5729dceaf4629619f98b0bc9d101c"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/lib/domain-evidence.mjs",
+      "bytes": 4847,
+      "sha256": "d6f7a0b1be7621917988dbc6e34e7dfa556d25f0fea441687de3624a245b69de"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/lib/live.mjs",
+      "bytes": 4946,
+      "sha256": "49c4a48e2986d0348fc5d9c9a4999b4a8c839f7c7924f6a2eea9a2d76099b5cf"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/lib/orchestrator.mjs",
+      "bytes": 10234,
+      "sha256": "2eef2c40ee187804854eac8d15aabb5b2e67a33c53b6a20a3c81d01021d8d4fb"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/lib/report.mjs",
+      "bytes": 8969,
+      "sha256": "5c694f5d4e46a0fd942695398d525aad53234209448625ad0ee714f06ae14568"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/lib/rules.mjs",
+      "bytes": 3375,
+      "sha256": "06ab3bf58918975ae166d66f12b119f4bb05612001493df3efe3d0deca8a57d5"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/plugin.json",
+      "bytes": 3621,
+      "sha256": "dc36b315e6301cfdf1f71a513874d34bef4b3ce8542bb2c075f2b59dbcdfd6ce"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/products/reference-tx/limits.json",
+      "bytes": 3215,
+      "sha256": "4d6efa2db37e31b48f9d736696d77b58060b5cfaa190b503a21e5c19c80f47a9"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/products/reference-tx/profile.json",
+      "bytes": 385,
+      "sha256": "b26ec70aa4d9fb1824ec826e6608d947526bfc6b56bb6ffb3728799caf481ead"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/products/reference-tx/states.json",
+      "bytes": 1156,
+      "sha256": "4987030296768507e69d7f3d1152c7939b4b9a99fd8a3e99a701bcba79d8a07c"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/scenarios/cases.json",
+      "bytes": 77486,
+      "sha256": "05f491c772098cd81c824c2c157e1a8d150168e05192fd0a69e37c76ca8000c9"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/station.json",
+      "bytes": 510,
+      "sha256": "eec51eb003b16f3b62eae562fa9bae1bec09015015b19487b10a33f3a5137e6c"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/suites/interop.json",
+      "bytes": 916,
+      "sha256": "7cc8a08eabe02d6aab94155a541a8062757746a2f014707f9e941c860d872b08"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/suites/production.json",
+      "bytes": 919,
+      "sha256": "4dd19813ca1f3c7f75c3c5cfece6aab837755d306b453da31387e3a7a9d439ec"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/suites/regression.json",
+      "bytes": 919,
+      "sha256": "ed5e1f318f5c4b815447a9ffc5e518978c392608605d1dcbcbe2cccdd9baf29d"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/suites/smoke.json",
+      "bytes": 563,
+      "sha256": "c129528de86a78d2a9d95e8156833c465aeeabd9b08865062073e7d2a8a0a759"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/suites/soak.json",
+      "bytes": 913,
+      "sha256": "b95b360f376ca94b87724ba967184af789785d278142f85bbd87ceb7d84b67ed"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/tests/fixtures/bad.json",
+      "bytes": 22182,
+      "sha256": "3d5ac17a629b9553056cce0b6897454ee1db35cba0127230de641fb4fd2ff567"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/tests/fixtures/gold.json",
+      "bytes": 23616,
+      "sha256": "c876bd477b2efec529ffb85f81353d629d65f5c0af941db972110314af9f06d0"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/tests/fixtures/missing.json",
+      "bytes": 122,
+      "sha256": "40b69aa868ea5652ff779da3e446438922e0d3da8f228a7385883f1fe3219dea"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/tests/fixtures/quality.json",
+      "bytes": 26419,
+      "sha256": "889136263d9d6350608f3f3fa92b804fd2e28a8259286b6a8bd315a1983d0f3d"
+    },
+    {
+      "path": "test-tools/plugins/wireless-charge-validation/tests/generate-reference.py",
+      "bytes": 11595,
+      "sha256": "b060fdc1ef894498cbc9bc8aa0e75785ef746c671a31b25a5e99c61ac88caa86"
+    },
+    {
+      "path": "test-tools/runner.mjs",
+      "bytes": 23195,
+      "sha256": "c12c699d1ee8106fda77e363b8a05f7c04548896b9a485ad33a6131187e6c651"
+    },
+    {
+      "path": "test-tools/schemas/marketplace-package.schema.json",
+      "bytes": 2183,
+      "sha256": "add9ba8faea27cb1da981ae7ae73d23511a73656529f9b9c98ddd7de0a38eb6c"
+    },
+    {
+      "path": "test-tools/schemas/plugin.schema.json",
+      "bytes": 7734,
+      "sha256": "a830aa9948d3c2b8a3ec5a6b34aa77592c61bfe0e9fa07e47535210795113061"
+    },
+    {
+      "path": "test-tools/schemas/station.schema.json",
+      "bytes": 1673,
+      "sha256": "aa35cbdf4a69ec35b6c984056085962c4612aba19cbd09bdf9431ce15f5bd15e"
+    },
+    {
+      "path": "test-tools/schemas/wireless-test/README.md",
+      "bytes": 1721,
+      "sha256": "4d4beae4de05fbeb06944cfa2e2066a863f42306a78f13b46b784db8e3fe4793"
+    },
+    {
+      "path": "test-tools/schemas/wireless-test/automation-v1.schema.json",
+      "bytes": 5371,
+      "sha256": "5d5f1d8341a267487aaa1c35c4d316bbbddb1b52c810722b0d168bcc8aa6be5d"
+    },
+    {
+      "path": "test-tools/schemas/wireless-test/plugin-v1.schema.json",
+      "bytes": 2663,
+      "sha256": "5a93f022aa0ec052b4650e999f2f469ccdb47e3c81d41dfb93e5eba374e74678"
+    },
+    {
+      "path": "test-tools/test/automation-service.smoke.mjs",
+      "bytes": 6278,
+      "sha256": "ca14b5bf728e1aef1d348b2f259631c59d9d1a9f16497727d32eb9643e91a504"
+    },
+    {
+      "path": "test-tools/test/fixtures/marketplace/demo-plugin/index.mjs",
+      "bytes": 252,
+      "sha256": "4fa74203ced81e8c2df51e693c696daf9eb821fb02fdc8cd1f832682afd0dfe2"
+    },
+    {
+      "path": "test-tools/test/fixtures/marketplace/demo-plugin/plugin.json",
+      "bytes": 474,
+      "sha256": "31dbfa6ad93c641aeeea8eb704038f8348dd2e120668f88613a2f7eb17373ee5"
+    },
+    {
+      "path": "test-tools/test/fpga-host-adapter.test.mjs",
+      "bytes": 17343,
+      "sha256": "64807658bcd906c542ba7940aafe9f99692e3d74dea77279c5642d1641f34cf9"
+    },
+    {
+      "path": "test-tools/test/hub-project.test.mjs",
+      "bytes": 9476,
+      "sha256": "466193ff5a577aad8429897e756793a34e1333bed1b7698c6234152a99e6b7f1"
+    },
+    {
+      "path": "test-tools/test/hub-retry.test.mjs",
+      "bytes": 1661,
+      "sha256": "06c7159112d849d9fd6d282efd2c7b9c259d0eae8f45ef2c80be06e30f8573d7"
+    },
+    {
+      "path": "test-tools/test/hub-runner.test.mjs",
+      "bytes": 6683,
+      "sha256": "3faea051611a6880652d52a415e7984e4c3d9190bff010585dadb3039d484001"
+    },
+    {
+      "path": "test-tools/test/hub-schema.test.mjs",
+      "bytes": 3943,
+      "sha256": "b7234d262eb3eb917a7364f3afd0468ddc90cc770fda6dd13e5b911fa3d825bf"
+    },
+    {
+      "path": "test-tools/test/hub-workspace.test.mjs",
+      "bytes": 9116,
+      "sha256": "45b827bd5733659a4955eb04d006a27d4174925e1671792c44bd8fede91032fb"
+    },
+    {
+      "path": "test-tools/test/line-triggers.test.mjs",
+      "bytes": 5127,
+      "sha256": "27e9ae52f5605a13e820d6b1e88e53ef2234434eca34221c7afffb89314c15f5"
+    },
+    {
+      "path": "test-tools/test/marketplace.test.mjs",
+      "bytes": 6569,
+      "sha256": "5f1731b3c9bc3480aaf7ceb1076212dcbf9dd89df87a144a81296e3b2c360dff"
+    },
+    {
+      "path": "test-tools/test/project-files.test.mjs",
+      "bytes": 5344,
+      "sha256": "5ecd5a4759c5b8ee4ded7c60fe13c351d309241e3f5223e5b81a3b78707d0372"
+    },
+    {
+      "path": "test-tools/test/scope-report.test.mjs",
+      "bytes": 2787,
+      "sha256": "72e7824097d16e096fe4c31a113db625fdc91d7ed82940eb0c467b0dd5e40039"
+    },
+    {
+      "path": "test-tools/test/wireless-charge-service.smoke.mjs",
+      "bytes": 3454,
+      "sha256": "bfe3266f76af92613d198dd1035fd178ec61bbe47216bcf38c9bf968e5b30d03"
+    },
+    {
+      "path": "test-tools/test/wireless-charge-validation.test.mjs",
+      "bytes": 19830,
+      "sha256": "16384893af987a1a8981c34342234f298f76d3fc2bcd92aa6c3bc35624756013"
+    },
+    {
+      "path": "third_party/winit/.cargo-ok",
+      "bytes": 7,
+      "sha256": "afbf9d0f3560b0fd7795e81c42a0a79ee6b6fc67e064f77826aee642cad28d91"
+    },
+    {
+      "path": "third_party/winit/.cargo_vcs_info.json",
+      "bytes": 94,
+      "sha256": "b8b2549c91dbf3dc4087197a6be89ab5acb5511c2d1eadc7349c249f646047bb"
+    },
+    {
+      "path": "third_party/winit/Cargo.lock",
+      "bytes": 56303,
+      "sha256": "b6183ac90e9aabac21f3fd993380cd8d8f7a28c7b7b67f8ae5549e95bedc205f"
+    },
+    {
+      "path": "third_party/winit/Cargo.toml",
+      "bytes": 13724,
+      "sha256": "2aeb741d47b763ee198ca915c330a6bf0b1fc094dd69357e80278b7852289c61"
+    },
+    {
+      "path": "third_party/winit/Cargo.toml.orig",
+      "bytes": 9844,
+      "sha256": "9e406724f6e8e69ea1986f1f4bc592617c3e19ff855b163cd076939d6c8969b9"
+    },
+    {
+      "path": "third_party/winit/FEATURES.md",
+      "bytes": 15334,
+      "sha256": "0e7a315f1016e07b0e1045511b6072ce13b3fc372c4fe097d0a8eea3d35ec2e1"
+    },
+    {
+      "path": "third_party/winit/LICENSE",
+      "bytes": 11323,
+      "sha256": "6dc0e068dcf3a5bc8e054205b85b7720e1d49265bbc64bf515d2cf79197df69a"
+    },
+    {
+      "path": "third_party/winit/README.md",
+      "bytes": 2887,
+      "sha256": "c21ecf8dc8b5cab43c5a8ecf0c043ad4eae6663b962ae6e9d10b7a6e3fb13039"
+    },
+    {
+      "path": "third_party/winit/build.rs",
+      "bytes": 1004,
+      "sha256": "eda62c3ebf765708bf1608b51ccf77501b4aa0253214c419f813c6d08d640b1a"
+    },
+    {
+      "path": "third_party/winit/docs/res/ATTRIBUTION.md",
+      "bytes": 569,
+      "sha256": "cce791f4d42357649754427331e9a0e0d4ff21f7e49919708991c71a70b7b132"
+    },
+    {
+      "path": "third_party/winit/docs/res/keyboard_left_shift_key.svg",
+      "bytes": 74680,
+      "sha256": "c490cbbd7a0bd7de65d2ae46c074678dc8dd03da76e634996b58e76bef4d9551"
+    },
+    {
+      "path": "third_party/winit/docs/res/keyboard_numpad_1_key.svg",
+      "bytes": 74682,
+      "sha256": "2892b7039b857875fbfa71a2bbedaa245b92b060aedff71a79a3c555e2fef11c"
+    },
+    {
+      "path": "third_party/winit/docs/res/keyboard_right_shift_key.svg",
+      "bytes": 74679,
+      "sha256": "0d585a96f7ef3d06b1609c26d6c836b40bef823fb5337dbb661419bf9bc57929"
+    },
+    {
+      "path": "third_party/winit/docs/res/keyboard_standard_1_key.svg",
+      "bytes": 74681,
+      "sha256": "2fc962bb17eeb482dc79cef05b16937d1096d0d25a784c1c27150540437f3e9a"
+    },
+    {
+      "path": "third_party/winit/examples/child_window.rs",
+      "bytes": 3821,
+      "sha256": "a605c0d8d2b7e9bbc585a109f82fe0f032dda2ea80e4efb07c396d34576bc10c"
+    },
+    {
+      "path": "third_party/winit/examples/control_flow.rs",
+      "bytes": 4627,
+      "sha256": "3c3ab1670113f7ef4b826f91a1daf6b8419171cac3e6042cc3d871c31fcb858d"
+    },
+    {
+      "path": "third_party/winit/examples/data/cross.png",
+      "bytes": 159,
+      "sha256": "4db9fec917c6cb3196872073e4168d28c4f3e0ad04c5c41865407088abf279e4"
+    },
+    {
+      "path": "third_party/winit/examples/data/cross2.png",
+      "bytes": 129,
+      "sha256": "fbeeb71e5d6f24898017739d088acefb522d85108a6f1f96183e60e6b4b1f6e6"
+    },
+    {
+      "path": "third_party/winit/examples/data/gradient.png",
+      "bytes": 229,
+      "sha256": "8f80c21867a59959b84f9ced19ff3aba7bf4e1cf0e2c24dea2c8465c8705c7ca"
+    },
+    {
+      "path": "third_party/winit/examples/data/icon.png",
+      "bytes": 2950,
+      "sha256": "4340d72fb8b5d95a10e3b2c02230f1060dff0950a137bd1d830c63dbc020dd45"
+    },
+    {
+      "path": "third_party/winit/examples/pump_events.rs",
+      "bytes": 2430,
+      "sha256": "9d2b52aee808ba58c4e987eda0562493c15da298de67bba210a5727ceb910c9c"
+    },
+    {
+      "path": "third_party/winit/examples/run_on_demand.rs",
+      "bytes": 3377,
+      "sha256": "b12ac771a8e4fd8945170f5dead56905ca6146e98c6203f2e197e50a364d0406"
+    },
+    {
+      "path": "third_party/winit/examples/util/fill.rs",
+      "bytes": 4177,
+      "sha256": "9fb51f71015d6a0bac1ab796c1b4806970f4cda6003d996ce2a5fce97c4f5260"
+    },
+    {
+      "path": "third_party/winit/examples/util/tracing.rs",
+      "bytes": 694,
+      "sha256": "4df742b6fa78a20e1d1971c789042a154c3cfa83eaea7b670ff56ab6e04f5a86"
+    },
+    {
+      "path": "third_party/winit/examples/window.rs",
+      "bytes": 39758,
+      "sha256": "f7cd8787211bb307736dd385766dd22e93a74fecae5f4f45928152a0265537e7"
+    },
+    {
+      "path": "third_party/winit/examples/x11_embed.rs",
+      "bytes": 2251,
+      "sha256": "571f44156b395c4b2466f2bedae81c818817a6b87f1d1958e9b52c117df3f5ad"
+    },
+    {
+      "path": "third_party/winit/src/application.rs",
+      "bytes": 14135,
+      "sha256": "993ddc2bbffca969224b2045dfd6cefd6cadd923df83f8ba24da8da8e5ab3fb4"
+    },
+    {
+      "path": "third_party/winit/src/changelog/mod.rs",
+      "bytes": 1648,
+      "sha256": "55a97a82a15c4006dca76e46bbd7ade72e103f54bbcc111bc55341207dff5140"
+    },
+    {
+      "path": "third_party/winit/src/changelog/unreleased.md",
+      "bytes": 1192,
+      "sha256": "21810a83a3b89ef6dc1471c8028bcc9beecb467e88bbb944f2cdb9f04633ad1f"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.10.md",
+      "bytes": 1130,
+      "sha256": "3ed4a49e068409208aa2d1640693bcf835b5b0a5367fc19a03f458edb366a7cb"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.11.md",
+      "bytes": 1631,
+      "sha256": "81110653eea2a68ff69b19cd540c1461cff1d9a4353fec08dc3a4e26ff44db07"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.12.md",
+      "bytes": 711,
+      "sha256": "41250756388ef71a6889f076a4ee87f63c6c70bf75597ce3dc5bd812d36d2f82"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.13.md",
+      "bytes": 1911,
+      "sha256": "021eb96e41f10de60fc33c0463df68194571ecd6169e17cc8c5c938f7f64e5ce"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.14.md",
+      "bytes": 2821,
+      "sha256": "8ed872d3e8abdd2c18ae1d65976734442ab41194195b31888c155b2bcba21c98"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.15.md",
+      "bytes": 3935,
+      "sha256": "3c96f73e28f85926440b9db7b445a1786f30bb7ec2844c3f3f57e7849db32b07"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.16.md",
+      "bytes": 3673,
+      "sha256": "5c8333b5bf024a2f39d91f93846ffe469d141c7b11e5ce501daa720ba64a9196"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.17.md",
+      "bytes": 1336,
+      "sha256": "2598e37dbb7e495bec60cafe693041fa5d58335a1a38b37a0779edae24e6942a"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.18.md",
+      "bytes": 4366,
+      "sha256": "f61eab5f6eace3ff07f66d4340c21926172332c748ba3e3fc4b7e07bdfa92ecf"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.19.md",
+      "bytes": 2130,
+      "sha256": "ea5ca936d53274e8a4f8bd385ba59fff5df866d889a4a69ca329791a664a3aee"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.20.md",
+      "bytes": 13979,
+      "sha256": "b04bf3e79ee11fd5f9646ccdc076a50c5a7e9749dc872adcc1f392fa1f1b1723"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.21.md",
+      "bytes": 1346,
+      "sha256": "ebc856323df17decd003fba57fc5e3f5b8c7ae8eaa763048b4d6dbef8ae09b01"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.22.md",
+      "bytes": 2046,
+      "sha256": "bd56cb152ac452ee4b354ace3976d3abda73d7db3a81afafee25c84cfdf08705"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.23.md",
+      "bytes": 5137,
+      "sha256": "6570ab734b9201360f5ca592343114bb3de9a608051333a4601c087dff234d5c"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.24.md",
+      "bytes": 1970,
+      "sha256": "a7bea6cd9d087c0a6ecddbbe5472dd3fa87735f088614c052db808c5742b57a8"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.25.md",
+      "bytes": 2697,
+      "sha256": "38d2cd8e8b067779b4c86c0b1d7d81a3b5f4101b2868eb316f41bd55e8bff71e"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.26.md",
+      "bytes": 2745,
+      "sha256": "b7a52b06cdddeff78c1c3e845ab42f5d41a268ef409c5237ddf3e15c1bbb7772"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.27.md",
+      "bytes": 8901,
+      "sha256": "51765d0114217504dc17c65894194ceb6928601eade2949fa72fcb6c00051528"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.28.md",
+      "bytes": 7132,
+      "sha256": "12829235afb1ae4481cc74bfff80997d404c987fda69c81bb657d7b709ead394"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.29.md",
+      "bytes": 18622,
+      "sha256": "04f9f09219695380622359e3ef74ebda5a89549cf8175b7aa965743a9e6d48b0"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.30.md",
+      "bytes": 16977,
+      "sha256": "5e436376fe1234cf94b08c4cb1dcd6d2e6e7684e4a33b71e17217a8fd0c18721"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.8.md",
+      "bytes": 1464,
+      "sha256": "c936e8b8ef369180ab9cf8fc24891d398dca5f238cb39467fe79a2f0b19539a1"
+    },
+    {
+      "path": "third_party/winit/src/changelog/v0.9.md",
+      "bytes": 1369,
+      "sha256": "fe9f9f731d585e83c2d35d7c2c560fa892c424d3e7ea1d13050ffdb467d50383"
+    },
+    {
+      "path": "third_party/winit/src/cursor.rs",
+      "bytes": 8117,
+      "sha256": "479eb73a7a23a58b718ce7255345f3f65ed2cf46d2e4e7d1716deb469dd9099b"
+    },
+    {
+      "path": "third_party/winit/src/error.rs",
+      "bytes": 3675,
+      "sha256": "549f95a2afff4435eed400c580b7d512229c7958df19258c0ce2ac30474f121d"
+    },
+    {
+      "path": "third_party/winit/src/event.rs",
+      "bytes": 46250,
+      "sha256": "ff5c577343a725173a539c797e243fa8f6150c02181d904bddb9d82581a7a61e"
+    },
+    {
+      "path": "third_party/winit/src/event_loop.rs",
+      "bytes": 24272,
+      "sha256": "f84209476849188122139926697f1fe97e17409a41ef0e8dfadf9bd4718108c7"
+    },
+    {
+      "path": "third_party/winit/src/icon.rs",
+      "bytes": 4082,
+      "sha256": "42780fcdb3dfe001fa24c51e21d326df2961e4232e0b09b0e8d9c3518161e73b"
+    },
+    {
+      "path": "third_party/winit/src/keyboard.rs",
+      "bytes": 67598,
+      "sha256": "fb1400750fb0c6d376415e642c837e0e8ded95f55ba03a8889d336d180620394"
+    },
+    {
+      "path": "third_party/winit/src/lib.rs",
+      "bytes": 9548,
+      "sha256": "924aead3c0bd3e446e8ee51193c636916f8b0b9d2cbb964e81e160db0f07a2ec"
+    },
+    {
+      "path": "third_party/winit/src/monitor.rs",
+      "bytes": 5460,
+      "sha256": "60d8887910f1d3836544f12d000146d95790f8af54476d7288f73f822377083b"
+    },
+    {
+      "path": "third_party/winit/src/platform/android.rs",
+      "bytes": 8150,
+      "sha256": "7a576387937d93c03654067a7197ec65da6c9f3e39b145a32182fe43f93609bc"
+    },
+    {
+      "path": "third_party/winit/src/platform/ios.rs",
+      "bytes": 17288,
+      "sha256": "bfb43e3067cd74067ce6019048141f86c1524b5a7859756f7b938310e9d9984b"
+    },
+    {
+      "path": "third_party/winit/src/platform/macos.rs",
+      "bytes": 18909,
+      "sha256": "c6685a9e320715b00124d66eb5e9be088cf1f165678e832a86459f0026d215e9"
+    },
+    {
+      "path": "third_party/winit/src/platform/mod.rs",
+      "bytes": 1216,
+      "sha256": "371ae3adce64ba6353c03cc5f7251325b50f0516bed4eca50496f1e42b5f6dfc"
+    },
+    {
+      "path": "third_party/winit/src/platform/modifier_supplement.rs",
+      "bytes": 1312,
+      "sha256": "e23c4a667aec84232ce072b7066a2aa2c912a1a7d5c0b7d9b5b648f877fb642d"
+    },
+    {
+      "path": "third_party/winit/src/platform/orbital.rs",
+      "bytes": 201,
+      "sha256": "e511445fa2d06fc7210a88abbc760395710c60a4c0376d1a4a0ee29e522bf2ac"
+    },
+    {
+      "path": "third_party/winit/src/platform/pump_events.rs",
+      "bytes": 6272,
+      "sha256": "bbdc0f490758f91609f1b46998976e071775bf9f17a7c4a3a12bd6781b0c6b3c"
+    },
+    {
+      "path": "third_party/winit/src/platform/run_on_demand.rs",
+      "bytes": 4676,
+      "sha256": "007047afc1e916f1bc01c5ee1bc959dd865049f17be97dc517abb7bacda66262"
+    },
+    {
+      "path": "third_party/winit/src/platform/scancode.rs",
+      "bytes": 1820,
+      "sha256": "2ce520012ee3ab6b5884d2f74e84380811b6e50c7139eee176fb233d75b25df2"
+    },
+    {
+      "path": "third_party/winit/src/platform/startup_notify.rs",
+      "bytes": 3673,
+      "sha256": "c2b3ba714649268109ab48ef5cc7dddd7dab0198518987f8735c174fe6b2c5b8"
+    },
+    {
+      "path": "third_party/winit/src/platform/wayland.rs",
+      "bytes": 4268,
+      "sha256": "4fd4601c7733275031f14c40d33caca8e493197c40bc721fdd055297f9690d00"
+    },
+    {
+      "path": "third_party/winit/src/platform/web.rs",
+      "bytes": 16678,
+      "sha256": "4dac8e96213a4ca4ec586946f18d16dfbad3666ce1e60b34c4e28eac6e213c5e"
+    },
+    {
+      "path": "third_party/winit/src/platform/windows.rs",
+      "bytes": 27788,
+      "sha256": "1a480966b317ac2f3117b26d379954b2d9af1740472a9ae07e055598862a24eb"
+    },
+    {
+      "path": "third_party/winit/src/platform/x11.rs",
+      "bytes": 9358,
+      "sha256": "a64f13d1e3e77c4cb3b21faafe87d74e8063bd901e5cb38af98738dbdd0fa911"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/android/keycodes.rs",
+      "bytes": 27966,
+      "sha256": "ee8674acc597a71665bedd05e7ac79b8efb76570fcefe616e5eeb81474822475"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/android/mod.rs",
+      "bytes": 38104,
+      "sha256": "17e982ffa857b36166b38a89c99bd4c19e199d847dfb3d43f289ca8d4e3bd066"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/ios/app_state.rs",
+      "bytes": 34620,
+      "sha256": "f2ff4a1093ccd4d52f3db86458ea8fbd18805876082c3a4ccc127e8d8e614a6a"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/ios/event_loop.rs",
+      "bytes": 18404,
+      "sha256": "df8f0d5e25b799b63edba57168ccfd736283c10149d596aab146019fc770a5aa"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/ios/mod.rs",
+      "bytes": 1493,
+      "sha256": "0707a46215de8a0c7692ae04ade45de27de19988fd3cb54fd4c5553e7c3aea7c"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/ios/monitor.rs",
+      "bytes": 9359,
+      "sha256": "76abeeafdab29e5dd46426a3f0eb173931b392dcff356bdc1c218e00adefec37"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/ios/notification_center.rs",
+      "bytes": 886,
+      "sha256": "cdcee390403dc4518402248022ad7d7fcd61ac42a041633f3de684d6533bddd3"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/ios/view.rs",
+      "bytes": 25388,
+      "sha256": "95f8cb9caf86ef10174c687eb017d110567d8ad3adba89c25c37f41fb6359cc6"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/ios/view_controller.rs",
+      "bytes": 6728,
+      "sha256": "fe4d8403c4e8f8bba6cb5f45191532649c6e28886536173dc3f546a3c9c9ff69"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/ios/window.rs",
+      "bytes": 26290,
+      "sha256": "731b07469178cf763d44f43e6dc31a2b1dce89788ac4b5a9e8adf641237ea7f4"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/common/mod.rs",
+      "bytes": 13,
+      "sha256": "697b29a56eeebe70eed5e9549b53d15c474d8c7f54a7476f992646f8603aeb25"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/common/xkb/compose.rs",
+      "bytes": 3424,
+      "sha256": "d4f11c74f1e1ffd93ecc75d7fa2afdba25212925f0589d7a9c26b9784a43e344"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/common/xkb/keymap.rs",
+      "bytes": 40223,
+      "sha256": "e08d41edd547e57df87b6c8da271f7c956a0d4dcead1cf2b17ab2c67652e0c82"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/common/xkb/mod.rs",
+      "bytes": 14275,
+      "sha256": "4ae8efa819657fa6cd8c38543f8638d7c7c67af18ff3a8b871919252d87c2400"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/common/xkb/state.rs",
+      "bytes": 5925,
+      "sha256": "c7a940941b2d1c679a2da163b244d6ec131c2d5d24f75e5265921cdb938c3cb5"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/mod.rs",
+      "bytes": 32702,
+      "sha256": "ee825f75ba79a7a12932640e8b085fdc897a35d3ec8105a37987ffd166d1c9f2"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/event_loop/mod.rs",
+      "bytes": 30268,
+      "sha256": "dd1ceefa859550fb109460ff9b536307dfa457069899244da0220c0a81267edb"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/event_loop/proxy.rs",
+      "bytes": 791,
+      "sha256": "090756d810c1cdf56832c8b283044f93965f0149db601f40625bb977a05468de"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/event_loop/sink.rs",
+      "bytes": 1526,
+      "sha256": "3f92a12b7d786f12edfe69925c2ba17194974c427614d4c449335aa843f9d2c2"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/mod.rs",
+      "bytes": 2375,
+      "sha256": "473911ef643fb20ca22dcc9a7eb9c87344b0914b470b019384d7ba1be1e92111"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/output.rs",
+      "bytes": 4658,
+      "sha256": "14982bc1e6ba130eb2c3d0da790905d28075cd1cec215b6f74e560fa449f5421"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/seat/keyboard/mod.rs",
+      "bytes": 14435,
+      "sha256": "dd20e74809b3a7987864bc5cabdbeaf62a8474400ddbc4fc86188ed7a84dea62"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/seat/mod.rs",
+      "bytes": 7788,
+      "sha256": "70bbd2a8c43a898f4cb2580d38c4f14e478e7331ab65d2e115feb0377fe2fc44"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/seat/pointer/mod.rs",
+      "bytes": 17688,
+      "sha256": "842ea0e853a3fef090ddf2ff6bc68f00c008f38db3b222468f8332451aa569b8"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/seat/pointer/relative_pointer.rs",
+      "bytes": 2747,
+      "sha256": "c1e9a253d23827036950ec58fb78f4d3b326b2f57cdff7381f0c0cef8015bea9"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/seat/text_input/mod.rs",
+      "bytes": 7211,
+      "sha256": "197f1b241915f4d579649e187b653efb7f1bfac9405821f2a2e0eef88e5375c2"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/seat/touch/mod.rs",
+      "bytes": 6635,
+      "sha256": "dd16a75607cab3ba5723ad6b7a2ad6dd09fa2a63fffa57622367f137ea5d3987"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/state.rs",
+      "bytes": 14800,
+      "sha256": "18beef206a1d0a1cf72ac65b1cefb4984bc204ca0638ecbbe2cb2c8d316422c9"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/types/cursor.rs",
+      "bytes": 1640,
+      "sha256": "b513bb85d34e3df1d5bc765e2f88a468e80f43d50464336d5dbaf54332fdf8e7"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/types/kwin_blur.rs",
+      "bytes": 2068,
+      "sha256": "6cbb4ce3e2484a01bacfa24a55ea3c1659503b18fc48e8f41f341d437f291ea4"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/types/mod.rs",
+      "bytes": 163,
+      "sha256": "84e32b36a90e15747ce5beae9318f1475d15925a45248147a5b7e9920e74f4c8"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/types/wp_fractional_scaling.rs",
+      "bytes": 2611,
+      "sha256": "c0897ffeee6f631aac024e9a737b90c18b807a775cf898e64b45fcca84ca97c7"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/types/wp_viewporter.rs",
+      "bytes": 1931,
+      "sha256": "77b67951f7bdd959555e8b39a8830d4547b28f73a921a4f347a647a9758d156a"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/types/xdg_activation.rs",
+      "bytes": 3506,
+      "sha256": "8d0fd39c97c6eb19b8231df20624777feca1aa45bb38692ab498e37e42aa5bab"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/window/mod.rs",
+      "bytes": 25452,
+      "sha256": "30b6c00aa143046e4b1d7277e5fd08ae7ef7f7f084b0c0e62c89e0dda8a5c6c2"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/wayland/window/state.rs",
+      "bytes": 43519,
+      "sha256": "d09f9c19235a36d0a0068eb82428a27e3a4f318f31925368e573310ae791030a"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/activation.rs",
+      "bytes": 6250,
+      "sha256": "e30310151a7277aa8467adb0890b16482913efa6aea1e518a0b1d5ac83e3ec95"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/atoms.rs",
+      "bytes": 2699,
+      "sha256": "409f77f94faa03e9ae3ab09d62a01e044aaeb5bbde9c9ee5e55ad6994374138b"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/dnd.rs",
+      "bytes": 5512,
+      "sha256": "89b186416d72fb36ecfaa350cae884949b1445d7a7b99a926eadba861d550243"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/event_processor.rs",
+      "bytes": 73445,
+      "sha256": "eefe47e789dae7cd56f3579eb292935d6237c886d486688ed2649b2aa6a76237"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/ffi.rs",
+      "bytes": 144,
+      "sha256": "a311e1e922ce9dab1d1761854bcff0b64ff50d7c34848a869ef70820cbcbdd79"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/ime/callbacks.rs",
+      "bytes": 7184,
+      "sha256": "82fe96afa6d46514b54d3c1a35bc9ea8ef44e91750976c17aada99f521f33325"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/ime/context.rs",
+      "bytes": 12481,
+      "sha256": "c4cbbdd20f6eb46e26521c1e877456363a2752e962ea4c4d27ee0f8e98e545f9"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/ime/inner.rs",
+      "bytes": 2361,
+      "sha256": "0f8e8070b1590cff566db06d8fd4e849ebfd4066817f60a455cb020dff81ba2d"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/ime/input_method.rs",
+      "bytes": 12098,
+      "sha256": "b301d72119cd3c87109540a760a7c0cac5cec58ced425a4bf2a91ff1c7dfb700"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/ime/mod.rs",
+      "bytes": 7251,
+      "sha256": "efa84f5da26bdb10bbed3c0c5089e4aa719985b96fa18215db9c71bf3dcd5f10"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/mod.rs",
+      "bytes": 34785,
+      "sha256": "811861508c9e34923fc77ff9aa610b1b977b641fd72a919e634ce0d38f788d45"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/monitor.rs",
+      "bytes": 10772,
+      "sha256": "5c49263f0ae5355cf56f379544f28301ebe63f4130e3b5744bfb5e1ae5d16fa0"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/tests/xsettings.dat",
+      "bytes": 6840,
+      "sha256": "26968fe327bd1b9617766cc73128812a582c6254eb9ed1d222bc0d0faea43aac"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/util/client_msg.rs",
+      "bytes": 967,
+      "sha256": "76c0c08831829fc010be1150e8f9aa9cc366b25dd344dba381ce7f7d3d3373af"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/util/cookie.rs",
+      "bytes": 1516,
+      "sha256": "d53987a8d3bb8e0b4462ed3bf670ff35f1f9c8315f622ad199990cd7629adaef"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/util/cursor.rs",
+      "bytes": 5062,
+      "sha256": "e3d229d3f27ed087c8916ba9b7e9ec6f08af11a5064e659f45aeb364ca703d22"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/util/geometry.rs",
+      "bytes": 10455,
+      "sha256": "fd2054b2e1c086011cb639830038737654fb9ecbd7fd090f5bcc0cc1567a1803"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/util/hint.rs",
+      "bytes": 4886,
+      "sha256": "f5f4744d090bbe6280e09ce2d6ea2da76d0d899d87762059a99d1174b39e47f8"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/util/icon.rs",
+      "bytes": 1159,
+      "sha256": "598a457838fff1e3eccc4274a13bdd140419ce303684347604712b127d57c6d6"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/util/input.rs",
+      "bytes": 3467,
+      "sha256": "a1db43e9940a20581cc4308f9be5b749d9912208c5bfd5fa6ce7d2aac71daaef"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/util/keys.rs",
+      "bytes": 1636,
+      "sha256": "5d6af7d9c91107ad5d9d8451bc3f85922bc5dcb87deb9e215956d03d2a69acba"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/util/memory.rs",
+      "bytes": 907,
+      "sha256": "b88e9bb56f20582c85bf07d176011dce4c6357c1de877c6241f2496ad4d27c42"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/util/mod.rs",
+      "bytes": 2310,
+      "sha256": "180f12c887da4c10904de7cf2934543784c917338b49d182aba7d098b183a899"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/util/modifiers.rs",
+      "bytes": 5563,
+      "sha256": "1f99aa3c76936f76eccc1eab18d39aa38916b97c4429e40818279650a09df78b"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/util/mouse.rs",
+      "bytes": 1064,
+      "sha256": "5eb02a1b1206dc05d056da762c210e4828158758d10f547277e7e08d8cead38b"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/util/randr.rs",
+      "bytes": 6438,
+      "sha256": "220d9343b2b3987c77fd346154fdfd9a23b004c077e1f57c3649c458a935b502"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/util/window_property.rs",
+      "bytes": 5946,
+      "sha256": "a079a7c6a7ed75e39b35cc76e4f55aff54b1cb6887711d1323fd60bc36ab4e4a"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/util/wm.rs",
+      "bytes": 5226,
+      "sha256": "09ec80c212ce2110022c8d2d81731e1f7c90438722cff8fae8dbbcc5e92ae220"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/util/xmodmap.rs",
+      "bytes": 1609,
+      "sha256": "1bd99ff1891b79ff59f38773a1ab5ad3fb9a60fc55643a3787dd3c02b6afb48d"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/window.rs",
+      "bytes": 74470,
+      "sha256": "caa0e303e2d1956020b1c27ead24dbe9c45fa73559ab38fea9a71d5e111ba8c7"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/xdisplay.rs",
+      "bytes": 11135,
+      "sha256": "ddfa5f2140c8cded23e14247011a5fdcc6c2a83d2523584f50d2da49b8a094d6"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/linux/x11/xsettings.rs",
+      "bytes": 9014,
+      "sha256": "3429aea240688c0faaab7f9725b586b6cd2f3332d6f9b19ac8da7689605713b0"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/macos/app.rs",
+      "bytes": 7656,
+      "sha256": "14ba9f49d955a906a115c34fd12fdbbda13ac9b75740606e9fe0daeffa903c5b"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/macos/app_state.rs",
+      "bytes": 17881,
+      "sha256": "cb346eda09cfb7ddb4941fead441e3242eec0c64639a621e7f3116702531b7a4"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/macos/cursor.rs",
+      "bytes": 8808,
+      "sha256": "537ee43a90cba74cc73801a45b67ef2356d99c7af12489865d0ff78273c6a9c9"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/macos/event.rs",
+      "bytes": 23632,
+      "sha256": "dd073f82f85c5950eebb45256521da675e216ec56eaacadb7b413b96f1e894d4"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/macos/event_handler.rs",
+      "bytes": 5303,
+      "sha256": "05b01ef0413ef0eb1004decf7def1131aa0ac6ce445bbcc03606c9c8b3a862c5"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/macos/event_loop.rs",
+      "bytes": 18381,
+      "sha256": "c538c57419a311e335842f18e55d3e1ba4d493fa88c111d3e956ef81458f0c89"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/macos/ffi.rs",
+      "bytes": 9114,
+      "sha256": "ae4aed628db11c332c8de422bb181bec15b22e44712b50d0a8eabb98d25f417d"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/macos/menu.rs",
+      "bytes": 3426,
+      "sha256": "b0bcc89693df6c2f5ff5cbfadaad83cff7fd5815483e2aaeea07b55e61a32ceb"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/macos/mod.rs",
+      "bytes": 1655,
+      "sha256": "584af72536847910a3e461fb40b9a0f9a375da3200f7ecf38f5d989b3c143d9d"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/macos/monitor.rs",
+      "bytes": 14690,
+      "sha256": "456ae20157b0c40f98cf2d7b6850fc07aacb510f5cfda27891c0ffcc2ee47e68"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/macos/observer.rs",
+      "bytes": 12203,
+      "sha256": "c4b1a7e129237924d6f2f20eed2e66d1d9c111b267d2bf1556bec85accc509b4"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/macos/util.rs",
+      "bytes": 679,
+      "sha256": "9c938d322c89cee11fb041ebd43ef77355fb1a38fc77151ce730133929e32955"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/macos/view.rs",
+      "bytes": 45271,
+      "sha256": "de63351d7a757d58883600c3f1702fc369cb77b2ae323a4efca7cb520e9da90e"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/macos/window.rs",
+      "bytes": 3543,
+      "sha256": "981b8acb0e46f9b153c143b939c8e39a63b994b5d3f8f0c0f24c56b2993bd1f8"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/macos/window_delegate.rs",
+      "bytes": 76164,
+      "sha256": "791c8112b5eb95d4c5bf7efff3f458432cdfd77598053c3d756ae610323f36ae"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/mod.rs",
+      "bytes": 2155,
+      "sha256": "32e11e828a4cee9ad1dcb649beab6b6842f9b5bff4c1e070c67e78c7c1e3d6c6"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/orbital/event_loop.rs",
+      "bytes": 33392,
+      "sha256": "20865c2ee7405e5dec577bc5aa6c62ca043ae4c3ff0cbd17f6d029ee27b1726d"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/orbital/mod.rs",
+      "bytes": 6598,
+      "sha256": "6b078d029061621f88dca6b1b88eba78671304779352281a9ee8d84e6c5829ca"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/orbital/window.rs",
+      "bytes": 15331,
+      "sha256": "a804344a32c90e8ff43a2640f99a63f3a3894a52137dd07a4503a435e7552279"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/async/abortable.rs",
+      "bytes": 2100,
+      "sha256": "9a6e1ca49d3cc19cd808dc5d0a94a1da16f7049021449aed05073703f1410f1e"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/async/atomic_waker.rs",
+      "bytes": 846,
+      "sha256": "d06e582da4c06722419566040cf2b9b131139072825d3c6da94183fa42d760ba"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/async/channel.rs",
+      "bytes": 3200,
+      "sha256": "32c90e56e0c975168e6f1cb05dbec119112f5c34925ebdae02ac3ff933ee66ad"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/async/concurrent_queue.rs",
+      "bytes": 1198,
+      "sha256": "b2db7edc5ae541bab5157cc057a5c5594aa4083acd6c564f615387799520c1b4"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/async/dispatcher.rs",
+      "bytes": 3828,
+      "sha256": "8e9f12f85ff04ef43af769eb968208076c47bd8135e31af78e65defe972e58e1"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/async/mod.rs",
+      "bytes": 580,
+      "sha256": "3d67f5c7205a9c506bf0273d97b786901225c015058eca4408f9aa09de4b5fa4"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/async/notifier.rs",
+      "bytes": 1971,
+      "sha256": "a13b0d9e0517da28716b86c5155fcce06294e3386f4267a20eac043e97b7fa90"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/async/waker.rs",
+      "bytes": 3784,
+      "sha256": "c6cde0c84e315972bc1735762961e29ff5cfdb4990a16c6e4196705a32305852"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/async/wrapper.rs",
+      "bytes": 2842,
+      "sha256": "03aa2bcbf2a4af964f023d34d89344268ecd6851ee14ed62ec80735f7633894e"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/cursor.rs",
+      "bytes": 24430,
+      "sha256": "4c44bb489893ffa0ce6f72e3949d4f6ec208ef0848ab76e2f2491d49227dd63b"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/device.rs",
+      "bytes": 174,
+      "sha256": "b01dba26e4eaaa488e25637428d766d64e0ba3985645f9dd4f7a6c999d77243a"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/error.rs",
+      "bytes": 200,
+      "sha256": "aa81b02160abb8707f5420d373ce9fd664f3255fedb49982f8539caf3a5e6083"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/event_loop/mod.rs",
+      "bytes": 4203,
+      "sha256": "6352287ae6a0afb3ebcf3919d12c2dfb3821901f790dd31cdd4bf4a3846069a0"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/event_loop/proxy.rs",
+      "bytes": 810,
+      "sha256": "03062c47460e5c53007bbccb233484435e081c515d7b59edd66bf808b40b3d62"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/event_loop/runner.rs",
+      "bytes": 31583,
+      "sha256": "e8ecd77ef8c4550ded308827e3975fdc54065ab58413a80b48e2f2bd1325bc8a"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/event_loop/state.rs",
+      "bytes": 343,
+      "sha256": "989601ab5a56c7eb6ba495d027f6093a64a8fb32facd31ad9e2f0da24697c98a"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/event_loop/window_target.rs",
+      "bytes": 26317,
+      "sha256": "8c47586f4fba7a77d8ce339289893040287b6c78e6d98dc7f12522522ace337e"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/keyboard.rs",
+      "bytes": 24028,
+      "sha256": "b15c5d89b2989b516ad87dbdc97b0b41aea6d09f929404894a0a907e4c4a2f6d"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/main_thread.rs",
+      "bytes": 2595,
+      "sha256": "9658c9a69410784162c983144a5c37638eef4cd6967d24eaedd25f01567ab00c"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/mod.rs",
+      "bytes": 2230,
+      "sha256": "2208e8c703370f19caa7c545badae78fce6f4bd5c569399dfa5497399212c98e"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/monitor.rs",
+      "bytes": 1073,
+      "sha256": "a746440b15fd8affbef1cc7bec63bbb40e548494a01b67bfc061fb0e4da77d38"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/web_sys/animation_frame.rs",
+      "bytes": 1640,
+      "sha256": "6aee3f5a4ed6c2d6b8d5f570da552a618773e4e513c76746efcdd8c316f94043"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/web_sys/canvas.rs",
+      "bytes": 19378,
+      "sha256": "f2272f16a45b2245bd2e7dfc9458899d1fd248a9615ab49d5976bd1584d9af56"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/web_sys/event.rs",
+      "bytes": 8846,
+      "sha256": "f73d5c0509b1e4a430ac238712e5963d21d378e0701e9c2b67cf839d890e3fb1"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/web_sys/event_handle.rs",
+      "bytes": 1137,
+      "sha256": "3e81317e037627fa4874d28ff6d43dff4cc3f2970f33496ed345910f33eed108"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/web_sys/fullscreen.rs",
+      "bytes": 3135,
+      "sha256": "6cf26354391839b55f8d9f1426f842349bb159384a79598a47628da64ae5dc1d"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/web_sys/intersection_handle.rs",
+      "bytes": 1002,
+      "sha256": "af2024c3fea10a70fa9fdbb6cca474730fecc9ccdcf1d3bb7cec6305fdb7346b"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/web_sys/media_query_handle.rs",
+      "bytes": 1473,
+      "sha256": "0c6dde21f28ee2f47db2cf10f859e158e156549dd1c10141be02d9496ea720ab"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/web_sys/mod.rs",
+      "bytes": 7321,
+      "sha256": "60c26a5a11e998a7ebaa0432fdc11aa1458a9b6676ca6c398487f7d9dbbdffc9"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/web_sys/pointer.rs",
+      "bytes": 9605,
+      "sha256": "e6277ddcc06acf6d3e09ba95ea54e618c3d355a82f92fa8ee56463bd30c6f643"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/web_sys/resize_scaling.rs",
+      "bytes": 10212,
+      "sha256": "fe98de29d14f60d10447ddd87ffec46bd24bfdf90095b608143f8d253627e06e"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/web_sys/schedule.rs",
+      "bytes": 11056,
+      "sha256": "351aa8dc3019b4efd8af1457129faafc35ea8ce0581b39b9ac95d141753f2c09"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/web_sys/worker.js",
+      "bytes": 244,
+      "sha256": "13d7ad44fd0ad212cb3691cda3b94c0350b8f553447ec3395647472ed8e008cf"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/web_sys/worker.min.js",
+      "bytes": 127,
+      "sha256": "1781ca3da664be395164092322711dd677283d98753c6b4bfe448586e9fcc8fd"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/web/window.rs",
+      "bytes": 13810,
+      "sha256": "fc6a7844845ec3b9d84188b59c9ef4bc8f5357a922f34bcb62d7a1dd3ec29424"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/windows/dark_mode.rs",
+      "bytes": 5721,
+      "sha256": "9fa225a2462e0a0467b7608fc126515f5138d7762f0f86688b17ef9d627f0fe1"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/windows/definitions.rs",
+      "bytes": 4494,
+      "sha256": "d3eb11a33c6daf98682796f7c019238fdc8bd2d389119699a20c1ed7d9dbddaf"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/windows/dpi.rs",
+      "bytes": 4356,
+      "sha256": "de57490ede1509fadd0b92404450bb1044aa42fb59a14619e32497618e1dac46"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/windows/drop_handler.rs",
+      "bytes": 8361,
+      "sha256": "47abcad8770ba1d5ec8c877c8e725aa330c472ef07ec4ffcb60c1e7ae33c41c8"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/windows/event_loop.rs",
+      "bytes": 109109,
+      "sha256": "3cbfb912cb7ba4cbe4782617daa61776a6eeb8be255caeb2d39a988ee2a778f0"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/windows/event_loop/runner.rs",
+      "bytes": 14879,
+      "sha256": "dfa68a445d4218098e39c731d27abfb172d55a2580c8e5bd16e209409f315f5b"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/windows/icon.rs",
+      "bytes": 7503,
+      "sha256": "89dd2f1e567852327cdc20adfb78ce12404f9ecc6786178d4caffe425a8d96c5"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/windows/ime.rs",
+      "bytes": 5440,
+      "sha256": "fb98b36a12d98bacf7fa88e8444f5d85713d51110e9ada028ce5ca12677a7feb"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/windows/keyboard.rs",
+      "bytes": 51671,
+      "sha256": "93188bdea60bce1014d624f289d25063b59a14985a318ca736bf62d8ba3e5d16"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/windows/keyboard_layout.rs",
+      "bytes": 42736,
+      "sha256": "d324796eaf474c35905f1b539cafaedaa3ee639e8ad7ad9ec559aeb2c56cf722"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/windows/minimal_ime.rs",
+      "bytes": 2118,
+      "sha256": "f400011bf7f57b50dd6f47066b6b1f354339217887938c26cbd22a062594805c"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/windows/mod.rs",
+      "bytes": 5208,
+      "sha256": "c739237f4903d6be9aaa3e913e50ae01575a689a4678486a3b82e214adf7020d"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/windows/monitor.rs",
+      "bytes": 8274,
+      "sha256": "fb177904e37746a41ff7607b60863282c505a885180dc9e069904f379b66f206"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/windows/raw_input.rs",
+      "bytes": 11228,
+      "sha256": "d36ff2c05cecc97b8b4e293a0a7dff4046a033b128101b07cc04812cbcc24b7a"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/windows/util.rs",
+      "bytes": 10488,
+      "sha256": "beed128bdedfb31daaa28da786bc6bdae037cbb41e5bf4db4d10678a44c72a68"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/windows/window.rs",
+      "bytes": 60023,
+      "sha256": "33347afd176151f5b92e3a0f354776a97e8218a1a9bfb61d605e39c26b6b9a33"
+    },
+    {
+      "path": "third_party/winit/src/platform_impl/windows/window_state.rs",
+      "bytes": 19341,
+      "sha256": "505e7ea90e1fa75500cb296cf6ec4cf3f04407c44731ffc9ae1f48e78d8d0f34"
+    },
+    {
+      "path": "third_party/winit/src/utils.rs",
+      "bytes": 623,
+      "sha256": "a6b2a21ab09102d288d9c9bfdd4c9173ae24cd50b18f3b11c6d9842c69ea3fc9"
+    },
+    {
+      "path": "third_party/winit/src/window.rs",
+      "bytes": 71910,
+      "sha256": "977153e4a39ae156c0dcbfcbd7270915fbc12c3459591535b351875a226aff97"
+    },
+    {
+      "path": "third_party/winit/tests/send_objects.rs",
+      "bytes": 881,
+      "sha256": "dd13b75fa0584cb03f928de109afd08859cffe9fd7828529ea3f4f1041b5085d"
+    },
+    {
+      "path": "third_party/winit/tests/serde_objects.rs",
+      "bytes": 1086,
+      "sha256": "25ba1c2321a77a5b67196dd694eea65f7101f59c78d0a64f511ea02457937396"
+    },
+    {
+      "path": "third_party/winit/tests/sync_object.rs",
+      "bytes": 652,
+      "sha256": "be6f81b8e53b705b6733135d7f3bb3a33294c3c3e28078ffbf3b448d19a98235"
+    },
+    {
+      "path": "tools/agent-eval/.npmrc",
+      "bytes": 22,
+      "sha256": "a093bb2fed59d699b7f9a62a5203cc196054c624e9c39c6d908c9e7db5dd2464"
+    },
+    {
+      "path": "tools/agent-eval/README.md",
+      "bytes": 1708,
+      "sha256": "8179e246109e3f5bd6dcf4618b548e50c2156308136b618cb3dd09c77dc64882"
+    },
+    {
+      "path": "tools/agent-eval/cases.json",
+      "bytes": 717,
+      "sha256": "91cca5e0e04f9196278e394f18e1c2bd7aeb78971445ec45c28d923ac661a061"
+    },
+    {
+      "path": "tools/agent-eval/charging-fixture.txt",
+      "bytes": 116,
+      "sha256": "835f870528ee07c9e95395d3958e196afb7975671fab70c81f910c5916b74476"
+    },
+    {
+      "path": "tools/agent-eval/package-lock.json",
+      "bytes": 335710,
+      "sha256": "ea15d40f966b0c103f35ff06b9826cd718de5c92280a02775cca010c7942e134"
+    },
+    {
+      "path": "tools/agent-eval/package.json",
+      "bytes": 137,
+      "sha256": "bf7ae57dce86a6df1e89b00c444a77d3563fa3e4f8b23e41dae7097d9ce9d8f5"
+    },
+    {
+      "path": "tools/agent-eval/promptfooconfig.cjs",
+      "bytes": 566,
+      "sha256": "86e441e0f5f1d8dce08fe18d8fadba78a84d86d69830aec2e4dee01fac09765d"
+    },
+    {
+      "path": "tools/agent-eval/provider.cjs",
+      "bytes": 1167,
+      "sha256": "a7633ef44dabc41b92b176baddf196f5880f516b4056650422e913898c57412a"
+    },
+    {
+      "path": "tools/agent-eval/run.py",
+      "bytes": 4629,
+      "sha256": "90f434e5532951305812fe8734099732792f3f9237753be84382be0d79936e47"
+    },
+    {
+      "path": "tools/agent-eval/score.cjs",
+      "bytes": 2883,
+      "sha256": "ec81268f7de4c228ac6d79f62ec4609f87173a0b3bff890626c50b86a6adb3e5"
+    }
+  ]
+}

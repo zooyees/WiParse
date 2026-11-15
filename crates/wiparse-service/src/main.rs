@@ -1,6 +1,20 @@
 //! Independent local automation service. No product rules or guessed IO firmware.
 mod jobs;
 mod storage;
+// Internal foundation only: no station capability or hardware route is exposed
+// until a trusted capture source and device owner are integrated.
+#[allow(dead_code)]
+mod wireless_gate;
+#[allow(dead_code)]
+mod wireless_station;
+#[cfg(windows)]
+#[allow(dead_code)]
+mod wireless_uart_windows;
+#[allow(dead_code)]
+mod wireless_ft4222;
+#[cfg(windows)]
+#[allow(dead_code)]
+mod wireless_runtime;
 use serde_json::{json, Value};
 use std::{
     fs,

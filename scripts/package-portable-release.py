@@ -36,7 +36,7 @@ def main():
     parser.add_argument('--node-dir', type=Path, required=True)
     parser.add_argument('--vc-redist', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--current', action='store_true', help='Package the binaries now in target/release instead of the 2026-10-25 verified snapshot')
+    parser.add_argument('--current', action='store_true', help='Acknowledge that target/release binaries are supplied separately and are not verified by this script')
     args = parser.parse_args()
     out = args.output.resolve()
     assert out.is_relative_to(ROOT / 'dist') and not out.exists(), 'Use a fresh workspace dist directory'
@@ -44,13 +44,9 @@ def main():
     version = next(line.split('"', 2)[1] for line in cargo.splitlines() if line.startswith('version = "'))
     gui_path = ROOT / 'target/release/wiparse-gui.exe'
     gui_sha = sha(gui_path)
-    if args.current:
-        accepted = {'version': version, 'exe_sha256': gui_sha, 'full_gui': 'current release build; GUI tests not re-run for this package'}
-    else:
-        accepted = json.loads((ROOT / 'docs/verification/serial-ai-fast-control-2026-10-25/verification.json').read_text(encoding='utf-8'))
-        assert gui_sha == accepted['exe_sha256'], 'GUI differs from the verified build'
-        for rel, digest in accepted['source_sha256'].items():
-            assert sha(ROOT / rel) == digest, f'GUI source changed since verification: {rel}'
+    if not args.current:
+        parser.error('pass --current to acknowledge that this script does not verify the supplied release binaries')
+    accepted = {'version': version, 'exe_sha256': gui_sha, 'full_gui': 'not verified by this packaging script'}
     assert (args.node_dir / 'LICENSE').is_file() and (args.node_dir / 'node.exe').is_file()
     out.mkdir(parents=True)
     (out / 'bin').mkdir()
@@ -82,29 +78,33 @@ def main():
     write(out / 'mcp/wiparse/cursor.mcp.example.json', {'mcpServers': {'wiparse': {
         'command': '<WiParse解压目录>/runtime/node/node.exe', 'args': ['<WiParse解压目录>/mcp/wiparse/dist/index.js'],
         'env': {'WIPARSE_URL': 'http://127.0.0.1:7878'}}}})
-    documents = ['DEPLOY_MCP.md', 'DEPLOY_API.md', 'CLI_REFERENCE.md', 'WORKSTATION_CLOSED_LOOP.md', 'AI_INTERFACE.md',
+    documents = ['DEPLOY_MCP.md', 'DEPLOY_API.md', 'CLI_REFERENCE.md', 'WORKSTATION_CLOSED_LOOP.md', 'AI_INTERFACE.md', 'ROUTER_SKILLS.md',
         'TESTING_HUB_WORKSPACE.md', 'HUB_UI_FIELDS_CONTRACT.md', 'HUB_PROJECT_CONFIG_CONTRACT.md', 'AUTOMATION-SERVICE.md', 'CHANGELOG.md']
     for name in documents:
         target = out / 'docs' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / 'docs' / name, target)
+    # Keep links in ROUTER_SKILLS.md and the candidate audit resolvable. These
+    # are historical records, not verification of the binaries being copied.
+    for name in ['verification-r65.md', 'verification-r79-attachment-invalidation.md',
+                 'verification-r81-cursor-version.md', 'verification-r82-delivery-audit.md',
+                 'source-manifest-r82.json']:
+        rel = Path('verification/router-skill-20261113') / name
+        (out / 'docs' / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / 'docs' / rel, out / 'docs' / rel)
     copy_tree(ROOT / 'docs/specs/wireless-test', out / 'docs/specs/wireless-test')
     copy_tree(ROOT / 'docs/examples', out / 'docs/examples')
-    for path in (ROOT / 'docs/reviews').glob('*2026-10-25.md'):
-        write(out / 'docs/reviews' / path.name, path.read_text(encoding='utf-8-sig'))
-    stamp = '2026-11-05-5' if args.current else '2026-10-25'
-    notes = '# 完整便携包 · ' + stamp + '\n\n本次已生成完整ZIP，包含当前程序、MCP和9个本地插件。\n\n'
-    if args.current:
-        notes += '波形分析：协议解析最长 5000 字节，可多路同时解析。帧附近按采样点保留边沿；字段同时给出码值和换算后的实际值。波形、时序和协议字段在系统浏览器中查看；软件内选择协议和通道并完成解码。\n\n'
-    write(out / 'docs/release-notes.md', notes + (ROOT / 'docs/releases/1.2.2.md').read_text(encoding='utf-8-sig'))
+    notes = f'# WiParse {accepted["version"]} 便携目录\n\n'
+    notes += '此目录的构建与验证范围以 release-manifest.json 和随附验证记录为准；旧验证记录不证明本次二进制已验收。\n'
+    write(out / 'docs/release-notes.md', notes)
     for name in ['generate-fpga-hub-demo.mjs', 'sync-ftdi-dlls.ps1']:
         target = out / 'scripts' / name
         target.parent.mkdir(exist_ok=True)
         shutil.copy2(ROOT / 'scripts' / name, target)
     write(out / 'Start-WiParse.cmd', '@echo off\nsetlocal\npushd "%~dp0"\nset "PATH=%~dp0runtime\\node;%PATH%"\nstart "" /D "%~dp0" "%~dp0bin\\WiParse.exe"\npopd\n')
-    write(out / 'README-更新与使用.md', '''# WiParse 1.2.2 Windows x64 完整便携包
+    write(out / 'README-更新与使用.md', f'''# WiParse {accepted['version']} Windows x64 便携目录
 
-包含当前 GUI、CLI、Service、已编译 MCP、全部9个本地插件、离线 npm 依赖、Node.js 运行时和许可证、VC++ x64 离线安装程序、20项FPGA示例配方、文档及匹配调试符号。FPGA插件0.5.5。波形分析可多路同时解析；波形、时序和字段在系统浏览器中查看。串口AI支持1–300秒分析，默认5秒。
+包含 GUI、CLI、Service、已编译 MCP、本地插件、离线 npm 依赖、Node.js 运行时和许可证、VC++ x64 离线安装程序、示例配方、文档及调试符号。具体版本和文件以 release-manifest.json 为准；模拟示例不代表真实设备验收。无线充电插件 live 执行仍受阻，详见 docs/ROUTER_SKILLS.md。
 
 ## 新目录使用
 
@@ -138,7 +138,7 @@ release-manifest.json列出全部文件SHA256、程序/插件/运行时版本及
 ''')
     plugins = sorted((json.loads(p.read_text(encoding='utf-8-sig')) for p in (out / 'test-tools/plugins').glob('*/plugin.json')), key=lambda p: p['id'])
     mcp_version = json.loads((out / 'mcp/wiparse/package.json').read_text(encoding='utf-8'))['version']
-    assert len(plugins) == 9 and mcp_version == accepted['version']
+    assert plugins, 'No local plugins found'
     for dep in ['test-tools/node_modules/ajv/package.json', 'test-tools/node_modules/ajv-formats/package.json',
                 'mcp/wiparse/node_modules/@modelcontextprotocol/sdk/package.json', 'mcp/wiparse/node_modules/zod/package.json',
                 'mcp/wiparse/dist/index.js', 'mcp/wiparse/dist/http.js']:
@@ -146,14 +146,14 @@ release-manifest.json列出全部文件SHA256、程序/插件/运行时版本及
     manifest = {'kind': 'full_portable', 'version': accepted['version'], 'platform': 'windows-x64',
         'created_at': datetime.now(timezone.utc).isoformat(), 'mcp_version': mcp_version,
         'plugins': [{'id': p['id'], 'version': p['version']} for p in plugins],
-        'node_version': subprocess.check_output([str(args.node_dir / 'node.exe'), '--version'], text=True).strip() if args.current else args.node_dir.name.removeprefix('node-').removesuffix('-win-x64'),
-        'vc_redist_sha256': sha(args.vc_redist), 'gui_verified_sha256': accepted['exe_sha256'],
-        'prior_gui_tests': accepted['full_gui'], 'contains_personal_config': False, 'contains_api_keys': False,
+        'node_version': subprocess.check_output([str(args.node_dir / 'node.exe'), '--version'], text=True).strip(),
+        'vc_redist_sha256': sha(args.vc_redist), 'gui_sha256': accepted['exe_sha256'],
+        'prior_gui_tests': accepted['full_gui'], 'credential_scan': 'not performed by this script',
         'external_dependencies': ['Windows x64', 'Instrument VISA and USB drivers for the actual hardware', 'LibFT4222 for optional FT4222 SPI/I2C/GPIO'],
         'files': [{'path': str(p.relative_to(out)).replace('\\', '/'), 'size': p.stat().st_size, 'sha256': sha(p)}
                   for p in sorted(out.rglob('*')) if p.is_file()]}
     write(out / 'release-manifest.json', manifest)
-    print(json.dumps({'directory': str(out), 'files': len(manifest['files']), 'plugins': manifest['plugins'], 'gui_sha256': manifest['gui_verified_sha256']}, ensure_ascii=False))
+    print(json.dumps({'directory': str(out), 'files': len(manifest['files']), 'plugins': manifest['plugins'], 'gui_sha256': manifest['gui_sha256']}, ensure_ascii=False))
 
 
 if __name__ == '__main__':

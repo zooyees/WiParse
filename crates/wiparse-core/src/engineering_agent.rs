@@ -48,7 +48,7 @@ pub const TOOLS:&[Tool]=&[
  Tool{method:"platform.catalog",title:"查询平台完整能力目录",page:"any",effect:Effect::Read,schema:"{filter?:string,offset?:0,limit?:12}; discover registered GUI/API/service capabilities and actual parameter examples; examples are not defaults or permission; service-required calls may be offline"},
  Tool{method:"platform.invoke",title:"调用平台功能",page:"any",effect:Effect::Read,schema:"{method:exactCatalogMethod,params:object}; calls same host implementation as GUI/API; inspect platform.catalog first, never invent path/device/parameter. Effects and permission are determined by nested method; dangerous operations need concrete confirmation; accepted/background is not completed. No arbitrary shell."},
  Tool{method:"agent.align",title:"按观测边界对齐日志与波形",page:"any",effect:Effect::Read,schema:"{log_id,frame_id,source_id,first_frame,last_frame,log_time_s}; use log.analyze timeline with confirmed boundary markers and wave.frames evidence. Frame indices mark corresponding starts. Optional calibration:{first_pair_error_s,last_pair_error_s,residual_rate_bound_ppm}; supply only operator/calibration-backed bounds including both clocks, otherwise omit. Conditional interpolation only; never assert synchronization or causality without verified external calibration."},
- Tool{method:"agent.plan",title:"更新任务进度",page:"any",effect:Effect::LocalCompute,schema:"{steps:[{id,title,state:pending|running|done|blocked,deliverable?:analysis|curve|present_curve|calculation|report|operation|report_file|protocol|frame_reference|cycle_duration|table_limits,basis?:observed|inferred|hypothesis|unavailable,target?:{device_id?,channel?,source_id?,action?,start_s?,end_s?,field?,unit?,source_version?},evidence_ids?:[actualID],reason?:string}]}; max12 steps; completed steps require actual successful evidence; instrument operation steps require target.device_id; blocked needs reason; never drop unresolved goals"},
+ Tool{method:"agent.plan",title:"更新任务进度",page:"any",effect:Effect::LocalCompute,schema:"{steps:[{id,title,state:pending|running|done|blocked,deliverable?:analysis|curve|present_curve|calculation|report|operation|report_file|protocol|frame_reference|cycle_duration|table_limits,basis?:observed|inferred|hypothesis|unavailable,target?:{device_id?,channel?,source_id?,action?,start_s?,end_s?,field?,unit?,source_version?},depends_on?:[stepID],evidence_ids?:[actualID],reason?:string}]}; max12 steps; completed steps require actual successful evidence; instrument operation steps require target.device_id; blocked needs reason; never drop unresolved goals"},
  Tool{method:"agent.evidence",title:"召回任务证据",page:"any",effect:Effect::Read,schema:"{evidence_id:string,offset?:byteOffsetFromNextOffset}; same bound task/session evidence index; not a fresh measurement"},
  Tool{method:"agent.recipe",title:"执行工程证据配方",page:"any",effect:Effect::Read,schema:"{recipe:recipe.charge_loss|recipe.pwm_dead_time|recipe.adapter_compatibility,evidence_id,limits_s?:[min,max]}; supply current successful log.analyze with events, wave.timing with both channels, or report.read of linked adapter-matrix.json respectively. PWM requires specified limits in seconds."},
  Tool{method:"agent.help",title:"查询工具用法",page:"any",effect:Effect::LocalCompute,schema:"{method:string}; exact schema and engineering constraints of an available host tool"},
@@ -69,16 +69,18 @@ pub const TOOLS:&[Tool]=&[
  Tool{method:"serial.monitor.stop",title:"停止串口AI监控",page:"serial",effect:Effect::Application,schema:"{}; leaves serial reception unchanged"},
  Tool{method:"serial.start",title:"启动当前串口接收",page:"serial",effect:Effect::Device,schema:"{}; currently selected live source only; completion waits for connection"},
  Tool{method:"serial.stop",title:"停止当前串口接收",page:"serial",effect:Effect::Device,schema:"{}; current live source only; no arbitrary transmit"},
- Tool{method:"data.present",title:"展示本地提取数据",page:"data_analysis",effect:Effect::Application,schema:"{query_id:hostUUID}; import retained data.extract file dataset or completed local log timeline with retain_dataset:true; actual points stay local; no model-provided points or paths; opens data analysis. Rejects incomplete/over-budget data and busy/live destination."},
- Tool{method:"data.extract",title:"按字段重新统计当前文本",page:"data_analysis",effect:Effect::Read,schema:"{fields:[selector],header?:frameMarker,timestamp?:{selector:string,unit:s|ms|us|clock},skip_first_record?:bool,retain_dataset?:bool,units?:[string]}; scan all records of the currently loaded data-analysis text file locally. Blank header means one physical line per record. 1..8 selectors: key:VIN, csv:2, tsv:2, semi:2, pipe:2, ws:2, json:/sensors/0/v or re: with capture group 1. Returns per-field counts, missing, min/max/mean; no timestamp required. Inspect for candidate selectors first. For plotting request retain_dataset:true then data.present(query_id); x is record number. skip_first_record excludes a known column header. units follow selector order."},
- Tool{method:"data.inspect",title:"读取数据曲线设置",page:"data_analysis",effect:Effect::Read,schema:"{}; units, scale, thresholds and sources"},
+ Tool{method:"data.present",title:"展示本地提取数据",page:"data_analysis",effect:Effect::Application,schema:"{query_id:hostUUID,expected_fields?:[names]}; pass the field names the user asked to see, including fields absent from the extraction. The receipt lists actual curves, sample counts and missing fields. Import retained data.extract file dataset or completed local log timeline with retain_dataset:true; actual points stay local; no model-provided points or paths; opens data analysis. Requires complete retained data. During live collection or file loading the result opens in a separate plot while the source continues."},
+ Tool{method:"data.extract",title:"按字段重新统计当前文本",page:"data_analysis",effect:Effect::Read,schema:"{fields:[selector],header?:frameMarker,timestamp?:{selector:string,unit:s|ms|us|clock},skip_first_record?:bool,retain_dataset?:bool,units?:[string]}; scan all records of the currently loaded data-analysis text file locally. Blank header means one physical line per record. 1..8 selectors: key:VIN, csv:2, tsv:2, semi:2, pipe:2, ws:2, json:/sensors/0/v or re: with capture group 1. Returns per-field counts, missing, min/max/mean; no timestamp required. Inspect for candidate selectors first. For plotting request retain_dataset:true then data.present(query_id,expected_fields); x uses observed timestamps when specified, otherwise record number. skip_first_record excludes a known column header. units follow selector order."},
+ Tool{method:"data.inspect",title:"读取数据曲线设置",page:"data_analysis",effect:Effect::Read,schema:"{offset?:0..4096,limit?:1..64,snapshot_id?:uuid}; published metadata only, not raw samples. For subsequent pages pass the first page snapshot_id and next_offset; on DATA.SNAPSHOT_CHANGED restart from offset 0."},
+ Tool{method:"data.snapshot.read",title:"读取冻结曲线片段",page:"data_analysis",effect:Effect::Read,schema:"{series:0..7,start?:inclusiveIndex,end?:exclusiveIndex,offset?:index,limit?:1..64,snapshot_id?:uuid}; only in explicitly reviewed data task; follow next_offset, window and source coverage are distinct."},
+ Tool{method:"data.snapshot.stats",title:"统计冻结曲线窗口",page:"data_analysis",effect:Effect::Read,schema:"{series:0..7,start?:inclusiveIndex,end?:exclusiveIndex,snapshot_id?:uuid}; only in explicitly reviewed data task; local calculation, physical acquisition completeness not verified."},
  Tool{method:"data.statistics",title:"统计数据曲线",page:"data_analysis",effect:Effect::Read,schema:"{}; local full-range statistics, no raw samples uploaded"},
  Tool{method:"report.create",title:"生成证据报告",page:"any",effect:Effect::LocalCompute,schema:"{title:string,markdown:string,evidence_ids:[actualID]}; 1..16 retained evidence IDs, host allocates portable project directory and writes Markdown/JSON/actual-series PNG+CSV; no arbitrary paths; report is AI analysis, not a product pass verdict"},
  Tool{method:"report.open",title:"打开AI报告",page:"test_report",effect:Effect::Application,schema:"{report_id:hostUUID}; only generated report in current project; displays Markdown and inline curve images"},
  Tool{method:"report.read",title:"分页读取当前报告正文",page:"test_report",effect:Effect::Read,schema:"{report_id?:actualIndexedIDOrCreatedUUID,scan?:{column:exactHeader,subtract_column?:sameUnitHeader,where?:{column:stageHeader,equals:exactStage},unit?:sourceUnit,min?:inclusive,max?:inclusive,delimiter?:commaOrTabOrSemicolon,max_rows?:optionalSegmentSize,cursor?:scanContinuation},attachment?:linkedDataFilename,cursor?:next_cursor,start_line?:1,start_byte?:0,limit?:80}; selected text report or report.inspect indexed ID, limit 1..200; actual source/line evidence, next_line + next_byte (pass as start_byte), line_complete and encoding flags; long lines are lossless fragments; use next_cursor for direct continuation on the same attachment, without start_line or start_byte. PNG and JPEG return local OCR text and pixel dimensions; raw waveform values require calibrated samples."},
- Tool{method:"report.inspect",title:"读取测试结果索引",page:"test_report",effect:Effect::Read,schema:"{offset?:0,limit?:10}; current project; limit 1..20"},
+ Tool{method:"report.inspect",title:"读取测试结果索引",page:"test_report",effect:Effect::Read,schema:"{offset?:0,limit?:10}; current project; limit 1..20. Each report may contain run_provenance.host_run_id only if the runner manifest explicitly lists that report. Null means no established association; paginate all reports when searching for a specific run."},
  Tool{method:"report.search",title:"检索当前报告证据",page:"test_report",effect:Effect::Read,schema:"{contains?:string,report_ids?:[id],limit?:6,cursor?:hostToken}; full local open report or up to8 indexed report IDs; 1GiB/15sec slices; cursor alone; actual line evidence and coverage; image pixels unavailable"},
- Tool{method:"testing.wait",title:"等待实际测试完成",page:"test_tool",effect:Effect::Read,schema:"{run_id:string,timeout_seconds?:5..600}; host waits for this exact existing run, no model polling; process completion is not a formal pass verdict"},
+ Tool{method:"testing.wait",title:"等待实际测试完成",page:"test_tool",effect:Effect::Read,schema:"{run_id:string,timeout_seconds?:5..600}; host waits for this exact existing run, no model polling. A failed exit preserves ok=false but may include process_completed=true and execution_succeeded=false; neither an exit code nor completion means product PASS. Timeout leaves the action outcome unknown."},
  Tool{method:"testing.status",title:"读取后台测试进度",page:"test_tool",effect:Effect::Read,schema:"{}; actual current run ID and terminal process status; never infer formal product verdict"},
  Tool{method:"testing.inspect",title:"读取测试工程",page:"test_tool",effect:Effect::Read,schema:"{}; current project, configured item counts, dirty flags and plugin"},
  Tool{method:"testing.propose",title:"校验测试配置草案",page:"test_tool",effect:Effect::Read,schema:"{changes:[{pointer:string,value:any}]}; max32 changes to EXISTING fields of currently open clean configuration; local schema/path validation; returns host draft_id and before/after diff; no save"},
@@ -97,6 +99,7 @@ pub const TOOLS:&[Tool]=&[
  Tool{method:"instrument.list",title:"读取已连接仪表",page:"instruments",effect:Effect::Read,schema:"{}; existing sessions only, never invent device IDs"},
  Tool{method:"instrument.command",title:"执行仪表操作",page:"instruments",effect:Effect::Device,schema:"{device_id:integer,command:typedObject}; use WiParse typed ControlCommand; only scope run/stop/single/autoset/channel/trigger/measurement and source/load typed controls; no SCPI, flashing or erase; waits for job completion"},
  Tool{method:"instrument.capture",title:"抓取示波器截图",page:"instruments",effect:Effect::Device,schema:"{device_id:integer}; preview capture only, no file paths; waits for actual job result"},
+ Tool{method:"instrument.waveform_source",title:"读取示波器源波形",page:"instruments",effect:Effect::Device,schema:"{device_id:integer}; host-owned project evidence directory, exclusive new file; no model-provided path; waits for actual save result"},
 ];
 pub fn tool(method: &str) -> Option<Tool> {
     TOOLS.iter().find(|tool| tool.method == method).copied()
@@ -197,18 +200,36 @@ pub fn validate(call: &Call) -> Result<Tool, String> {
     match call.method.as_str(){
       "evidence.get"=>if !call.params["id"].as_str().is_some_and(|s|s.starts_with('E')&&s[1..].parse::<u64>().is_ok()){return Err("EVIDENCE.INVALID_ID".into());},
       "report.create"=>if !call.params["title"].as_str().is_some_and(|s|!s.trim().is_empty()&&s.len()<=160&&!s.contains(['\n','\r']))||!call.params["markdown"].as_str().is_some_and(|s|!s.trim().is_empty()&&s.len()<=48000)||!call.params["evidence_ids"].as_array().is_some_and(|a|!a.is_empty()&&a.len()<=16&&a.iter().all(|v|v.as_str().is_some_and(|s|!s.is_empty()&&s.len()<=64))){return Err("REPORT.INVALID_ARGUMENTS".into());},
+      "data.inspect" => {
+          if call.params.get("offset").is_some_and(|v|v.as_u64().is_none_or(|n|n>crate::extract::MAX_DISCOVERED_FIELDS as u64)) ||
+             call.params.get("limit").is_some_and(|v|v.as_u64().is_none_or(|n|!(1..=64).contains(&n))) ||
+             call.params.get("snapshot_id").is_some_and(|v|v.as_str().is_none_or(|s|uuid::Uuid::parse_str(s).is_err())) {return Err("DATA.INVALID_FIELD_PAGE".into());}
+      }
+      "data.snapshot.read" | "data.snapshot.stats" => {
+          if !call.params["series"].as_u64().is_some_and(|n|n<crate::extract::MAX_SERIES as u64)
+              || ["start","end","offset"].iter().any(|k|call.params.get(*k).is_some_and(|v|v.as_u64().is_none()))
+              || call.params.get("limit").is_some_and(|v|!v.as_u64().is_some_and(|n|(1..=64).contains(&n)))
+              || call.params.get("snapshot_id").is_some_and(|v|!v.as_str().is_some_and(|s|uuid::Uuid::parse_str(s).is_ok())) {return Err("DATA.INVALID_SNAPSHOT_QUERY".into());}
+      }
       "data.extract" => {
-          let fields=call.params["fields"].as_array().filter(|items|(1..=8).contains(&items.len())).ok_or("DATA.INVALID_FIELDS")?;
+          let fields=call.params["fields"].as_array().filter(|items|(1..=crate::extract::MAX_SERIES).contains(&items.len())).ok_or("DATA.INVALID_FIELDS: expected 1..=8 selectors")?;
           for key in ["retain_dataset","skip_first_record"] {if call.params.get(key).is_some_and(|v|!v.is_boolean()){return Err("DATA.INVALID_OPTION".into());}}
           if call.params.get("units").is_some_and(|v|v.as_array().is_none_or(|a|a.len()!=fields.len()||a.iter().any(|u|u.as_str().is_none_or(|v|v.len()>32||v.chars().any(char::is_control))))){return Err("DATA.INVALID_UNITS".into());}
           if let Some(t)=call.params.get("timestamp") {
               if t.as_object().is_none_or(|o|o.len()!=2)||!matches!(t["unit"].as_str(),Some("s"|"ms"|"us"|"clock")) {return Err("DATA.INVALID_TIMESTAMP".into());}
-              crate::extract::Selector::compile(t["selector"].as_str().ok_or("DATA.INVALID_TIMESTAMP")?,true,true)?;
+              crate::extract::Selector::timestamp(t["selector"].as_str().ok_or("DATA.INVALID_TIMESTAMP")?,true)?;
           }
           for field in fields { crate::extract::Selector::compile(field.as_str().ok_or("DATA.INVALID_SELECTOR")?,true,true)?; }
           if call.params.get("header").is_some_and(|v|v.as_str().is_none_or(|h|h.len()>256)){return Err("DATA.INVALID_HEADER".into());}
       }
-      "data.present"=>if !call.params["query_id"].as_str().is_some_and(|s|uuid::Uuid::parse_str(s).is_ok()){return Err("DATA.INVALID_QUERY_ID".into());},
+      "data.present"=>{
+          if !call.params["query_id"].as_str().is_some_and(|s|uuid::Uuid::parse_str(s).is_ok()){return Err("DATA.INVALID_QUERY_ID".into());}
+          if let Some(fields)=call.params.get("expected_fields"){
+              if fields.as_array().is_none_or(|a|a.len()>32 || a.iter().any(|v|v.as_str().is_none_or(|s|s.trim().is_empty() || s.len()>crate::extract::MAX_SELECTOR_BYTES || s.chars().any(char::is_control)))){
+                  return Err("DATA.INVALID_EXPECTED_FIELDS: expected up to 32 nonempty field names".into());
+              }
+          }
+      },
       "report.open"=>if !call.params["report_id"].as_str().is_some_and(|s|uuid::Uuid::parse_str(s).is_ok()){return Err("REPORT.INVALID_ID".into());},
       "testing.wait"=>if !call.params["run_id"].as_str().is_some_and(|s|!s.is_empty()&&s.len()<=128)||call.params.get("timeout_seconds").is_some_and(|v|!v.as_u64().is_some_and(|n|(5..=600).contains(&n))){return Err("TEST.INVALID_WAIT".into());},
       "testing.propose"=>if !call.params["changes"].as_array().is_some_and(|v|!v.is_empty()&&v.len()<=32&&v.iter().all(|v|v.as_object().is_some_and(|o|o.len()==2&&o.contains_key("value")&&o.get("pointer").and_then(Value::as_str).is_some_and(|s|s.starts_with('/')&&s.len()<=256)))){return Err("TEST.INVALID_CHANGES".into());},
@@ -216,7 +237,7 @@ pub fn validate(call: &Call) -> Result<Tool, String> {
       "testing.select"=>if !call.params["ids"].as_array().is_some_and(|v|!v.is_empty()&&v.len()<=500&&v.iter().all(|s|s.as_str().is_some_and(|s|!s.is_empty()&&s.len()<=128))){return Err("TEST.INVALID_SELECTION".into());},
       _=>{}
     }
-    if call.params.get("offset").is_some_and(|v|!v.as_u64().is_some_and(|n|n<=1_000_000)){return Err("AGENT.OFFSET_BUDGET".into());}
+    if call.params.get("offset").is_some_and(|v|!v.as_u64().is_some_and(|n|call.method=="data.snapshot.read" || n<=1_000_000)){return Err("AGENT.OFFSET_BUDGET".into());}
     let object = call
         .params
         .as_object()
@@ -272,7 +293,7 @@ pub fn validate(call: &Call) -> Result<Tool, String> {
     }
     if object
         .get("limit")
-        .is_some_and(|v| !v.as_u64().is_some_and(|n| (1..=20).contains(&n)))
+        .is_some_and(|v| !v.as_u64().is_some_and(|n| (1..=if matches!(call.method.as_str(),"data.snapshot.read"|"data.inspect") {64} else {20}).contains(&n)))
     {
         return Err("AGENT.INVALID_LIMIT".into());
     }
@@ -324,7 +345,7 @@ pub fn validate(call: &Call) -> Result<Tool, String> {
                 return Err("AGENT.PROTOCOL_AND_SIGNAL_REQUIRED".into());
             }
         }
-        "instrument.command" | "instrument.readback" | "instrument.capture" => {
+        "instrument.command" | "instrument.readback" | "instrument.capture" | "instrument.waveform_source" => {
             if !object
                 .get("device_id")
                 .and_then(Value::as_u64)
@@ -333,7 +354,7 @@ pub fn validate(call: &Call) -> Result<Tool, String> {
                 return Err("AGENT.DEVICE_REQUIRED".into());
             }
             if call.method=="instrument.command"{scope_verification(&call.params)?;}
-            if call.method != "instrument.capture" && !object.contains_key("command") {
+            if !matches!(call.method.as_str(), "instrument.capture" | "instrument.waveform_source") && !object.contains_key("command") {
                 return Err("AGENT.COMMAND_REQUIRED".into());
             }
         }
@@ -420,7 +441,10 @@ fn parameter_keys(method:&str)-> &'static [&'static str] {
             "cursor",
         ],
         "data.extract"=> &["fields","header","retain_dataset","skip_first_record","units","timestamp"],
-        "data.present"=> &["query_id"],
+        "data.present"=> &["query_id","expected_fields"],
+        "data.inspect"=> &["offset","limit","snapshot_id"],
+        "data.snapshot.read"=> &["series","start","end","offset","limit","snapshot_id"],
+        "data.snapshot.stats"=> &["series","start","end","snapshot_id"],
         "report.create" => &["title","markdown","evidence_ids"],
         "report.open" => &["report_id"],
         "report.inspect" => &["offset", "limit"],
@@ -433,14 +457,19 @@ fn parameter_keys(method:&str)-> &'static [&'static str] {
         "calc.evaluate" | "calc.apply" => &["card", "fields"],
         "instrument.command" => &["device_id","command","verify"],
         "instrument.readback" => &["device_id","command"],
-        "instrument.capture" => &["device_id"],
+        "instrument.capture" | "instrument.waveform_source" => &["device_id"],
         _ => &[],
     }
 }
 
 pub fn catalog(page: &str, cross: bool, read: bool, application: bool) -> String {
+    catalog_for_skills(page, cross, read, application, &[])
+}
+pub fn catalog_for_skills(page: &str, cross: bool, read: bool, application: bool, skills: &[String]) -> String {
     let mut out = String::from("Engineering tools (ONE call per answer, exact schema):\n");
     for tool in TOOLS {
+        if matches!(tool.method,"data.snapshot.read"|"data.snapshot.stats") {continue;}
+        if !crate::ai::skills::permits(skills, tool.method) { continue; }
         if !read && tool.effect != Effect::LocalCompute {
             continue;
         }
@@ -465,6 +494,15 @@ pub const CONTRACT: &str = r#"You are WiParse's engineering task assistant. Prod
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn waveform_source_accepts_only_a_device_target() {
+        let call = |params| Call { method: "instrument.waveform_source".into(), params };
+        assert_eq!(validate(&call(json!({"device_id":7}))).unwrap().effect, Effect::Device);
+        for params in [json!({}), json!({"device_id":7,"dir":"../outside"}),
+            json!({"device_id":7,"filename":"user.isf"}), json!({"device_id":7,"overwrite":true})] {
+            assert!(validate(&call(params)).is_err());
+        }
+    }
     #[test]
     fn unknown_tools_and_parameters_cannot_be_smuggled_into_calls() {
         for call in [

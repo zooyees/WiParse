@@ -3,6 +3,10 @@ import {hash} from './config.mjs';
 
 // One fenced case. The station owns its approved sequence, hardware watchdog and output feedback.
 export async function captureCase(bundle,scenario,run,request,guard) {
+  // Until the external service exposes an enforceable per-run RX readiness
+  // gate, do not issue a lease or any hardware request through this entry.
+  guard();
+  throw new Error('INTEGRATION.TX_RX_FT4222_GATE_NOT_IMPLEMENTED');
   const base={station_id:bundle.station.station_id,case_id:scenario.id,run_id:run.run_id,attempt_id:run.attempt_id,
     dut_serial:run.dut.serial,firmware:run.dut.firmware,configuration_hashes:bundle.hashes};
   const deadline=performance.now()+scenario.deadline_ms;

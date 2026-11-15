@@ -199,11 +199,8 @@ fn source_change_clears_old_context_and_control_authorization() {
     p.tick_ai(&ctx, Lang::Zh, "layout-project".into(), &cfg, false);
     assert!(!p.ai_chat.allow_automation);
     assert!(p.ai_chat.watch.is_none());
-    assert!(!p
-        .ai_chat
-        .entries
-        .iter()
-        .any(|e| e.text.contains("old source analysis")));
+    assert!(p.ai_chat.entries.iter().any(|e| e.text.contains("old source analysis")));
+    assert!(!format!("{:?}",p.ai_chat.history).contains("old source analysis"));
 }
 
 #[test]
@@ -359,4 +356,157 @@ fn local_library_popup_keeps_preview_accessible_inside_small_windows(){
   let preview=text_rect(&output,"本地预分析");assert!(preview.min.x>=0.&&preview.max.x<=width&&preview.min.y>=0.&&preview.max.y<=height,"preview clipped at {width}: {preview:?}");
   if width==420.{output.textures_delta.set.retain(|(id,_)|*id!=egui::TextureId::Managed(0));output.textures_delta.set.push((egui::TextureId::Managed(0),egui::epaint::ImageDelta::full(ctx.fonts(|fonts|fonts.image()),egui::TextureOptions::LINEAR)));crate::ui_audit::export_frame(&ctx,output,&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tmp/serial-local-log-ui"),"local-library-menu",egui::vec2(width,height));}
  }
+}
+
+#[test]
+fn serial_skills_menu_keyboard_reaches_and_toggles_skill() {
+    let mut p = panel();
+    let state = p.ai_state("layout-project", false);
+    let ctx = egui::Context::default();
+    crate::fonts::install_cjk_fonts(&ctx);
+    let theme = ui_theme::apply_theme(&ctx, false);
+    ctx.style_mut(|style| style.animation_time = 0.);
+    let mut draw = |events| ctx.run(egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420., 800.))),
+        events, ..Default::default()
+    }, |ctx| { egui::CentralPanel::default().show(ctx, |ui| { p.ai_chat.ui(ui, Lang::En, &theme, &state); }); });
+    let out = draw(vec![]);
+    let position = text_rect(&out, "…").center();
+    let pointer = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary,
+        pressed, modifiers: egui::Modifiers::NONE };
+    draw(vec![egui::Event::PointerMoved(position), pointer(position, true)]);
+    draw(vec![pointer(position, false)]);
+    let menu = draw(vec![]);
+    let select = text_rect(&menu, "Select skills").center();
+    draw(vec![egui::Event::PointerMoved(select), pointer(select, true)]);
+    draw(vec![pointer(select, false)]);
+    let menu = draw(vec![]);
+    let skill = text_rect(&menu, "Serial log analysis").center();
+    draw(vec![egui::Event::PointerMoved(skill), pointer(skill, true)]);
+    draw(vec![pointer(skill, false)]);
+    drop(draw);
+    assert!(p.ai_chat.selected_skills.iter().any(|id| id == "serial_log"),
+        "pointer action should first select the skill");
+    let mut draw = |events| ctx.run(egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420., 800.))),
+        events, ..Default::default()
+    }, |ctx| { egui::CentralPanel::default().show(ctx, |ui| { p.ai_chat.ui(ui, Lang::En, &theme, &state); }); });
+    let key = |key, pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false,
+        modifiers: egui::Modifiers::NONE };
+    draw(vec![key(egui::Key::Space, true)]);
+    draw(vec![key(egui::Key::Space, false)]);
+    drop(draw);
+    assert!(!p.ai_chat.selected_skills.iter().any(|id| id == "serial_log"),
+        "Space should toggle off the focused skill after pointer selection");
+}
+
+#[test]
+fn serial_control_checkbox_is_keyboard_operable_after_pointer_selection() {
+    let mut p = panel();
+    let state = p.ai_state("layout-project", false);
+    let ctx = egui::Context::default();
+    crate::fonts::install_cjk_fonts(&ctx);
+    let theme = ui_theme::apply_theme(&ctx, false);
+    let mut draw = |events| ctx.run(egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420., 800.))),
+        events, ..Default::default()
+    }, |ctx| { egui::CentralPanel::default().show(ctx, |ui| { p.ai_chat.ui(ui, Lang::En, &theme, &state); }); });
+    let control = text_rect(&draw(vec![]), "Allow control").center();
+    let event = |pressed| egui::Event::PointerButton { pos: control, button: egui::PointerButton::Primary,
+        pressed, modifiers: egui::Modifiers::NONE };
+    draw(vec![egui::Event::PointerMoved(control), event(true)]);
+    draw(vec![event(false)]);
+    drop(draw);
+    assert!(p.ai_chat.allow_automation, "pointer action should select control checkbox");
+    let mut draw = |events| ctx.run(egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420., 800.))),
+        events, ..Default::default()
+    }, |ctx| { egui::CentralPanel::default().show(ctx, |ui| { p.ai_chat.ui(ui, Lang::En, &theme, &state); }); });
+    let key = |pressed| egui::Event::Key { key: egui::Key::Space, physical_key: None, pressed,
+        repeat: false, modifiers: egui::Modifiers::NONE };
+    draw(vec![key(true)]);
+    draw(vec![key(false)]);
+    drop(draw);
+    assert!(!p.ai_chat.allow_automation, "Space should revoke the focused control grant");
+}
+
+#[test]
+fn serial_skill_and_control_are_reachable_using_only_keyboard() {
+    fn frame(ctx: &egui::Context, p: &mut SerialToolPanel, state: &Snapshot,
+        theme: &ui_theme::Tokens, events: Vec<egui::Event>) -> egui::FullOutput {
+        ctx.run(egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO,
+            egui::vec2(420., 800.))), events, ..Default::default() }, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| { p.ai_chat.ui(ui, Lang::En, theme, state); });
+        })
+    }
+    fn key(key: egui::Key, pressed: bool) -> egui::Event {
+        egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE }
+    }
+    fn focused_label(out: &egui::FullOutput) -> Option<String> {
+        let update = out.platform_output.accesskit_update.as_ref()?;
+        update.nodes.iter().find(|(id, _)| *id == update.focus)
+            .and_then(|(_, node)| node.label().map(str::to_owned))
+    }
+    let mut p = panel();
+    let state = p.ai_state("layout-project", false);
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    crate::fonts::install_cjk_fonts(&ctx);
+    let theme = ui_theme::apply_theme(&ctx, false);
+    ctx.style_mut(|style| style.animation_time = 0.);
+    frame(&ctx, &mut p, &state, &theme, vec![]);
+    let mut goto = |p: &mut SerialToolPanel, target: &str| {
+        for _ in 0..80 {
+            let out = frame(&ctx, p, &state, &theme, vec![key(egui::Key::Tab, true)]);
+            let release = frame(&ctx, p, &state, &theme, vec![key(egui::Key::Tab, false)]);
+            if focused_label(&out).as_deref() == Some(target) || focused_label(&release).as_deref() == Some(target) { return; }
+        }
+        panic!("keyboard could not reach {target}");
+    };
+    goto(&mut p, "…");
+    frame(&ctx, &mut p, &state, &theme, vec![key(egui::Key::Enter, true)]);
+    frame(&ctx, &mut p, &state, &theme, vec![key(egui::Key::Enter, false)]);
+    goto(&mut p, "Select skills");
+    frame(&ctx, &mut p, &state, &theme, vec![key(egui::Key::Enter, true)]);
+    frame(&ctx, &mut p, &state, &theme, vec![key(egui::Key::Enter, false)]);
+    goto(&mut p, "Serial log analysis");
+    frame(&ctx, &mut p, &state, &theme, vec![key(egui::Key::Space, true)]);
+    frame(&ctx, &mut p, &state, &theme, vec![key(egui::Key::Space, false)]);
+    assert!(p.ai_chat.selected_skills.iter().any(|id| id == "serial_log"));
+    frame(&ctx, &mut p, &state, &theme, vec![key(egui::Key::Escape, true)]);
+    frame(&ctx, &mut p, &state, &theme, vec![key(egui::Key::Escape, false)]);
+    goto(&mut p, "Allow control");
+    frame(&ctx, &mut p, &state, &theme, vec![key(egui::Key::Space, true)]);
+    frame(&ctx, &mut p, &state, &theme, vec![key(egui::Key::Space, false)]);
+    assert!(p.ai_chat.allow_automation, "keyboard must enable the isolated control grant");
+    frame(&ctx, &mut p, &state, &theme, vec![key(egui::Key::Space, true)]);
+    frame(&ctx, &mut p, &state, &theme, vec![key(egui::Key::Space, false)]);
+    assert!(!p.ai_chat.allow_automation, "keyboard must also revoke the control grant");
+}
+
+#[test]
+fn ai_divider_drag_changes_panel_width() {
+    let ctx=egui::Context::default();
+    let theme=ui_theme::apply_theme(&ctx,false);
+    let mut chat=SerialAiChat::default();chat.open=true;
+    let width=chat.panel_width;
+    let full=egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(1000.0,600.0));
+    let start=egui::pos2(full.right()-width-2.0,300.0);
+    let end=start+egui::vec2(80.0,0.0);
+    let mut draw=|events|ctx.run(egui::RawInput{screen_rect:Some(full),events,..Default::default()},|ctx|{
+        egui::CentralPanel::default().show(ctx,|ui|{
+            let (main,right)=chat.split(ui,full,&theme);
+            // Simulate the subsequently drawn content panels competing for
+            // pointer input, as they do in the full serial tool layout.
+            ui.interact(main,ui.id().with("main-content"),egui::Sense::click_and_drag());
+            ui.interact(right.unwrap(),ui.id().with("ai-content"),egui::Sense::click_and_drag());
+            chat.resize_split(ui,main,right.unwrap(),&theme);
+        });
+    });
+    let _=draw(vec![]);
+    let _=draw(vec![egui::Event::PointerMoved(start),egui::Event::PointerButton{pos:start,button:egui::PointerButton::Primary,pressed:true,modifiers:egui::Modifiers::NONE}]);
+    let _=draw(vec![egui::Event::PointerMoved(end)]);
+    let _=draw(vec![egui::Event::PointerButton{pos:end,button:egui::PointerButton::Primary,pressed:false,modifiers:egui::Modifiers::NONE}]);
+    drop(draw);
+    assert!(chat.panel_width < width-20.0,"divider drag did not resize the AI panel");
 }

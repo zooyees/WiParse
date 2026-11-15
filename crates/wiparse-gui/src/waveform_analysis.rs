@@ -91,6 +91,7 @@ struct TraceWindow {
     last_sample: usize,
 }
 struct LoadedWave {
+    load_instance: uuid::Uuid,
     trace_sha256: String,
     path: PathBuf,
     label: String,
@@ -113,6 +114,105 @@ struct LoadedWave {
     y_scale: f64,
     /// Full-trace X is non-decreasing (viewport decimate can skip a second scan).
     x_monotonic: bool,
+}
+
+/// Immutable decoded samples captured from the current in-process view.
+/// This does not authenticate the original file or an instrument acquisition.
+pub(crate) struct ReviewedWaveSnapshot {
+    channels: Vec<ReviewedWaveChannel>,
+}
+pub(crate) struct ReviewedProtocolSnapshot {
+    id: uuid::Uuid,
+    kind: BusKind,
+    result: BusDecodeResult,
+    configuration: String,
+    source_binding: String,
+    generation: u64,
+    lane: usize,
+}
+impl ReviewedProtocolSnapshot {
+    pub(crate) fn manifest(&self)->serde_json::Value {
+        serde_json::json!({"snapshot_id":self.id.to_string(),"protocol":self.kind.label(),"configuration":self.configuration,
+            "source_binding":self.source_binding,"generation":self.generation,"lane":self.lane,"pending":false,"clock_domain":"capture_local","external_alignment_verified":false,"decoder_truncated":self.result.truncated,"decoder_error":self.result.error,
+            "scope":"frozen cached decode of in-memory wave samples; not proof of file integrity, physical capture or protocol compliance"})
+    }
+    pub(crate) fn frames(&self,params:&serde_json::Value)->serde_json::Value {
+        let query=params["contains"].as_str().unwrap_or("").to_lowercase();let errors=params["errors_only"]==true;
+        let offset=params["offset"].as_u64().unwrap_or(0) as usize;let limit=params["limit"].as_u64().unwrap_or(10).clamp(1,20) as usize;
+        let rows:Vec<_>=self.result.frames.iter().enumerate().filter(|(_,frame)|protocol_view::is_data_frame(self.kind,frame)
+            && (!errors||frame.has_error()) && protocol_view::matches_query(frame,&query)).collect();
+        let end=offset.saturating_add(limit).min(rows.len());
+        serde_json::json!({"ok":true,"data":{"protocol":self.kind.label(),"snapshot_id":self.id.to_string(),"provenance":self.manifest(),
+            "protocol_statistics":{"all_data_frames":self.result.frames.iter().filter(|frame|protocol_view::is_data_frame(self.kind,frame)).count(),
+                "integrity_error_frames":self.result.frames.iter().filter(|frame|protocol_view::is_data_frame(self.kind,frame)&&frame.has_error()).count(),"ping_frames_excluded":self.kind==BusKind::Scp},
+            "total_matches":rows.len(),"partial":offset>0 || end<rows.len() || self.result.truncated || self.result.error.is_some() || errors || !query.is_empty(),"page_offset":offset,"page_filter":{"contains":query,"errors_only":errors},"decoder_truncated":self.result.truncated,"decoder_error":self.result.error,
+            "next_offset":(end<rows.len()).then_some(end),"frames":rows[offset.min(end)..end].iter().map(|(index,frame)|serde_json::json!({
+                "index":index,"start_s":frame.t_start,"end_s":frame.t_end,"summary":frame.summary,"integrity":integrity_text(frame.error,true),
+                "bytes":frame.bytes.iter().take(128).collect::<Vec<_>>(),"bytes_total":frame.bytes.len(),"frame_payload_complete":frame.bytes.len()<=128,
+                "fields":if frame.bytes.len()<=256 {explain_frame(self.kind,&self.result.frames,*index,true)}else{vec!["超长帧：未对截断内容重新解释字段".into()]}
+            })).collect::<Vec<_>>()}})
+    }
+    pub(crate) fn matches_receipt(&self,result:&serde_json::Value)->bool {
+        result["ok"]==true && result["data"]["snapshot_id"]==self.id.to_string()
+            && result["data"]["decoder_truncated"]==self.result.truncated && result["data"]["protocol"]==self.kind.label()
+    }
+}
+struct ReviewedWaveChannel {
+    instance: uuid::Uuid,
+    digest: String,
+    trace: WaveformTrace,
+}
+impl ReviewedWaveSnapshot {
+    pub(crate) fn manifest(&self)->serde_json::Value {
+        serde_json::json!({"scope":"immutable decoded in-memory samples; original file and physical acquisition not verified",
+            "channels":self.channels.iter().enumerate().map(|(index,c)|serde_json::json!({
+                "index":index,"trace_id":format!("trace-{}",c.instance),"trace_sha256":c.digest,
+                "channel":c.trace.channel,"sample_count":c.trace.y.len(),"x_unit":c.trace.x_unit,"y_unit":c.trace.y_unit
+            })).collect::<Vec<_>>(),"raw_samples_included":false})
+    }
+    pub(crate) fn measure(&self,params:&serde_json::Value,ctx:&egui::Context,cancel:Arc<std::sync::atomic::AtomicBool>)->crate::ai::agent::HostReply {
+        let Some(channel)=params["channel"].as_u64().and_then(|index|self.channels.get(index as usize)) else {
+            return crate::ai::agent::HostReply::value(crate::ai::agent::failure("WAVE.CHANNEL_NOT_IN_SNAPSHOT"));
+        };
+        let other=if let Some(index)=params.get("other_channel") {
+            let Some(other)=index.as_u64().and_then(|index|self.channels.get(index as usize)).filter(|other|other.instance!=channel.instance) else {
+                return crate::ai::agent::HostReply::value(crate::ai::agent::failure("WAVE.SECOND_CHANNEL_MISSING_OR_IDENTICAL"));
+            };
+            if params["threshold"].as_f64().is_none() || params["other_threshold"].as_f64().is_none() {
+                return crate::ai::agent::HostReply::value(crate::ai::agent::failure("WAVE.DEADTIME_REQUIRES_TWO_EXPLICIT_THRESHOLDS"));
+            }
+            Some((other.trace.clone(),other.digest.clone(),format!("trace-{}",other.instance)))
+        } else {None};
+        let trace=channel.trace.clone();let digest=channel.digest.clone();let trace_id=format!("trace-{}",channel.instance);let params=params.clone();
+        crate::ai::agent::spawn_work(ctx,move||match wiparse_core::engineering_wave::analyze(&trace,other.as_ref().map(|other|&other.0),&params,&cancel) {
+            Ok(mut data)=>{
+                data["source_window"]=serde_json::json!({"trace_sha256":digest,"channel":trace.channel,"first_sample":data["first_sample_index"],"last_sample":data["last_sample_index"]});
+                data["trace_id"]=serde_json::json!(trace_id);data["snapshot_total_samples"]=serde_json::json!(trace.y.len());
+                if let Some((other,digest,id))=other {
+                    data["other_source_window"]=serde_json::json!({"trace_sha256":digest,"trace_id":id,"channel":other.channel,"first_sample":data["first_sample_index"],"last_sample":data["last_sample_index"],"total_samples":other.y.len()});
+                    data["alignment_scope"]=serde_json::json!("sample coordinates checked in requested window; external clock synchronization and probe deskew are not verified");
+                }
+                data["source_scope"]=serde_json::json!("frozen decoded samples; original file and acquisition not verified");
+                serde_json::json!({"ok":true,"data":data})
+            },Err(error)=>crate::ai::agent::failure(error)
+        })
+    }
+    pub(crate) fn matches_receipt(&self,params:&serde_json::Value,result:&serde_json::Value)->bool {
+        let Some(channel)=params["channel"].as_u64().and_then(|index|self.channels.get(index as usize)) else{return false;};
+        let data=&result["data"];let first=data["source_window"]["first_sample"].as_u64();let last=data["source_window"]["last_sample"].as_u64();
+        let second=if let Some(index)=params.get("other_channel") {
+            index.as_u64().and_then(|index|self.channels.get(index as usize)).is_some_and(|other|
+                other.instance!=channel.instance && data["other_source_window"]["trace_id"]==format!("trace-{}",other.instance)
+                    && data["other_source_window"]["trace_sha256"]==other.digest
+                    && data["other_source_window"]["first_sample"]==data["source_window"]["first_sample"]
+                    && data["other_source_window"]["last_sample"]==data["source_window"]["last_sample"]
+                    && data["other_source_window"]["total_samples"].as_u64()==Some(other.trace.y.len() as u64))
+        } else {data["other_source_window"].is_null()};
+        result["ok"]==true && second && data["trace_id"]==format!("trace-{}",channel.instance)
+            && data["source_window"]["trace_sha256"]==channel.digest && data["snapshot_total_samples"].as_u64()==Some(channel.trace.y.len() as u64)
+            && first.zip(last).is_some_and(|(first,last)|first<=last && last<channel.trace.y.len() as u64)
+            && data["sample_count"].as_u64().is_some_and(|count|count>0 && count<=channel.trace.y.len() as u64)
+    }
 }
 
 /// Viewport envelope cache: one entry per visible wave when zoomed.
@@ -143,6 +243,7 @@ struct PendingWaveLoad {
     rx: Receiver<WaveLoadEvent>,
     /// Wave indices inserted by tier-1 preview (updated when preview arrives).
     wave_range: Option<(usize, usize)>,
+    wave_ids: Vec<uuid::Uuid>,
 }
 
 enum WaveLoadEvent {
@@ -198,6 +299,9 @@ const VIEWPORT_SETTLE_SECS: f64 = 0.08;
 
 pub struct WaveformAnalysisPanel {
     waves: Vec<LoadedWave>,
+    source_lease: wiparse_core::ai::source_lease::SourceLease,
+    sample_review_lease: wiparse_core::ai::source_lease::SourceLease,
+    protocol_review_lease: wiparse_core::ai::source_lease::SourceLease,
     selected: Option<usize>,
     status: String,
     open_dir: PathBuf,
@@ -272,6 +376,7 @@ pub struct WaveformAnalysisPanel {
 }
 
 impl WaveformAnalysisPanel {
+    pub(crate) fn set_source_lease(&mut self, lease: wiparse_core::ai::source_lease::SourceLease) { self.source_lease = lease; }
     pub fn new(cfg: &AppConfig) -> Self {
         let open_dir = PathBuf::from(&cfg.apps.instruments.save_dir);
         let open_dir = if open_dir.as_os_str().is_empty() {
@@ -286,6 +391,9 @@ impl WaveformAnalysisPanel {
         };
         let mut panel = Self {
             waves: Vec::new(),
+            source_lease: Default::default(),
+            sample_review_lease: Default::default(),
+            protocol_review_lease: Default::default(),
             selected: None,
             status: String::new(),
             open_dir,
@@ -498,24 +606,16 @@ impl WaveformAnalysisPanel {
                     {
                         if let Some(i) = self.selected {
                             let path = self.waves.get(i).map(|w| w.path.clone());
-                            if let Some(path) = path {
-                                self.waves.retain(|w| !same_wave_path(&w.path, &path));
-                            } else {
-                                self.waves.remove(i);
-                            }
+                            // Canonicalization can touch the filesystem; compute the
+                            // removal set before taking the source commit lock.
+                            let remove_mask: Vec<bool> = self.waves.iter().enumerate().map(|(idx, wave)|
+                                path.as_ref().map_or(idx == i, |path| same_wave_path(&wave.path, path))).collect();
+                            self.remove_wave_mask(&remove_mask);
                             if self.waves.is_empty() {
-                                self.selected = None;
                                 self.last_x_range = None;
                                 self.last_y_range = None;
                                 self.pending_bounds = None;
                                 self.fit_request = false;
-                                self.bus_result = None;
-                                self.pending_bus_decode = None;
-                                self.selected_bus_frame = None;
-                                self.bus_frame_popup = None;
-                                for lane in &mut self.bus_lanes {
-                                    lane.result = None;
-                                }
                             } else {
                                 self.activate_wave(0);
                             }
@@ -711,16 +811,18 @@ impl WaveformAnalysisPanel {
     }
 
     fn clear_active_cursors(&mut self) {
-        match self.cursor_axis {
+        let redecode = self.cursor_axis == CursorAxis::X && self.x_cursors_should_redecode();
+        wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| match self.cursor_axis {
             CursorAxis::X => {
                 self.x1 = None;
                 self.x2 = None;
+                if redecode { self.bus_decode_dirty = true; }
             }
             CursorAxis::Y => {
                 self.y1 = None;
                 self.y2 = None;
             }
-        }
+        });
         self.dragging_cursor = None;
         self.gated_measure_cache = None;
     }
@@ -1201,7 +1303,8 @@ impl WaveformAnalysisPanel {
         if self.waves.iter().any(|w| same_wave_path(&w.path, path)) {
             // Browser = single-document switch: keep every channel from this file
             // (multi-channel WFM expands to N LoadedWave entries sharing one path).
-            self.waves.retain(|w| same_wave_path(&w.path, path));
+            let remove_mask: Vec<bool> = self.waves.iter().map(|w| !same_wave_path(&w.path, path)).collect();
+            if remove_mask.iter().any(|remove| *remove) { self.remove_wave_mask(&remove_mask); }
             self.next_color = self.waves.len();
             self.activate_wave(0);
             self.status = format!(
@@ -1213,8 +1316,10 @@ impl WaveformAnalysisPanel {
             return;
         }
         // Replace current document with the newly loaded file.
-        self.waves.clear();
-        self.selected = None;
+        let remove_mask = vec![true; self.waves.len()];
+        self.remove_wave_mask(&remove_mask);
+        let old_load = wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| self.pending_load.take());
+        drop(old_load);
         self.next_color = 0;
         self.last_x_range = None;
         self.last_y_range = None;
@@ -1224,17 +1329,43 @@ impl WaveformAnalysisPanel {
         self.start_load_path(path.to_path_buf(), lang);
     }
 
+    // Channel indices may shift after a document is removed. Invalidate all
+    // decoded lanes together with the channel swap, then recompute for survivors.
+    fn remove_wave_mask(&mut self, remove_mask: &[bool]) {
+        let shared=self.source_lease.clone();let samples=self.sample_review_lease.clone();let protocol=self.protocol_review_lease.clone();
+        let (removed, old_results, old_pending) = wiparse_core::ai::source_lease::SourceLease::mutate_three_always(&shared,&samples,&protocol,|| {
+            let mut next=0usize;
+            let remap: Vec<Option<usize>> = (0..self.waves.len()).map(|i| {
+                if remove_mask.get(i).copied().unwrap_or(false) { None } else { let n=next; next+=1; Some(n) }
+            }).collect();
+            let (keep, removed): (Vec<_>, Vec<_>) = std::mem::take(&mut self.waves)
+                .into_iter().enumerate().partition(|(idx, _)| !remove_mask.get(*idx).copied().unwrap_or(false));
+            self.waves = keep.into_iter().map(|(_, wave)| wave).collect();
+            remap_bus_channels(&mut self.bus_settings.channels, &remap);
+            let mut results=Vec::new();
+            if let Some(result)=self.bus_result.take(){results.push(result);}
+            for lane in &mut self.bus_lanes {remap_bus_channels(&mut lane.settings.channels, &remap);if let Some(result)=lane.result.take(){results.push(result);}}
+            let pending=self.pending_bus_decode.take();
+            self.bus_decode_dirty=!self.waves.is_empty();
+            self.selected=None; self.selected_bus_frame=None; self.bus_frame_popup=None;
+            (removed.into_iter().map(|(_,wave)|wave).collect::<Vec<_>>(), results, pending)
+        });
+        drop((removed,old_results,old_pending));
+    }
+
     fn start_load_path(&mut self, path: PathBuf, lang: Lang) {
         if self.pending_load.is_some() {
             self.status = t(lang, "正在加载上一文件…", "Previous file still loading…").into();
             return;
         }
         let (tx, rx) = unbounded();
-        self.pending_load = Some(PendingWaveLoad {
+        let shared=self.source_lease.clone();let samples=self.sample_review_lease.clone();let protocol=self.protocol_review_lease.clone();
+        wiparse_core::ai::source_lease::SourceLease::mutate_three_always(&shared,&samples,&protocol,|| self.pending_load = Some(PendingWaveLoad {
             path: path.clone(),
             rx,
             wave_range: None,
-        });
+            wave_ids: Vec::new(),
+        }));
         self.status = format!(
             "{} {}…",
             t(lang, "正在加载", "Loading"),
@@ -1254,6 +1385,8 @@ impl WaveformAnalysisPanel {
         lang: Lang,
     ) -> (usize, usize) {
         let nch = channels.len();
+        let shared=self.source_lease.clone();let samples=self.sample_review_lease.clone();let protocol=self.protocol_review_lease.clone();
+        let (first_idx, end) = wiparse_core::ai::source_lease::SourceLease::mutate_three_always(&shared,&samples,&protocol,|| {
         let first_idx = self.waves.len();
         for draft in channels {
             let color = color_for_channel(&draft.trace.channel).unwrap_or_else(|| {
@@ -1262,6 +1395,7 @@ impl WaveformAnalysisPanel {
                 c
             });
             self.waves.push(LoadedWave {
+                load_instance: uuid::Uuid::new_v4(),
                 trace_sha256: draft.trace_sha256,
                 path: path.to_path_buf(),
                 label: draft.label,
@@ -1283,6 +1417,9 @@ impl WaveformAnalysisPanel {
         if nch > 1 {
             auto_stagger_channel_offsets(&mut self.waves, first_idx..end);
         }
+        self.bus_decode_dirty = true;
+        (first_idx, end)
+        });
         self.clear_viewport_lod_state();
         self.gated_measure_cache = None;
         self.mark_extent_dirty();
@@ -1296,12 +1433,17 @@ impl WaveformAnalysisPanel {
             max_pts
         );
         tracing::info!(channels = nch, points_per_channel = max_pts, "waveform preview loaded");
-        self.bus_decode_dirty = true;
         (first_idx, end)
     }
 
-    fn apply_final_measures(&mut self, wave_range: (usize, usize), measures: Vec<WaveformMeasurements>, extents: Vec<(f64, f64, f64, f64)>) {
+    fn apply_final_measures(&mut self, wave_range: (usize, usize), measures: Vec<WaveformMeasurements>, extents: Vec<(f64, f64, f64, f64)>, expected: Option<&[uuid::Uuid]>) -> bool {
         let (first, end) = wave_range;
+        let applied = wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| {
+        if end < first || end > self.waves.len() || measures.len() != end-first || extents.len() != end-first { return false; }
+        if let Some(ids) = expected {
+            if end - first != ids.len()
+                || self.waves[first..end].iter().zip(ids).any(|(wave,id)| wave.load_instance != *id) { return false; }
+        }
         for (i, (m, (x_min, x_max, y_min, y_max))) in (first..end)
             .zip(measures.into_iter().zip(extents.into_iter()))
         {
@@ -1314,8 +1456,12 @@ impl WaveformAnalysisPanel {
                 w.measures_pending = false;
             }
         }
+        true
+        });
+        if !applied { return false; }
         self.mark_extent_dirty();
         self.gated_measure_cache = None;
+        true
     }
 
     fn poll_pending_loads(&mut self, lang: Lang) {
@@ -1326,7 +1472,13 @@ impl WaveformAnalysisPanel {
                 };
                 match load.rx.try_recv() {
                     Ok(ev) => ev,
-                    Err(_) => return,
+                    Err(crossbeam_channel::TryRecvError::Empty) => return,
+                    Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                        let old=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| self.pending_load.take());
+                        drop(old);self.report_window=None;
+                        self.status=t(lang,"波形加载线程退出，测量结果未完成","Waveform loader stopped; measurements are incomplete").into();
+                        return;
+                    }
                 }
             };
             let path = self
@@ -1338,29 +1490,31 @@ impl WaveformAnalysisPanel {
                 WaveLoadEvent::Preview { channels, max_pts } => {
                     let (first, end) =
                         self.apply_preview_channels(&path, channels, max_pts, lang);
+                    let ids = self.waves[first..end].iter().map(|wave| wave.load_instance).collect();
                     if let Some(load) = self.pending_load.as_mut() {
                         load.wave_range = Some((first, end));
+                        load.wave_ids = ids;
                     }
                 }
                 WaveLoadEvent::Final {
                     measures,
                     extents,
                 } => {
-                    if let Some((first, end)) = self
-                        .pending_load
-                        .as_ref()
-                        .and_then(|l| l.wave_range)
-                    {
-                        self.apply_final_measures((first, end), measures, extents);
-                        if let Some(window)=self.report_window.take() {
-                            if !self.show_trace_window(&window){self.status="所选文件的通道或采样内容与报告不一致".into();}
+                    if let Some(((first, end), ids)) = self.pending_load.as_ref().and_then(|l| l.wave_range.map(|range| (range, l.wave_ids.clone()))) {
+                        if self.apply_final_measures((first, end), measures, extents, Some(&ids)) {
+                            if let Some(window)=self.report_window.take() {
+                                if !self.show_trace_window(&window){self.status="所选文件的通道或采样内容与报告不一致".into();}
+                            }
+                        } else {
+                            self.report_window=None;
+                            self.status=t(lang,"波形通道已变化，旧测量结果未应用","Waveform channels changed; stale measurements discarded").into();
                         }
                     }
-                    self.pending_load = None;
+                    let old=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| self.pending_load.take());drop(old);
                 }
                 WaveLoadEvent::Error(err) => {
                     self.report_window=None;
-                    self.pending_load = None;
+                    let old=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| self.pending_load.take());drop(old);
                     self.status = format!(
                         "{} {}: {err}",
                         t(lang, "加载失败", "Load failed"),
@@ -1554,34 +1708,50 @@ impl WaveformAnalysisPanel {
 
     fn commit_active_lane(&mut self) {
         if self.bus_lanes.is_empty() {
-            self.bus_lanes.push(ProtocolLane {
+            let lane = ProtocolLane {
                 id: self.next_bus_lane_id,
                 settings: self.bus_settings.clone(),
                 uart_baud_text: self.uart_baud_text.clone(),
                 ddsss_fop_text: self.ddsss_fop_text.clone(),
                 result: self.bus_result.clone(),
+            };
+            wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| {
+                self.bus_lanes.push(lane);
+                self.next_bus_lane_id = self.next_bus_lane_id.wrapping_add(1);
+                self.active_bus_lane = 0;
             });
-            self.next_bus_lane_id = self.next_bus_lane_id.wrapping_add(1);
-            self.active_bus_lane = 0;
             return;
         }
         let index = self.active_bus_lane.min(self.bus_lanes.len() - 1);
-        self.active_bus_lane = index;
-        let lane = &mut self.bus_lanes[index];
-        lane.settings = self.bus_settings.clone();
-        lane.uart_baud_text = self.uart_baud_text.clone();
-        lane.ddsss_fop_text = self.ddsss_fop_text.clone();
+        let settings=self.bus_settings.clone();
+        let baud=self.uart_baud_text.clone();
+        let fop=self.ddsss_fop_text.clone();
+        wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| {
+            self.active_bus_lane = index;
+            let lane = &mut self.bus_lanes[index];
+            lane.settings = settings;
+            lane.uart_baud_text = baud;
+            lane.ddsss_fop_text = fop;
+        });
     }
 
     fn load_bus_lane(&mut self, index: usize) {
         let Some(lane) = self.bus_lanes.get(index) else { return };
-        self.bus_settings = lane.settings.clone();
-        self.uart_baud_text = lane.uart_baud_text.clone();
-        self.ddsss_fop_text = lane.ddsss_fop_text.clone();
-        self.bus_result = lane.result.clone();
-        self.active_bus_lane = index;
-        self.selected_bus_frame = None;
-        self.bus_frame_popup = None;
+        let settings=lane.settings.clone();
+        let baud=lane.uart_baud_text.clone();
+        let fop=lane.ddsss_fop_text.clone();
+        let result=lane.result.clone();
+        let old=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| {
+            self.bus_settings = settings;
+            self.uart_baud_text = baud;
+            self.ddsss_fop_text = fop;
+            let old=std::mem::replace(&mut self.bus_result,result);
+            self.active_bus_lane = index;
+            self.selected_bus_frame = None;
+            self.bus_frame_popup = None;
+            old
+        });
+        drop(old);
     }
 
     fn show_protocol_lane(&mut self, index: usize) {
@@ -1600,13 +1770,16 @@ impl WaveformAnalysisPanel {
         let mut settings = self.bus_settings.clone();
         settings.channels = BusChannelMap::default();
         let id = self.next_bus_lane_id;
-        self.next_bus_lane_id = self.next_bus_lane_id.wrapping_add(1);
-        self.bus_lanes.push(ProtocolLane {
+        let lane = ProtocolLane {
             id,
             settings,
             uart_baud_text: self.uart_baud_text.clone(),
             ddsss_fop_text: self.ddsss_fop_text.clone(),
             result: None,
+        };
+        wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| {
+            self.next_bus_lane_id = self.next_bus_lane_id.wrapping_add(1);
+            self.bus_lanes.push(lane);
         });
         self.load_bus_lane(self.bus_lanes.len() - 1);
     }
@@ -1631,7 +1804,7 @@ impl WaveformAnalysisPanel {
         if let Some(channel) = primary_signal(&self.bus_settings) {
             used.insert(channel);
         } else if let Some(channel) = (0..self.waves.len()).find(|index| !used.contains(index)) {
-            assign_primary(&mut self.bus_settings, channel);
+            wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| {assign_primary(&mut self.bus_settings, channel);self.bus_decode_dirty = true;});
             used.insert(channel);
             self.commit_active_lane();
         }
@@ -1643,39 +1816,45 @@ impl WaveformAnalysisPanel {
             settings.channels = BusChannelMap::default();
             assign_primary(&mut settings, channel);
             let id = self.next_bus_lane_id;
-            self.next_bus_lane_id = self.next_bus_lane_id.wrapping_add(1);
-            self.bus_lanes.push(ProtocolLane {
+            let lane = ProtocolLane {
                 id,
                 settings,
                 uart_baud_text: self.uart_baud_text.clone(),
                 ddsss_fop_text: self.ddsss_fop_text.clone(),
                 result: None,
+            };
+            wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| {
+                self.next_bus_lane_id = self.next_bus_lane_id.wrapping_add(1);
+                self.bus_lanes.push(lane);
+                self.bus_decode_dirty = true;
             });
             used.insert(channel);
         }
-        self.bus_decode_dirty = true;
     }
 
     fn remove_protocol_lane(&mut self) {
         if self.bus_lanes.len() <= 1 {
             return;
         }
-        self.bus_lanes.remove(self.active_bus_lane);
+        let removed = wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| {self.bus_decode_dirty = true;self.bus_lanes.remove(self.active_bus_lane)});
+        drop(removed);
         let index = self.active_bus_lane.min(self.bus_lanes.len() - 1);
         self.load_bus_lane(index);
-        self.bus_decode_dirty = true;
     }
 
     fn schedule_bus_decode(&mut self) -> bool {
         self.commit_active_lane();
         if self.waves.is_empty() {
-            self.bus_result = None;
-            self.pending_bus_decode = None;
-            self.selected_bus_frame = None;
-            self.bus_frame_popup = None;
-            for lane in &mut self.bus_lanes {
-                lane.result = None;
-            }
+            let old=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| {
+                let mut old=Vec::new();
+                if let Some(result)=self.bus_result.take(){old.push(result);}
+                self.pending_bus_decode = None;
+                self.selected_bus_frame = None;
+                self.bus_frame_popup = None;
+                for lane in &mut self.bus_lanes {if let Some(result)=lane.result.take(){old.push(result);}}
+                old
+            });
+            drop(old);
             return true;
         }
         if self.pending_bus_decode.is_some() {
@@ -1688,7 +1867,8 @@ impl WaveformAnalysisPanel {
         for lane in &mut self.bus_lanes {
             let settings = settings_for_decode(&lane.settings, &lane.uart_baud_text, &lane.ddsss_fop_text, x1, x2);
             if !channels_ready(&settings) {
-                lane.result = None;
+                let old=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease,&self.protocol_review_lease,|| lane.result.take());
+                drop(old);
                 continue;
             }
             let (indices, settings) = compact_bus_decode_indices(wave_count, &settings);
@@ -1697,9 +1877,12 @@ impl WaveformAnalysisPanel {
         let active_id = self.bus_lanes.get(self.active_bus_lane).map(|lane| lane.id);
         let active_ready = active_id.is_some_and(|id| prepared.iter().any(|(lane_id, _, _)| *lane_id == id));
         if !active_ready {
-            self.bus_result = None;
-            self.selected_bus_frame = None;
-            self.bus_frame_popup = None;
+            let old=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| {
+                self.selected_bus_frame = None;
+                self.bus_frame_popup = None;
+                self.bus_result.take()
+            });
+            drop(old);
         }
         if prepared.is_empty() {
             return true;
@@ -1712,11 +1895,14 @@ impl WaveformAnalysisPanel {
                 settings,
             })
             .collect();
-        let generation = self.bus_decode_gen.wrapping_add(1);
-        self.bus_decode_gen = generation;
-        tracing::info!(lanes = jobs.len(), generation, "bus decode started");
         let (tx, rx) = unbounded();
-        self.pending_bus_decode = Some(PendingBusDecode { rx });
+        let generation = wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| {
+            let generation = self.bus_decode_gen.wrapping_add(1);
+            self.bus_decode_gen = generation;
+            self.pending_bus_decode = Some(PendingBusDecode { rx });
+            generation
+        });
+        tracing::info!(lanes = jobs.len(), generation, "bus decode started");
         thread::spawn(move || {
             let results: Vec<(u64, BusDecodeResult)> = jobs
                 .into_par_iter()
@@ -1734,20 +1920,31 @@ impl WaveformAnalysisPanel {
         let Ok((gen, results)) = pending.rx.try_recv() else {
             return;
         };
-        self.pending_bus_decode = None;
-        if gen != self.bus_decode_gen {
+        // Settings, source or cursor changes while a decode is running set the
+        // dirty flag. Never publish those obsolete results under the new state.
+        if gen != self.bus_decode_gen || self.bus_decode_dirty {
+            wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| self.pending_bus_decode = None);
             return;
         }
         let frames: usize = results.iter().map(|(_, result)| result.frames.len()).sum();
         tracing::info!(generation = gen, lanes = results.len(), frames, "bus decode completed");
-        for (id, result) in results {
-            if let Some(lane) = self.bus_lanes.iter_mut().find(|lane| lane.id == id) {
-                lane.result = Some(result);
+        let active_id = self.bus_lanes.get(self.active_bus_lane).map(|lane| lane.id);
+        let active_result = active_id.and_then(|id| results.iter().find(|(candidate, _)| *candidate == id).map(|(_, result)| result.clone())
+            .or_else(|| self.bus_lanes.iter().find(|lane| lane.id == id).and_then(|lane| lane.result.clone())));
+        let old = wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| {
+            self.pending_bus_decode = None;
+            let mut old = Vec::new();
+            for (id, result) in results {
+                if let Some(lane) = self.bus_lanes.iter_mut().find(|lane| lane.id == id) {
+                    if let Some(previous) = lane.result.replace(result) { old.push(previous); }
+                }
             }
-        }
-        self.bus_result = self.bus_lanes.get(self.active_bus_lane).and_then(|lane| lane.result.clone());
-        self.selected_bus_frame = None;
-        self.bus_frame_popup = None;
+            if let Some(previous) = std::mem::replace(&mut self.bus_result, active_result) { old.push(previous); }
+            self.selected_bus_frame = None;
+            self.bus_frame_popup = None;
+            old
+        });
+        drop(old);
     }
 
     #[cfg(test)]
@@ -1925,6 +2122,9 @@ impl WaveformAnalysisPanel {
         self.protocol_lane_bar(ui, lang, tokens);
         ui.add_space(6.0);
 
+        let mut settings = self.bus_settings.clone();
+        let mut baud_text = self.uart_baud_text.clone();
+        let mut fop_text = self.ddsss_fop_text.clone();
         let layout = bus_form_layout(ui);
         ui.spacing_mut().item_spacing.y = 4.0;
 
@@ -1932,33 +2132,33 @@ impl WaveformAnalysisPanel {
             .num_columns(2)
             .spacing([6.0, 4.0])
             .show(ui, |ui| {
-                let prev = self.bus_settings.kind;
+                let prev = settings.kind;
                 bus_grid_label(ui, layout, &t(lang, "协议", "Protocol"));
                 egui::ComboBox::from_id_salt("bus_kind")
-                    .selected_text(self.bus_settings.kind.label())
+                    .selected_text(settings.kind.label())
                     .width(layout.field_w)
                     .show_ui(ui, |ui| {
                         for kind in BusKind::all_selectable() {
                             if ui
-                                .selectable_label(self.bus_settings.kind == *kind, kind.label())
+                                .selectable_label(settings.kind == *kind, kind.label())
                                 .clicked()
                             {
-                                self.bus_settings.kind = *kind;
+                                settings.kind = *kind;
                                 changed = true;
                             }
                         }
                     });
-                if self.bus_settings.kind != prev {
+                if settings.kind != prev {
                     changed = true;
                 }
                 ui.end_row();
 
-                match self.bus_settings.kind {
+                match settings.kind {
                     BusKind::Off => {}
                     BusKind::UsbPd | BusKind::Scp | BusKind::Ufcs => {
                         changed |= bus_grid_channel_combo(ui, layout, "charging_sig",
-                            if self.bus_settings.kind == BusKind::UsbPd { "CC" } else if self.bus_settings.kind == BusKind::Scp { "D- (SCP)" } else { "D+ (UFCS)" },
-                            &self.waves, &mut self.bus_settings.channels.charging_signal);
+                            if settings.kind == BusKind::UsbPd { "CC" } else if settings.kind == BusKind::Scp { "D- (SCP)" } else { "D+ (UFCS)" },
+                            &self.waves, &mut settings.channels.charging_signal);
                         bus_grid_label(ui, layout, &t(lang, "阈值 V", "Threshold V"));
                         ui.allocate_ui_with_layout(
                             egui::vec2(layout.field_w, layout.row_h),
@@ -1966,34 +2166,34 @@ impl WaveformAnalysisPanel {
                             |ui| {
                                 ui.set_max_width(layout.field_w);
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                let mut manual = self.bus_settings.threshold.is_some();
+                                let mut manual = settings.threshold.is_some();
                                 if ui.checkbox(&mut manual, t(lang, "手动", "Manual")).changed() {
-                                    self.bus_settings.threshold = if manual { Some(match self.bus_settings.kind {BusKind::Scp=>wiparse_core::bus_decode::SCP_DEFAULT_THRESHOLD_V,BusKind::UsbPd=>wiparse_core::bus_decode::USB_PD_DEFAULT_THRESHOLD_V,_=>0.6}) } else { None };
+                                    settings.threshold = if manual { Some(match settings.kind {BusKind::Scp=>wiparse_core::bus_decode::SCP_DEFAULT_THRESHOLD_V,BusKind::UsbPd=>wiparse_core::bus_decode::USB_PD_DEFAULT_THRESHOLD_V,_=>0.6}) } else { None };
                                     changed = true;
                                 }
-                                if let Some(value) = self.bus_settings.threshold.as_mut() {
+                                if let Some(value) = settings.threshold.as_mut() {
                                     changed |= ui.add(egui::DragValue::new(value).speed(0.01).range(-20.0..=20.0)).changed();
                                 } else {
-                                    let value=match self.bus_settings.kind{BusKind::UsbPd=>Some(wiparse_core::bus_decode::USB_PD_DEFAULT_THRESHOLD_V),BusKind::Scp=>Some(wiparse_core::bus_decode::SCP_DEFAULT_THRESHOLD_V),_=>None};
+                                    let value=match settings.kind{BusKind::UsbPd=>Some(wiparse_core::bus_decode::USB_PD_DEFAULT_THRESHOLD_V),BusKind::Scp=>Some(wiparse_core::bus_decode::SCP_DEFAULT_THRESHOLD_V),_=>None};
                                     ui.label(RichText::new(value.map(|v|format!("{v:.2} V")).unwrap_or_else(||t(lang,"自动","Auto").into())).size(12.)).on_hover_text(t(lang,"协议默认阈值，勾选后可手动调整","Protocol default threshold; enable Manual to override"));
                                 }
                             },
                         );
                         ui.end_row();
-                        if self.bus_settings.kind == BusKind::Ufcs {
+                        if settings.kind == BusKind::Ufcs {
                             bus_grid_label(ui, layout, &t(lang, "波特率", "Baud"));
-                            egui::ComboBox::from_id_salt("ufcs_baud").selected_text(self.bus_settings.ufcs.baud.to_string())
+                            egui::ComboBox::from_id_salt("ufcs_baud").selected_text(settings.ufcs.baud.to_string())
                                 .width(layout.field_w)
                                 .show_ui(ui, |ui| {
                                     for baud in [38400, 57600, 115200, 230400] {
-                                        changed |= ui.selectable_value(&mut self.bus_settings.ufcs.baud, baud, baud.to_string()).changed();
+                                        changed |= ui.selectable_value(&mut settings.ufcs.baud, baud, baud.to_string()).changed();
                                     }
                                 });
                             ui.end_row();
                         }
-                        if self.bus_settings.kind == BusKind::Scp {
+                        if settings.kind == BusKind::Scp {
                             bus_grid_label(ui, layout, "UI (µs)");
-                            changed |= ui.add(egui::DragValue::new(&mut self.bus_settings.scp.ui_us).range(120.0..=200.0).speed(1.0)).changed();
+                            changed |= ui.add(egui::DragValue::new(&mut settings.scp.ui_us).range(120.0..=200.0).speed(1.0)).changed();
                             ui.end_row();
                         }
                     }
@@ -2004,13 +2204,13 @@ impl WaveformAnalysisPanel {
                             "uart_sig",
                             &t(lang, "信号", "Signal"),
                             &self.waves,
-                            &mut self.bus_settings.channels.uart_signal,
+                            &mut settings.channels.uart_signal,
                         );
                         bus_grid_label(ui, layout, &t(lang, "波特率", "Baud"));
                         let baud_hint = t(lang, "自动", "auto");
                         let resp = ui.add_sized(
                             [layout.field_w, layout.row_h],
-                            egui::TextEdit::singleline(&mut self.uart_baud_text)
+                            egui::TextEdit::singleline(&mut baud_text)
                                 .hint_text(baud_hint),
                         );
                         let enter = ui.input(|i| {
@@ -2033,7 +2233,7 @@ impl WaveformAnalysisPanel {
                             ui,
                             layout,
                             &t(lang, "数据位", "Data"),
-                            &mut self.bus_settings.uart.data_bits,
+                            &mut settings.uart.data_bits,
                             &[("5", 5), ("6", 6), ("7", 7), ("8", 8), ("9", 9)],
                             22.0,
                         );
@@ -2041,13 +2241,13 @@ impl WaveformAnalysisPanel {
                             ui,
                             layout,
                             &t(lang, "校验", "Parity"),
-                            &mut self.bus_settings.uart.parity,
+                            &mut settings.uart.parity,
                         );
                         changed |= bus_grid_buttons(
                             ui,
                             layout,
                             &t(lang, "停止位", "Stop"),
-                            &mut self.bus_settings.uart.stop_bits,
+                            &mut settings.uart.stop_bits,
                             &[("1", 1), ("2", 2)],
                             28.0,
                         );
@@ -2055,7 +2255,7 @@ impl WaveformAnalysisPanel {
                             ui,
                             layout,
                             &t(lang, "极性", "Polarity"),
-                            &mut self.bus_settings.uart.inverted,
+                            &mut settings.uart.inverted,
                             ("TTL", "Inv"),
                         );
                     }
@@ -2066,7 +2266,7 @@ impl WaveformAnalysisPanel {
                             "i2c_scl",
                             "SCL",
                             &self.waves,
-                            &mut self.bus_settings.channels.i2c_scl,
+                            &mut settings.channels.i2c_scl,
                         );
                         changed |= bus_grid_channel_combo(
                             ui,
@@ -2074,24 +2274,24 @@ impl WaveformAnalysisPanel {
                             "i2c_sda",
                             "SDA",
                             &self.waves,
-                            &mut self.bus_settings.channels.i2c_sda,
+                            &mut settings.channels.i2c_sda,
                         );
-                        let mut bits = if self.bus_settings.i2c.reg_addr_bits == 16 { 16u8 } else { 8 };
+                        let mut bits = if settings.i2c.reg_addr_bits == 16 { 16u8 } else { 8 };
                         changed |= bus_segment(ui, layout, &t(lang, "寄存器位宽", "Reg bits"), &mut bits, &[("8", 8), ("16", 16)]);
-                        self.bus_settings.i2c.reg_addr_bits = bits;
+                        settings.i2c.reg_addr_bits = bits;
                     }
                     BusKind::Spi => {
                         changed |= bus_grid_spi_wire(
                             ui,
                             layout,
                             &t(lang, "线制", "Wires"),
-                            &mut self.bus_settings.spi.wire,
+                            &mut settings.spi.wire,
                         );
                         changed |= bus_grid_spi_mode(
                             ui,
                             layout,
                             &t(lang, "模式", "Mode"),
-                            &mut self.bus_settings.spi.mode,
+                            &mut settings.spi.mode,
                         );
                         changed |= bus_grid_channel_combo(
                             ui,
@@ -2099,35 +2299,35 @@ impl WaveformAnalysisPanel {
                             "spi_clk",
                             "CLK",
                             &self.waves,
-                            &mut self.bus_settings.channels.spi_clk,
+                            &mut settings.channels.spi_clk,
                         );
-                        let packed = self.bus_settings.spi.wire.is_packed();
+                        let packed = settings.spi.wire.is_packed();
                         changed |= bus_grid_channel_combo(
                             ui,
                             layout,
                             "spi_mosi",
                             if packed { "IO0" } else { "MOSI" },
                             &self.waves,
-                            &mut self.bus_settings.channels.spi_mosi,
+                            &mut settings.channels.spi_mosi,
                         );
-                        if self.bus_settings.spi.wire != SpiWire::TwoWire {
+                        if settings.spi.wire != SpiWire::TwoWire {
                             changed |= bus_grid_channel_combo(
                                 ui,
                                 layout,
                                 "spi_miso",
                                 if packed { "IO1" } else { "MISO" },
                                 &self.waves,
-                                &mut self.bus_settings.channels.spi_miso,
+                                &mut settings.channels.spi_miso,
                             );
                         }
-                        if self.bus_settings.spi.wire == SpiWire::Quad {
+                        if settings.spi.wire == SpiWire::Quad {
                             changed |= bus_grid_channel_combo(
                                 ui,
                                 layout,
                                 "spi_io2",
                                 "IO2",
                                 &self.waves,
-                                &mut self.bus_settings.channels.spi_io2,
+                                &mut settings.channels.spi_io2,
                             );
                             changed |= bus_grid_channel_combo(
                                 ui,
@@ -2135,7 +2335,7 @@ impl WaveformAnalysisPanel {
                                 "spi_io3",
                                 "IO3",
                                 &self.waves,
-                                &mut self.bus_settings.channels.spi_io3,
+                                &mut settings.channels.spi_io3,
                             );
                         }
                         changed |= bus_grid_channel_combo(
@@ -2144,13 +2344,13 @@ impl WaveformAnalysisPanel {
                             "spi_cs",
                             "CS",
                             &self.waves,
-                            &mut self.bus_settings.channels.spi_cs,
+                            &mut settings.channels.spi_cs,
                         );
                         changed |= bus_grid_buttons(
                             ui,
                             layout,
                             &t(lang, "位宽", "Word"),
-                            &mut self.bus_settings.spi.word_bits,
+                            &mut settings.spi.word_bits,
                             &[("8", 8), ("16", 16), ("24", 24), ("32", 32)],
                             28.0,
                         );
@@ -2158,14 +2358,14 @@ impl WaveformAnalysisPanel {
                             ui,
                             layout,
                             &t(lang, "位序", "Bit order"),
-                            &mut self.bus_settings.spi.msb_first,
+                            &mut settings.spi.msb_first,
                             ("LSB", "MSB"),
                         );
                         changed |= bus_grid_bool_pair(
                             ui,
                             layout,
                             &t(lang, "片选", "Chip sel"),
-                            &mut self.bus_settings.spi.cs_active_low,
+                            &mut settings.spi.cs_active_low,
                             ("High", "Low"),
                         );
                     }
@@ -2176,7 +2376,7 @@ impl WaveformAnalysisPanel {
                             "i2s_bclk",
                             "BCLK",
                             &self.waves,
-                            &mut self.bus_settings.channels.i2s_bclk,
+                            &mut settings.channels.i2s_bclk,
                         );
                         changed |= bus_grid_channel_combo(
                             ui,
@@ -2184,7 +2384,7 @@ impl WaveformAnalysisPanel {
                             "i2s_ws",
                             "WS",
                             &self.waves,
-                            &mut self.bus_settings.channels.i2s_ws,
+                            &mut settings.channels.i2s_ws,
                         );
                         changed |= bus_grid_channel_combo(
                             ui,
@@ -2192,16 +2392,16 @@ impl WaveformAnalysisPanel {
                             "i2s_data",
                             "DATA",
                             &self.waves,
-                            &mut self.bus_settings.channels.i2s_data,
+                            &mut settings.channels.i2s_data,
                         );
-                        let mut bits = self.bus_settings.i2s.bits_per_sample;
+                        let mut bits = settings.i2s.bits_per_sample;
                         changed |= bus_segment(ui, layout, &t(lang, "位宽", "Bits"), &mut bits, &[("16", 16u8), ("24", 24), ("32", 32)]);
-                        self.bus_settings.i2s.bits_per_sample = bits;
+                        settings.i2s.bits_per_sample = bits;
                         changed |= bus_grid_i2s_format(
                             ui,
                             layout,
                             &t(lang, "格式", "Format"),
-                            &mut self.bus_settings.i2s.format,
+                            &mut settings.i2s.format,
                         );
                     }
                     BusKind::Ddsss => {
@@ -2211,22 +2411,22 @@ impl WaveformAnalysisPanel {
                             "ddsss_sig",
                             &t(lang, "信号", "Signal"),
                             &self.waves,
-                            &mut self.bus_settings.channels.ddsss_signal,
+                            &mut settings.channels.ddsss_signal,
                         );
                         bus_grid_label(ui, layout, &t(lang, "序列", "Sequence"));
                         egui::ComboBox::from_id_salt("ddsss_seq")
-                            .selected_text(self.bus_settings.ddsss.sequence.label())
+                            .selected_text(settings.ddsss.sequence.label())
                             .width(layout.field_w)
                             .show_ui(ui, |ui| {
                                 for seq in DdsssSequence::all_selectable() {
                                     if ui
                                         .selectable_label(
-                                            self.bus_settings.ddsss.sequence == *seq,
+                                            settings.ddsss.sequence == *seq,
                                             seq.label(),
                                         )
                                         .clicked()
                                     {
-                                        self.bus_settings.ddsss.sequence = *seq;
+                                        settings.ddsss.sequence = *seq;
                                         changed = true;
                                     }
                                 }
@@ -2236,13 +2436,13 @@ impl WaveformAnalysisPanel {
                             ui,
                             layout,
                             &t(lang, "扩展码", "Extension"),
-                            &mut self.bus_settings.ddsss.extension,
+                            &mut settings.ddsss.extension,
                         );
                         bus_grid_label(ui, layout, &t(lang, "FOP Hz", "FOP Hz"));
                         let fop_hint = t(lang, "自动 85k–1.78M", "auto 85k–1.78M");
                         let resp = ui.add_sized(
                             [layout.field_w, layout.row_h],
-                            egui::TextEdit::singleline(&mut self.ddsss_fop_text)
+                            egui::TextEdit::singleline(&mut fop_text)
                                 .hint_text(fop_hint),
                         );
                         let enter = ui.input(|i| {
@@ -2264,6 +2464,14 @@ impl WaveformAnalysisPanel {
                     }
                 }
             });
+        if changed || baud_text != self.uart_baud_text || fop_text != self.ddsss_fop_text {
+            wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| {
+                self.bus_settings = settings;
+                self.uart_baud_text = baud_text;
+                self.ddsss_fop_text = fop_text;
+                if changed { self.bus_decode_dirty = true; }
+            });
+        }
 
         if self.bus_settings.kind == BusKind::Off {
             ui.label(
@@ -2274,10 +2482,6 @@ impl WaveformAnalysisPanel {
         }
 
         ui.add_space(4.0);
-        if changed {
-            self.bus_decode_dirty = true;
-        }
-
         if self.pending_bus_decode.is_some() {
             ui.label(
                 RichText::new(t(lang, "解码中…", "Decoding…"))
@@ -2385,7 +2589,8 @@ impl WaveformAnalysisPanel {
         else {
             return Err("unexpected load event".into());
         };
-        let (first, end) = {
+        let shared=self.source_lease.clone();let samples=self.sample_review_lease.clone();let protocol=self.protocol_review_lease.clone();
+        let (first, end) = wiparse_core::ai::source_lease::SourceLease::mutate_three_always(&shared,&samples,&protocol,|| {
             let nch = channels.len();
             let first_idx = self.waves.len();
             for draft in channels {
@@ -2395,6 +2600,7 @@ impl WaveformAnalysisPanel {
                     c
                 });
                 self.waves.push(LoadedWave {
+                    load_instance: uuid::Uuid::new_v4(),
                 trace_sha256: draft.trace_sha256,
                     path: path.to_path_buf(),
                     label: draft.label,
@@ -2417,15 +2623,20 @@ impl WaveformAnalysisPanel {
                 auto_stagger_channel_offsets(&mut self.waves, first_idx..end);
             }
             (first_idx, end)
-        };
+        });
         if let Ok(WaveLoadEvent::Final { measures, extents }) = rx.recv() {
-            self.apply_final_measures((first, end), measures, extents);
+            self.apply_final_measures((first, end), measures, extents, None);
         }
         self.clear_viewport_lod_state();
         self.gated_measure_cache = None;
         self.mark_extent_dirty();
         self.activate_wave(first);
         Ok(max_pts)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_load_wave_without_persisting(&mut self, path: &Path) -> Result<usize, String> {
+        self.load_path_sync(path)
     }
 
     #[allow(dead_code)]
@@ -2438,7 +2649,12 @@ impl WaveformAnalysisPanel {
         if index >= self.waves.len() {
             return;
         }
-        self.selected = Some(index);
+        let redecode=(self.x1.is_some() || self.x2.is_some()) && self.x_cursors_should_redecode();
+        wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| {
+            self.selected = Some(index);
+            self.x1 = None; self.x2 = None; self.y1 = None; self.y2 = None;
+            if redecode {self.bus_decode_dirty=true;}
+        });
         self.fit_request = true;
         self.pending_bounds = None;
         self.clear_viewport_lod_state();
@@ -2453,10 +2669,6 @@ impl WaveformAnalysisPanel {
             self.last_x_range = None;
             self.last_y_range = None;
         }
-        self.x1 = None;
-        self.x2 = None;
-        self.y1 = None;
-        self.y2 = None;
         self.dragging_cursor = None;
     }
 
@@ -3852,22 +4064,21 @@ impl WaveformAnalysisPanel {
 
         if let Some((which, v)) = drag_cursor {
             self.dragging_cursor = Some(which);
-            match (self.cursor_axis, which) {
+            let redecode = self.cursor_axis == CursorAxis::X && self.x_cursors_should_redecode();
+            wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| { match (self.cursor_axis, which) {
                 (CursorAxis::X, 1) => self.x1 = Some(v),
                 (CursorAxis::X, 2) => self.x2 = Some(v),
                 (CursorAxis::Y, 1) => self.y1 = Some(v),
                 (CursorAxis::Y, 2) => self.y2 = Some(v),
                 _ => {}
-            }
-            if self.cursor_axis == CursorAxis::X && self.x_cursors_should_redecode() {
-                self.bus_decode_dirty = true;
-            }
+            } if redecode { self.bus_decode_dirty = true; } });
         }
         if end_drag {
             self.dragging_cursor = None;
         }
         if let Some(v) = click_val {
-            match self.cursor_axis {
+            let redecode = self.cursor_axis == CursorAxis::X && self.x_cursors_should_redecode();
+            wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| { match self.cursor_axis {
                 CursorAxis::X => match (self.x1, self.x2) {
                     (None, _) => self.x1 = Some(v),
                     (Some(_), None) => self.x2 = Some(v),
@@ -3884,10 +4095,7 @@ impl WaveformAnalysisPanel {
                         self.y2 = None;
                     }
                 },
-            }
-            if self.cursor_axis == CursorAxis::X && self.x_cursors_should_redecode() {
-                self.bus_decode_dirty = true;
-            }
+            } if redecode { self.bus_decode_dirty = true; } });
         }
         if let Some(i) = click_bus_frame {
             self.open_bus_frame(i);
@@ -4050,7 +4258,7 @@ impl WaveformAnalysisPanel {
     /// Cached, bounded summary only; raw samples are not uploaded by this helper.
     pub(crate) fn ai_summary(&self) -> serde_json::Value {
         let channels: Vec<_> = self.waves.iter().enumerate().take(16).map(|(index,wave)| serde_json::json!({
-            "index":index,"trace_id":format!("trace-{:x}-{:x}",wave.trace.x.as_ptr() as usize,wave.trace.y.as_ptr() as usize),"source_file":wave.path.file_name().map(|p|p.to_string_lossy()),
+            "index":index,"trace_id":format!("trace-{}",wave.load_instance),"source_file":wave.path.file_name().map(|p|p.to_string_lossy()),
             "channel": wave.trace.channel, "points": wave.measures.count, "sample_interval_s": wave.measures.dt,
             "unit": wave.trace.y_unit, "min": wave.measures.min, "max": wave.measures.max,
             "peak_to_peak": wave.measures.pp, "mean": wave.measures.mean, "rms": wave.measures.rms,
@@ -4109,18 +4317,32 @@ impl WaveformAnalysisPanel {
 
     pub fn api_close(&mut self, lang: Lang) -> crate::backend::InvokeReply {
         use crate::backend::invoke_ok as ok;
-        self.waves.clear();
-        self.selected = None;
+        let shared=self.source_lease.clone();let samples=self.sample_review_lease.clone();let protocol=self.protocol_review_lease.clone();
+        let (old_waves, old_load, old_results) = wiparse_core::ai::source_lease::SourceLease::mutate_three_always(&shared,&samples,&protocol,|| {
+            self.selected = None;
+            let mut results=Vec::new();
+            if let Some(result)=self.bus_result.take(){results.push(result);}
+            for lane in &mut self.bus_lanes {if let Some(result)=lane.result.take(){results.push(result);}}
+            self.pending_bus_decode=None;
+            self.bus_decode_dirty=false;
+            self.selected_bus_frame=None;
+            self.bus_frame_popup=None;
+            (std::mem::take(&mut self.waves), self.pending_load.take(), results)
+        });
+        drop(old_waves);
+        drop(old_load);
+        drop(old_results);
         self.next_color = 0;
         self.clear_viewport_lod_state();
         self.gated_measure_cache = None;
-        self.bus_result = None;
         self.status = t(lang, "已关闭", "Closed").into();
         ok("ui.wave.close", self.api_snapshot())
     }
 
     pub fn api_cursors(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
         use crate::backend::invoke_ok as ok;
+        let redecode = self.x_cursors_should_redecode() && (params.get("x1").and_then(|x|x.as_f64()).is_some() || params.get("x2").and_then(|x|x.as_f64()).is_some() || params.get("clear").and_then(|x|x.as_bool()) == Some(true));
+        wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| {
         if let Some(v) = params.get("x1").and_then(|x| x.as_f64()) {
             self.x1 = Some(v);
         }
@@ -4139,6 +4361,8 @@ impl WaveformAnalysisPanel {
             self.y1 = None;
             self.y2 = None;
         }
+        if redecode { self.bus_decode_dirty = true; }
+        });
         ok("ui.wave.cursor", self.api_snapshot())
     }
 
@@ -4150,8 +4374,11 @@ impl WaveformAnalysisPanel {
 
     pub fn api_bus(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
+        let mut settings = self.bus_settings.clone();
+        let mut baud_text = self.uart_baud_text.clone();
+        let mut fop_text = self.ddsss_fop_text.clone();
         if let Some(kind) = params.get("kind").and_then(|v| v.as_str()) {
-            self.bus_settings.kind = match kind.trim().to_ascii_lowercase().as_str() {
+            settings.kind = match kind.trim().to_ascii_lowercase().as_str() {
                 "off" | "none" => BusKind::Off,
                 "uart" => BusKind::Uart,
                 "i2c" => BusKind::I2c,
@@ -4164,7 +4391,7 @@ impl WaveformAnalysisPanel {
                 _ => return err("ui.wave.bus", "kind must be off|uart|i2c|spi|i2s|ddsss|usbpd|scp|ufcs"),
             };
         }
-        let ch = &mut self.bus_settings.channels;
+        let ch = &mut settings.channels;
         fn idx(v: &serde_json::Value, key: &str) -> Option<usize> {
             v.get(key).and_then(|x| x.as_u64()).map(|n| n as usize)
         }
@@ -4203,42 +4430,47 @@ impl WaveformAnalysisPanel {
             ch.i2s_data = Some(n);
         }
         if let Some(v) = params.get("threshold").and_then(|x| x.as_f64()) {
-            self.bus_settings.threshold = Some(v);
+            settings.threshold = Some(v);
         }
         if params.get("threshold").is_some_and(|v| v.is_null()) {
-            self.bus_settings.threshold = None;
+            settings.threshold = None;
         }
         if let Some(v) = params.get("ui_us").and_then(|x| x.as_f64()) {
             if !(120.0..=200.0).contains(&v) { return err("ui.wave.bus", "ui_us must be 120..200"); }
-            self.bus_settings.scp.ui_us = v;
+            settings.scp.ui_us = v;
         }
         if let Some(v) = params.get("baud").and_then(|x| x.as_f64()) {
-            if self.bus_settings.kind == BusKind::Ufcs {
+            if settings.kind == BusKind::Ufcs {
                 if ![38400.0,57600.0,115200.0,230400.0].contains(&v) { return err("ui.wave.bus", "unsupported UFCS baud"); }
-                self.bus_settings.ufcs.baud = v as u32;
+                settings.ufcs.baud = v as u32;
             }
-            self.bus_settings.uart.baud = Some(v);
-            self.uart_baud_text = format!("{v}");
+            settings.uart.baud = Some(v);
+            baud_text = format!("{v}");
         }
         if let Some(s) = params.get("sequence").and_then(|x| x.as_str()) {
             let Some(seq) = DdsssSequence::parse_label(s) else {
                 return err("ui.wave.bus", "sequence must be auto|seqa|seqb|seqc|seqd");
             };
-            self.bus_settings.ddsss.sequence = seq;
+            settings.ddsss.sequence = seq;
         }
         if let Some(s) = params.get("extension").and_then(|x| x.as_str()) {
             let Some(ext) = DdsssExtension::parse_label(s) else {
                 return err("ui.wave.bus", "extension must be auto|off|on");
             };
-            self.bus_settings.ddsss.extension = ext;
+            settings.ddsss.extension = ext;
         }
         if let Some(v) = params.get("fop").and_then(|x| x.as_f64()) {
             if v > 0.0 {
-                self.bus_settings.ddsss.fop_hz = Some(v);
-                self.ddsss_fop_text = format!("{v}");
+                settings.ddsss.fop_hz = Some(v);
+                fop_text = format!("{v}");
             }
         }
-        self.bus_decode_dirty = true;
+        wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| {
+            self.bus_settings = settings;
+            self.uart_baud_text = baud_text;
+            self.ddsss_fop_text = fop_text;
+            self.bus_decode_dirty = true;
+        });
         ok("ui.wave.bus", self.api_snapshot())
     }
 
@@ -5494,6 +5726,15 @@ fn field_note(name: &str, zh: bool) -> String {
     if zh { zh_text } else { en_text }.to_string()
 }
 
+fn remap_bus_channels(channels: &mut BusChannelMap, remap: &[Option<usize>]) {
+    for slot in [&mut channels.uart_signal,&mut channels.i2c_scl,&mut channels.i2c_sda,
+        &mut channels.spi_clk,&mut channels.spi_mosi,&mut channels.spi_miso,&mut channels.spi_cs,
+        &mut channels.spi_io2,&mut channels.spi_io3,&mut channels.i2s_bclk,&mut channels.i2s_ws,
+        &mut channels.i2s_data,&mut channels.ddsss_signal,&mut channels.charging_signal] {
+        *slot=(*slot).and_then(|index|remap.get(index).copied().flatten());
+    }
+}
+
 fn channels_ready(settings: &BusDecodeSettings) -> bool {
     match settings.kind {
         BusKind::Off => false,
@@ -5616,6 +5857,174 @@ fn t(lang: Lang, zh: &str, en: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn regular_and_reviewed_protocol_queries_use_same_byte_filter_and_payload_flag() {
+        use super::*;
+        use wiparse_core::bus_decode::BusFrame;
+        let result=BusDecodeResult {frames:vec![BusFrame{summary:"frame".into(),bytes:vec![0xaa,0xbb],..Default::default()},
+            BusFrame{summary:"long".into(),bytes:vec![0xcc;129],..Default::default()}],..Default::default()};
+        let snapshot=ReviewedProtocolSnapshot{id:uuid::Uuid::new_v4(),kind:BusKind::Scp,result:result.clone(),configuration:String::new(),source_binding:String::new(),generation:1,lane:0};
+        let mut panel=WaveformAnalysisPanel::new(&AppConfig::default());
+        panel.bus_settings.kind=BusKind::Scp;panel.bus_result=Some(result);panel.bus_decode_dirty=false;
+        for query in ["aa bb","cc"] {
+            let params=serde_json::json!({"contains":query,"limit":20});
+            let normal=panel.agent_frames(&params);let reviewed=snapshot.frames(&params);
+            assert_eq!(normal["data"]["total_matches"],reviewed["data"]["total_matches"]);
+            assert_eq!(normal["data"]["frames"][0]["frame_payload_complete"],reviewed["data"]["frames"][0]["frame_payload_complete"]);
+        }
+    }
+
+    #[test]
+    fn reviewed_protocol_pages_exclude_ping_and_disclose_partial_results() {
+        use super::*;
+        use wiparse_core::bus_decode::BusFrame;
+        let snapshot=ReviewedProtocolSnapshot {
+            id:uuid::Uuid::new_v4(),kind:BusKind::Scp,
+            result:BusDecodeResult {frames:vec![
+                BusFrame {summary:"PING".into(),..Default::default()},
+                BusFrame {summary:"frame one".into(),bytes:vec![0xaa],..Default::default()},
+                BusFrame {summary:"frame two".into(),bytes:vec![0xbb;129],..Default::default()},
+            ],truncated:true,..Default::default()},
+            configuration:String::new(),source_binding:String::new(),generation:1,lane:0,
+        };
+        let first=snapshot.frames(&serde_json::json!({"limit":1}));
+        assert_eq!(first["data"]["total_matches"],2);
+        assert_eq!(first["data"]["next_offset"],1);
+        assert_eq!(first["data"]["partial"],true);
+        assert!(snapshot.matches_receipt(&first));
+        let second=snapshot.frames(&serde_json::json!({"offset":1,"limit":1}));
+        assert_eq!(second["data"]["frames"][0]["frame_payload_complete"],false);
+        assert_eq!(second["data"]["decoder_truncated"],true);
+        assert_eq!(second["data"]["snapshot_id"],first["data"]["snapshot_id"]);
+        let filtered=snapshot.frames(&serde_json::json!({"contains":"aa"}));
+        assert_eq!(filtered["data"]["total_matches"],1);
+        assert_eq!(filtered["data"]["partial"],true);
+    }
+    #[test]
+    fn reviewed_protocol_ignores_unrelated_shared_changes_but_expires_on_cursor_change() {
+        use super::*;
+        let mut panel=WaveformAnalysisPanel::new(&AppConfig::default());
+        panel.bus_settings.kind=BusKind::Uart;
+        panel.bus_result=Some(BusDecodeResult::default());
+        panel.bus_decode_dirty=false;
+        let snapshot=panel.capture_review_protocol().unwrap();
+        panel.source_lease.mutate_always(||());
+        assert!(snapshot.is_current());
+        panel.api_cursors(&serde_json::json!({"x1":1.0}));
+        assert!(!snapshot.is_current());
+    }
+    #[test]
+    fn reviewed_wave_snapshot_is_immutable_and_expires_when_channels_change() {
+        use super::*;
+        let mut panel=WaveformAnalysisPanel::new(&AppConfig::default());
+        let trace=WaveformTrace{channel:"CH1".into(),x:WaveformTrace::wave_axis(vec![0.,1.,2.]),y:WaveformTrace::wave_axis(vec![0.,1.,0.]),x_unit:"s".into(),y_unit:"V".into()};
+        let digest=wiparse_core::engineering_wave::trace_digest(&trace);
+        let measures=WaveformMeasurements {count:3,dt:1.,min:0.,max:1.,pp:1.,mean:1./3.,rms:0.5,freq_hz:None,period:None};
+        let draft=LoadedChannelDraft{trace_sha256:digest,trace,measures,overview:Arc::new(Vec::new()),x_min:0.,x_max:2.,y_min:0.,y_max:1.,label:"fixture".into(),x_monotonic:true};
+        panel.apply_preview_channels(Path::new("private-file"),vec![draft],3,Lang::Zh);
+        let captured=panel.capture_review_wave().unwrap();
+        assert!(captured.is_current());
+        assert!(!captured.value().manifest().to_string().contains("private-file"));
+        let channel=&captured.value().channels[0];
+        let receipt=serde_json::json!({"ok":true,"data":{"trace_id":format!("trace-{}",channel.instance),"source_window":{"trace_sha256":channel.digest,"first_sample":0,"last_sample":2},"sample_count":3,"snapshot_total_samples":3}});
+        assert!(captured.value().matches_receipt(&serde_json::json!({"channel":0}),&receipt));
+        let mut wrong=receipt.clone();wrong["data"]["source_window"]["trace_sha256"]=serde_json::json!("other");
+        assert!(!captured.value().matches_receipt(&serde_json::json!({"channel":0}),&wrong));
+        panel.remove_wave_mask(&[true]);
+        assert!(!captured.is_current());
+        assert_eq!(captured.value().channels[0].trace.y.len(),3);
+    }
+    #[test]
+    fn disconnected_wave_loader_clears_pending_without_claiming_complete() {
+        use super::*;
+        let mut panel=WaveformAnalysisPanel::new(&AppConfig::default());
+        let (tx,rx)=unbounded();drop(tx);
+        panel.pending_load=Some(PendingWaveLoad{path:PathBuf::from("trace.isf"),rx,wave_range:None,wave_ids:Vec::new()});
+        let (_,permit)=panel.source_lease.snapshot(||()).unwrap();
+        panel.poll_pending_loads(Lang::Zh);
+        assert!(panel.pending_load.is_none());
+        assert!(panel.status.contains("未完成"));
+        assert!(permit.commit_prepared(||()).is_none());
+    }
+    #[test]
+    fn removed_channels_are_remapped_or_cleared() {
+        use super::*;
+        let mut channels=BusChannelMap::default();
+        channels.uart_signal=Some(0); channels.i2c_scl=Some(1); channels.i2c_sda=Some(2); channels.spi_clk=Some(9);
+        remap_bus_channels(&mut channels,&[None,Some(0),Some(1)]);
+        assert_eq!(channels.uart_signal,None);
+        assert_eq!(channels.i2c_scl,Some(0));
+        assert_eq!(channels.i2c_sda,Some(1));
+        assert_eq!(channels.spi_clk,None);
+    }
+    #[test]
+    fn changed_decode_input_discards_inflight_results() {
+        use super::*;
+        let mut panel = WaveformAnalysisPanel::new(&AppConfig::default());
+        panel.bus_result = Some(BusDecodeResult { info:"prior".into(), ..Default::default() });
+        panel.bus_decode_gen = 7;
+        panel.bus_decode_dirty = true;
+        let (tx,rx) = unbounded();
+        panel.pending_bus_decode = Some(PendingBusDecode { rx });
+        tx.send((7, vec![(panel.bus_lanes[0].id,BusDecodeResult { info:"obsolete".into(), ..Default::default() })])).unwrap();
+        panel.poll_pending_bus_decode();
+        assert!(panel.pending_bus_decode.is_none());
+        assert!(panel.bus_decode_dirty);
+        assert_eq!(panel.bus_result.as_ref().unwrap().info,"prior");
+        assert_eq!(panel.agent_frames(&serde_json::json!({}))["ok"],false);
+    }
+    #[test]
+    fn clearing_time_cursor_requests_protocol_redecode() {
+        use super::*;
+        let mut panel = WaveformAnalysisPanel::new(&AppConfig::default());
+        panel.bus_settings.kind = BusKind::Uart;
+        panel.x1=Some(1.0); panel.x2=Some(2.0);
+        panel.bus_decode_dirty=false;
+        panel.clear_active_cursors();
+        assert!(panel.bus_decode_dirty);
+        panel.bus_decode_dirty=false;
+        panel.api_cursors(&serde_json::json!({"x1":1.0}));
+        assert!(panel.bus_decode_dirty);
+    }
+    #[test]
+    fn stale_final_measurement_does_not_overwrite_replaced_channel() {
+        use super::*;
+        let mut panel = WaveformAnalysisPanel::new(&AppConfig::default());
+        let measures = WaveformMeasurements { count:2, dt:1.0, min:0.0, max:1.0, pp:1.0, mean:0.5, rms:0.5, freq_hz:None, period:None };
+        let trace = WaveformTrace { channel:"CH1".into(), x:WaveformTrace::wave_axis(vec![0.0, 1.0]), y:WaveformTrace::wave_axis(vec![0.0, 1.0]), x_unit:"s".into(), y_unit:"V".into() };
+        let draft = LoadedChannelDraft { trace_sha256:"fixture".into(), trace, measures:measures.clone(), overview:Arc::new(Vec::new()), x_min:0.0, x_max:1.0, y_min:0.0, y_max:1.0, label:"fixture".into(), x_monotonic:true };
+        panel.apply_preview_channels(Path::new("fixture"), vec![draft], 2, Lang::Zh);
+        panel.bus_settings.kind=BusKind::Uart;panel.x1=Some(0.0);panel.x2=Some(1.0);panel.bus_decode_dirty=false;
+        panel.activate_wave(0);assert!(panel.bus_decode_dirty);assert!(panel.x1.is_none());
+        panel.bus_decode_dirty=false;
+        let window=TraceWindow{trace_sha256:"fixture".into(),channel:"CH1".into(),first_sample:0,last_sample:1};
+        assert!(panel.show_trace_window(&window));assert!(panel.bus_decode_dirty);
+        assert!(!panel.apply_final_measures((0,1), vec![measures.clone()], vec![], None));
+        assert!(panel.waves[0].measures_pending);
+        let wrong_id = uuid::Uuid::new_v4();
+        assert!(!panel.apply_final_measures((0,1), vec![measures], vec![(0.0,1.0,0.0,1.0)], Some(&[wrong_id])));
+        assert!(panel.waves[0].measures_pending);
+    }
+    #[test]
+    fn cursor_change_invalidates_guarded_source_snapshot() {
+        use super::*;
+        use wiparse_core::ai::{AiConfig, AiRequest, AiService};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let mut panel = WaveformAnalysisPanel::new(&AppConfig::default());
+        let (request, permit) = panel.source_lease.snapshot(|| AiRequest { purpose:"fixture".into(), text:"fixture".into() }).unwrap();
+        let service = AiService::new(AiConfig { enabled:true, base_url:format!("http://{}",listener.local_addr().unwrap()), model:"fixture".into(), ..Default::default() });
+        let task = service.submit_conversation_reviewed_guarded(request, vec![], permit).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while task.outbound_preview().is_none() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panel.api_cursors(&serde_json::json!({"x1":0.5}));
+        assert!(task.approve_outbound());
+        assert!(matches!(task.result.recv_timeout(std::time::Duration::from_secs(3)).unwrap(), Err(wiparse_core::ai::AiError::Config(_))));
+        assert!(matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+    }
     use super::*;
 
     #[test]
@@ -5856,14 +6265,32 @@ mod tests {
 }
 
 impl WaveformAnalysisPanel {
+ pub(crate) fn capture_review_protocol(&self)->Option<wiparse_core::ai::ReviewedSource<Arc<ReviewedProtocolSnapshot>>> {
+    if self.pending_load.is_some() || self.pending_bus_decode.is_some() || self.bus_decode_dirty || self.bus_settings.kind==BusKind::Off {return None;}
+    let result=self.bus_result.as_ref()?;
+    wiparse_core::ai::ReviewedSource::capture(&self.protocol_review_lease,||Arc::new(ReviewedProtocolSnapshot {
+        id:uuid::Uuid::new_v4(),kind:self.bus_settings.kind,result:result.clone(),
+        configuration:format!("{:?}",settings_for_decode(&self.bus_settings,&self.uart_baud_text,&self.ddsss_fop_text,self.x1,self.x2)),
+        source_binding:self.agent_identity(),generation:self.bus_decode_gen,lane:self.active_bus_lane}))
+ }
+ pub(crate) fn capture_review_wave(&self)->Option<wiparse_core::ai::ReviewedSource<Arc<ReviewedWaveSnapshot>>> {
+    if self.pending_load.is_some() || self.waves.is_empty() || self.waves.len()>16 {return None;}
+    wiparse_core::ai::ReviewedSource::capture(&self.sample_review_lease,|| {
+        let channels=self.waves.iter().map(|wave|ReviewedWaveChannel {instance:wave.load_instance,digest:wave.trace_sha256.clone(),trace:wave.trace.clone()}).collect();
+        Arc::new(ReviewedWaveSnapshot{channels})
+    }).filter(|snapshot|snapshot.value().channels.iter().all(|channel|
+        !channel.trace.x.is_empty() && channel.trace.x.len()==channel.trace.y.len()
+            && channel.digest.len()==64 && channel.digest.bytes().all(|byte|byte.is_ascii_hexdigit())))
+ }
  fn show_trace_window(&mut self, window:&TraceWindow)->bool {
     let Some((index,wave))=self.waves.iter().enumerate().find(|(_,w)|w.trace_sha256==window.trace_sha256 && w.trace.channel==window.channel) else {return false};
     if window.first_sample>window.last_sample {return false;}
     let (Some(&a),Some(&b))=(wave.trace.x.get(window.first_sample),wave.trace.x.get(window.last_sample)) else {return false};
     if !a.is_finite() || !b.is_finite() || b<a {return false;}
     let pad=((b-a)*0.05).max(a.abs().max(b.abs())*f64::EPSILON*4.).max(1e-12);
-    self.selected=Some(index);
-    self.x1=Some(a);self.x2=Some(b);
+    let redecode=self.x_cursors_should_redecode();
+    wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.protocol_review_lease.clone(),|| { self.selected=Some(index);self.x1=Some(a);self.x2=Some(b);if redecode {self.bus_decode_dirty=true;} });
+    self.gated_measure_cache=None;
     let Some(ext)=self.document_extent().or_else(||self.data_extent()) else {return false};
     self.fit_request=false;
     self.pending_bounds=Some(PlotBounds::from_min_max([a-pad,ext.min()[1]],[b+pad,ext.max()[1]]));
@@ -5886,19 +6313,20 @@ impl WaveformAnalysisPanel {
         self.report_window=Some(window);self.start_load_path(source,lang);
     }
  }
- pub(crate) fn agent_identity(&self)->String{format!("{:?}:{}:{}:{:?}",self.waves.iter().map(|w|(w.trace.x.as_ptr() as usize,w.trace.y.as_ptr() as usize,w.trace.y.len())).collect::<Vec<_>>(),self.active_bus_lane,self.bus_decode_gen,settings_for_decode(&self.bus_settings,&self.uart_baud_text,&self.ddsss_fop_text,self.x1,self.x2))}
+ pub(crate) fn agent_identity(&self)->String{format!("{:?}:{}:{}:{:?}",self.waves.iter().map(|w|(w.load_instance,&w.trace_sha256,w.trace.y.len())).collect::<Vec<_>>(),self.active_bus_lane,self.bus_decode_gen,settings_for_decode(&self.bus_settings,&self.uart_baud_text,&self.ddsss_fop_text,self.x1,self.x2))}
+ pub(crate) fn agent_has_waveform(&self)->bool{!self.waves.is_empty()}
  pub(crate) fn agent_provenance(&self)->serde_json::Value{serde_json::json!({"clock_domain":"capture_local","external_alignment_verified":false,"generation":self.bus_decode_gen,"lane":self.active_bus_lane,"configuration":format!("{:?}",settings_for_decode(&self.bus_settings,&self.uart_baud_text,&self.ddsss_fop_text,self.x1,self.x2)),"source_binding":self.agent_identity(),"pending":self.pending_bus_decode.is_some()||self.bus_decode_dirty})}
  pub(crate) fn agent_tick(&mut self,lang:Lang){self.poll_pending_loads(lang);self.poll_pending_viewport();self.poll_pending_bus_decode();if self.bus_decode_dirty&&self.schedule_bus_decode(){self.bus_decode_dirty=false;}}
  pub(crate) fn agent_measure(&self,params:&serde_json::Value,ctx:&egui::Context,cancel:Arc<std::sync::atomic::AtomicBool>)->crate::ai::agent::HostReply{
-  let Some(wave)=params["channel"].as_u64().and_then(|i|self.waves.get(i as usize))else{return crate::ai::agent::HostReply::value(crate::ai::agent::failure("波形通道不存在"))};let digest=wave.trace_sha256.clone();let trace=wave.trace.clone();let index=params["channel"].clone();
-  let params=params.clone();let other=params["other_channel"].as_u64().and_then(|i|self.waves.get(i as usize)).map(|w|w.trace.clone());let provenance=self.agent_provenance();
-  crate::ai::agent::spawn_work(ctx,move||{match wiparse_core::engineering_wave::analyze(&trace,other.as_ref(),&params,&cancel){Ok(mut data)=>{data["source_window"]=serde_json::json!({"trace_sha256":digest,"channel":trace.channel,"first_sample":data["first_sample_index"],"last_sample":data["last_sample_index"]});data["channel_index"]=index;data["channel"]=serde_json::json!(trace.channel);data["trace_id"]=serde_json::json!(format!("trace-{:x}-{:x}",trace.x.as_ptr() as usize,trace.y.as_ptr() as usize));data["provenance"]=provenance;serde_json::json!({"ok":true,"data":data})},Err(e)=>crate::ai::agent::failure(e)}
+  let Some(wave)=params["channel"].as_u64().and_then(|i|self.waves.get(i as usize))else{return crate::ai::agent::HostReply::value(crate::ai::agent::failure("波形通道不存在"))};let digest=wave.trace_sha256.clone();let trace_id=format!("trace-{}",wave.load_instance);let trace=wave.trace.clone();let index=params["channel"].clone();
+  let params=params.clone();let other=params["other_channel"].as_u64().and_then(|i|self.waves.get(i as usize)).map(|w|(w.trace.clone(),w.trace_sha256.clone(),format!("trace-{}",w.load_instance)));let provenance=self.agent_provenance();
+  crate::ai::agent::spawn_work(ctx,move||{match wiparse_core::engineering_wave::analyze(&trace,other.as_ref().map(|value|&value.0),&params,&cancel){Ok(mut data)=>{data["source_window"]=serde_json::json!({"trace_sha256":digest,"channel":trace.channel,"first_sample":data["first_sample_index"],"last_sample":data["last_sample_index"]});data["channel_index"]=index;data["channel"]=serde_json::json!(trace.channel);data["trace_id"]=serde_json::json!(trace_id);if let Some((other,digest,id))=other{data["other_source_window"]=serde_json::json!({"trace_sha256":digest,"trace_id":id,"channel":other.channel,"first_sample":data["first_sample_index"],"last_sample":data["last_sample_index"],"total_samples":other.y.len()});data["alignment_scope"]=serde_json::json!("sample coordinates checked in requested window; external clock synchronization and probe deskew are not verified");}data["provenance"]=provenance;serde_json::json!({"ok":true,"data":data})},Err(e)=>crate::ai::agent::failure(e)}
   })
  }
  pub(crate) fn agent_frames(&self,params:&serde_json::Value)->serde_json::Value{
   if self.pending_bus_decode.is_some()||self.bus_decode_dirty{return serde_json::json!({"ok":false,"error":"协议解析正在更新，请等待完成"});}
   let Some(result)=&self.bus_result else{return serde_json::json!({"ok":false,"error":"当前没有协议解析结果，请先配置协议或调用wave.decode"})};
-  let query=params["contains"].as_str().unwrap_or("").to_lowercase();let errors=params["errors_only"].as_bool().unwrap_or(false);let offset=params["offset"].as_u64().unwrap_or(0) as usize;let limit=params["limit"].as_u64().unwrap_or(10).min(20) as usize;
+  let query=params["contains"].as_str().unwrap_or("").to_lowercase();let errors=params["errors_only"].as_bool().unwrap_or(false);let offset=params["offset"].as_u64().unwrap_or(0) as usize;let limit=params["limit"].as_u64().unwrap_or(10).clamp(1,20) as usize;
   let signal=self.bus_overlay_channel().and_then(|i|self.waves.get(i)).filter(|w|w.x_monotonic);
   let window=|start:f64,end:f64|signal.and_then(|w|{
       let axis=&w.trace.x;
@@ -5906,8 +6334,8 @@ impl WaveformAnalysisPanel {
       let after=axis.partition_point(|t|*t<=end);
       (first<after).then(||serde_json::json!({"trace_sha256":w.trace_sha256,"channel":w.trace.channel,"first_sample":first,"last_sample":after-1}))
   });
-  let rows:Vec<_>=result.frames.iter().enumerate().filter(|(_,f)|protocol_view::is_data_frame(self.bus_settings.kind,f)&&(!errors||f.has_error())&&(query.is_empty()||f.summary.to_lowercase().contains(&query))).collect();
-  serde_json::json!({"ok":true,"data":{"protocol":self.bus_settings.kind.label(),"provenance":self.agent_provenance(),"protocol_statistics":{"all_data_frames":result.frames.iter().filter(|f|protocol_view::is_data_frame(self.bus_settings.kind,f)).count(),"integrity_error_frames":result.frames.iter().filter(|f|protocol_view::is_data_frame(self.bus_settings.kind,f)&&f.has_error()).count(),"ping_frames_excluded":self.bus_settings.kind==BusKind::Scp},"total_matches":rows.len(),"decoder_truncated":result.truncated,"decoder_error":result.error,"next_offset":if offset+limit<rows.len(){Some(offset+limit)}else{None},"frames":rows.iter().skip(offset).take(limit).map(|(i,f)|serde_json::json!({"index":i,"source_window":window(f.t_start,f.t_end),"start_s":f.t_start,"end_s":f.t_end,"summary":f.summary,"integrity":integrity_text(f.error,true),"bytes":f.bytes.iter().take(128).collect::<Vec<_>>(),"bytes_total":f.bytes.len(),"fields":if f.bytes.len()<=256{explain_frame(self.bus_settings.kind,&result.frames,*i,true)}else{vec!["超长帧：未对截断内容重新解释字段".into()]}})).collect::<Vec<_>>()}})
+  let rows:Vec<_>=result.frames.iter().enumerate().filter(|(_,f)|protocol_view::is_data_frame(self.bus_settings.kind,f)&&(!errors||f.has_error())&&protocol_view::matches_query(f,&query)).collect();
+  serde_json::json!({"ok":true,"data":{"protocol":self.bus_settings.kind.label(),"provenance":self.agent_provenance(),"protocol_statistics":{"all_data_frames":result.frames.iter().filter(|f|protocol_view::is_data_frame(self.bus_settings.kind,f)).count(),"integrity_error_frames":result.frames.iter().filter(|f|protocol_view::is_data_frame(self.bus_settings.kind,f)&&f.has_error()).count(),"ping_frames_excluded":self.bus_settings.kind==BusKind::Scp},"total_matches":rows.len(),"partial":offset>0 || offset.saturating_add(limit)<rows.len() || result.truncated || result.error.is_some() || errors || !query.is_empty(),"page_offset":offset,"page_filter":{"contains":query,"errors_only":errors},"decoder_truncated":result.truncated,"decoder_error":result.error,"next_offset":if offset.saturating_add(limit)<rows.len(){Some(offset.saturating_add(limit))}else{None},"frames":rows.iter().skip(offset).take(limit).map(|(i,f)|serde_json::json!({"index":i,"source_window":window(f.t_start,f.t_end),"start_s":f.t_start,"end_s":f.t_end,"summary":f.summary,"integrity":integrity_text(f.error,true),"bytes":f.bytes.iter().take(128).collect::<Vec<_>>(),"bytes_total":f.bytes.len(),"frame_payload_complete":f.bytes.len()<=128,"fields":if f.bytes.len()<=256{explain_frame(self.bus_settings.kind,&result.frames,*i,true)}else{vec!["超长帧：未对截断内容重新解释字段".into()]}})).collect::<Vec<_>>()}})
  }
  pub(crate) fn agent_decode_status(&self,generation:u64)->serde_json::Value{if self.bus_decode_gen!=generation{return serde_json::json!({"ok":false,"error":"协议任务已被后续解析替换"});}if self.pending_bus_decode.is_some(){serde_json::json!({"_agent_wait":{"method":"wave.decode.result","params":{"generation":generation}}})}else{self.agent_frames(&serde_json::json!({"limit":6}))}}
  pub(crate) fn agent_decode(&mut self,params:&serde_json::Value,lang:Lang)->serde_json::Value{

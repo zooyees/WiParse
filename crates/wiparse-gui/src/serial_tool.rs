@@ -27,6 +27,10 @@ use wiparse_core::serial::{
 use wiparse_core::testrun::{decode_hex, RunVerdict, TestDriver, TestPlan, TickAction};
 
 mod ai_chat;
+// Staged only: the live serial path remains gated until every writer and
+// worker uses this command handoff and its concurrency checks are validated.
+#[allow(dead_code)]
+mod dispatch_gate;
 mod sidebar;
 
 /// One subfolder under the log browser root that contains `.txt` files.
@@ -43,6 +47,8 @@ const DRAIN_TIME_PER_FRAME: Duration = Duration::from_millis(4);
 const LIVE_FLUSH_INTERVAL: Duration = Duration::from_secs(5);
 
 enum SerialEvent {
+    // Keeps the source boundary closed until the UI publishes this event.
+    StateChange(Box<SerialEvent>, wiparse_core::ai::source_lease::SourceUpdate),
     Opened { device: String, baud: u32 },
     Line(String),
     Status(String),
@@ -58,11 +64,39 @@ struct PendingFileLoad {
 struct ExtraLink {
     device: String,
     stop: Arc<AtomicBool>,
+    stop_intent: Arc<std::sync::Mutex<Option<SerialStopIntent>>>,
+    reviewed_stop: ReviewedStopEndpoint,
     rx: Receiver<SerialEvent>,
     #[allow(dead_code)]
     write_tx: Sender<Vec<u8>>,
     tab: usize,
 }
+
+struct SerialWorkerCompletion {
+    session_id: uuid::Uuid,
+    port: String,
+    rx: Receiver<SerialReleaseReceipt>,
+}
+#[derive(Clone)]
+struct ReviewedStopEndpoint { session_id:uuid::Uuid, gate:dispatch_gate::Gate, tx:Sender<dispatch_gate::ReviewedStop> }
+
+#[derive(Clone)]
+struct SerialReleaseReceipt {
+    session_id: uuid::Uuid,
+    port: String,
+    opened: Option<bool>,
+    // The SerialSession value has been dropped. This is host-side evidence,
+    // not an independently verified operating-system or physical state.
+    host_session_dropped: Option<bool>,
+    stop_intent: Option<SerialStopIntent>,
+    journal_persisted: Option<bool>,
+}
+
+#[derive(Clone)]
+struct SerialStopIntent { command_id:String, project:String, fingerprint:String, audit:Option<SerialStopAudit> }
+#[derive(Clone)]
+struct SerialStopAudit { journal:crate::ai::journal::Journal, task_id:String }
+struct SerialReceiptPersistence { session_id:uuid::Uuid, rx:Receiver<bool> }
 
 pub struct SerialToolPanel {
     repaint: Option<egui::Context>,
@@ -82,6 +116,8 @@ pub struct SerialToolPanel {
     tabs: Vec<LogTabPage>,
     active_tab: usize,
     stop_flag: Option<Arc<AtomicBool>>,
+    primary_stop_intent: Option<Arc<std::sync::Mutex<Option<SerialStopIntent>>>>,
+    primary_reviewed_stop: Option<ReviewedStopEndpoint>,
     rx: Option<Receiver<SerialEvent>>,
     /// Hex/bytes to write while monitoring (API / Agent).
     write_tx: Option<Sender<Vec<u8>>>,
@@ -120,9 +156,16 @@ pub struct SerialToolPanel {
     ai_confirmed: HashMap<String, u32>,
     ai_serial_error: HashMap<String, String>,
     ai_epoch: u64,
+    serial_source_lease: wiparse_core::ai::source_lease::SourceLease,
+    // Fixed live snapshots survive append/eviction but not session or view changes.
+    serial_review_lease: wiparse_core::ai::source_lease::SourceLease,
     // Generation and absolute first row of the primary acquisition.
     analysis_source: (u64,usize),
     ai_test_locked: bool,
+    integrated_test_active: Arc<AtomicBool>,
+    serial_workers: Vec<SerialWorkerCompletion>,
+    serial_release_receipts: std::collections::VecDeque<SerialReleaseReceipt>,
+    serial_receipt_persistence: Vec<SerialReceiptPersistence>,
     ai_settings_requested: bool,
 }
 
@@ -154,6 +197,13 @@ pub enum TestInstrumentJob {
 }
 
 impl SerialToolPanel {
+    pub(crate) fn source_lease(&self) -> wiparse_core::ai::source_lease::SourceLease {
+        self.serial_source_lease.clone()
+    }
+    pub(crate) fn review_source_lease(&self) -> wiparse_core::ai::source_lease::SourceLease {
+        self.serial_review_lease.clone()
+    }
+    pub(crate) fn integrated_test_state(&self) -> Arc<AtomicBool> { self.integrated_test_active.clone() }
     pub fn new(cfg: &AppConfig, lang: Lang) -> Self {
         let ports = list_ports().unwrap_or_default();
         let baud_options = if cfg.serial.default_baudrates.is_empty() {
@@ -177,6 +227,10 @@ impl SerialToolPanel {
         tabs[0].title = live_name.clone();
         let mut panel = Self {
             ports,
+            serial_workers: Vec::new(),
+            serial_release_receipts: std::collections::VecDeque::new(),
+            serial_receipt_persistence: Vec::new(),
+            integrated_test_active: Arc::new(AtomicBool::new(false)),
             selected_port: 0,
             baud,
             baud_options,
@@ -190,6 +244,8 @@ impl SerialToolPanel {
             tabs,
             active_tab: 0,
             stop_flag: None,
+            primary_stop_intent: None,
+            primary_reviewed_stop: None,
             rx: None,
             write_tx: None,
             live_file: None,
@@ -223,6 +279,8 @@ impl SerialToolPanel {
             ai_confirmed: HashMap::new(),
             ai_serial_error: HashMap::new(),
             ai_epoch: 0,
+            serial_source_lease: Default::default(),
+            serial_review_lease: Default::default(),
             analysis_source:(0,0),
             ai_test_locked: false,
             ai_settings_requested: false,
@@ -301,8 +359,10 @@ impl SerialToolPanel {
             return Some(tab_idx);
         }
         let tab = LogTabPage::file_tab_empty(path_s.clone());
-        self.tabs.push(tab);
-        let tab_idx = self.tabs.len() - 1;
+        let tab_idx = wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
+            self.tabs.push(tab);
+            self.tabs.len() - 1
+        });
         let (tx, rx) = unbounded();
         self.pending_loads.push(PendingFileLoad { tab_idx, rx });
         self.status = format!("loading {path_s}…");
@@ -320,7 +380,9 @@ impl SerialToolPanel {
 
     fn refresh_ports(&mut self, lang: Lang) {
         let current = self.ports.get(self.selected_port).map(|p| p.device.clone());
-        self.ports = refresh_ports().unwrap_or_default();
+        let fresh = refresh_ports().unwrap_or_default();
+        wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
+        self.ports = fresh;
         if let Some(cur) = current {
             if let Some(idx) = self.ports.iter().position(|p| p.device == cur) {
                 self.selected_port = idx;
@@ -333,6 +395,7 @@ impl SerialToolPanel {
         } else if self.selected_port >= self.ports.len() {
             self.selected_port = 0;
         }
+        });
         self.wifi_rev = wifi_uart_revision();
         self.status = if self.monitoring {
             let port = self
@@ -360,6 +423,7 @@ impl SerialToolPanel {
         if same {
             return;
         }
+        wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
         self.ports = fresh;
         if let Some(cur) = current {
             if let Some(idx) = self.ports.iter().position(|p| p.device == cur) {
@@ -370,6 +434,7 @@ impl SerialToolPanel {
         } else if self.selected_port >= self.ports.len() {
             self.selected_port = 0;
         }
+        });
     }
 
     fn poll_wifi_ports(&mut self, ctx: &egui::Context) {
@@ -383,13 +448,14 @@ impl SerialToolPanel {
     }
 
     fn ensure_listed_device(&mut self, device: &str) {
-        if let Some(idx) = self.ports.iter().position(|p| p.device == device) {
-            self.selected_port = idx;
-        } else {
-            self.ports
-                .insert(0, PortInfo::from_device(device.to_owned()));
-            self.selected_port = 0;
-        }
+        wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
+            if let Some(idx) = self.ports.iter().position(|p| p.device == device) {
+                self.selected_port = idx;
+            } else {
+                self.ports.insert(0, PortInfo::from_device(device.to_owned()));
+                self.selected_port = 0;
+            }
+        });
     }
 
     fn live_path(&self) -> PathBuf {
@@ -657,8 +723,10 @@ impl SerialToolPanel {
             self.ensure_listed_device(p);
         }
         if let Some(b) = baud_override {
-            self.baud = b.to_string();
-            self.baud_custom = !self.baud_options.iter().any(|x| x == &self.baud);
+            wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
+                self.baud = b.to_string();
+                self.baud_custom = !self.baud_options.iter().any(|x| x == &self.baud);
+            });
         }
     }
 
@@ -678,13 +746,7 @@ impl SerialToolPanel {
         port_override: Option<String>,
         baud_override: Option<u32>,
     ) -> Result<(String, u32), String> {
-        if let Some(ref p) = port_override {
-            self.ensure_listed_device(p);
-        }
-        if let Some(b) = baud_override {
-            self.baud = b.to_string();
-            self.baud_custom = !self.baud_options.iter().any(|x| x == &self.baud);
-        }
+        self.apply_port_baud(port_override, baud_override);
         let Some(port) = self.ports.get(self.selected_port).map(|p| p.device.clone()) else {
             self.status = tr(lang, "status.port_none");
             return Err(self.status.clone());
@@ -700,6 +762,13 @@ impl SerialToolPanel {
             || self.extras.iter().any(|link| link.device == port)
         {
             return Ok((port, baud));
+        }
+        self.poll_serial_worker_completions();
+        if self.serial_workers.iter().any(|worker|worker.port.eq_ignore_ascii_case(&port)) {
+            return Err("SERIAL.RELEASE_PENDING: previous session is still ending; retry after the worker returns".into());
+        }
+        if self.serial_workers.len() >= 128 {
+            return Err("SERIAL.WORKER_LIMIT: previous sessions have not finished".into());
         }
         if self.monitoring {
             return self.start_extra(lang, port, baud);
@@ -727,6 +796,15 @@ impl SerialToolPanel {
         let port_for_thread = port.clone();
         let repaint = self.repaint.clone();
         let visible = Arc::clone(&self.repaint_visible);
+        let source_lease = self.serial_review_lease.clone();
+        let open_update = source_lease.begin_update();
+        let session_id = uuid::Uuid::new_v4();
+        let (completion_tx, completion_rx) = bounded(1);
+        let (reviewed_stop_tx, reviewed_stop_rx) = bounded(1);
+        let reviewed_stop = ReviewedStopEndpoint {session_id,gate:dispatch_gate::Gate::default(),tx:reviewed_stop_tx};
+        let stop_intent = Arc::new(std::sync::Mutex::new(None));
+        let worker_stop_intent = stop_intent.clone();
+        self.serial_workers.push(SerialWorkerCompletion { session_id, port:port.clone(), rx:completion_rx });
         thread::spawn(move || {
             serial_worker(
                 port_for_thread,
@@ -736,16 +814,28 @@ impl SerialToolPanel {
                 write_rx,
                 repaint,
                 visible,
+                source_lease,
+                open_update,
+                session_id,
+                completion_tx,
+                worker_stop_intent,
+                reviewed_stop_rx,
             )
         });
         self.stop_flag = Some(stop);
+        self.primary_stop_intent = Some(stop_intent);
+        self.primary_reviewed_stop = Some(reviewed_stop);
         self.rx = Some(rx);
         self.write_tx = Some(write_tx);
         self.monitoring = true;
-        self.ai_epoch = self.ai_epoch.wrapping_add(1);
-        self.ai_serial_error.remove(&port);
-        self.analysis_source=(self.analysis_source.0.wrapping_add(1),self.live_abs_len());
-        self.primary_device = Some(port.clone());
+        let first_row = self.live_abs_len();
+        wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
+            self.ai_epoch = self.ai_epoch.wrapping_add(1);
+            self.ai_serial_error.remove(&port);
+            self.analysis_source=(self.analysis_source.0.wrapping_add(1),first_row);
+            self.primary_device = Some(port.clone());
+            self.active_tab = 0;
+        });
         let status_port = self
             .ports
             .get(self.selected_port)
@@ -755,7 +845,6 @@ impl SerialToolPanel {
         if let Some(live) = self.tabs.get_mut(0) {
             live.title = self.live_name.clone();
         }
-        self.active_tab = 0;
         self.live_brief.reset();
         self.live_rows_received = 0;
         self.recording_error = None;
@@ -769,6 +858,7 @@ impl SerialToolPanel {
         port: String,
         baud: u32,
     ) -> Result<(String, u32), String> {
+        self.ai_chat.revoke_review_before_source_change();
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = bounded(SERIAL_EVENT_CAPACITY);
         let (write_tx, write_rx) = unbounded();
@@ -776,6 +866,15 @@ impl SerialToolPanel {
         let port_for_thread = port.clone();
         let repaint = self.repaint.clone();
         let visible = Arc::clone(&self.repaint_visible);
+        let source_lease = self.serial_review_lease.clone();
+        let open_update = source_lease.begin_update();
+        let session_id = uuid::Uuid::new_v4();
+        let (completion_tx, completion_rx) = bounded(1);
+        let (reviewed_stop_tx, reviewed_stop_rx) = bounded(1);
+        let reviewed_stop = ReviewedStopEndpoint {session_id,gate:dispatch_gate::Gate::default(),tx:reviewed_stop_tx};
+        let stop_intent = Arc::new(std::sync::Mutex::new(None));
+        let worker_stop_intent = stop_intent.clone();
+        self.serial_workers.push(SerialWorkerCompletion { session_id, port:port.clone(), rx:completion_rx });
         thread::spawn(move || {
             serial_worker(
                 port_for_thread,
@@ -785,6 +884,12 @@ impl SerialToolPanel {
                 write_rx,
                 repaint,
                 visible,
+                source_lease,
+                open_update,
+                session_id,
+                completion_tx,
+                worker_stop_intent,
+                reviewed_stop_rx,
             )
         });
         let title = self
@@ -795,17 +900,14 @@ impl SerialToolPanel {
             .unwrap_or_else(|| port.clone());
         let mut tab = LogTabPage::live_tab(lang);
         tab.title = title.clone();
-        self.tabs.push(tab);
-        let tab_idx = self.tabs.len() - 1;
-        self.extras.push(ExtraLink {
-            device: port.clone(),
-            stop,
-            rx,
-            write_tx,
-            tab: tab_idx,
+        wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
+            self.tabs.push(tab);
+            let tab_idx = self.tabs.len() - 1;
+            self.extras.push(ExtraLink { device: port.clone(), stop, stop_intent, reviewed_stop, rx, write_tx, tab: tab_idx });
+            self.ai_epoch=self.ai_epoch.wrapping_add(1);
+            self.active_tab = tab_idx;
+            self.monitoring = true;
         });
-        self.active_tab = tab_idx;
-        self.monitoring = true;
         self.status = tr_monitoring(lang, &title, baud);
         Ok((port, baud))
     }
@@ -823,13 +925,17 @@ impl SerialToolPanel {
         let Some(idx) = self.extras.iter().position(|link| link.device == device) else {
             return;
         };
+        self.ai_chat.revoke_review_before_source_change();
+        let (link, removed_tab) = wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
         self.ai_epoch = self.ai_epoch.wrapping_add(1);
         self.ai_confirmed.remove(device);
         let link = self.extras.remove(idx);
+        // Publish the stop intent together with removal of the active
+        // session. Only an atomic flag is touched while the leases are held.
         link.stop.store(true, Ordering::SeqCst);
         let tab = link.tab;
-        if tab > 0 && self.tabs.get(tab).is_some_and(|t| t.live) {
-            self.tabs.remove(tab);
+        let removed_tab = if tab > 0 && self.tabs.get(tab).is_some_and(|t| t.live) {
+            let removed = self.tabs.remove(tab);
             for extra in &mut self.extras {
                 if extra.tab > tab {
                     extra.tab -= 1;
@@ -843,7 +949,12 @@ impl SerialToolPanel {
             if self.active_tab >= self.tabs.len() {
                 self.active_tab = 0;
             }
-        }
+            Some(removed)
+        } else { None };
+        (link, removed_tab)
+        });
+        drop(link);
+        drop(removed_tab);
     }
 
     fn drain_extras(&mut self, update_live_filters: bool) {
@@ -852,6 +963,7 @@ impl SerialToolPanel {
         for i in 0..n {
             let mut batch = Vec::new();
             let mut stopped = false;
+            let mut stopped_update = None;
             let tab = self.extras[i].tab;
             let started = Instant::now();
             let mut remaining = DRAIN_LINES_PER_FRAME;
@@ -860,29 +972,36 @@ impl SerialToolPanel {
                     break;
                 };
                 remaining -= 1;
+                let (ev, state_update) = match ev {
+                    SerialEvent::StateChange(event, update) => (*event, Some(update)),
+                    other => (other, None),
+                };
                 match ev {
-                    SerialEvent::Opened { device, baud } => { self.ai_confirmed.insert(device, baud); }
+                    SerialEvent::Opened { device, baud } => { wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| { self.ai_serial_error.remove(&device); self.ai_confirmed.insert(device, baud); }); }
                     SerialEvent::Line(line) => batch.push(line),
-                    SerialEvent::Error(e) => { self.ai_serial_error.insert(self.extras[i].device.clone(), e.clone()); batch.push(format!("[ERR] {e}")); }
+                    SerialEvent::Error(e) => { let device = self.extras[i].device.clone(); wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| { self.ai_serial_error.insert(device, e.clone()); self.ai_epoch=self.ai_epoch.wrapping_add(1); }); batch.push(format!("[ERR] {e}")); }
                     SerialEvent::Stopped => {
                         stopped = true;
+                        stopped_update = state_update;
                         break;
                     }
                     SerialEvent::Status(_) => {}
+                    SerialEvent::StateChange(..) => unreachable!("nested serial state event"),
                 }
             }
             if !batch.is_empty() {
                 if let Some(page) = self.tabs.get_mut(tab) {
                     self.ai_chat.observe(page.ai_view_id(), &batch);
-                    page.append_lines(batch, update_live_filters);
+                    self.serial_source_lease.mutate_always(|| page.append_lines(batch, update_live_filters));
                 }
             }
             if stopped {
-                dead.push(self.extras[i].device.clone());
+                dead.push((self.extras[i].device.clone(), stopped_update));
             }
         }
-        for device in dead.into_iter().rev() {
+        for (device, update) in dead.into_iter().rev() {
             self.stop_extra(&device);
+            drop(update);
         }
     }
 
@@ -893,6 +1012,15 @@ impl SerialToolPanel {
     fn device_is_open(&self, device: &str) -> bool {
         self.primary_device.as_deref() == Some(device)
             || self.extras.iter().any(|link| link.device == device)
+    }
+
+    fn serial_stop_command_slot(&self, device: &str) -> Option<Arc<std::sync::Mutex<Option<SerialStopIntent>>>> {
+        if self.primary_device.as_deref() == Some(device) { return self.primary_stop_intent.clone(); }
+        self.extras.iter().find(|link|link.device == device).map(|link|link.stop_intent.clone())
+    }
+    fn serial_reviewed_stop_endpoint(&self, device: &str) -> Option<ReviewedStopEndpoint> {
+        if self.primary_device.as_deref() == Some(device) { return self.primary_reviewed_stop.clone(); }
+        self.extras.iter().find(|link|link.device == device).map(|link|link.reviewed_stop.clone())
     }
 
     pub fn api_stop_monitor(&mut self, lang: Lang) {
@@ -1116,12 +1244,16 @@ impl SerialToolPanel {
         let pack = EvidencePack::create(&evidence_root(), plan.clone(), &port, baud)?;
         let dir = pack.dir.display().to_string();
         let run_id = pack.run_id.clone();
-        self.live_test = Some(LiveTest {
-            driver: TestDriver::new(plan),
-            pack,
-            scope_queue: Vec::new(),
-            instrument_jobs: Vec::new(),
-            finished: false,
+        // ai_chat may be temporarily moved out; the panel-owned source lease
+        // remains stable and must guard test ownership changes.
+        self.serial_review_lease.clone().mutate_always(|| {
+            self.live_test = Some(LiveTest {
+                driver: TestDriver::new(plan),
+                pack,
+                scope_queue: Vec::new(),
+                instrument_jobs: Vec::new(),
+                finished: false,
+            });
         });
         self.status = format!("test {run_id}");
         self.tick_test();
@@ -1439,7 +1571,7 @@ impl SerialToolPanel {
         verdict: RunVerdict,
         reason: &str,
     ) -> Result<serde_json::Value, String> {
-        let Some(mut t) = self.live_test.take() else {
+        let Some(mut t) = self.serial_review_lease.clone().mutate_always(|| self.live_test.take()) else {
             return Err("no test".into());
         };
         t.finished = true;
@@ -1495,14 +1627,17 @@ impl SerialToolPanel {
     }
 
     fn stop_monitor(&mut self, lang: Lang) {
-        self.ai_epoch = self.ai_epoch.wrapping_add(1);
-        if let Some(port) = &self.primary_device { self.ai_confirmed.remove(port); }
-        if let Some(flag) = self.stop_flag.take() {
-            flag.store(true, Ordering::SeqCst);
-        }
+        wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
+            self.ai_epoch = self.ai_epoch.wrapping_add(1);
+            if let Some(port) = &self.primary_device { self.ai_confirmed.remove(port); }
+            self.primary_device = None;
+            if let Some(flag) = &self.stop_flag { flag.store(true, Ordering::SeqCst); }
+        });
+        self.stop_flag = None;
+        self.primary_stop_intent = None;
+        self.primary_reviewed_stop = None;
         self.rx = None;
         self.write_tx = None;
-        self.primary_device = None;
         self.monitoring = !self.extras.is_empty();
         if let Err(e) = self.close_live_writer() {
             self.recording_error = Some(e.to_string());
@@ -1511,6 +1646,7 @@ impl SerialToolPanel {
     }
 
     fn new_live_log(&mut self, lang: Lang) {
+        self.ai_chat.revoke_review_before_source_change();
         if !self.save_live_to_disk {
             self.clear_live_display();
             let stamp = Local::now().format("%Y%m%d_%H%M%S");
@@ -1544,20 +1680,18 @@ impl SerialToolPanel {
 
         let mut new_live = LogTabPage::live_tab(lang);
         new_live.title = self.live_name.clone();
-        self.tabs.insert(0, new_live);
-        self.analysis_source=(self.analysis_source.0.wrapping_add(1),0);
-        for load in &mut self.pending_loads {
-            load.tab_idx += 1;
-        }
-
         // Previous live is now at index 1 — reopen it as a closable file tab.
         let path_s = normalize_path(&archived_path.to_string_lossy());
         let archived_tab = LogTabPage::file_tab_empty(path_s);
-        if self.tabs.len() > 1 {
-            self.tabs[1] = archived_tab;
-        } else {
-            self.tabs.push(archived_tab);
-        }
+        let old_tab = wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
+            self.tabs.insert(0, new_live);
+            self.analysis_source=(self.analysis_source.0.wrapping_add(1),0);
+            for load in &mut self.pending_loads { load.tab_idx += 1; }
+            self.active_tab = 0;
+            if self.tabs.len() > 1 { Some(std::mem::replace(&mut self.tabs[1], archived_tab)) }
+            else { self.tabs.push(archived_tab); None }
+        });
+        drop(old_tab);
         let (tx, rx) = unbounded();
         self.pending_loads.push(PendingFileLoad { tab_idx: 1, rx });
         let path_for_worker = archived_path;
@@ -1568,15 +1702,17 @@ impl SerialToolPanel {
             self.status = format!("{}: {e}", tr(lang, "status.create_failed"));
             return;
         }
-        self.active_tab = 0;
         self.persist_open_log_files();
         self.status = format!("new live log: {}", self.live_name);
     }
 
     fn clear_live_display(&mut self) {
+        self.ai_chat.revoke_review_before_source_change();
         if let Some(live) = self.tabs.get_mut(0) {
-            live.clear_display();
-            self.analysis_source=(self.analysis_source.0.wrapping_add(1),0);
+            wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
+                live.clear_display();
+                self.analysis_source=(self.analysis_source.0.wrapping_add(1),0);
+            });
         }
     }
 
@@ -1754,7 +1890,9 @@ impl SerialToolPanel {
             return; // never close live
         }
         if idx < self.tabs.len() {
-            self.tabs.remove(idx);
+            if idx == self.active_tab { self.ai_chat.revoke_review_before_source_change(); }
+            let removed_tab = wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
+            let removed_tab = self.tabs.remove(idx);
             for extra in &mut self.extras {
                 if extra.tab > idx {
                     extra.tab -= 1;
@@ -1774,6 +1912,9 @@ impl SerialToolPanel {
             } else if self.active_tab > idx {
                 self.active_tab -= 1;
             }
+            removed_tab
+            });
+            drop(removed_tab);
             self.persist_open_log_files();
         }
     }
@@ -1786,7 +1927,7 @@ impl SerialToolPanel {
                 match load.rx.try_recv() {
                     Ok(FileBuildEvent::Progress { lines }) => {
                         if let Some(tab) = self.tabs.get_mut(load.tab_idx) {
-                            tab.set_index_progress(lines);
+                            self.serial_source_lease.mutate_always(|| tab.set_index_progress(lines));
                             self.status = format!("indexing {}… {lines} lines", tab.title);
                         }
                     }
@@ -1796,7 +1937,7 @@ impl SerialToolPanel {
                                 drop(store);
                             } else {
                                 let total = store.line_count();
-                                tab.set_file_store(store);
+                                self.serial_source_lease.mutate_always(|| tab.set_file_store(store));
                                 self.status = format!("opened {} ({total} lines)", tab.title);
                             }
                         }
@@ -1806,7 +1947,7 @@ impl SerialToolPanel {
                     Ok(FileBuildEvent::Err(e)) => {
                         self.status = format!("open failed: {e}");
                         if let Some(tab) = self.tabs.get_mut(load.tab_idx) {
-                            tab.finish_loading();
+                            self.serial_source_lease.mutate_always(|| tab.finish_loading());
                         }
                         finished = true;
                         break;
@@ -1832,6 +1973,7 @@ impl SerialToolPanel {
         update_live_filters: bool,
         api: Option<&crate::backend::ApiBridge>,
     ) {
+        self.poll_serial_worker_completions();
         self.release_writer_if_target_is_being_edited();
         for tab in &mut self.tabs {
             tab.poll_background_tasks();
@@ -1841,6 +1983,7 @@ impl SerialToolPanel {
         let mut budget = DRAIN_LINES_PER_FRAME;
         let mut batch = Vec::new();
         let mut stop_seen = false;
+        let mut stopped_update = None;
         let drain_started = Instant::now();
         if let Some(rx) = &self.rx {
             while budget > 0 && drain_started.elapsed() < DRAIN_TIME_PER_FRAME {
@@ -1848,8 +1991,12 @@ impl SerialToolPanel {
                     break;
                 };
                 budget -= 1;
+                let (ev, state_update) = match ev {
+                    SerialEvent::StateChange(event, update) => (*event, Some(update)),
+                    other => (other, None),
+                };
                 match ev {
-                    SerialEvent::Opened { device, baud } => { self.ai_confirmed.insert(device, baud); }
+                    SerialEvent::Opened { device, baud } => { wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| { self.ai_serial_error.remove(&device); self.ai_confirmed.insert(device, baud); }); }
                     SerialEvent::Line(line) => {
                         batch.push(line);
                     }
@@ -1863,24 +2010,31 @@ impl SerialToolPanel {
                         if let Some(api) = api {
                             api.publish_serial_status(&format!("error: {e}"));
                         }
-                        if let Some(port) = &self.primary_device { self.ai_serial_error.insert(port.clone(), e.clone()); }
+                        wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| { if let Some(port) = &self.primary_device { self.ai_serial_error.insert(port.clone(), e.clone()); } self.ai_epoch=self.ai_epoch.wrapping_add(1); });
                         self.status = e.clone();
                         batch.push(format!("[ERR] {e}"));
                     }
                     SerialEvent::Stopped => {
                         stop_seen = true;
+                        stopped_update = state_update;
                         break;
                     }
+                    SerialEvent::StateChange(..) => unreachable!("nested serial state event"),
                 }
             }
         }
 
         if stop_seen {
-            self.ai_epoch = self.ai_epoch.wrapping_add(1);
-            if let Some(port) = &self.primary_device { self.ai_confirmed.remove(port); }
-            self.primary_device = None;
+            wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
+                self.ai_epoch = self.ai_epoch.wrapping_add(1);
+                if let Some(port) = &self.primary_device { self.ai_confirmed.remove(port); }
+                self.primary_device = None;
+            });
+            drop(stopped_update);
             self.monitoring = !self.extras.is_empty();
             self.stop_flag = None;
+            self.primary_stop_intent = None;
+            self.primary_reviewed_stop = None;
             self.rx = None;
             self.write_tx = None;
             if let Err(e) = self.close_live_writer() {
@@ -1926,7 +2080,7 @@ impl SerialToolPanel {
             }
             if let Some(live) = self.tabs.get_mut(0) {
                 self.ai_chat.observe(live.ai_view_id(), &batch);
-                live.append_lines(batch, update_live_filters);
+                self.serial_source_lease.mutate_always(|| live.append_lines(batch, update_live_filters));
             }
         }
         if let Some(error) = self.recording_error.as_ref() {
@@ -1947,6 +2101,44 @@ impl SerialToolPanel {
         }
     }
 
+    fn poll_serial_worker_completions(&mut self) {
+        let mut pending = Vec::with_capacity(self.serial_workers.len());
+        for worker in self.serial_workers.drain(..) {
+            let receipt = match worker.rx.try_recv() {
+                Ok(receipt) if receipt.session_id == worker.session_id && receipt.port == worker.port => Some(receipt),
+                Ok(_) | Err(crossbeam_channel::TryRecvError::Disconnected) => Some(SerialReleaseReceipt {
+                    session_id:worker.session_id, port:worker.port.clone(), opened:None, host_session_dropped:None, stop_intent:None, journal_persisted:None,
+                }),
+                Err(crossbeam_channel::TryRecvError::Empty) => None,
+            };
+            if let Some(mut receipt) = receipt {
+                if let Some(intent) = receipt.stop_intent.as_mut() {
+                    if let Some(audit) = intent.audit.take() {
+                        if self.serial_receipt_persistence.len() >= 128 {
+                            receipt.journal_persisted=Some(false);
+                        } else {
+                            let (tx,rx)=bounded(1);
+                            let session_id=receipt.session_id;
+                            let port=receipt.port.clone();let command=intent.command_id.clone();let fingerprint=intent.fingerprint.clone();
+                            let opened=receipt.opened;let dropped=receipt.host_session_dropped;
+                            let spawned=std::thread::Builder::new().name("serial-receipt-journal".into()).spawn(move || {let ok=audit.journal.append_serial_release(&audit.task_id,&command,&fingerprint,&session_id.to_string(),&port,opened,dropped).is_ok();let _=tx.send(ok);});
+                            if spawned.is_ok() {self.serial_receipt_persistence.push(SerialReceiptPersistence{session_id,rx});}
+                            else {receipt.journal_persisted=Some(false);}
+                        }
+                    }
+                }
+                self.serial_release_receipts.push_back(receipt);
+                while self.serial_release_receipts.len() > 64 { self.serial_release_receipts.pop_front(); }
+            } else { pending.push(worker); }
+        }
+        self.serial_workers = pending;
+        let receipts = &mut self.serial_release_receipts;
+        self.serial_receipt_persistence.retain(|entry| {
+            let outcome=match entry.rx.try_recv() {Ok(ok)=>Some(ok),Err(crossbeam_channel::TryRecvError::Disconnected)=>Some(false),Err(crossbeam_channel::TryRecvError::Empty)=>None};
+            if let Some(ok)=outcome {if let Some(receipt)=receipts.iter_mut().find(|receipt|receipt.session_id==entry.session_id){receipt.journal_persisted=Some(ok);}false} else {true}
+        });
+    }
+
     pub fn needs_repaint(&self) -> bool {
         self.monitoring
             || !self.pending_loads.is_empty()
@@ -1956,7 +2148,8 @@ impl SerialToolPanel {
 
     /// Background file load / RX backlog — repaint even when another main tab is visible.
     pub fn has_background_io(&self) -> bool {
-        !self.pending_loads.is_empty()
+        !self.serial_workers.is_empty() || !self.serial_receipt_persistence.is_empty()
+            || !self.pending_loads.is_empty()
             || self.tabs.iter().any(LogTabPage::has_background_filter)
             || self.is_test_running()
     }
@@ -2001,7 +2194,8 @@ impl SerialToolPanel {
 
     fn activate_tab(&mut self, idx: usize) {
         if idx < self.tabs.len() {
-            self.active_tab = idx;
+            if idx != self.active_tab { self.ai_chat.revoke_review_before_source_change(); }
+            wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| self.active_tab = idx);
             if let Some(tab) = self.tabs.get_mut(idx) {
                 tab.on_activated();
             }
@@ -2012,7 +2206,9 @@ impl SerialToolPanel {
         if idx <= 1 {
             return;
         }
-        self.tabs.drain(1..idx);
+        if self.active_tab > 0 && self.active_tab < idx { self.ai_chat.revoke_review_before_source_change(); }
+        let removed = wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
+        let removed: Vec<_> = self.tabs.drain(1..idx).collect();
         self.pending_loads.retain_mut(|load| {
             if load.tab_idx > 0 && load.tab_idx < idx {
                 return false;
@@ -2025,6 +2221,9 @@ impl SerialToolPanel {
         if self.active_tab >= idx {
             self.active_tab = self.active_tab.saturating_sub(idx - 1);
         }
+        removed
+        });
+        drop(removed);
         self.persist_open_log_files();
     }
 
@@ -2032,20 +2231,28 @@ impl SerialToolPanel {
         if idx + 1 >= self.tabs.len() {
             return;
         }
-        self.tabs.truncate(idx + 1);
+        if self.active_tab > idx { self.ai_chat.revoke_review_before_source_change(); }
+        let removed = wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
+        let removed = self.tabs.split_off(idx + 1);
         self.pending_loads.retain_mut(|load| load.tab_idx <= idx);
         if self.active_tab > idx {
             self.active_tab = idx;
         }
+        removed
+        });
+        drop(removed);
         self.persist_open_log_files();
     }
 
     fn close_all_file_tabs(&mut self) {
-        if self.tabs.len() > 1 {
-            self.tabs.truncate(1);
-        }
-        self.pending_loads.clear();
-        self.active_tab = 0;
+        if self.active_tab != 0 { self.ai_chat.revoke_review_before_source_change(); }
+        let removed = wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
+            let removed = if self.tabs.len() > 1 { self.tabs.split_off(1) } else { Vec::new() };
+            self.pending_loads.clear();
+            self.active_tab = 0;
+            removed
+        });
+        drop(removed);
         self.persist_open_log_files();
     }
 
@@ -2133,6 +2340,7 @@ impl SerialToolPanel {
                                 ui.spacing_mut().item_spacing.x = ui_theme::SPACE_SM;
                                 let refresh_w = ui_theme::CTRL_H;
                                 let port_w = (ctrl_w - refresh_w - ui_theme::SPACE_SM).max(1.0);
+                                let mut next_port = self.selected_port;
                                 egui::ComboBox::from_id_salt("serial_port")
                                     .width(port_w)
                                     .truncate()
@@ -2144,7 +2352,7 @@ impl SerialToolPanel {
                                         }
                                         for (i, p) in self.ports.iter().enumerate() {
                                             ui.selectable_value(
-                                                &mut self.selected_port,
+                                                &mut next_port,
                                                 i,
                                                 p.display_label(),
                                             );
@@ -2152,6 +2360,9 @@ impl SerialToolPanel {
                                     })
                                     .response
                                     .on_hover_text(port_hover);
+                                if next_port != self.selected_port {
+                                    wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| self.selected_port = next_port);
+                                }
                                 if ui_theme::secondary_btn_sized(
                                     ui,
                                     t,
@@ -2206,8 +2417,10 @@ impl SerialToolPanel {
                                             )
                                             .clicked()
                                         {
-                                            self.baud = b;
-                                            self.baud_custom = false;
+                                            wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
+                                                self.baud = b;
+                                                self.baud_custom = false;
+                                            });
                                         }
                                     }
                                     ui.separator();
@@ -2218,21 +2431,22 @@ impl SerialToolPanel {
                                         )
                                         .clicked()
                                     {
-                                        self.baud_custom = true;
-                                        if self.baud_options.iter().any(|b| b == &self.baud) {
-                                            self.baud.clear();
-                                        }
+                                        wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| {
+                                            self.baud_custom = true;
+                                            if self.baud_options.iter().any(|b| b == &self.baud) { self.baud.clear(); }
+                                        });
                                     }
                                 });
                             if self.baud_custom {
+                                let mut next_baud = self.baud.clone();
                                 let baud_edit = ui.add_sized(
                                     [ctrl_w, ui_theme::CTRL_H],
-                                    ui_theme::singleline_sized(&mut self.baud, ctrl_w)
+                                    ui_theme::singleline_sized(&mut next_baud, ctrl_w)
                                         .hint_text(tr(lang, "serial.baud_custom_hint")),
                                 );
                                 if baud_edit.changed() {
-                                    self.baud =
-                                        self.baud.chars().filter(|c| c.is_ascii_digit()).collect();
+                                    let filtered = next_baud.chars().filter(|c| c.is_ascii_digit()).collect();
+                                    wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.serial_source_lease.clone(),&self.serial_review_lease.clone(),|| self.baud = filtered);
                                 }
                             }
 
@@ -2915,6 +3129,7 @@ impl SerialToolPanel {
                             let idx =
                                 self.active_tab.min(self.tabs.len().saturating_sub(1));
                             if let Some(page) = self.tabs.get_mut(idx) {
+                                page.set_edit_source_lease(self.serial_source_lease.clone());
                                 page.set_ai_visible(self.ai_chat.open);
                                 page.ui(ui, lang, t);
                                 if page.take_ai_toggle() {
@@ -2926,7 +3141,10 @@ impl SerialToolPanel {
                 },
             );
         }
-        if let Some(rect) = ai_rect { self.paint_ai_sidebar(ui, rect, lang, t); }
+        if let Some(rect) = ai_rect {
+            self.paint_ai_sidebar(ui, rect, lang, t);
+            self.ai_chat.resize_split(ui, full, rect, t);
+        }
     }
 
     pub fn on_exit(&mut self) {
@@ -2979,6 +3197,12 @@ impl SerialToolPanel {
             }
             None => err("ui.serial.open", &format!("could not open {path}")),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_select_log_file_without_persisting(&mut self, path: &std::path::Path) {
+        self.tabs.push(LogTabPage::file_tab_empty(path.display().to_string()));
+        self.active_tab = self.tabs.len() - 1;
     }
 
     pub fn api_close_tab(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
@@ -3264,6 +3488,59 @@ fn live_capture_is_empty(live_line_count: usize, live_file: Option<&Path>) -> bo
     }
 }
 
+// A missing receiver can otherwise discard the last state transition and make
+// stale connection state look current. On an unexpected channel failure keep
+// the source permanently invalid until restart; explicit stop is already published by
+// the host before it drops the receiver.
+fn publish_serial_state(
+    tx: &Sender<SerialEvent>, event: SerialEvent,
+    update: wiparse_core::ai::source_lease::SourceUpdate, stop: &AtomicBool,
+    source_lease: &wiparse_core::ai::source_lease::SourceLease,
+) -> bool {
+    match tx.send(SerialEvent::StateChange(Box::new(event), update)) {
+        Ok(()) => true,
+        Err(error) => {
+            if let SerialEvent::StateChange(_, update) = error.0 {
+                if !stop.load(Ordering::SeqCst) { source_lease.invalidate_permanently(); }
+                drop(update);
+            }
+            false
+        }
+    }
+}
+
+struct SerialWorkerExit {
+    tx: Sender<SerialEvent>,
+    source_lease: wiparse_core::ai::source_lease::SourceLease,
+    stop: Arc<AtomicBool>,
+    repaint: Option<egui::Context>,
+    pending_update: Option<wiparse_core::ai::source_lease::SourceUpdate>,
+    armed: bool,
+    session: Option<SerialSession>,
+    opened: Option<bool>,
+    completion: Option<(uuid::Uuid, String, Sender<SerialReleaseReceipt>, Arc<std::sync::Mutex<Option<SerialStopIntent>>>)>,
+    claimed_stop: Option<(dispatch_gate::Gate, uuid::Uuid)>,
+}
+impl Drop for SerialWorkerExit {
+    fn drop(&mut self) {
+        if !self.armed { return; }
+        let update = self.pending_update.take().unwrap_or_else(|| self.source_lease.begin_update());
+        // Retain the update boundary while dropping the owned transport and
+        // reporting its completion, including during unwinding.
+        drop(self.session.take());
+        if let Some((gate, id)) = self.claimed_stop.take() { let _ = gate.complete(id, !std::thread::panicking()); }
+        if let Some((session_id, port, tx, stop_intent)) = self.completion.take() {
+            let stop_intent = if self.stop.load(Ordering::SeqCst) {
+                stop_intent.lock().ok().and_then(|value|value.clone())
+            } else { None };
+            let _ = tx.try_send(SerialReleaseReceipt { session_id, port, opened:self.opened,
+                host_session_dropped:(self.opened==Some(true)).then_some(true), stop_intent, journal_persisted:None });
+        }
+        publish_serial_state(&self.tx, SerialEvent::Stopped, update, &self.stop, &self.source_lease);
+        if let Some(ctx) = &self.repaint { ctx.request_repaint(); }
+    }
+}
+
 fn serial_worker(
     port: String,
     baud: u32,
@@ -3272,31 +3549,52 @@ fn serial_worker(
     write_rx: Receiver<Vec<u8>>,
     repaint: Option<egui::Context>,
     visible: Arc<AtomicBool>,
+    source_lease: wiparse_core::ai::source_lease::SourceLease,
+    open_update: wiparse_core::ai::source_lease::SourceUpdate,
+    session_id: uuid::Uuid,
+    completion_tx: Sender<SerialReleaseReceipt>,
+    stop_intent: Arc<std::sync::Mutex<Option<SerialStopIntent>>>,
+    reviewed_stop_rx: Receiver<dispatch_gate::ReviewedStop>,
 ) {
-    let mut session = match SerialSession::open(&port, baud) {
-        Ok(s) => s,
+    let mut exit = SerialWorkerExit { tx: tx.clone(), source_lease: source_lease.clone(),
+        stop: stop.clone(), repaint: repaint.clone(), pending_update: None, armed: true,
+        session:None, opened:None, completion:Some((session_id,port.clone(),completion_tx,stop_intent)), claimed_stop:None };
+    exit.session = match SerialSession::open(&port, baud) {
+        Ok(s) => { exit.opened=Some(true); Some(s) },
         Err(e) => {
-            let _ = tx.send(SerialEvent::Error(e.to_string()));
-            let _ = tx.send(SerialEvent::Stopped);
-            if let Some(ctx) = &repaint {
-                ctx.request_repaint();
-            }
+            exit.opened=Some(false);
+            exit.pending_update = Some(source_lease.begin_update());
+            publish_serial_state(&tx, SerialEvent::Error(e.to_string()), open_update, &stop, &source_lease);
             return;
         }
     };
-    let _ = tx.send(SerialEvent::Opened { device: session.device.clone(), baud });
-    let _ = tx.send(SerialEvent::Status(format!("open {}", session.device)));
+    let device=exit.session.as_ref().expect("session opened").device.clone();
+    if !publish_serial_state(&tx, SerialEvent::Opened { device: device.clone(), baud }, open_update, &stop, &source_lease) { return; }
+    let _ = tx.send(SerialEvent::Status(format!("open {}", device)));
     if let Some(ctx) = &repaint {
         ctx.request_repaint();
     }
     let mut last_stamp = Local::now().naive_local() - chrono::Duration::milliseconds(1);
     while !stop.load(Ordering::SeqCst) {
+        if let Ok(command) = reviewed_stop_rx.try_recv() {
+            let result=if command.command.target.session == session_id.to_string() && command.command.target.port == port {
+                command.claim(&stop)
+            } else {
+                let _=command.gate.cancel(command.command.id);
+                Err("SERIAL.GATE_SESSION_MISMATCH")
+            };
+            if result.is_ok() {exit.claimed_stop=Some((command.gate.clone(),command.command.id));}
+            let _=command.reply.try_send(result.map_err(str::to_owned));
+            if stop.load(Ordering::SeqCst) {break;}
+        }
         while let Ok(bytes) = write_rx.try_recv() {
-            if let Err(e) = session.write_bytes(&bytes) {
-                let _ = tx.send(SerialEvent::Error(e.to_string()));
+            if let Err(e) = exit.session.as_mut().expect("session opened").write_bytes(&bytes) {
+                let update = source_lease.begin_update();
+                if !publish_serial_state(&tx, SerialEvent::Error(e.to_string()), update, &stop, &source_lease) { return; }
+                if let Some(ctx) = &repaint { ctx.request_repaint(); }
             }
         }
-        match session.poll_events() {
+        match exit.session.as_mut().expect("session opened").poll_events() {
             Ok(events) => {
                 let idle = events.is_empty();
                 for ev in events {
@@ -3348,7 +3646,11 @@ fn serial_worker(
                 }
             }
             Err(e) => {
-                let _ = tx.send(SerialEvent::Error(e.to_string()));
+                // Keep the source closed across both error and final stop,
+                // even if the UI drains the error before the stop is queued.
+                exit.pending_update = Some(source_lease.begin_update());
+                let update = source_lease.begin_update();
+                publish_serial_state(&tx, SerialEvent::Error(e.to_string()), update, &stop, &source_lease);
                 break;
             }
         }
@@ -3356,10 +3658,7 @@ fn serial_worker(
         // here limits a continuous stream to 2048 bytes per 20 ms at best.
         thread::yield_now();
     }
-    let _ = tx.send(SerialEvent::Stopped);
-    if let Some(ctx) = &repaint {
-        ctx.request_repaint();
-    }
+    // The exit guard publishes Stopped on both normal exit and unwinding.
 }
 
 /// Python `SerialWorker.get_strict_timestamp` parity: `[HH:MM:SS.mmm]`, strictly increasing.
@@ -3536,6 +3835,8 @@ mod tests {
         panel.extras.push(ExtraLink {
             device: "COM7".into(),
             stop: Arc::new(AtomicBool::new(false)),
+            stop_intent: Arc::new(std::sync::Mutex::new(None)),
+            reviewed_stop: ReviewedStopEndpoint{session_id:uuid::Uuid::new_v4(),gate:dispatch_gate::Gate::default(),tx:bounded(1).0},
             rx,
             write_tx,
             tab,

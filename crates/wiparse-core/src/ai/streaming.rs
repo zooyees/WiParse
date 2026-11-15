@@ -23,18 +23,18 @@ pub(super) fn read(
         line.clear();
         let count = reader.read_until(b'\n', &mut line).map_err(|_|AiError::Network)?;
         bytes += count as u64;
-        if bytes > MAX_RESPONSE { return Err(AiError::Response); }
+        if bytes > MAX_RESPONSE { return Err(AiError::ResponseDetail("服务响应超过允许的字节数")); }
         if count == 0 { break; }
         let line = std::str::from_utf8(&line).map_err(|_|AiError::Response)?;
         let Some(data) = line.strip_prefix("data:").map(str::trim) else { continue; };
         if data == "[DONE]" { break; }
-        let event: Value = serde_json::from_str(data).map_err(|_|AiError::Response)?;
+        let event: Value = serde_json::from_str(data).map_err(|_|AiError::ResponseDetail("服务返回了无效的流式 JSON 片段"))?;
         if event.get("error").is_some() { return Err(AiError::Response); }
         if let Some(name) = event["model"].as_str() { model = name.into(); }
         if !event["usage"].is_null() { usage = event["usage"].clone(); }
         let choice = &event["choices"][0];
         let delta = &choice["delta"];
-        if let Some(chunk) = delta["content"].as_str() { text.push_str(chunk); }
+        append_text_content(&mut text,&delta["content"]);
         if let Some(chunk) = delta["reasoning_content"].as_str() { reasoning.push_str(chunk); }
         if let Some(parts) = delta["tool_calls"].as_array() {
             for part in parts {

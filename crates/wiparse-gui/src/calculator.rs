@@ -1035,6 +1035,9 @@ impl CrcState {
 }
 
 pub struct CalculatorPanel {
+    source_lease: wiparse_core::ai::source_lease::SourceLease,
+    published_summary: Value,
+    published_api: Value,
     lc: LcState,
     bandpass: BandpassState,
     q: QState,
@@ -1045,18 +1048,44 @@ pub struct CalculatorPanel {
 
 impl CalculatorPanel {
     pub fn new() -> Self {
-        Self {
+        let mut panel=Self {
+            source_lease: Default::default(),
+            published_summary: Value::Null,
+            published_api: Value::Null,
             lc: LcState::default(),
             bandpass: BandpassState::default(),
             q: QState::default(),
             rc: RcState::default(),
             crc: CrcState::default(),
             converter: ConverterPanel::new(),
+        };
+        panel.published_summary=panel.build_ai_summary();
+        panel.published_api=panel.build_api_get();
+        panel
+    }
+
+    pub(crate) fn set_source_lease(&mut self, lease: wiparse_core::ai::source_lease::SourceLease) { self.source_lease=lease; }
+    #[allow(dead_code)]
+    pub(crate) fn capture_ai_source(&self)->Option<wiparse_core::ai::ReviewedSource<Value>> {
+        wiparse_core::ai::ReviewedSource::capture(&self.source_lease,||self.published_summary.clone())
+    }
+
+    // GUI/API edits operate on the panel's private working state. Only the
+    // published summary is visible to cross-page AI snapshots.
+    fn publish_ai_summary(&mut self) {
+        let next=self.build_ai_summary();
+        if next!=self.published_summary || self.published_api["crc"]["data"].as_str()!=Some(self.crc.data.as_str()) || !self.converter.api_snapshot_matches(&self.published_api["converter"]) {
+            let api=self.build_api_get();
+            let old=self.source_lease.clone().mutate_always(||(std::mem::replace(&mut self.published_summary,next),std::mem::replace(&mut self.published_api,api)));
+            drop(old);
         }
     }
 
     /// On-screen inputs and scalar results. Resonance curves stay on this page.
     pub(crate) fn ai_summary(&self) -> Value {
+        self.published_summary.clone()
+    }
+    fn build_ai_summary(&self) -> Value {
         let clip = |text: &str, limit: usize| text.chars().take(limit).collect::<String>();
         let si=|s:&str,scale:f64|s.trim().parse::<f64>().ok().filter(|v|v.is_finite()).map(|v|v*scale).filter(|v|v.is_finite());
         json!({"input_si":{"lc":{"inductance_h":si(&self.lc.inductance,self.lc.inductance_unit.scale()),"capacitance_f":si(&self.lc.capacitance,self.lc.capacitance_unit.scale())},"bandpass":{"r_hp_ohm":si(&self.bandpass.r_hp,self.bandpass.r_hp_unit.scale()),"c_hp_f":si(&self.bandpass.c_hp,self.bandpass.c_hp_unit.scale()),"r_lp_ohm":si(&self.bandpass.r_lp,self.bandpass.r_lp_unit.scale()),"c_lp_f":si(&self.bandpass.c_lp,self.bandpass.c_lp_unit.scale())},"rc":{"resistance_ohm":si(&self.rc.resistance,self.rc.resistance_unit.scale()),"capacitance_f":si(&self.rc.capacitance,self.rc.capacitance_unit.scale()),"time_s":si(&self.rc.time,self.rc.time_unit.scale())}},"result_quality":"cached results may predate input edits; use calc.evaluate with input_si for a fresh calculation; null means unavailable; not a physical measurement",
@@ -1108,6 +1137,12 @@ impl CalculatorPanel {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
+        // Widget edits change only UI-thread working state; every AI/API reader
+        // sees the prior published values until this frame's atomic publication.
+        self.ui_inner(ui,lang,t);
+        self.publish_ai_summary();
+    }
+    fn ui_inner(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
         let viewport_height = ui.available_height();
         egui::ScrollArea::vertical()
             .id_salt("calculator-dashboard")
@@ -1176,6 +1211,9 @@ impl CalculatorPanel {
     }
 
     pub fn api_get(&self) -> serde_json::Value {
+        self.published_api.clone()
+    }
+    fn build_api_get(&self) -> serde_json::Value {
         serde_json::json!({
             "lc": {
                 "inductance": self.lc.inductance,
@@ -1207,6 +1245,9 @@ impl CalculatorPanel {
     }
 
     pub fn api_set(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        let update=self.source_lease.begin_update();let result=self.api_set_inner(params);self.publish_ai_summary();drop(update);result
+    }
+    fn api_set_inner(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let card = params
             .get("card")
@@ -1313,7 +1354,7 @@ impl CalculatorPanel {
             }
             _ => return err("ui.calc.set", "card must be lc|bandpass|q|rc|crc|convert"),
         }
-        ok("ui.calc.set", self.api_get())
+        ok("ui.calc.set", self.build_api_get())
     }
 
     fn lc_ui(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
@@ -2866,6 +2907,13 @@ mod tests {
 
 impl CalculatorPanel{
  pub(crate) fn agent_calculate(&mut self,params:&Value)->Value{
+  let update=self.source_lease.begin_update();
+  let result=self.agent_calculate_inner(params);
+  self.publish_ai_summary();
+  drop(update);
+  result
+ }
+ fn agent_calculate_inner(&mut self,params:&Value)->Value{
   let card=params["card"].as_str().unwrap_or("");let f=&params["fields"];let number=|key:&str|f[key].as_f64().or_else(||f[key].as_str().and_then(|s|s.parse::<f64>().ok())).unwrap_or(f64::NAN);
   let result=match card{
    "lc"=>{self.lc.inductance=number("inductance_h").to_string();self.lc.inductance_unit=InductanceUnit::Henry;self.lc.capacitance=number("capacitance_f").to_string();self.lc.capacitance_unit=CapacitanceUnit::Farad;self.lc.calculate();json!({"frequency_hz":self.lc.result.as_ref().map(|r|r.frequency_hz),"error":self.lc.error.map(|e|format!("{e:?}"))})},
@@ -2881,5 +2929,21 @@ impl CalculatorPanel{
 
 #[cfg(test)]mod agent_tests{
  use super::*;
+ #[test]fn calculator_publishes_only_committed_changes_and_invalidates_permits(){
+  let mut c=CalculatorPanel::new();let source=wiparse_core::ai::source_lease::SourceLease::default();c.set_source_lease(source.clone());
+  let before=c.ai_summary();let (_,permit)=source.snapshot(||()).unwrap();
+  c.lc.inductance="20".into();assert_eq!(c.ai_summary(),before);
+  c.publish_ai_summary();assert_ne!(c.ai_summary(),before);assert!(permit.commit_prepared(||()).is_none());
+  let (_,unchanged)=source.snapshot(||()).unwrap();c.publish_ai_summary();assert_eq!(unchanged.commit_prepared(||()),Some(()));
+  let (_,api_permit)=source.snapshot(||()).unwrap();c.api_set(&json!({"card":"lc","fields":{"inductance":"30"}}));assert!(api_permit.commit_prepared(||()).is_none());
+  let (_,agent_permit)=source.snapshot(||()).unwrap();c.agent_calculate(&json!({"card":"lc","fields":{"inductance_h":1e-5,"capacitance_f":1e-7}}));assert!(agent_permit.commit_prepared(||()).is_none());
+ }
+ #[test]fn full_api_snapshot_tracks_changes_beyond_summary_excerpt(){
+  let mut c=CalculatorPanel::new();let prefix="x".repeat(140);
+  c.crc.data=format!("{prefix}A");c.publish_ai_summary();let summary=c.ai_summary();
+  let (_,permit)=c.source_lease.snapshot(||()).unwrap();
+  c.crc.data=format!("{prefix}B");assert!(c.api_get()["crc"]["data"].as_str().unwrap().ends_with('A'));
+  c.publish_ai_summary();assert_eq!(c.ai_summary(),summary);assert!(c.api_get()["crc"]["data"].as_str().unwrap().ends_with('B'));assert!(permit.commit_prepared(||()).is_none());
+ }
  #[test]fn agent_uses_the_existing_numeric_engines(){let mut c=CalculatorPanel::new();let lc=c.agent_calculate(&json!({"card":"lc","fields":{"inductance_h":1e-5,"capacitance_f":1e-7}}));assert_eq!(lc["ok"],true);assert!((lc["data"]["result"]["frequency_hz"].as_f64().unwrap()-159154.943091895).abs()<0.001);let rc=c.agent_calculate(&json!({"card":"rc","fields":{"resistance_ohm":1000,"capacitance_f":1e-6,"initial_voltage_v":0,"final_voltage_v":5,"time_s":0.001}}));assert_eq!(rc["ok"],true);assert!((rc["data"]["result"]["time_constant_s"].as_f64().unwrap()-0.001).abs()<1e-12);let crc=c.agent_calculate(&json!({"card":"crc","fields":{"data":"123456789","preset":"CRC-32/ISO-HDLC","input_mode":"utf8"}}));assert_eq!(crc["data"]["result"]["result_decimal"],0xCBF43926u64);let result=c.agent_calculate(&json!({"card":"converter","fields":{"tab":"scientific","expression":"sin(90)","angle_mode":"degrees"}}));assert_eq!(result["data"]["result"],"1");}
 }

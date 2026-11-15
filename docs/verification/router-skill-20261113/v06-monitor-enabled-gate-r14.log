@@ -1,0 +1,13 @@
+
+running 8 tests
+test serial_tool::dispatch_gate::tests::altered_command_consumes_approval_and_expired_confirmation_fails ... ok
+test serial_tool::dispatch_gate::tests::changed_service_configuration_revokes_worker_claim_even_after_restore ... ok
+test serial_tool::dispatch_gate::tests::changed_source_revokes_confirmation_and_queued_command ... ok
+test serial_tool::dispatch_gate::tests::claimed_cancel_and_late_success_remain_unknown ... ok
+test serial_tool::dispatch_gate::tests::claimed_operation_loses_authority_and_cannot_be_replayed ... ok
+test serial_tool::dispatch_gate::tests::queued_confirmation_expiry_prevents_worker_claim ... ok
+test serial_tool::dispatch_gate::tests::reviewed_stop_claim_checks_both_sources_before_setting_flag ... ok
+test serial_tool::dispatch_gate::tests::reviewed_stop_claim_sets_flag_only_once_with_current_sources ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 586 filtered out; finished in 0.00s
+

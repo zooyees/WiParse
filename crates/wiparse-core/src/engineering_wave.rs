@@ -53,7 +53,8 @@ pub fn analyze(
     cancel: &AtomicBool,
 ) -> Result<Value, String> {
     if p.get("other_channel").is_some() && (other.is_none() || p["other_channel"]==p["channel"]) {return Err("WAVE.SECOND_CHANNEL_MISSING_OR_IDENTICAL".into());}
-    let n = trace.x.len().min(trace.y.len());
+    if trace.x.len() != trace.y.len() { return Err("WAVE.SAMPLE_AXIS_LENGTH_MISMATCH".into()); }
+    let n = trace.x.len();
     let a = p["start_s"].as_f64().unwrap_or(f64::NEG_INFINITY);
     let b = p["end_s"].as_f64().unwrap_or(f64::INFINITY);
     if trace.x_unit.trim() != "s" {
@@ -197,7 +198,7 @@ pub fn analyze(
         return Ok(result);
     }
     Ok(
-        json!({"first_sample_index":first_index,"last_sample_index":last_index,"sample_count":selected,"invalid_samples":invalid,"quality_complete":invalid==0,"requested_window_s":[p.get("start_s"),p.get("end_s")],"stage_label":p["stage"],"unit":trace.y_unit,"amplitude":amplitude.value(),"min":amplitude.min,"max":amplitude.max,"peak_to_peak":amplitude.min.zip(amplitude.max).map(|(a,b)|b-a),"mean":amplitude.mean,"rms":scale*(ssq/amplitude.n as f64).sqrt(),"threshold":threshold,"period_s":(periods.n>0).then_some(periods.mean),"period_statistics_s":periods.value(),"frequency_hz":(periods.n>0).then(||1./periods.mean),"high_width_s":high.value(),"low_width_s":low.value(),"dead_time_s":dead.value(),"first_to_second_dead_time_s":first_to_second.value(),"second_to_first_dead_time_s":second_to_first.value(),"same_leg_off_intervals_excluded":same_leg_gaps,"probe_deskew_verified":false,"simultaneous_high_samples":overlap,"sample_resolution_s":min_dt,"sample_interval_s":min_dt,"largest_observed_interval_s":max_dt,"external_alignment_verified":false,"raw_samples_uploaded":false,"quality_notes":"Timing uses explicit threshold crossings. Pulse statistics exclude incomplete end pulses. Dead time uses synchronized sample positions and has sample-resolution uncertainty; incomplete boundary off intervals excluded. Threshold uses native channel amplitude unit. Stage label is user supplied, not automatic Qi stage recognition. No product pass/fail without explicit limits."}),
+        json!({"first_sample_index":first_index,"last_sample_index":last_index,"source_window":[first_index.map(|i|trace.x[i]),last_index.map(|i|trace.x[i])],"sample_count":selected,"invalid_samples":invalid,"quality_complete":invalid==0,"requested_window_s":[p.get("start_s"),p.get("end_s")],"stage_label":p["stage"],"unit":trace.y_unit,"amplitude":amplitude.value(),"min":amplitude.min,"max":amplitude.max,"peak_to_peak":amplitude.min.zip(amplitude.max).map(|(a,b)|b-a),"mean":amplitude.mean,"rms":scale*(ssq/amplitude.n as f64).sqrt(),"threshold":threshold,"other_threshold":p.get("other_threshold"),"period_s":(periods.n>0).then_some(periods.mean),"period_statistics_s":periods.value(),"frequency_hz":(periods.n>0).then(||1./periods.mean),"high_width_s":high.value(),"low_width_s":low.value(),"dead_time_s":dead.value(),"first_to_second_dead_time_s":first_to_second.value(),"second_to_first_dead_time_s":second_to_first.value(),"same_leg_off_intervals_excluded":same_leg_gaps,"probe_deskew_verified":false,"simultaneous_high_samples":overlap,"sample_resolution_s":min_dt,"sample_interval_s":min_dt,"largest_observed_interval_s":max_dt,"external_alignment_verified":false,"raw_samples_uploaded":false,"quality_notes":"Timing uses explicit threshold crossings. Pulse statistics exclude incomplete end pulses. Dead time uses synchronized sample positions and has sample-resolution uncertainty; incomplete boundary off intervals excluded. Threshold uses native channel amplitude unit. Stage label is user supplied, not automatic Qi stage recognition. No product pass/fail without explicit limits."}),
     )
 }
 #[cfg(test)]
@@ -215,6 +216,12 @@ mod tests {
                     .collect(),
             ),
         }
+    }
+    #[test]
+    fn mismatched_sample_and_time_axis_cannot_claim_complete_measurement() {
+        let mut t=trace();
+        t.y=WaveformTrace::wave_axis(t.y[..t.y.len()-1].to_vec());
+        assert_eq!(analyze(&t,None,&json!({"threshold":1.65}),&AtomicBool::new(false)).unwrap_err(),"WAVE.SAMPLE_AXIS_LENGTH_MISMATCH");
     }
     #[test]
     fn pwm_period_width_and_cancellation() {

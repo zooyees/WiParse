@@ -2,8 +2,10 @@
 pub mod context;
 pub mod tools;
 pub mod workflow;
+pub mod skills;
 pub mod usage;
 pub mod telemetry;
+pub mod source_lease;
 use crossbeam_channel::{bounded, Receiver};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -100,6 +102,8 @@ pub enum AiError {
         "AI.RESPONSE: 服务返回无效、过大或不完整的文本 / Invalid, oversized or incomplete response"
     )]
     Response,
+    #[error("AI.RESPONSE: {0}")]
+    ResponseDetail(&'static str),
     #[error(
         "AI.TRUNCATED: 输出达到 token 上限，请增加输出上限或缩短问题 / Output token limit reached"
     )]
@@ -179,6 +183,67 @@ pub struct AiRequest {
     pub purpose: String,
     pub text: String,
 }
+/// Immutable request components captured together with a source generation.
+/// Only source owners with complete writer coverage may use this for review.
+pub struct ReviewedSnapshot {
+    request: AiRequest,
+    history: Vec<AiMessage>,
+    tools: Option<tools::Conversation>,
+    permits: Vec<source_lease::SourcePermit>,
+}
+/// Immutable host data captured with the generation that produced it.
+#[derive(Clone)]
+pub struct ReviewedSource<T> { value:T, permit:source_lease::SourcePermit }
+/// Two independently captured host-owned sources, both required at dispatch.
+#[derive(Clone)]
+pub struct ReviewedPair<A,B> { first:A, second:B, permits:Vec<source_lease::SourcePermit> }
+impl<T> ReviewedSource<T> {
+    pub fn value(&self)->&T { &self.value }
+    pub fn generation(&self)->u64 { self.permit.generation() }
+    pub fn is_current(&self)->bool { self.permit.recapture(||()).is_some() }
+    pub fn capture(lease:&source_lease::SourceLease,read:impl FnOnce()->T)->Option<Self>{
+        let (value,permit)=lease.snapshot(read)?;Some(Self{value,permit})
+    }
+    /// Derive a value from the captured data while retaining its source permit.
+    /// The mapping must not read mutable external state.
+    pub fn map<U>(self, derive:impl FnOnce(T)->U)->ReviewedSource<U> {
+        ReviewedSource { value:derive(self.value), permit:self.permit }
+    }
+    pub fn into_request(self,build:impl FnOnce(T)->(AiRequest,Vec<AiMessage>,Option<tools::Conversation>))->Option<ReviewedSnapshot>{
+        let prepared=build(self.value);
+        let ((request,history,tools),permit)=self.permit.recapture(||prepared)?;
+        Some(ReviewedSnapshot{request,history,tools,permits:vec![permit]})
+    }
+    pub fn join<U>(self,other:ReviewedSource<U>)->ReviewedPair<T,U> {
+        ReviewedPair{first:self.value,second:other.value,permits:vec![self.permit,other.permit]}
+    }
+}
+impl<A,B> ReviewedPair<A,B> {
+    /// Commit bounded in-memory state while both source generations are held.
+    /// The callback must never block, perform I/O, or acquire a source lease.
+    pub fn commit_in_memory<T>(&self, action:impl FnOnce()->T)->Option<T> {
+        let mut result=None;
+        if source_lease::SourcePermit::commit_all(&self.permits,||{result=Some(action());true}) {result} else {None}
+    }
+    pub fn join<C>(mut self,other:ReviewedSource<C>)->ReviewedPair<(A,B),C> {
+        self.permits.push(other.permit);
+        ReviewedPair{first:(self.first,self.second),second:other.value,permits:self.permits}
+    }
+    pub fn into_request(self,build:impl FnOnce(A,B)->(AiRequest,Vec<AiMessage>,Option<tools::Conversation>))->Option<ReviewedSnapshot> {
+        let prepared=build(self.first,self.second);
+        if !source_lease::SourcePermit::commit_all(&self.permits,||true) {return None;}
+        let (request,history,tools)=prepared;
+        Some(ReviewedSnapshot{request,history,tools,permits:self.permits})
+    }
+}
+impl ReviewedSnapshot {
+    /// `capture` must read every included source inside this same lease and
+    /// must not perform I/O, UI work, or wait for workers inside the closure.
+    pub fn capture(lease:&source_lease::SourceLease, capture:impl FnOnce()->(AiRequest,Vec<AiMessage>,Option<tools::Conversation>))->Option<Self> {
+        let ((request,history,tools),permit)=lease.snapshot(capture)?;
+        Some(Self{request,history,tools,permits:vec![permit]})
+    }
+}
 /// Only user/assistant messages are accepted; callers cannot replace the system policy.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "role", content = "content", rename_all = "lowercase")]
@@ -199,6 +264,8 @@ pub struct AiReply {
 #[derive(Clone)]
 pub struct AiService {
     config: Arc<RwLock<AiConfig>>,
+    config_revision: Arc<AtomicUsize>,
+    instance_id: uuid::Uuid,
     running: Arc<AtomicUsize>,
 }
 mod streaming;
@@ -208,12 +275,50 @@ pub struct AiTask {
     pub result: Receiver<Result<AiReply, AiError>>,
     cancelled: Arc<AtomicBool>,
     socket: Arc<std::sync::Mutex<Option<std::net::TcpStream>>>,
+    review: Option<Arc<OutboundReviewState>>,
+}
+/// Exact serialized request, excluding authorization headers and credentials.
+#[derive(Clone)]
+pub struct OutboundPreview { pub endpoint: String, pub body: Value, equivalence: String }
+impl OutboundPreview {
+    /// Opaque in-memory comparison key. Never includes credentials in the preview.
+    pub fn equivalence_key(&self) -> &str { &self.equivalence }
+}
+struct OutboundReviewState {
+    preview: std::sync::Mutex<Option<OutboundPreview>>,
+    source_permit: Option<Vec<source_lease::SourcePermit>>,
+    // 0 = waiting, 1 = approved, 2 = revoked, 3 = dispatch committed.
+    decision: AtomicUsize,
 }
 impl AiTask {
     pub fn cancel(&self) {
+        self.cancel_outbound_before_dispatch();
         self.cancelled.store(true, Ordering::Release);
         if let Ok(socket)=self.socket.lock(){if let Some(socket)=socket.as_ref(){let _=socket.shutdown(std::net::Shutdown::Both);}}
 
+    }
+    /// Atomically revoke a staged or approved request if dispatch has not committed.
+    /// False means it may already have started; it is not evidence of delivery.
+    pub fn cancel_outbound_before_dispatch(&self) -> bool {
+        self.review.as_ref().is_some_and(|r| r.decision.fetch_update(
+            Ordering::AcqRel, Ordering::Acquire,
+            |state| (state == 0 || state == 1).then_some(2),
+        ).is_ok())
+    }
+    pub fn outbound_preview(&self) -> Option<OutboundPreview> {
+        let review = self.review.as_ref()?;
+        if review.decision.load(Ordering::Acquire) != 0 { return None; }
+        review.preview.lock().ok()?.clone()
+    }
+    pub fn awaiting_outbound_review(&self) -> bool {
+        self.review.as_ref().is_some_and(|r| r.decision.load(Ordering::Acquire) == 0)
+    }
+    pub fn approve_outbound(&self) -> bool {
+        self.review.as_ref().is_some_and(|r| r.preview.lock().is_ok_and(|p| p.is_some())
+            && r.decision.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire).is_ok())
+    }
+    pub fn reject_outbound(&self) -> bool {
+        self.review.as_ref().is_some_and(|r| r.decision.compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire).is_ok())
     }
 }
 struct Slot(Arc<AtomicUsize>);
@@ -223,17 +328,52 @@ impl Drop for Slot {
     }
 }
 impl AiService {
+    /// Consumes the exact components captured with the source permit.
+    pub fn submit_reviewed_snapshot(&self,snapshot:ReviewedSnapshot)->Result<AiTask,AiError>{
+        let ReviewedSnapshot{request,history,tools,permits}=snapshot;
+        if let Some(tools)=&tools {tools.validate()?;}
+        let config=self.config.read().unwrap_or_else(|e|e.into_inner()).clone();
+        let tools=tools.filter(|_|config.protocol==AiProtocol::ChatCompletions && config.tool_mode!=AiToolMode::Json);
+        self.submit_config_agent_review(config,request,history,tools,true,Some(permits),None)
+    }
+    pub fn submit_reviewed_snapshot_at_revision(&self,snapshot:ReviewedSnapshot,instance:uuid::Uuid,revision:usize)->Result<AiTask,AiError>{
+        if instance!=self.instance_id {return Err(AiError::Config("AI service changed; retry"));}
+        let ReviewedSnapshot{request,history,tools,permits}=snapshot;
+        if let Some(tools)=&tools {tools.validate()?;}
+        let config=self.config.read().map_err(|_|AiError::Config("AI configuration unavailable"))?.clone();
+        let tools=tools.filter(|_|config.protocol==AiProtocol::ChatCompletions && config.tool_mode!=AiToolMode::Json);
+        self.submit_config_agent_review(config,request,history,tools,true,Some(permits),Some(revision))
+    }
     pub fn new(config: AiConfig) -> Self {
         Self {
             config: Arc::new(RwLock::new(config)),
+            config_revision: Arc::new(AtomicUsize::new(0)),
+            instance_id: uuid::Uuid::new_v4(),
             running: Arc::new(AtomicUsize::new(0)),
         }
     }
     pub fn native_tools_enabled(&self) -> bool {
         context::native(&self.config.read().unwrap_or_else(|e| e.into_inner()))
     }
+    pub fn instance_id(&self)->uuid::Uuid { self.instance_id }
+    /// Bind a control proposal to the exact service configuration it used.
+    pub fn revision_for_config(&self, expected:&AiConfig)->Option<usize> {
+        let config=self.config.read().ok()?;
+        (&*config==expected).then(||self.config_revision.load(Ordering::Acquire))
+    }
+    /// Hold the same configuration read boundary used for network dispatch.
+    /// The callback must be bounded and perform no I/O.
+    pub fn commit_config_revision<T>(&self, revision:usize, action:impl FnOnce()->T)->Option<T> {
+        let _config=self.config.read().ok()?;
+        if self.config_revision.load(Ordering::Acquire)!=revision {return None;}
+        Some(action())
+    }
     pub fn configure(&self, config: AiConfig) {
-        *self.config.write().unwrap_or_else(|e| e.into_inner()) = config;
+        let mut current = self.config.write().unwrap_or_else(|e| e.into_inner());
+        if *current != config {
+            *current = config;
+            self.config_revision.fetch_add(1, Ordering::AcqRel);
+        }
     }
     /// Returns immediately; TLS, HTTP and JSON parsing happen in a bounded worker.
     pub fn submit(&self, request: AiRequest) -> Result<AiTask, AiError> {
@@ -263,6 +403,29 @@ impl AiService {
         let tools=(config.protocol==AiProtocol::ChatCompletions&&config.tool_mode!=AiToolMode::Json).then_some(tools);
         self.submit_config_agent(config,request,history,tools)
     }
+    /// Stage an exact outbound request for explicit user review before network I/O.
+    pub fn submit_conversation_reviewed(&self, request: AiRequest, history: Vec<AiMessage>) -> Result<AiTask, AiError> {
+        let config = self.config.read().unwrap_or_else(|e| e.into_inner()).clone();
+        self.submit_config_agent_review(config, request, history, None, true, None,None)
+    }
+    pub fn submit_agent_reviewed(&self, request: AiRequest, history: Vec<AiMessage>, tools: tools::Conversation) -> Result<AiTask, AiError> {
+        tools.validate()?;
+        let config = self.config.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let tools = (config.protocol == AiProtocol::ChatCompletions && config.tool_mode != AiToolMode::Json).then_some(tools);
+        self.submit_config_agent_review(config, request, history, tools, true, None,None)
+    }
+    /// The permit must come from constructing the actual source snapshot under
+    /// a fully integrated source lease, not from a later polling observation.
+    pub fn submit_conversation_reviewed_guarded(&self, request: AiRequest, history: Vec<AiMessage>, permit: source_lease::SourcePermit) -> Result<AiTask, AiError> {
+        let config = self.config.read().unwrap_or_else(|e| e.into_inner()).clone();
+        self.submit_config_agent_review(config, request, history, None, true, Some(vec![permit]),None)
+    }
+    pub fn submit_agent_reviewed_guarded(&self, request: AiRequest, history: Vec<AiMessage>, tools: tools::Conversation, permit: source_lease::SourcePermit) -> Result<AiTask, AiError> {
+        tools.validate()?;
+        let config = self.config.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let tools = (config.protocol == AiProtocol::ChatCompletions && config.tool_mode != AiToolMode::Json).then_some(tools);
+        self.submit_config_agent_review(config, request, history, tools, true, Some(vec![permit]),None)
+    }
     /// Explicit test of unsaved settings, sharing the same concurrency budget.
     pub fn test_connection(&self, mut config: AiConfig) -> Result<AiTask, AiError> {
         config.enabled = true;
@@ -287,6 +450,17 @@ impl AiService {
         self.submit_config_agent(config,request,history,None)
     }
     fn submit_config_agent(&self,config:AiConfig,request:AiRequest,history:Vec<AiMessage>,tools:Option<tools::Conversation>)->Result<AiTask,AiError>{
+        self.submit_config_agent_review(config,request,history,tools,false,None,None)
+    }
+    fn submit_config_agent_review(&self,config:AiConfig,request:AiRequest,history:Vec<AiMessage>,tools:Option<tools::Conversation>,reviewed:bool,source_permit:Option<Vec<source_lease::SourcePermit>>,expected_revision:Option<usize>)->Result<AiTask,AiError>{
+
+        let revision = if reviewed {
+            let current = self.config.read().unwrap_or_else(|e| e.into_inner());
+            if *current != config { return Err(AiError::Config("配置已变化，请重新发起请求 / Configuration changed; retry")); }
+            let revision=self.config_revision.load(Ordering::Acquire);
+            if expected_revision.is_some_and(|expected|expected!=revision) {return Err(AiError::Config("配置已变化，请重新发起请求 / Configuration changed; retry"));}
+            revision
+        } else { 0 };
 
         if !config.enabled {
             return Err(AiError::Disabled);
@@ -319,6 +493,10 @@ impl AiService {
         let (tx, result) = bounded(1);
         let progress = Arc::new(std::sync::Mutex::new(None));
         let worker_progress = progress.clone();
+        let review = reviewed.then(|| Arc::new(OutboundReviewState { preview: std::sync::Mutex::new(None), source_permit, decision: AtomicUsize::new(0) }));
+        let worker_review = review.clone();
+        let current_config = self.config.clone();
+        let current_revision = self.config_revision.clone();
         std::thread::Builder::new()
             .name("wiparse-ai".into())
             .spawn(move || {
@@ -327,7 +505,7 @@ impl AiService {
                 let reply = if flag.load(Ordering::Acquire) {
                     Err(AiError::Cancelled)
                 } else {
-                    complete(&config, &request, &history,flag.clone(),worker_socket,tools.as_ref(),worker_progress)
+                    complete(&config, &request, &history,flag.clone(),worker_socket,tools.as_ref(),worker_progress,worker_review.as_ref(),&current_config,&current_revision,revision)
                 };
                 tracing::info!(target:"wiparse_ai_usage", metrics=%telemetry::measurement(&request,&history,tools.as_ref(),started.elapsed().as_millis(),&reply), "AI request completed");
                 let _ = tx.send(if flag.load(Ordering::Acquire) {
@@ -337,7 +515,7 @@ impl AiService {
                 });
             })
             .map_err(|_| AiError::Busy)?;
-        Ok(AiTask { result, cancelled, socket, progress })
+        Ok(AiTask { result, cancelled, socket, progress, review })
     }
 }
 fn complete(
@@ -348,6 +526,10 @@ fn complete(
     socket:Arc<std::sync::Mutex<Option<std::net::TcpStream>>>,
     tools:Option<&tools::Conversation>,
     progress:Arc<std::sync::Mutex<Option<String>>>,
+    review:Option<&Arc<OutboundReviewState>>,
+    current_config:&Arc<RwLock<AiConfig>>,
+    current_revision:&Arc<AtomicUsize>,
+    revision:usize,
 ) -> Result<AiReply, AiError> {
     let endpoint = config.endpoint()?;
     let key = config.key()?;
@@ -387,8 +569,54 @@ fn complete(
     }
     if let Some(tools)=tools {
         body["tools"]=json!(tools.functions.iter().map(|f|json!({"type":"function","function":{"name":f.name,"description":f.description,"parameters":f.parameters}})).collect::<Vec<_>>());
-        body["tool_choice"]=json!("auto");
+        body["tool_choice"] = if tools.functions.len() == 1 && tools.functions[0].name == "wiparse_plan"
+            && config.thinking != Some(true) {
+            json!({"type":"function","function":{"name":"wiparse_plan"}})
+        } else { json!("auto") };
         // The host enforces one call; do not send provider-specific parallel flags.
+    }
+    if let Some(review) = review {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        let body_encoded = body.to_string();
+        let config_encoded = serde_json::to_vec(config).map_err(|_| AiError::Input)?;
+        for part in [endpoint.as_bytes(), body_encoded.as_bytes(), config_encoded.as_slice(), key.as_bytes()] {
+            hash.update((part.len() as u64).to_le_bytes()); hash.update(part);
+        }
+        let equivalence = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        *review.preview.lock().map_err(|_| AiError::Cancelled)? = Some(OutboundPreview { endpoint: endpoint.clone(), body: body.clone(), equivalence });
+        let review_started = std::time::Instant::now();
+        loop {
+            if cancelled.load(Ordering::Acquire) || review_started.elapsed() >= Duration::from_secs(600) {
+                let _ = review.decision.fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| (state == 0 || state == 1).then_some(2));
+                return Err(AiError::Cancelled);
+            }
+            match review.decision.load(Ordering::Acquire) {
+                1 => break,
+                2 => return Err(AiError::Cancelled),
+                _ => std::thread::sleep(Duration::from_millis(50)),
+            }
+        }
+        // Credentials are never part of the preview. Changes to configuration or
+        // environment-backed credentials invalidate the staged request.
+        let current = current_config.read().unwrap_or_else(|e| e.into_inner());
+        if *current != *config || current_revision.load(Ordering::Acquire) != revision || config.key()? != key {
+            return Err(AiError::Config("配置或凭据已变化，请重新审阅请求 / Configuration changed; review again"));
+        }
+        if cancelled.load(Ordering::Acquire) { return Err(AiError::Cancelled); }
+        // This CAS is the linearization point: cancellation/revocation wins before it;
+        // afterwards the request may be sent, so callers must report an unknown outcome.
+        let commit = || review.decision.compare_exchange(1, 3, Ordering::AcqRel, Ordering::Acquire).is_ok();
+        // Legacy reviewed callers may stage and reject, but cannot send without
+        // an explicit source permit. Ordinary non-reviewed calls are unchanged.
+        let committed = match &review.source_permit { Some(permits) => source_lease::SourcePermit::commit_all(permits,commit), None => false };
+        if !committed {
+            if review.decision.compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+                return Err(AiError::Config("来源已变化或无法验证，请重新采集并审阅 / Source changed or unavailable; recapture and review"));
+            }
+            return Err(AiError::Cancelled);
+        }
+        drop(current);
     }
     // Do not forward credentials to redirects and never retry a potentially billable POST.
     let connector=CancelConnector{cancelled:cancelled.clone(),socket};
@@ -417,7 +645,7 @@ fn complete(
         let reply = streaming::read(config, response.into_reader(), &cancelled, &progress)?;
         benchmark.usage(&reply.usage);
         if let Some(message) = &reply.tool_message {
-            if !tools.is_some_and(|t| message.calls.iter().all(|c| t.functions.iter().any(|f|f.name == c.name))) { return Err(AiError::Response); }
+            if !tools.is_some_and(|t| message.calls.iter().all(|c| t.functions.iter().any(|f|f.name == c.name))) { return Err(AiError::ResponseDetail("回复调用了本次请求未提供的工具")); }
         }
         return Ok(reply);
     }
@@ -428,15 +656,23 @@ fn complete(
         .read_to_end(&mut bytes)
         .map_err(|_| AiError::Network)?;
     if bytes.len() as u64 > MAX_RESPONSE {
-        return Err(AiError::Response);
+        return Err(AiError::ResponseDetail("服务响应超过允许的字节数"));
     }
-    let value: Value = serde_json::from_slice(&bytes).map_err(|_| AiError::Response)?;
+    let value: Value = serde_json::from_slice(&bytes).map_err(|_| AiError::ResponseDetail("服务响应不是完整的 JSON"))?;
     benchmark.usage(&value["usage"]);
     let reply=parse_reply(config,value)?;
     if let Some(message)=&reply.tool_message{
-        if !tools.is_some_and(|t|message.calls.iter().all(|c|t.functions.iter().any(|f|f.name==c.name))){return Err(AiError::Response);}
+        if !tools.is_some_and(|t|message.calls.iter().all(|c|t.functions.iter().any(|f|f.name==c.name))){return Err(AiError::ResponseDetail("回复调用了本次请求未提供的工具"));}
     }
     Ok(reply)
+}
+fn append_text_content(text:&mut String, content:&Value) {
+    if let Some(s)=content.as_str() { text.push_str(s); }
+    else if let Some(parts)=content.as_array() {
+        for part in parts.iter().filter(|p|matches!(p["type"].as_str(),Some("text"|"output_text"))) {
+            if let Some(s)=part["text"].as_str() {text.push_str(s);}
+        }
+    }
 }
 fn parse_reply(config: &AiConfig, value: Value) -> Result<AiReply, AiError> {
     let tool_message=if config.protocol==AiProtocol::ChatCompletions{tools::parse(&value["choices"][0]["message"])?}else{None};
@@ -444,13 +680,12 @@ fn parse_reply(config: &AiConfig, value: Value) -> Result<AiReply, AiError> {
         AiProtocol::ChatCompletions => {
             let choice = &value["choices"][0];
             if choice["finish_reason"] != "stop" && choice["finish_reason"] != "length" && !(choice["finish_reason"]=="tool_calls"&&tool_message.is_some()) {
-                return Err(AiError::Response);
+                return Err(AiError::ResponseDetail("回复缺少有效的结束标记，或工具调用未完整返回"));
             }
+            let mut text=String::new();
+            append_text_content(&mut text,&choice["message"]["content"]);
             (
-                choice["message"]["content"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_owned(),
+                text,
                 choice["finish_reason"].as_str().map(str::to_owned),
             )
         }
@@ -458,7 +693,7 @@ fn parse_reply(config: &AiConfig, value: Value) -> Result<AiReply, AiError> {
             let limited = value["status"] == "incomplete"
                 && value["incomplete_details"]["reason"] == "max_output_tokens";
             if value["status"] != "completed" && !limited {
-                return Err(AiError::Response);
+                return Err(AiError::ResponseDetail("服务未返回已完成的响应状态"));
             }
             let mut parts = Vec::new();
             for output in value["output"].as_array().ok_or(AiError::Response)? {
@@ -481,7 +716,7 @@ fn parse_reply(config: &AiConfig, value: Value) -> Result<AiReply, AiError> {
         }
     };
     if text.trim().is_empty() && tool_message.is_none() {
-        return Err(AiError::Response);
+        return Err(if finish_reason.as_deref()==Some("length") { AiError::Truncated } else { AiError::ResponseDetail("服务未返回可显示的正文或工具结果") });
     }
     Ok(AiReply {
         text,
@@ -674,6 +909,269 @@ mod tests {
     }
     fn chat() -> String {
         json!({"model":"test-model", "choices":[{"message":{"content":"检查电压"},"finish_reason":"stop"}],"usage":{"total_tokens":10}}).to_string()
+    }
+
+    #[test]
+    fn reviewed_request_rejects_before_connect_and_sends_exact_approved_body() {
+        for approve in [false, true] {
+            let (url, requests, server) = mock(200, "application/json", chat(), "");
+            let service = AiService::new(config(url));
+            let source = source_lease::SourceLease::default();
+            let ((request, history), permit) = source.snapshot(|| (request(), vec![AiMessage::User("fixture".into())])).unwrap();
+            let task = service.submit_conversation_reviewed_guarded(request, history, permit).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let preview = loop {
+                if let Some(preview) = task.outbound_preview() { break preview; }
+                assert!(Instant::now() < deadline, "preview missing");
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            assert!(!preview.body.to_string().contains("Authorization"));
+            assert!(requests.try_recv().is_err(), "connected before consent");
+            if approve {
+                assert!(task.approve_outbound());
+                let (_, actual) = requests.recv_timeout(Duration::from_secs(3)).unwrap();
+                assert_eq!(actual, preview.body);
+                assert!(task.result.recv_timeout(Duration::from_secs(3)).unwrap().is_ok());
+            } else {
+                assert!(task.reject_outbound());
+                assert_eq!(task.result.recv_timeout(Duration::from_secs(3)).unwrap().unwrap_err(), AiError::Cancelled);
+                assert!(requests.try_recv().is_err());
+            }
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn reviewed_request_invalidates_changed_config_before_connect() {
+        let (url, requests, server) = mock(200, "application/json", chat(), "");
+        let initial = config(url); let service = AiService::new(initial.clone());
+        let task = service.submit_conversation_reviewed(request(), vec![]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while task.outbound_preview().is_none() {
+            assert!(Instant::now() < deadline); std::thread::sleep(Duration::from_millis(5));
+        }
+        let mut changed = initial; changed.model = "changed-model".into(); service.configure(changed);
+        assert!(task.approve_outbound());
+        assert!(matches!(task.result.recv_timeout(Duration::from_secs(3)).unwrap(), Err(AiError::Config(_))));
+        assert!(requests.try_recv().is_err());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn reviewed_request_does_not_reuse_approval_after_config_changes_back() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let initial = config(format!("http://{}", listener.local_addr().unwrap()));
+        let service = AiService::new(initial.clone());
+        let task = service.submit_conversation_reviewed(request(), vec![]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while task.outbound_preview().is_none() {
+            assert!(Instant::now() < deadline); std::thread::sleep(Duration::from_millis(5));
+        }
+        let mut changed = initial.clone(); changed.model = "temporary-change".into();
+        service.configure(changed); service.configure(initial);
+        assert!(task.approve_outbound());
+        assert!(matches!(task.result.recv_timeout(Duration::from_secs(3)).unwrap(), Err(AiError::Config(_))));
+        assert!(matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+    }
+
+    #[test]
+    fn guarded_review_does_not_send_after_source_mutation() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let service = AiService::new(config(format!("http://{}", listener.local_addr().unwrap())));
+        let source = source_lease::SourceLease::default();
+        let (request, permit) = source.snapshot(request).unwrap();
+        let task = service.submit_conversation_reviewed_guarded(request, vec![], permit).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while task.outbound_preview().is_none() {
+            assert!(Instant::now() < deadline); std::thread::sleep(Duration::from_millis(5));
+        }
+        source.mutate(|| ()).unwrap();
+        assert!(task.approve_outbound());
+        assert!(matches!(task.result.recv_timeout(Duration::from_secs(3)).unwrap(), Err(AiError::Config(_))));
+        assert!(matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+    }
+
+    #[test]
+    fn captured_review_snapshot_rejects_update_before_dispatch() {
+        let listener=TcpListener::bind("127.0.0.1:0").unwrap();listener.set_nonblocking(true).unwrap();
+        let service=AiService::new(config(format!("http://{}",listener.local_addr().unwrap())));
+        let source=source_lease::SourceLease::default();
+        let snapshot=ReviewedSnapshot::capture(&source,||(request(),vec![AiMessage::User("captured history".into())],None)).unwrap();
+        let task=service.submit_reviewed_snapshot(snapshot).unwrap();let deadline=Instant::now()+Duration::from_secs(2);
+        while task.outbound_preview().is_none(){assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(5));}
+        let update=source.begin_update();drop(update);assert!(task.approve_outbound());
+        assert!(matches!(task.result.recv_timeout(Duration::from_secs(3)).unwrap(),Err(AiError::Config(_))));
+        assert!(matches!(listener.accept(),Err(e) if e.kind()==std::io::ErrorKind::WouldBlock));
+    }
+    #[test]
+    fn reviewed_source_refuses_to_build_request_after_aba_update() {
+        let lease=source_lease::SourceLease::default();
+        let mut value=1;
+        let source=ReviewedSource::capture(&lease,||value).unwrap();
+        lease.mutate_always(||value=2);lease.mutate_always(||value=1);
+        assert!(source.into_request(|captured|(AiRequest{purpose:"fixture".into(),text:captured.to_string()},vec![],None)).is_none());
+    }
+    #[test]
+    fn derived_review_source_retains_original_generation() {
+        let lease=source_lease::SourceLease::default();
+        let source=ReviewedSource::capture(&lease, || ("state", "sample")).unwrap().map(|(_,sample)|sample);
+        assert_eq!(*source.value(), "sample");
+        lease.mutate_always(|| ());
+        assert!(!source.is_current());
+        assert!(source.into_request(|sample|(AiRequest{purpose:"fixture".into(),text:sample.into()},vec![],None)).is_none());
+    }
+    #[test]
+    fn reviewed_submission_rejects_configuration_aba_since_capture() {
+        let original=config("http://127.0.0.1:9".into());
+        let service=AiService::new(original.clone());
+        let revision=service.revision_for_config(&original).unwrap();
+        let lease=source_lease::SourceLease::default();
+        let snapshot=ReviewedSnapshot::capture(&lease,||(request(),vec![],None)).unwrap();
+        let mut changed=original.clone();changed.model="another-model".into();
+        service.configure(changed);service.configure(original);
+        assert!(matches!(service.submit_reviewed_snapshot_at_revision(snapshot,service.instance_id(),revision),Err(AiError::Config(_))));
+    }
+    #[test]
+    fn combined_review_rejects_either_changed_source_before_dispatch() {
+        for changed in [0,1] {
+            let listener=TcpListener::bind("127.0.0.1:0").unwrap();listener.set_nonblocking(true).unwrap();
+            let service=AiService::new(config(format!("http://{}",listener.local_addr().unwrap())));
+            let first=source_lease::SourceLease::default();let second=source_lease::SourceLease::default();
+            let pair=ReviewedSource::capture(&first,||"one").unwrap().join(ReviewedSource::capture(&second,||"two").unwrap());
+            let snapshot=pair.into_request(|a,b|(AiRequest{purpose:"fixture".into(),text:format!("{a} {b}")},vec![],None)).unwrap();
+            let task=service.submit_reviewed_snapshot(snapshot).unwrap();let deadline=Instant::now()+Duration::from_secs(2);
+            while task.outbound_preview().is_none(){assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(5));}
+            if changed==0 {first.mutate_always(||());}else{second.mutate_always(||());}
+            assert!(task.approve_outbound());assert!(matches!(task.result.recv_timeout(Duration::from_secs(3)).unwrap(),Err(AiError::Config(_))));
+            assert!(matches!(listener.accept(),Err(e) if e.kind()==std::io::ErrorKind::WouldBlock));
+        }
+    }
+
+    #[test]
+    fn reviewed_monitor_rejects_config_aba_before_dispatch_even_with_valid_sources() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let initial = config(format!("http://{}", listener.local_addr().unwrap()));
+        let service = AiService::new(initial.clone());
+        let task_lease = source_lease::SourceLease::default();
+        let watch_lease = source_lease::SourceLease::default();
+        let sample_lease = source_lease::SourceLease::default();
+        let snapshot = ReviewedSource::capture(&task_lease, || ()).unwrap()
+            .join(ReviewedSource::capture(&watch_lease, || ()).unwrap())
+            .join(ReviewedSource::capture(&sample_lease, || ()).unwrap())
+            .into_request(|_, _| (request(), vec![], None)).unwrap();
+        let task = service.submit_reviewed_snapshot(snapshot).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while task.outbound_preview().is_none() { assert!(Instant::now() < deadline); std::thread::sleep(Duration::from_millis(5)); }
+        let mut changed = initial.clone(); changed.model = "temporary-change".into();
+        service.configure(changed); service.configure(initial);
+        assert!(task.approve_outbound());
+        assert!(matches!(task.result.recv_timeout(Duration::from_secs(3)).unwrap(), Err(AiError::Config(_))));
+        assert!(matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+    }
+
+    #[test]
+    fn reviewed_monitor_dispatch_rejects_any_changed_task_watch_or_sample() {
+        for changed in 0..3 {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let service = AiService::new(config(format!("http://{}", listener.local_addr().unwrap())));
+            let task_lease = source_lease::SourceLease::default();
+            let watch_lease = source_lease::SourceLease::default();
+            let sample_lease = source_lease::SourceLease::default();
+            let task_source = ReviewedSource::capture(&task_lease, || "task").unwrap();
+            let watch_source = ReviewedSource::capture(&watch_lease, || "watch").unwrap();
+            let sample_source = ReviewedSource::capture(&sample_lease, || "sample").unwrap();
+            let snapshot = task_source.join(watch_source).join(sample_source)
+                .into_request(|_, _| (request(), vec![], None)).unwrap();
+            let task = service.submit_reviewed_snapshot(snapshot).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while task.outbound_preview().is_none() { assert!(Instant::now() < deadline); std::thread::sleep(Duration::from_millis(5)); }
+            match changed { 0 => task_lease.mutate_always(|| ()), 1 => watch_lease.mutate_always(|| ()), _ => sample_lease.mutate_always(|| ()) };
+            assert!(task.approve_outbound());
+            assert!(matches!(task.result.recv_timeout(Duration::from_secs(3)).unwrap(), Err(AiError::Config(_))));
+            assert!(matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+        }
+    }
+
+    #[test]
+    fn guarded_review_cannot_send_during_update_or_after_cancellation() {
+        for cancel in [false,true] {
+            let listener=TcpListener::bind("127.0.0.1:0").unwrap();listener.set_nonblocking(true).unwrap();
+            let service=AiService::new(config(format!("http://{}",listener.local_addr().unwrap())));
+            let source=source_lease::SourceLease::default();let (request,permit)=source.snapshot(request).unwrap();
+            let task=service.submit_conversation_reviewed_guarded(request,vec![],permit).unwrap();
+            let deadline=Instant::now()+Duration::from_secs(2);
+            while task.outbound_preview().is_none(){assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(5));}
+            let update=source.begin_update();
+            if cancel {assert!(task.cancel_outbound_before_dispatch());} else {assert!(task.approve_outbound());}
+            assert!(task.result.recv_timeout(Duration::from_secs(3)).unwrap().is_err());
+            drop(update);
+            assert!(matches!(listener.accept(),Err(e) if e.kind()==std::io::ErrorKind::WouldBlock));
+        }
+    }
+
+    #[test]
+    fn legacy_review_without_source_permit_is_blocked_before_connect() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let service = AiService::new(config(format!("http://{}", listener.local_addr().unwrap())));
+        let task = service.submit_conversation_reviewed(request(), vec![]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while task.outbound_preview().is_none() {
+            assert!(Instant::now() < deadline); std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(task.approve_outbound());
+        assert!(matches!(task.result.recv_timeout(Duration::from_secs(3)).unwrap(), Err(AiError::Config(_))));
+        assert!(matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+    }
+
+    #[test]
+    fn outbound_revocation_and_dispatch_commit_are_mutually_exclusive() {
+        let state = OutboundReviewState { preview: std::sync::Mutex::new(None), source_permit: None, decision: AtomicUsize::new(1) };
+        assert!(state.decision.compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire).is_ok());
+        assert!(state.decision.compare_exchange(1, 3, Ordering::AcqRel, Ordering::Acquire).is_err());
+        state.decision.store(1, Ordering::Release);
+        assert!(state.decision.compare_exchange(1, 3, Ordering::AcqRel, Ordering::Acquire).is_ok());
+        assert!(state.decision.fetch_update(Ordering::AcqRel, Ordering::Acquire, |s| (s == 0 || s == 1).then_some(2)).is_err());
+    }
+
+    #[test]
+    fn native_review_can_be_cancelled_without_opening_connection() {
+        let (url, requests, server) = mock(200, "application/json", chat(), "");
+        let service = AiService::new(config(url));
+        let tools = tools::Conversation { functions: vec![tools::Function {
+            name:"wiparse_call".into(), description:"fixture".into(), parameters:json!({"type":"object"}),
+        }], ..Default::default() };
+        let task = service.submit_agent_reviewed(request(), vec![], tools).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let preview = loop {
+            if let Some(preview) = task.outbound_preview() { break preview; }
+            assert!(Instant::now() < deadline); std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(preview.body["tools"][0]["function"]["name"], "wiparse_call");
+        task.cancel();
+        assert_eq!(task.result.recv_timeout(Duration::from_secs(3)).unwrap().unwrap_err(), AiError::Cancelled);
+        assert!(requests.try_recv().is_err());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn reviewed_rejection_makes_no_tcp_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let service = AiService::new(config(format!("http://{}", listener.local_addr().unwrap())));
+        let task = service.submit_conversation_reviewed(request(), vec![]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while task.outbound_preview().is_none() {
+            assert!(Instant::now() < deadline); std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+        assert!(task.reject_outbound());
+        assert_eq!(task.result.recv_timeout(Duration::from_secs(3)).unwrap().unwrap_err(), AiError::Cancelled);
+        assert!(matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
     }
 
     #[test]
@@ -937,7 +1435,7 @@ mod tests {
                 .recv_timeout(Duration::from_secs(5))
                 .unwrap()
                 .unwrap_err(),
-            AiError::Response
+            AiError::ResponseDetail("服务响应超过允许的字节数")
         );
         handle.join().unwrap();
     }

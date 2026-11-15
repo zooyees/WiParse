@@ -88,6 +88,13 @@ export function writeReport(dir, bundle, run) {
   const text=`# 无线充电自动检验\n\n模式：${cell(run.mode)}；执行：${cell(run.execution_status)}；产品：${cell(run.product_verdict)}\n\n运行 ID：${cell(run.run_id)}；尝试 ID：${cell(run.attempt_id)}\n\n检查结果：${cell(run.validation_verdict)}。工位批准：${cell(run.industrial_approved)}。限值见本次运行的配置记录。\n\n[完整检查记录](checks.json)；[覆盖率](coverage.json)；[适配器与输入合同](adapter-matrix.json)；[配置与限值](configuration.json)；[异常与处置](errors.jsonl)；[逐项诊断与原始证据定位](investigation.json)；[文件校验清单](manifest.json)${replayLink}${recordingLink}\n\n| 用例 | 执行状态 | 判定 | 原因 | 数据 |\n|---|---|---|---|---|\n`+caseRows.join('\n')+'\n\n首次异常：'+cell(run.first_error_id||'无')+'。候选原因不表示已确认根因，处置建议见异常记录。\n';
   const unresolved = investigations.filter(f=>f.reason!=='CAPTURE.OBSERVED_REVIEW_REQUIRED');
   let findings = '';
+  if (run.errors.length) {
+    findings += '\n## 执行异常\n\n';
+    for (const item of run.errors.slice(0,12)) {
+      findings += `- ${cell(item.code)}；${cell(item.suggested_action)}\n`;
+    }
+    if (run.errors.length>12) findings += `\n共 ${run.errors.length} 项，完整记录见异常与处置。\n`;
+  }
   if (unresolved.length) {
     findings = '\n## 待调查项\n\n| 用例 / 检查 | 观测值 | 现有证据 | 下一项检查 |\n|---|---|---|---|\n';
     for (const f of unresolved.slice(0,12)) {

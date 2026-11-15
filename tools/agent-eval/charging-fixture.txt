@@ -1,0 +1,10 @@
+boot fixture
+power_state:1
+cause:UV
+power_state:0
+power_state:0
+idle
+power_state:1
+cause:THERMAL
+power_state:0
+idle

@@ -38,6 +38,16 @@ test('live blocks even when capabilities asserted; all dependency reasons visibl
   assert.equal(r.ok,false);assert(r.blocking.includes('INTEGRATION.LIVE_BACKEND_NOT_VALIDATED'));
   assert(r.blocking.includes('LIMITS.NOT_PRODUCT_APPROVED'));assert(r.blocking.includes('SAFETY.NOT_VERIFIED'));
 });
+test('live local gate reports the blocker without contacting a service',async()=>temporary(async(dir)=>{
+  let calls=0;
+  const client={invoke(){calls++;throw Error('unexpected');},request(){calls++;throw Error('unexpected');}};
+  const result=await execute(bundle('live'),{root,dir,client});
+  assert.equal(calls,0);
+  assert.equal(result.execution_status,'error');
+  assert.equal(result.product_verdict,'INCONCLUSIVE');
+  assert(result.errors.some(e=>e.code.includes('INTEGRATION.TX_RX_FT4222_GATE_NOT_IMPLEMENTED')));
+  assert(fs.readFileSync(result.summary_md,'utf8').includes('INTEGRATION.TX_RX_FT4222_GATE_NOT_IMPLEMENTED'));
+}));
 for(const [fixture,expected] of [['gold','PASS'],['bad','FAIL'],['missing','INCONCLUSIVE'],['quality','INCONCLUSIVE']]) {
   test(`${fixture} replay validates all SYS and never certifies a DUT`,async()=>temporary(async(dir)=>{
     const run=await execute(bundle('replay',fixture),{root,dir,client:mockClient});
@@ -171,7 +181,17 @@ test('project recording preserves raw evidence and does not send instrument or e
   assert.throws(()=>loadBundle(root,{mode:'recorded',capture_id:'../test'}),/INVALID_ID/);
 }));
 
-test('a cancelled live stimulus is never retried; safe-stop feedback precedes lease release',async()=>{
+test('unverified live entry rejects before requesting a device',async()=>{
+  const {captureCase}=await import('../plugins/wireless-charge-validation/lib/live.mjs');
+  const b=bundle('live');
+  let calls=0;
+  await assert.rejects(captureCase(b,b.cases[0],{run_id:'r',attempt_id:'a',dut:{serial:'x',firmware:'y'}},async()=>{calls++;},()=>{}),/INTEGRATION.TX_RX_FT4222_GATE_NOT_IMPLEMENTED/);
+  assert.equal(calls,0);
+});
+
+// Retain these intended live-path checks, but do not report them as passed
+// while the external per-run RX-to-I2C execution gate is unavailable.
+test.skip('BLOCKED: cancelled live stimulus is never retried; safe-stop feedback precedes lease release',async()=>{
   const {captureCase}=await import('../plugins/wireless-charge-validation/lib/live.mjs');
   const b=bundle('live');b.station.live={resource:'commissioning-fixture'};
   const calls=[];let cancelled=false;
@@ -191,7 +211,7 @@ test('a cancelled live stimulus is never retried; safe-stop feedback precedes le
   assert.equal(calls.filter(c=>c==='stimulus.apply').length,1);
 });
 
-test('commissioned station contract archives evidence and evaluates the measured case',async()=>temporary(async(dir)=>{
+test.skip('BLOCKED: commissioned station contract archives evidence and evaluates the measured case',async()=>temporary(async(dir)=>{
   const b=bundle('live'),scenario=b.cases[0];b.cases=[scenario];b.args.dut_serial='test-dut';b.args.dut_firmware='test-fw';
   b.station.live={resource:'fixture'};b.station.station_id='contract-fixture';b.station.g4_approved=false;b.suite.industrial=false;
   b.limits.approved=true;b.limits.simulation_only=false;scenario.capture_plan.timing_budget_approved=true;

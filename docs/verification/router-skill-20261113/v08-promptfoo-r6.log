@@ -1,0 +1,44 @@
+deepseek understand ran 
+deepseek decompose ran 
+deepseek followup ran 
+qwen understand unavailable DASHSCOPE_API_KEY unavailable
+qwen decompose unavailable DASHSCOPE_API_KEY unavailable
+qwen followup unavailable DASHSCOPE_API_KEY unavailable
+Cache is disabled.
+Starting evaluation eval-DGK-2026-11-15T06:08:30
+Running 3 test cases (up to 1 at a time)...
+
+[90m┌────────────────────────────────────────────────────────────[39m[90m┬────────────────────────────────────────────────────────────┐[39m
+[90m│[39m[1m[34m scenario                                                   [39m[22m[90m│[39m[1m[34m [deepseek] {{scenario}}                                    [39m[22m[90m│[39m
+[90m├────────────────────────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────────────────┤[39m
+[90m│[39m understand                                                 [90m│[39m [PASS]                                                     [90m│[39m
+[90m│[39m                                                            [90m│[39m {"availability":"ran","case":"understand","model":"deepse… [90m│[39m
+[90m│[39m                                                            [90m│[39m V = 1000 mV，所以 2500 mV ÷ 1000 = 2.5                     [90m│[39m
+[90m│[39m                                                            [90m│[39m V。","calls":[],"elapsed_ms":883,"evidence_ids":[],"phase… [90m│[39m
+[90m├────────────────────────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────────────────┤[39m
+[90m│[39m decompose                                                  [90m│[39m [FAIL]                                                     [90m│[39m
+[90m│[39m                                                            [90m│[39m {"availability":"ran","case":"decompose","model":"deepsee… [90m│[39m
+[90m├────────────────────────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────────────────┤[39m
+[90m│[39m followup                                                   [90m│[39m [PASS]                                                     [90m│[39m
+[90m│[39m                                                            [90m│[39m {"availability":"ran","case":"followup","model":"deepseek… [90m│[39m
+[90m│[39m                                                            [90m│[39m power_state 1→0 状态转换统计\n\n**结论：共 2               [90m│[39m
+[90m│[39m                                                            [90m│[39m 次有效转换**，对应 cause 代号分别为                        [90m│[39m
+[90m│[39m                                                            [90m│[39m `UV`、`THERMAL`。\n\n### 扫描范围与完整性\n-               [90m│[39m
+[90m│[39m                                                            [90m│[39m 来源：`charging-fixture.log`（source_id `f2863fa...        [90m│[39m
+[90m└────────────────────────────────────────────────────────────[39m[90m┴────────────────────────────────────────────────────────────┘[39m
+✓ Eval complete (ID: eval-DGK-2026-11-15T06:08:30)
+
+» View results: promptfoo view
+» Share with your team: https://promptfoo.app
+» Feedback: https://promptfoo.dev/feedback
+
+Total Tokens: 68,297
+  Provider: 68,297 (66,428 prompt, 1,869 completion, 31,740 cached)
+
+Results:
+  ✓ 2 passed (66.67%)
+  ✗ 1 failed (33.33%)
+  0 errors (0%)
+Duration: 0s (concurrency: 1)
+
+Writing output to D:\windlink\windlink\WiParse-R\docs\verification\router-skill-20261113\promptfoo-candidate-r6\promptfoo-results.json

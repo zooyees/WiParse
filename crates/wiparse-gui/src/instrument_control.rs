@@ -3,6 +3,7 @@
 mod workbench;
 mod agent_commands;
 mod waveform_pipeline;
+mod secure_output;
 use waveform_pipeline::{PipelineJob, SourceRequest};
 
 use crate::plot::paint_envelope_columns;
@@ -74,6 +75,8 @@ enum Job {
         auto_dir: Option<PathBuf>,
         auto_filename: Option<String>,
         overwrite: bool,
+        cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+        secure_destination: Option<secure_output::Destination>,
     },
     Waveform {
         id: u64,
@@ -129,6 +132,8 @@ enum Event {
         auto_dir: Option<PathBuf>,
         auto_filename: Option<String>,
         overwrite: bool,
+        cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+        secure_destination: Option<secure_output::Destination>,
         bytes: Vec<u8>,
         suggested_name: String,
         /// Parsed on the worker thread so the UI does not freeze on multi‑Mpoint ISF.
@@ -148,6 +153,10 @@ enum Event {
         bytes: usize,
         metrics: serde_json::Value,
         update_save_dir: bool,
+        project_relative: Option<PathBuf>,
+        source_parse_error: Option<String>,
+        source_representation: String,
+        source_channels: Vec<u8>,
     },
     /// Long-running job progress (screenshot / waveform source transfer).
     Progress {
@@ -166,6 +175,8 @@ enum Event {
 struct PendingWaveformSave {
     id: u64,
     job_id: Option<u64>,
+    cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+    secure_destination: Option<secure_output::Destination>,
     bytes: Vec<u8>,
     effective_ext: String,
     file_stem: String,
@@ -173,6 +184,10 @@ struct PendingWaveformSave {
     traces: Arc<Vec<WaveformTrace>>,
     /// Per-channel native blobs `(channel, bytes, ext)`.
     channel_files: Vec<(u8, Vec<u8>, String)>,
+    conversion_incomplete: bool,
+    source_parse_error: Option<String>,
+    source_representation: String,
+    source_channels: Vec<u8>,
     /// Measured metrics from parsed traces. Empty object when parse failed.
     metrics: serde_json::Value,
 }
@@ -189,15 +204,18 @@ pub struct InstrumentJobResult {
 
 /// Shared read-only access to the same bounded job history used by the device API.
 #[derive(Clone, Default)]
-pub(crate) struct InstrumentReceipts(std::sync::Arc<std::sync::Mutex<VecDeque<InstrumentJobResult>>>);
+pub(crate) struct InstrumentReceipts(std::sync::Arc<std::sync::Mutex<VecDeque<std::sync::Arc<InstrumentJobResult>>>>);
 impl InstrumentReceipts {
     fn record(&self, receipt:InstrumentJobResult) {
         let mut rows=self.0.lock().unwrap_or_else(|e|e.into_inner());
-        rows.push_back(receipt);
+        rows.push_back(std::sync::Arc::new(receipt));
         if rows.len()>512 {rows.pop_front();}
     }
     pub(crate) fn lookup(&self,id:u64)->Option<InstrumentJobResult> {
-        self.0.lock().unwrap_or_else(|e|e.into_inner()).iter().find(|r|r.job_id==id).cloned()
+        self.0.lock().unwrap_or_else(|e|e.into_inner()).iter().find(|r|r.job_id==id).map(|r|(**r).clone())
+    }
+    fn snapshot(&self)->VecDeque<std::sync::Arc<InstrumentJobResult>> {
+        self.0.lock().unwrap_or_else(|e|e.into_inner()).clone()
     }
     #[cfg(test)]
     fn len(&self)->usize{self.0.lock().unwrap_or_else(|e|e.into_inner()).len()}
@@ -432,6 +450,12 @@ struct DeviceUi {
 }
 
 pub struct InstrumentControlPanel {
+    source_lease: wiparse_core::ai::source_lease::SourceLease,
+    published_ai_summary: serde_json::Value,
+    published_agent_identity: String,
+    published_receipts: VecDeque<std::sync::Arc<InstrumentJobResult>>,
+    published_inventory: Option<(String,std::sync::Arc<serde_json::Value>)>,
+    ai_summary_dirty: bool,
     tx: Sender<Job>,
     rx: Receiver<Event>,
     resources: Vec<ResourceInfo>,
@@ -507,7 +531,13 @@ impl InstrumentControlPanel {
             // Seed only until a scan classifies and redistributes devices.
             resource_inputs[0] = first.clone();
         }
-        let panel = Self {
+        let mut panel = Self {
+            source_lease: Default::default(),
+            published_ai_summary: serde_json::Value::Null,
+            published_agent_identity: String::new(),
+            published_receipts: VecDeque::new(),
+            published_inventory: None,
+            ai_summary_dirty: false,
             tx,
             rx,
             resources: instrument_cfg
@@ -562,8 +592,33 @@ impl InstrumentControlPanel {
             last_rtt: Instant::now(),
             rtt_pending: HashSet::new(),
         };
+        panel.published_ai_summary=panel.ai_summary();
+        panel.published_agent_identity=panel.agent_identity();
         let _ = std::fs::create_dir_all(&panel.save_dir);
         panel
+    }
+
+    pub(crate) fn set_source_lease(&mut self, lease:wiparse_core::ai::source_lease::SourceLease) { self.source_lease=lease; }
+    pub(crate) fn begin_source_update(&self)->wiparse_core::ai::source_lease::SourceUpdate { self.source_lease.begin_update() }
+    pub(crate) fn publish_ai_summary(&mut self) {
+        if !self.ai_summary_dirty {return;}
+        let next=self.ai_summary();
+        let identity=self.agent_identity();
+        if next!=self.published_ai_summary || identity!=self.published_agent_identity {
+            let old=self.source_lease.clone().mutate_always(||(std::mem::replace(&mut self.published_ai_summary,next),std::mem::replace(&mut self.published_agent_identity,identity)));
+            drop(old);
+        }
+        self.ai_summary_dirty=false;
+    }
+    #[allow(dead_code)]
+    pub(crate) fn published_ai_summary(&self)->&serde_json::Value { &self.published_ai_summary }
+    pub(crate) fn published_agent_identity(&self)->&str { &self.published_agent_identity }
+    pub(crate) fn invalidate_agent_inventory(&mut self) {
+        self.ai_summary_dirty=true;
+        if self.published_inventory.is_some() {
+            let old=self.source_lease.clone().mutate_always(||self.published_inventory.take());
+            drop(old);
+        }
     }
 
     /// Enable/disable debug workbench: all cards, demo sessions, and 设备总览.
@@ -571,6 +626,12 @@ impl InstrumentControlPanel {
         if self.debug_mode == enabled {
             return;
         }
+        let update=self.source_lease.begin_update();
+        self.apply_debug_mode_inner(enabled,lang);
+        self.publish_ai_summary();drop(update);
+    }
+    fn apply_debug_mode_inner(&mut self, enabled: bool, lang: Lang) {
+        self.invalidate_agent_inventory();
         self.debug_mode = enabled;
         if enabled {
             self.ensure_demo_devices(lang);
@@ -665,6 +726,19 @@ impl InstrumentControlPanel {
     }
 
     pub fn pump_with_bus(&mut self, ctx: &egui::Context, bus: Option<&crate::backend::EventBus>) {
+        let busy_status_changes=self.busy_device.is_some() && self.busy_started.is_some_and(|started|
+            !self.busy_label.is_empty() && self.status!=format!("{}… {}s",self.busy_label,started.elapsed().as_secs()));
+        let active_rtt=self.devices.iter().any(|device|matches!(device.kind,InstrumentKind::DebugProbe|InstrumentKind::WiparseDongle)
+            && (device.controls.probe_rtt_on || (device.kind==InstrumentKind::WiparseDongle && device.controls.dongle_uart_listen)));
+        let may_change=!self.rx.is_empty() || self.pending_waveform_save.is_some() || busy_status_changes
+            || (self.live_active() && self.last_sample.elapsed() >= Duration::from_millis(self.sample_interval_ms))
+            || (active_rtt && self.last_rtt.elapsed() >= Duration::from_millis(150));
+        let update=may_change.then(||self.source_lease.begin_update());
+        self.pump_with_bus_inner(ctx,bus);
+        if update.is_some(){self.publish_ai_summary();}
+        drop(update);
+    }
+    fn pump_with_bus_inner(&mut self, ctx: &egui::Context, bus: Option<&crate::backend::EventBus>) {
         self.agent_commands.show_review(ctx);
         let results_before = self.job_results.len();
         let frame_budget = Instant::now();
@@ -706,7 +780,8 @@ impl InstrumentControlPanel {
         if let (Some(_), Some(started)) = (self.busy_device, self.busy_started) {
             let secs = started.elapsed().as_secs();
             if !self.busy_label.is_empty() {
-                self.status = format!("{}… {}s", self.busy_label, secs);
+                let status = format!("{}… {}s", self.busy_label, secs);
+                if self.status!=status { self.invalidate_agent_inventory();self.status=status; }
             }
             ctx.request_repaint_after(Duration::from_millis(200));
         }
@@ -754,12 +829,14 @@ impl InstrumentControlPanel {
     }
 
     fn clear_busy(&mut self) {
+        self.invalidate_agent_inventory();
         self.busy_device = None;
         self.busy_started = None;
         self.busy_label.clear();
     }
 
     fn begin_busy(&mut self, id: u64, label: impl Into<String>) {
+        self.invalidate_agent_inventory();
         self.busy_device = Some(id);
         self.busy_started = Some(Instant::now());
         self.busy_label = label.into();
@@ -804,6 +881,7 @@ impl InstrumentControlPanel {
         let Some(job_id) = job_id else {
             return;
         };
+        self.invalidate_agent_inventory();
         if self.waveform_source_job == Some(job_id) {
             self.waveform_source_job = None;
             if self.busy_device == device_id {
@@ -812,10 +890,15 @@ impl InstrumentControlPanel {
         }
         self.agent_commands.completed(job_id,ok);
         let mut detail_budget=16*1024;
-        self.completed_jobs.record(InstrumentJobResult {
+        let receipt=InstrumentJobResult {
             job_id,ok,kind:kind.into(),device_id,
             detail: job_detail_summary(&detail,&mut detail_budget,0),
+        };
+        let old=self.source_lease.clone().mutate_always(|| {
+            self.completed_jobs.record(receipt);
+            std::mem::replace(&mut self.published_receipts,self.completed_jobs.snapshot())
         });
+        drop(old);
         self.job_results.push(InstrumentJobResult {
             job_id,
             ok,
@@ -854,6 +937,7 @@ impl InstrumentControlPanel {
             .iter()
             .map(|d| LiveDevice {
                 device_id: d.id,
+                session_id: format!("{}:{}", self.job_session, d.id),
                 resource: d.resource.clone(),
                 kind: kind_wire(d.kind),
                 model: d.identity.model.clone(),
@@ -876,6 +960,10 @@ impl InstrumentControlPanel {
     }
 
     pub fn api_select(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        let _update=self.source_lease.begin_update();let result=self.api_select_inner(params);self.publish_ai_summary();result
+    }
+    fn api_select_inner(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        self.invalidate_agent_inventory();
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let overview = params
             .get("overview")
@@ -944,6 +1032,18 @@ impl InstrumentControlPanel {
 
     pub fn api_overview(&self, lang: Lang) -> serde_json::Value {
         self.api_inventory(lang, None, true)
+    }
+
+    pub(crate) fn agent_inventory(&mut self, lang:Lang, params:&serde_json::Value, overview:bool) -> serde_json::Value {
+        // Build on demand, not on idle frames; ordinary API behavior is unchanged.
+        let value=if overview {self.api_overview(lang)} else {self.api_list(lang,params)};
+        let key=format!("{}:{}:{}",if lang==Lang::Zh {"zh"} else {"en"},overview,params["kind"]);
+        if self.published_inventory.as_ref().is_none_or(|(old_key,old)|old_key!=&key || **old!=value) {
+            let shared=std::sync::Arc::new(value);
+            let old=self.source_lease.clone().mutate_always(||self.published_inventory.replace((key,shared)));
+            drop(old);
+        }
+        self.published_inventory.as_ref().map(|(_,value)|(**value).clone()).unwrap_or(serde_json::Value::Null)
     }
 
     fn api_inventory(
@@ -1044,6 +1144,10 @@ impl InstrumentControlPanel {
     }
 
     pub fn api_scan(&mut self, _params: &serde_json::Value) -> crate::backend::InvokeReply {
+        let _update=self.source_lease.begin_update();let result=self.api_scan_inner(_params);self.publish_ai_summary();result
+    }
+    fn api_scan_inner(&mut self, _params: &serde_json::Value) -> crate::backend::InvokeReply {
+        self.invalidate_agent_inventory();
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         self.scanning = true;
         match self.tx.send(Job::Scan {
@@ -1060,6 +1164,10 @@ impl InstrumentControlPanel {
         params: &serde_json::Value,
         lang: Lang,
     ) -> crate::backend::InvokeReply {
+        let _update=self.source_lease.begin_update();let result=self.api_connect_inner(params,lang);self.publish_ai_summary();result
+    }
+    fn api_connect_inner(&mut self, params:&serde_json::Value, lang:Lang) -> crate::backend::InvokeReply {
+        self.invalidate_agent_inventory();
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let resource = match params.get("resource").and_then(|v| v.as_str()) {
             Some(r) if !r.is_empty() => r.to_string(),
@@ -1089,6 +1197,10 @@ impl InstrumentControlPanel {
     }
 
     pub fn api_connect_all(&mut self, lang: Lang) -> crate::backend::InvokeReply {
+        let _update=self.source_lease.begin_update();let result=self.api_connect_all_inner(lang);self.publish_ai_summary();result
+    }
+    fn api_connect_all_inner(&mut self, lang: Lang) -> crate::backend::InvokeReply {
+        self.invalidate_agent_inventory();
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let queued = self.queue_connect_all(lang);
         if queued.is_empty() {
@@ -1104,6 +1216,10 @@ impl InstrumentControlPanel {
     }
 
     pub fn api_disconnect(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        let _update=self.source_lease.begin_update();let result=self.api_disconnect_inner(params);self.publish_ai_summary();result
+    }
+    fn api_disconnect_inner(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        self.invalidate_agent_inventory();
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let id = match params.get("device_id").and_then(|v| v.as_u64()) {
             Some(id) => id,
@@ -1130,8 +1246,21 @@ impl InstrumentControlPanel {
         data["job_session"]=serde_json::json!(self.job_session);
         crate::backend::invoke_ok("instrument.job.get",data)
     }
+    pub(crate) fn agent_job_get(&self, params:&serde_json::Value)->crate::backend::InvokeReply {
+        if params["job_session"].as_str().is_none_or(|epoch|epoch!=self.job_session) {
+            return crate::backend::invoke_err("instrument.job.get","INSTRUMENT.PREVIOUS_SESSION: command outcome unknown; read device state");
+        }
+        let Some(id)=params["job_id"].as_u64() else {return crate::backend::invoke_err("instrument.job.get","missing job_id");};
+        let mut data=self.published_receipts.iter().find(|r|r.job_id==id).map(|r|serde_json::json!({"state":"completed","job_id":r.job_id,"ok":r.ok,"kind":r.kind,"device_id":r.device_id,"detail":r.detail})).unwrap_or_else(||serde_json::json!({"state":"pending_or_unknown","job_id":id}));
+        data["job_session"]=serde_json::json!(self.job_session);
+        crate::backend::invoke_ok("instrument.job.get",data)
+    }
 
     pub fn api_command(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        let _update=self.source_lease.begin_update();let result=self.api_command_inner(params);self.publish_ai_summary();result
+    }
+    fn api_command_inner(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        self.invalidate_agent_inventory();
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let id = match params.get("device_id").and_then(|v| v.as_u64()) {
             Some(id) => id,
@@ -1159,6 +1288,10 @@ impl InstrumentControlPanel {
     }
 
     pub fn api_measure(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        let _update=self.source_lease.begin_update();let result=self.api_measure_inner(params);self.publish_ai_summary();result
+    }
+    fn api_measure_inner(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        self.invalidate_agent_inventory();
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let id = match params.get("device_id").and_then(|v| v.as_u64()) {
             Some(id) => id,
@@ -1175,6 +1308,10 @@ impl InstrumentControlPanel {
     }
 
     pub fn api_capture(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        let _update=self.source_lease.begin_update();let result=self.api_capture_inner(params);self.publish_ai_summary();result
+    }
+    fn api_capture_inner(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        self.invalidate_agent_inventory();
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let id = match params.get("device_id").and_then(|v| v.as_u64()) {
             Some(id) => id,
@@ -1219,6 +1356,24 @@ impl InstrumentControlPanel {
         &mut self,
         params: &serde_json::Value,
     ) -> crate::backend::InvokeReply {
+        let _update=self.source_lease.begin_update();let result=self.start_waveform_source(params, None, None);self.publish_ai_summary();result
+    }
+
+    pub(crate) fn agent_waveform_source(&mut self, params: &serde_json::Value,
+        cancel: Arc<std::sync::atomic::AtomicBool>, root: &std::path::Path, project: &str) -> crate::backend::InvokeReply {
+        if cancel.load(std::sync::atomic::Ordering::Acquire) {
+            return crate::backend::invoke_err("instrument.waveform_source", "AI.CANCELLED_BEFORE_ACQUISITION");
+        }
+        let destination = match secure_output::Destination::prepare(root, project) {
+            Ok(destination) => destination,
+            Err(error) => return crate::backend::invoke_err("instrument.waveform_source", &error),
+        };
+        let _update=self.source_lease.begin_update();let result=self.start_waveform_source(params, Some(cancel), Some(destination));self.publish_ai_summary();result
+    }
+
+    fn start_waveform_source(&mut self, params: &serde_json::Value,
+        cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+        secure_destination: Option<secure_output::Destination>) -> crate::backend::InvokeReply {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         if self.waveform_source_job.is_some() {
             return err("instrument.waveform_source", "A waveform source read or save is already in progress");
@@ -1262,6 +1417,8 @@ impl InstrumentControlPanel {
             auto_dir: dir,
             auto_filename: filename,
             overwrite,
+            cancel,
+            secure_destination,
         }) {
             Ok(()) => ok(
                 "instrument.waveform_source",
@@ -1281,6 +1438,9 @@ impl InstrumentControlPanel {
     }
 
     pub fn api_waveform(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        let _update=self.source_lease.begin_update();let result=self.api_waveform_inner(params);self.publish_ai_summary();result
+    }
+    fn api_waveform_inner(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let id = match params.get("device_id").and_then(|v| v.as_u64()) {
             Some(id) => id,
@@ -1305,6 +1465,12 @@ impl InstrumentControlPanel {
     }
 
     fn handle_event(&mut self, ctx: &egui::Context, event: Event) {
+        let _update=self.source_lease.begin_update();
+        self.handle_event_inner(ctx,event);
+        self.publish_ai_summary();
+    }
+    fn handle_event_inner(&mut self, ctx: &egui::Context, event: Event) {
+        self.invalidate_agent_inventory();
         match event {
             Event::Resources(resources) => {
                 self.scanning = false;
@@ -1519,6 +1685,8 @@ impl InstrumentControlPanel {
                 auto_dir,
                 auto_filename,
                 overwrite,
+                cancel,
+                secure_destination,
                 bytes,
                 suggested_name,
                 plot,
@@ -1584,7 +1752,7 @@ impl InstrumentControlPanel {
                         bytes.len(),
                         suggested_name
                     ));
-                } else if let Some(err) = parse_error {
+                } else if let Some(ref err) = parse_error {
                     self.status = format!(
                         "已收到 {} KB 但解析失败: {err} / Got {} KB but parse failed: {err}",
                         bytes.len() / 1024,
@@ -1599,9 +1767,14 @@ impl InstrumentControlPanel {
                     );
                 }
 
-                let pending = PendingWaveformSave {
+                let conversion_incomplete = channels.len() > 1 && parse_error.is_some() && effective_ext != "isf";
+                let source_representation = if channels.len() <= 1 { "native_single" }
+                    else if effective_ext == "isf" { "combined_isf" } else { "derived_csv" };
+                let mut pending = PendingWaveformSave {
                     id,
                     job_id,
+                    cancel,
+                    secure_destination,
                     bytes,
                     effective_ext,
                     file_stem: stem
@@ -1612,9 +1785,15 @@ impl InstrumentControlPanel {
                     vendor,
                     traces,
                     channel_files,
+                    conversion_incomplete,
+                    source_parse_error: parse_error,
+                    source_representation: source_representation.into(),
+                    source_channels: channels,
                     metrics,
                 };
-                if let Some(dir) = auto_dir.filter(|p| !p.as_os_str().is_empty()) {
+                if let Some(destination) = pending.secure_destination.take() {
+                    self.queue_waveform_save(pending, waveform_pipeline::SaveSelection::Secure { destination });
+                } else if let Some(dir) = auto_dir.filter(|p| !p.as_os_str().is_empty()) {
                     self.auto_save_waveform_source(
                         pending,
                         &dir,
@@ -1635,7 +1814,7 @@ impl InstrumentControlPanel {
                     self.busy_started = Some(Instant::now());
                 }
             }
-            Event::WaveformSaved { id, job_id, result, bytes, metrics, update_save_dir } => {
+            Event::WaveformSaved { id, job_id, result, bytes, metrics, update_save_dir, project_relative, source_parse_error, source_representation, source_channels } => {
                 match result {
                     Ok(Some(saved)) => {
                         if let Some(path) = saved.first() {
@@ -1648,6 +1827,10 @@ impl InstrumentControlPanel {
                         self.complete_job(job_id, true, "waveform_source", Some(id), serde_json::json!({
                             "path": saved.first().map(|p| p.display().to_string()),
                             "files": saved.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+                            "project_relative": project_relative.map(|p| p.to_string_lossy().replace('\\', "/")),
+                            "source_parse_error": source_parse_error,
+                            "source_representation": source_representation,
+                            "source_channels": source_channels,
                             "bytes": bytes, "metrics": metrics,
                         }));
                     }
@@ -1754,7 +1937,14 @@ impl InstrumentControlPanel {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        let update=ui.input(|input| !input.events.is_empty()).then(||self.source_lease.begin_update());
+        self.ui_inner(ui,lang,tokens);
+        if update.is_some() {self.publish_ai_summary();}
+        drop(update);
+    }
+    fn ui_inner(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
         // `pump` is called once from the app update loop while this tab is active.
+        if ui.input(|input| !input.events.is_empty()) { self.invalidate_agent_inventory(); }
         let (full, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
         if !full.is_positive() {
             return;
@@ -1792,6 +1982,7 @@ impl InstrumentControlPanel {
     }
 
     fn select_kind(&mut self, kind: InstrumentKind) {
+        self.invalidate_agent_inventory();
         self.overview_open = false;
         let kind_changed = self.selected_kind != kind;
         self.selected_kind = kind;
@@ -1819,11 +2010,13 @@ impl InstrumentControlPanel {
     }
 
     fn select_overview(&mut self) {
+        self.invalidate_agent_inventory();
         self.overview_open = true;
         self.selected_id = None;
     }
 
     fn apply_discovered_resources(&mut self, resources: Vec<ResourceInfo>) {
+        self.invalidate_agent_inventory();
         for resource in resources {
             if let Some(existing) = self
                 .resources
@@ -1909,6 +2102,7 @@ impl InstrumentControlPanel {
     }
 
     fn begin_connect(&mut self, kind: InstrumentKind, lang: Lang) {
+        self.invalidate_agent_inventory();
         let Some(resource) = self.resolve_card_resource(kind) else {
             self.status = text(
                 lang,
@@ -1968,6 +2162,7 @@ impl InstrumentControlPanel {
     }
 
     fn queue_connect_all(&mut self, lang: Lang) -> Vec<serde_json::Value> {
+        self.invalidate_agent_inventory();
         let pending: Vec<(InstrumentKind, String)> = self
             .resources
             .iter()
@@ -2463,6 +2658,8 @@ impl InstrumentControlPanel {
                     auto_dir: None,
                     auto_filename: None,
                     overwrite: false,
+                    cancel: None,
+                    secure_destination: None,
                 }) {
                     self.complete_job(job_id, false, "waveform_source", Some(id), serde_json::json!({ "error": error.to_string() }));
                 }
@@ -2964,6 +3161,7 @@ impl InstrumentControlPanel {
     }
 
     fn log(&mut self, message: String) {
+        self.invalidate_agent_inventory();
         self.logs
             .push_back(format!("{} {message}", Local::now().format("%H:%M:%S%.3f")));
         while self.logs.len() > 1_000 {
@@ -3168,7 +3366,13 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>, pipeline: Sender<Pipe
                 auto_dir,
                 auto_filename,
                 overwrite,
+                cancel,
+                secure_destination,
             } => {
+                if cancel.as_ref().is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+                    send_error_job(&events, Some(id), job_id, "AI.CANCELLED_BEFORE_ACQUISITION");
+                    continue;
+                }
                 let _ = events.send(Event::Progress {
                     id: Some(id),
                     message: "正在查询已打开通道并读取波形（采样率×屏幕时宽）… / Querying displayed channels, reading acquisition-density screen window…"
@@ -3177,7 +3381,7 @@ fn worker_loop(jobs: Receiver<Job>, events: Sender<Event>, pipeline: Sender<Pipe
                 if let Some(LiveSession::Scpi(device)) = devices.get_mut(&id) {
                     match device.capture_scope_waveform_sources_displayed() {
                         Ok(parts) => {
-                            let request = SourceRequest { id, job_id, auto_dir, auto_filename, overwrite };
+                            let request = SourceRequest { id, job_id, auto_dir, auto_filename, overwrite, cancel, secure_destination };
                             if pipeline.try_send(PipelineJob::Source { request, parts }).is_err() {
                                 send_error_job(&events, Some(id), job_id, "Waveform processing queue is busy; retry after the current task completes");
                             }
@@ -7399,7 +7603,29 @@ impl InstrumentControlPanel {
     }
 }
 
-impl InstrumentControlPanel { pub(crate) fn agent_identity(&self)->String {format!("{:?}", self.devices.iter().map(|d|(d.id,d.kind)).collect::<Vec<_>>())} }
+impl InstrumentControlPanel {
+    pub(crate) fn agent_identity(&self)->String {
+        serde_json::json!(self.devices.iter().map(|device| serde_json::json!({
+            "id":device.id,"session":format!("{}:{}",self.job_session,device.id),
+            "kind":kind_wire(device.kind),"capabilities":device.capabilities
+        })).collect::<Vec<_>>()).to_string()
+    }
+
+    pub(crate) fn agent_review_target(&self, id: u64) -> Option<String> {
+        self.devices.iter().find(|device| device.id == id).map(|device| {
+            format!("{} · {} {} · {} · #{}", kind_wire(device.kind),
+                device.identity.manufacturer, device.identity.model, device.resource, device.id)
+        })
+    }
+
+    pub(crate) fn agent_validate_waveform_source(&self, id: u64) -> Result<(), String> {
+        let device = self.devices.iter().find(|device| device.id == id).ok_or("DEVICE.NOT_CONNECTED")?;
+        if device.kind != InstrumentKind::Oscilloscope || !device.capabilities.waveform {
+            return Err("DEVICE.WAVEFORM_SOURCE_UNSUPPORTED".into());
+        }
+        Ok(())
+    }
+}
 
 impl InstrumentControlPanel {
  pub(crate) fn agent_validate_device(&self,p:&serde_json::Value,capture:bool)->Result<(),String> {
@@ -7418,6 +7644,61 @@ impl InstrumentControlPanel {
  }
 }
 
+#[cfg(test)]mod summary_publication_tests{
+ use super::*;
+ #[test]fn agent_receipt_requires_current_session_identity(){
+  let panel=InstrumentControlPanel::new(&AppConfig::default());
+  assert!(!panel.agent_job_get(&serde_json::json!({"job_id":1})).ok);
+  assert!(!panel.agent_job_get(&serde_json::json!({"job_id":1,"job_session":"old"})).ok);
+  assert!(panel.agent_job_get(&serde_json::json!({"job_id":1,"job_session":panel.job_session})).ok);
+ }
+ #[test]fn published_instrument_summary_changes_only_on_commit(){
+  let mut panel=InstrumentControlPanel::new(&AppConfig::default());
+  let lease=wiparse_core::ai::source_lease::SourceLease::default();panel.set_source_lease(lease.clone());
+  let previous=panel.published_ai_summary().clone();let (_,permit)=lease.snapshot(||()).unwrap();
+  panel.invalidate_agent_inventory();panel.status="new instrument state".into();assert_eq!(panel.published_ai_summary(),&previous);
+  panel.publish_ai_summary();assert_ne!(panel.published_ai_summary(),&previous);assert!(permit.commit_prepared(||()).is_none());
+  let (_,unchanged)=lease.snapshot(||()).unwrap();panel.publish_ai_summary();assert_eq!(unchanged.commit_prepared(||()),Some(()));
+  panel.log("fixture".into());assert!(panel.ai_summary_dirty);panel.publish_ai_summary();assert!(!panel.ai_summary_dirty);
+ }
+ #[test]fn instrument_receipt_invalidates_prior_source_permit(){
+  let mut panel=InstrumentControlPanel::new(&AppConfig::default());
+  let lease=wiparse_core::ai::source_lease::SourceLease::default();panel.set_source_lease(lease.clone());
+  let (_,permit)=lease.snapshot(||()).unwrap();
+  panel.complete_job(Some(42),true,"measure",None,serde_json::json!({"value":5}));
+  assert!(permit.commit_prepared(||()).is_none());
+  assert_eq!(panel.api_job_get(&serde_json::json!({"job_id":42})).data["state"],"completed");
+  assert_eq!(panel.agent_job_get(&serde_json::json!({"job_id":42,"job_session":panel.job_session})).data["detail"]["value"],5);
+  assert!(!panel.agent_job_get(&serde_json::json!({"job_id":42,"job_session":"old"})).ok);
+ }
+ #[test]fn inventory_is_published_on_demand_and_only_changed_values_invalidate(){
+  let mut panel=InstrumentControlPanel::new(&AppConfig::default());
+  let lease=wiparse_core::ai::source_lease::SourceLease::default();panel.set_source_lease(lease.clone());
+  let params=serde_json::json!({});panel.agent_inventory(Lang::Zh,&params,false);
+  let (_,unchanged)=lease.snapshot(||()).unwrap();panel.agent_inventory(Lang::Zh,&params,false);
+  assert_eq!(unchanged.commit_prepared(||()),Some(()));
+  let (_,old)=lease.snapshot(||()).unwrap();panel.scanning=true;
+  let inventory=panel.agent_inventory(Lang::Zh,&params,false);
+  assert_eq!(inventory["scanning"],true);assert!(old.commit_prepared(||()).is_none());
+ }
+ #[test]fn inventory_invalidation_cannot_be_undone_by_restoring_same_values(){
+  let mut panel=InstrumentControlPanel::new(&AppConfig::default());
+  let lease=wiparse_core::ai::source_lease::SourceLease::default();panel.set_source_lease(lease.clone());
+  let params=serde_json::json!({});let before=panel.agent_inventory(Lang::Zh,&params,false);
+  let (_,permit)=lease.snapshot(||()).unwrap();
+  panel.invalidate_agent_inventory();panel.scanning=true;panel.scanning=false;
+  assert_eq!(panel.agent_inventory(Lang::Zh,&params,false),before);
+  assert!(permit.commit_prepared(||()).is_none());
+ }
+ #[test]fn internal_busy_and_selection_changes_invalidate_inventory(){
+  let mut panel=InstrumentControlPanel::new(&AppConfig::default());
+  let lease=wiparse_core::ai::source_lease::SourceLease::default();panel.set_source_lease(lease.clone());
+  let params=serde_json::json!({});panel.agent_inventory(Lang::Zh,&params,false);
+  let (_,busy)=lease.snapshot(||()).unwrap();panel.begin_busy(42,"running");assert!(busy.commit_prepared(||()).is_none());
+  panel.agent_inventory(Lang::Zh,&params,false);let (_,selection)=lease.snapshot(||()).unwrap();
+  panel.select_overview();assert!(selection.commit_prepared(||()).is_none());
+ }
+}
 #[cfg(test)]mod agent_capability_regressions{
  use super::*;use serde_json::json;
  #[test]fn mismatched_kind_and_nonexistent_channels_never_enter_device_queue(){

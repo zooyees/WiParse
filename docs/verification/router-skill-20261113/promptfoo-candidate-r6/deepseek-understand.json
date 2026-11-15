@@ -1,0 +1,28 @@
+{
+  "availability": "ran",
+  "case": "understand",
+  "model": "deepseek-flash",
+  "provider": "deepseek",
+  "turns": [
+    {
+      "answer": "1 V = 1000 mV，所以 2500 mV ÷ 1000 = 2.5 V。",
+      "calls": [],
+      "elapsed_ms": 883,
+      "evidence_ids": [],
+      "phase": "completed",
+      "plan": [],
+      "status": "deepseek-flash · 分析完成",
+      "task": "17af2311-90ff-4303-b4b8-fa9ca2657f96",
+      "timeout": false,
+      "usage_cumulative": {
+        "cached_input_tokens": 124,
+        "failed_attempts": 0,
+        "input_tokens": 258,
+        "output_tokens": 24,
+        "reported_responses": 1,
+        "responses": 1,
+        "total_tokens": 282
+      }
+    }
+  ]
+}

@@ -1801,6 +1801,10 @@ fn editor_move_row(session: &mut LineEditorSession, delta: isize) {
     session.want_focus = true;
 }
 
+fn editor_source_mutation<T>(lease: Option<&wiparse_core::ai::source_lease::SourceLease>, mutation: impl FnOnce() -> T) -> T {
+    match lease { Some(lease) => lease.mutate_always(mutation), None => mutation() }
+}
+
 /// Virtualized line editor: only visible rows are laid out; typing mutates one line.
 pub fn show_virtual_line_editor(
     ui: &mut Ui,
@@ -1809,6 +1813,7 @@ pub fn show_virtual_line_editor(
     salt: &str,
     height: f32,
     t: &Tokens,
+    source_lease: Option<&wiparse_core::ai::source_lease::SourceLease>,
 ) -> bool {
     let mut changed = false;
     session.clamp_caret();
@@ -1882,17 +1887,17 @@ pub fn show_virtual_line_editor(
             });
         }
         if let Some(text) = paste {
-            editor_insert_text(session, &text);
+            editor_source_mutation(source_lease, || editor_insert_text(session, &text));
             changed = true;
         }
         if ate_enter {
-            editor_split_line(session);
+            editor_source_mutation(source_lease, || editor_split_line(session));
             changed = true;
         }
-        if ate_backspace && editor_join_prev(session) {
+        if ate_backspace && editor_source_mutation(source_lease, || editor_join_prev(session)) {
             changed = true;
         }
-        if ate_delete && editor_join_next(session) {
+        if ate_delete && editor_source_mutation(source_lease, || editor_join_next(session)) {
             changed = true;
         }
 
@@ -2014,7 +2019,8 @@ pub fn show_virtual_line_editor(
                     );
                     if row == focus_row {
                         let prev_len = session.lines[row].chars().count();
-                        let mut line = std::mem::take(&mut session.lines[row]);
+                        let mut line = session.lines[row].clone();
+                        let mut line_changed = false;
                         let editor_id = ui.id().with(("line-edit-row", salt));
                         let inner = crate::theme::scope_in_allocated_rect(
                             ui,
@@ -2042,6 +2048,7 @@ pub fn show_virtual_line_editor(
                                 }
                                 if output.response.changed() {
                                     changed = true;
+                                    line_changed = true;
                                 }
                                 session.col = output
                                     .cursor_range
@@ -2052,7 +2059,7 @@ pub fn show_virtual_line_editor(
                         );
                         let _ = inner;
                         let new_len = line.chars().count();
-                        session.lines[row] = line;
+                        if line_changed { editor_source_mutation(source_lease, || session.lines[row] = line); }
                         if new_len < prev_len && prev_len >= session.max_chars {
                             session.rescan_max_chars();
                         } else {

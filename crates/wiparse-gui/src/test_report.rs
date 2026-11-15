@@ -311,10 +311,13 @@ fn text_markdown_inline(ui: &mut egui::Ui, text: &str, size: f32, strong: bool, 
 pub struct TestReportPanel {
     pub(crate) ai_state: (bool, bool),
     project_id: String,
+    project_source_lease: wiparse_core::ai::source_lease::SourceLease,
     new_project_id: String,
     projects: Vec<ProjectDoc>,
     index: IndexedProject,
+    index_version: uuid::Uuid,
     selected: Option<PathBuf>,
+    open_revision: u64,
     project_root: Option<PathBuf>,
     integrity: Option<(PathBuf,std::sync::Arc<std::sync::OnceLock<String>>)>,
     preview_title: String,
@@ -331,11 +334,80 @@ pub struct TestReportPanel {
 }
 
 impl TestReportPanel {
+    pub(crate) fn set_project_source_lease(&mut self, lease: wiparse_core::ai::source_lease::SourceLease) {
+        self.project_source_lease = lease;
+    }
+    fn commit_project_id(&mut self, id: String) {
+        if self.project_id != id {
+            let version=uuid::Uuid::new_v4();
+            let old=self.project_source_lease.clone().mutate_always(|| {
+                let index=std::mem::replace(&mut self.index,IndexedProject{id:id.clone(),name:String::new(),tests:Vec::new()});
+                self.index_version=version;
+                self.project_id = id;
+                self.open_revision=self.open_revision.saturating_add(1);
+                self.preview_title.clear(); self.status.clear();
+                (index,self.selected.take(),self.preview.take(),self.return_report.take(),self.integrity.take())
+            });
+            drop(old);
+            self.image_textures.clear();
+        }
+    }
+    #[cfg(test)]
+    fn commit_report_selection(&mut self, selected: Option<PathBuf>) {
+        if self.selected != selected {
+            let old=self.project_source_lease.clone().mutate_always(|| { self.open_revision=self.open_revision.saturating_add(1); self.selected = selected; self.preview_title.clear(); self.status.clear(); self.preview.take() });
+            drop(old);
+        }
+    }
+    #[cfg(test)]
+    fn commit_preview(&mut self, preview: PreviewKind) {
+        let old=self.project_source_lease.clone().mutate_always(|| {self.open_revision=self.open_revision.saturating_add(1);self.preview.replace(preview)});
+        drop(old);
+    }
+    #[cfg(test)]
+    fn commit_preview_status(&mut self, preview: PreviewKind, status: String) {
+        let old=self.project_source_lease.clone().mutate_always(|| {
+            self.open_revision=self.open_revision.saturating_add(1);
+            self.status=status;
+            self.preview.replace(preview)
+        });
+        drop(old);
+    }
+    fn commit_empty_run(&mut self, title:String, hint:String) {
+        let old=self.project_source_lease.clone().mutate_always(|| {
+            self.open_revision=self.open_revision.saturating_add(1);
+            self.selected=None;self.return_report=None;self.preview_title=title;self.status=hint.clone();
+            (self.preview.replace(PreviewKind::EmptyHint(hint)),self.integrity.take())
+        });
+        drop(old);
+    }
+    fn commit_prepared_open(&mut self, project:&str, revision:u64, path:PathBuf, title:String, preview:PreviewKind, status:String,
+        integrity:Option<(PathBuf,std::sync::Arc<std::sync::OnceLock<String>>)>) -> bool {
+        let result=self.project_source_lease.clone().mutate_always(|| {
+            if self.project_id!=project || self.open_revision!=revision || revision==u64::MAX { return Err((path,title,preview,status,integrity)); }
+            self.open_revision+=1;
+            self.selected=Some(path); self.preview_title=title; self.status=status;
+            Ok((self.preview.replace(preview),std::mem::replace(&mut self.integrity,integrity)))
+        });
+        let applied=result.is_ok();drop(result);applied
+    }
+    fn commit_status(&mut self, status: String) {
+        if self.status != status { self.project_source_lease.clone().mutate_always(|| {self.open_revision=self.open_revision.saturating_add(1);self.status=status;}); }
+    }
+    #[cfg(test)]
+    fn commit_preview_title(&mut self, title: String) {
+        if self.preview_title != title { self.project_source_lease.clone().mutate_always(|| {self.open_revision=self.open_revision.saturating_add(1);self.preview_title=title;}); }
+    }
+    #[cfg(test)]
+    pub(crate) fn test_select_report_without_persisting(&mut self, path: &std::path::Path) {
+        self.commit_report_selection(Some(path.to_owned()));
+    }
     pub fn new(cfg: &AppConfig) -> Self {
         let project_id = sanitize_id(&cfg.apps.project.active_id, "default");
         Self {
             ai_state: (false, false),
             project_id: project_id.clone(),
+            project_source_lease: Default::default(),
             new_project_id: String::new(),
             projects: Vec::new(),
             index: IndexedProject {
@@ -343,7 +415,9 @@ impl TestReportPanel {
                 name: String::new(),
                 tests: Vec::new(),
             },
+            index_version: uuid::Uuid::new_v4(),
             selected: None,
+            open_revision: 0,
             project_root: None, integrity: None,
             preview_title: String::new(),
             return_report: None,
@@ -449,10 +523,10 @@ impl TestReportPanel {
         waveform: Option<&mut WaveformAnalysisPanel>,
     ) -> ReportAction {
         if self.status.is_empty() {
-            self.status = tr(lang, "report.status_ready");
+            self.commit_status(tr(lang, "report.status_ready"));
         }
         if hub_project != self.project_id && wiparse_core::project::is_valid_id(hub_project) {
-            self.project_id = hub_project.to_owned();
+            self.commit_project_id(hub_project.to_owned());
             self.index_dirty = true;
         }
         self.maybe_rebuild(data_root, plugins, running_id.is_some(), hub_epoch);
@@ -496,13 +570,29 @@ impl TestReportPanel {
     }
 
     fn rebuild_index(&mut self, data_root: &Path, plugins: &[PluginMeta]) {
-        self.project_root=Some(data_root.to_owned());
         let doc = ensure_project(data_root, &self.project_id, None);
-        self.project_id = doc.id.clone();
+        self.commit_project_id(doc.id.clone());
         self.refresh_project_list(data_root);
-        self.index = index_project(data_root, &doc, plugins);
-        self.index_dirty = false;
-        self.last_index_at = Some(Instant::now());
+        let project=self.project_id.clone();let revision=self.open_revision;
+        let index = index_project(data_root, &doc, plugins);
+        self.commit_prepared_index(&project,revision,data_root.to_owned(),index);
+    }
+
+    fn commit_prepared_index(&mut self, project:&str, revision:u64, root:PathBuf, index:IndexedProject) -> bool {
+        if self.project_id==project && self.open_revision==revision && revision!=u64::MAX && index==self.index && self.project_root.as_ref()==Some(&root) {
+            self.index_dirty=false;self.last_index_at=Some(Instant::now());return true;
+        }
+        let version=uuid::Uuid::new_v4();
+        let old=self.project_source_lease.clone().mutate_always(|| {
+            if self.project_id!=project || self.open_revision!=revision || revision==u64::MAX || index.id!=project { return Err(index); }
+            self.project_root=Some(root);
+            self.index_version=version;
+            self.open_revision+=1;
+            self.index_dirty=false;
+            self.last_index_at=Some(Instant::now());
+            Ok(std::mem::replace(&mut self.index,index))
+        });
+        let applied=old.is_ok();drop(old);applied
     }
 
     fn refresh_project_list(&mut self, data_root: &Path) {
@@ -559,7 +649,7 @@ impl TestReportPanel {
     ) -> Result<String, String> {
         let id = sanitize_id(id, "default");
         ensure_project(data_root, &id, None);
-        self.project_id = id.clone();
+        self.commit_project_id(id.clone());
         self.persist_project();
         self.rebuild_index(data_root, plugins);
         Ok(id)
@@ -577,7 +667,7 @@ impl TestReportPanel {
             return Err("invalid project id".into());
         }
         let doc = ensure_project(data_root, raw, name);
-        self.project_id = doc.id.clone();
+        self.commit_project_id(doc.id.clone());
         self.persist_project();
         self.rebuild_index(data_root, plugins);
         Ok(doc.id)
@@ -613,61 +703,33 @@ impl TestReportPanel {
             return;
         }
         let view = open_view_for_file(view, view, name);
-        self.selected = Some(path.clone());
-        self.preview_title = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string());
-        if is_markdown(&path) {
-            self.open_report(path, lang);
-            return;
-        }
+        if is_markdown(&path) { self.open_report(path, lang); return; }
+        if view == ArtifactView::Log || is_text_file(&path) { self.open_text(path, lang); return; }
+        let project=self.project_id.clone();let revision=self.open_revision;
+        let title=path.file_name().map(|n|n.to_string_lossy().into_owned()).unwrap_or_else(||path.display().to_string());
         if view == ArtifactView::Wave || is_wave_file(&path) {
-            self.preview = Some(PreviewKind::Wave);
-            self.status = format!(
-                "{} · {}",
-                tr(lang, "report.status_wave"),
-                self.preview_title
-            );
-            *action = ReportAction::Open {
-                path,
-                view: ArtifactView::Wave,
-                overlay,
-            };
-            return;
-        }
-        if view == ArtifactView::Log || is_text_file(&path) {
-            self.open_text(path, lang);
-            return;
-        }
-        if is_image_file(&path) {
-            self.image_textures.clear();
-            self.preview = Some(PreviewKind::Image);
-            self.status = format!(
-                "{} · {}",
-                tr(lang, "report.status_loaded"),
-                self.preview_title
-            );
-            return;
-        }
-        if view == ArtifactView::External {
-            if open_path_external(&path) {
-                self.preview = Some(PreviewKind::EmptyHint(tr(lang, "report.open_external")));
-                self.status = format!(
-                    "{} · {}",
-                    tr(lang, "report.open_external"),
-                    self.preview_title
-                );
-            } else {
-                self.status = tr(lang, "report.status_open_err").to_string();
+            let status=format!("{} · {}",tr(lang, "report.status_wave"),title);
+            if self.commit_prepared_open(&project,revision,path.clone(),title,PreviewKind::Wave,status,None) {
+                *action = ReportAction::Open { path, view: ArtifactView::Wave, overlay };
             }
             return;
         }
-        *action = ReportAction::Open {
-            path,
-            view,
-            overlay,
-        };
+        if is_image_file(&path) {
+            let status=format!("{} · {}",tr(lang, "report.status_loaded"),title);
+            if self.commit_prepared_open(&project,revision,path,title,PreviewKind::Image,status,None) { self.image_textures.clear(); }
+            return;
+        }
+        if view == ArtifactView::External {
+            let opened=open_path_external(&path);
+            let status=if opened {format!("{} · {}",tr(lang, "report.open_external"),title)} else {tr(lang, "report.status_open_err")};
+            let preview=PreviewKind::EmptyHint(status.clone());
+            self.commit_prepared_open(&project,revision,path,title,preview,status,None);
+            return;
+        }
+        let status=tr(lang,"report.open_external");
+        if self.commit_prepared_open(&project,revision,path.clone(),title,PreviewKind::EmptyHint(status.clone()),status,None) {
+            *action = ReportAction::Open { path, view, overlay };
+        }
     }
 
     pub fn remove_hub_test(
@@ -790,7 +852,7 @@ impl TestReportPanel {
                     self.new_project_open = true;
                 }
                 if picked != self.project_id {
-                    self.project_id = picked;
+                    self.commit_project_id(picked);
                     self.persist_project();
                     self.rebuild_index(data_root, plugins);
                     action = ReportAction::ProjectChanged(self.project_id.clone());
@@ -817,14 +879,14 @@ impl TestReportPanel {
                             let raw = self.new_project_id.trim().to_owned();
                             if wiparse_core::project::is_valid_id(&raw) {
                                 let doc = ensure_project(data_root, &raw, Some(&raw));
-                                self.project_id = doc.id;
+                                self.commit_project_id(doc.id);
                                 self.new_project_id.clear();
                                 self.new_project_open = false;
                                 self.persist_project();
                                 self.rebuild_index(data_root, plugins);
                                 action = ReportAction::ProjectChanged(self.project_id.clone());
                             } else {
-                                self.status = tr(lang, "report.project_id_invalid").to_string();
+                                self.commit_status(tr(lang, "report.project_id_invalid").to_string());
                             }
                         }
                     });
@@ -895,7 +957,7 @@ impl TestReportPanel {
                         if add_test_entry(data_root, &self.project_id, entry).is_ok() {
                             self.add_test_open = false;
                             self.rebuild_index(data_root, plugins);
-                            self.status = format!("{} · {shown}", tr(lang, "report.add_test"));
+                            self.commit_status(format!("{} · {shown}", tr(lang, "report.add_test")));
                         }
                     }
                 }
@@ -1055,16 +1117,13 @@ impl TestReportPanel {
                                         if let Some(f) = result.latest_report() {
                                             open_file = Some((f.path.clone(), ArtifactView::Report, false));
                                         } else {
-                                            self.selected = None;
-                                            self.return_report = None;
-                                            self.preview_title = wiparse_core::project::format_run_stamp(&result.stamp);
+                                            let title=wiparse_core::project::format_run_stamp(&result.stamp);
                                             let hint = if lang == Lang::Zh {
                                                 "此批次尚未生成 MD 报告。波形、图片和日志在报告生成后通过正文链接查看。"
                                             } else {
                                                 "No Markdown report for this run yet. Evidence is opened through links in the generated report."
                                             };
-                                            self.preview = Some(PreviewKind::EmptyHint(hint.into()));
-                                            self.status = hint.into();
+                                            self.commit_empty_run(title,hint.into());
                                         }
                                     }
                                     if let Some(target) = result.latest_report() {
@@ -1100,7 +1159,7 @@ impl TestReportPanel {
                         });
                     if let Some(id) = remove_id {
                         if self.remove_hub_test(data_root, plugins, &id).is_ok() {
-                            self.status = format!("{} · {id}", tr(lang, "report.remove_test"));
+                            self.commit_status(format!("{} · {id}", tr(lang, "report.remove_test")));
                         }
                     }
                     if let Some((path, view, overlay)) = open_file {
@@ -1345,32 +1404,31 @@ impl TestReportPanel {
     }
 
     fn open_text(&mut self, path: PathBuf, lang: Lang) {
-        match read_text_capped(&path) {
+        let project=self.project_id.clone();let revision=self.open_revision;
+        let title=path.file_name().map(|n|n.to_string_lossy().into_owned()).unwrap_or_else(||path.display().to_string());
+        let (preview,status)=match read_text_capped(&path) {
             Ok(text) => {
-                self.preview = Some(PreviewKind::Text(std::sync::Arc::new(text)));
-                self.status = format!(
-                    "{} · {}",
-                    tr(lang, "report.status_loaded"),
-                    self.preview_title
-                );
+                (PreviewKind::Text(std::sync::Arc::new(text)),format!("{} · {}",tr(lang, "report.status_loaded"),title))
             }
             Err(e) => {
-                self.preview = Some(PreviewKind::EmptyHint(e.clone()));
-                self.status = format!("{}: {e}", tr(lang, "report.status_read_err"));
+                (PreviewKind::EmptyHint(e.clone()),format!("{}: {e}", tr(lang, "report.status_read_err")))
             }
-        }
+        };
+        self.commit_prepared_open(&project,revision,path,title,preview,status,None);
     }
 
     fn integrity_status(&self)->Option<&str>{
         self.integrity.as_ref().filter(|(p,_)|self.selected.as_ref()==Some(p)).map(|(_,v)|v.get().map(String::as_str).unwrap_or("正在核验报告及附件…"))
     }
     fn open_report(&mut self, path: PathBuf, lang: Lang) {
-        self.integrity=None;
+        let project=self.project_id.clone();let revision=self.open_revision;
+        let title=path.file_name().map(|n|n.to_string_lossy().into_owned()).unwrap_or_else(||path.display().to_string());
+        let mut integrity=None;
         if let (Some(root),Some(id))=(&self.project_root,path.parent().and_then(Path::file_name).and_then(|s|s.to_str())){
             if let Ok(expected)=crate::ai::artifact::report_path(root,&self.project_id,id){
                 if expected.canonicalize().ok().is_some_and(|p|Some(p)==path.canonicalize().ok()){
                     let result=std::sync::Arc::new(std::sync::OnceLock::new());
-                    self.integrity=Some((path.clone(),result.clone()));
+                    integrity=Some((path.clone(),result.clone()));
                     let journal=crate::ai::journal::Journal::at(root,&self.project_id);
                     let id=id.to_owned();
                     std::thread::spawn(move||{
@@ -1380,45 +1438,31 @@ impl TestReportPanel {
                 }
             }
         }
-        self.selected = Some(path.clone());
-        self.preview_title = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string());
-        self.image_textures.clear();
-
-        if !is_markdown(&path) {
-            self.preview = Some(PreviewKind::EmptyHint(tr(lang, "report.status_not_md")));
-            self.status = tr(lang, "report.status_not_md");
-            return;
-        }
-
-        match read_text_capped(&path) {
+        let (preview,status)=if !is_markdown(&path) {
+            (PreviewKind::EmptyHint(tr(lang, "report.status_not_md")),tr(lang, "report.status_not_md"))
+        } else { match read_text_capped(&path) {
             Ok(text) => {
                 let doc = std::sync::Arc::new(parse_report_md(&text));
-                self.preview = Some(PreviewKind::Markdown(doc));
-                self.status = format!(
-                    "{} · {}",
-                    tr(lang, "report.status_loaded"),
-                    self.preview_title
-                );
+                (PreviewKind::Markdown(doc),format!("{} · {}",tr(lang, "report.status_loaded"),title))
             }
             Err(e) => {
-                self.preview = Some(PreviewKind::EmptyHint(e.clone()));
-                self.status = format!("{}: {e}", tr(lang, "report.status_read_err"));
+                (PreviewKind::EmptyHint(e.clone()),format!("{}: {e}", tr(lang, "report.status_read_err")))
             }
-        }
+        }};
+        if self.commit_prepared_open(&project,revision,path,title,preview,status,integrity) { self.image_textures.clear(); }
     }
 
     fn open_external(&mut self, lang: Lang) {
         let Some(path) = self.selected.clone() else {
             return;
         };
-        if open_path_external(&path) {
-            self.status = format!("{} · {}", tr(lang, "report.open_external"), path.display());
-        } else {
-            self.status = tr(lang, "report.status_open_err");
-        }
+        let project=self.project_id.clone();let revision=self.open_revision;
+        let status=if open_path_external(&path) {format!("{} · {}", tr(lang, "report.open_external"), path.display())} else {tr(lang, "report.status_open_err")};
+        self.project_source_lease.clone().mutate_always(|| {
+            if self.project_id==project && self.open_revision==revision && self.selected.as_ref()==Some(&path) && revision!=u64::MAX {
+                self.open_revision+=1;self.status=status;
+            }
+        });
     }
 }
 
@@ -3318,6 +3362,143 @@ fn parse_md_link(chars: &[char], start: usize) -> Option<(String, String, usize)
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unchanged_index_preserves_version_but_changed_index_invalidates_prepared_open() {
+        use super::*;
+        let mut panel=TestReportPanel::new(&AppConfig::default());
+        let project=panel.project_id.clone();let root=PathBuf::from("root");
+        let index=IndexedProject{id:project.clone(),name:"first".into(),tests:Vec::new()};
+        assert!(panel.commit_prepared_index(&project,panel.open_revision,root.clone(),index.clone()));
+        let revision=panel.open_revision;let version=panel.index_version;let (_,permit)=panel.project_source_lease.snapshot(||()).unwrap();
+        assert!(panel.commit_prepared_index(&project,revision,root.clone(),index));
+        assert_eq!(panel.index_version,version);assert_eq!(permit.commit_prepared(||()),Some(()));
+        let changed=IndexedProject{id:project.clone(),name:"second".into(),tests:Vec::new()};
+        assert!(panel.commit_prepared_index(&project,revision,root,changed));
+        assert_ne!(panel.index_version,version);
+        assert!(!panel.commit_prepared_open(&project,revision,PathBuf::from("old.md"),"old".into(),PreviewKind::EmptyHint("old".into()),"old".into(),None));
+    }
+    #[test]
+    fn replacing_preview_at_same_path_changes_agent_binding() {
+        use super::*;
+        let mut panel=TestReportPanel::new(&AppConfig::default());let project=panel.project_id.clone();
+        let path=PathBuf::from("same-report.md");
+        assert!(panel.commit_prepared_open(&project,panel.open_revision,path.clone(),"same".into(),PreviewKind::Text(std::sync::Arc::new("first".into())),"loaded".into(),None));
+        let before=panel.agent_identity();
+        assert!(panel.commit_prepared_open(&project,panel.open_revision,path,"same".into(),PreviewKind::Text(std::sync::Arc::new("second".into())),"loaded".into(),None));
+        assert_ne!(panel.agent_identity(),before);
+    }
+    #[test]
+    fn stale_index_never_replaces_current_project_or_selection() {
+        use super::*;
+        let mut panel=TestReportPanel::new(&AppConfig::default());let project=panel.project_id.clone();let revision=panel.open_revision;
+        let index=IndexedProject{id:project.clone(),name:"old".into(),tests:Vec::new()};
+        panel.commit_report_selection(Some(PathBuf::from("later.md")));
+        assert!(!panel.commit_prepared_index(&project,revision,PathBuf::from("old-root"),index));
+        assert_ne!(panel.index.name,"old");assert_eq!(panel.selected.as_deref(),Some(std::path::Path::new("later.md")));
+    }
+    #[test]
+    fn wave_and_image_open_commit_their_own_selection_and_preview() {
+        use super::*;
+        let mut panel=TestReportPanel::new(&AppConfig::default());
+        let mut action=ReportAction::None;
+        panel.apply_open(PathBuf::from("trace.isf"),ArtifactView::Wave,false,Lang::Zh,&mut action);
+        assert_eq!(panel.selected.as_deref(),Some(std::path::Path::new("trace.isf")));
+        assert!(matches!(&panel.preview,Some(PreviewKind::Wave)));
+        assert!(matches!(&action,ReportAction::Open{view:ArtifactView::Wave,..}));
+        panel.apply_open(PathBuf::from("capture.png"),ArtifactView::External,false,Lang::Zh,&mut action);
+        assert_eq!(panel.selected.as_deref(),Some(std::path::Path::new("capture.png")));
+        assert!(matches!(panel.preview,Some(PreviewKind::Image)));
+    }
+    #[test]
+    fn prepared_report_rejects_selection_aba_and_project_changes() {
+        use super::*;
+        let mut panel=TestReportPanel::new(&AppConfig::default());
+        panel.commit_report_selection(Some(PathBuf::from("first.md")));
+        let project=panel.project_id.clone();let revision=panel.open_revision;
+        panel.commit_report_selection(Some(PathBuf::from("second.md")));
+        panel.commit_report_selection(Some(PathBuf::from("first.md")));
+        assert!(!panel.commit_prepared_open(&project,revision,PathBuf::from("old.md"),"old".into(),PreviewKind::Text(std::sync::Arc::new("stale".into())),"loaded".into(),None));
+        assert_eq!(panel.selected.as_deref(),Some(std::path::Path::new("first.md")));
+        let revision=panel.open_revision;panel.commit_project_id("different_project".into());
+        assert!(!panel.commit_prepared_open(&project,revision,PathBuf::from("old.md"),"old".into(),PreviewKind::Text(std::sync::Arc::new("stale".into())),"loaded".into(),None));
+        assert!(panel.selected.is_none());
+    }
+    #[test]
+    fn prepared_report_commits_failure_as_a_coherent_state() {
+        use super::*;
+        let mut panel=TestReportPanel::new(&AppConfig::default());let project=panel.project_id.clone();let revision=panel.open_revision;
+        assert!(panel.commit_prepared_open(&project,revision,PathBuf::from("missing.md"),"missing.md".into(),PreviewKind::EmptyHint("read error".into()),"read error".into(),None));
+        assert_eq!(panel.selected.as_deref(),Some(std::path::Path::new("missing.md")));
+        assert_eq!(panel.preview_title,"missing.md");assert_eq!(panel.status,"read error");
+        assert!(matches!(panel.preview,Some(PreviewKind::EmptyHint(_))));
+    }
+    #[test]
+    fn report_summary_fields_invalidate_permit_and_project_switch_drops_old_preview() {
+        use super::*;
+        let mut panel=TestReportPanel::new(&AppConfig::default());
+        panel.commit_report_selection(Some(PathBuf::from("old.md")));
+        panel.commit_preview(PreviewKind::Text(std::sync::Arc::new("old evidence".into())));
+        let (_,title_permit)=panel.project_source_lease.snapshot(||()).unwrap();
+        panel.commit_preview_title("old title".into());
+        assert!(title_permit.commit_prepared(||()).is_none());
+        let (_,status_permit)=panel.project_source_lease.snapshot(||()).unwrap();
+        panel.commit_status("loaded".into());
+        assert!(status_permit.commit_prepared(||()).is_none());
+        panel.commit_project_id("new_project".into());
+        assert!(panel.selected.is_none() && panel.preview.is_none());
+        assert!(panel.preview_title.is_empty() && panel.index.tests.is_empty());
+        assert_eq!(panel.index.id,"new_project");
+    }
+    #[test]
+    fn preview_replacement_invalidates_permit_and_selection_clears_old_preview() {
+        use super::*;
+        let mut panel=TestReportPanel::new(&AppConfig::default());
+        panel.commit_report_selection(Some(PathBuf::from("first.md")));
+        panel.commit_preview(PreviewKind::Text(std::sync::Arc::new("old report".into())));
+        let (_,permit)=panel.project_source_lease.snapshot(||()).unwrap();
+        panel.commit_preview(PreviewKind::Text(std::sync::Arc::new("new report".into())));
+        assert!(permit.commit_prepared(||()).is_none());
+        panel.commit_report_selection(Some(PathBuf::from("second.md")));
+        assert!(panel.preview.is_none());
+        assert!(panel.preview_title.is_empty() && panel.status.is_empty());
+        let (_,old)=panel.project_source_lease.snapshot(||()).unwrap();
+        panel.commit_preview_status(PreviewKind::Text(std::sync::Arc::new("second".into())),"loaded second".into());
+        assert!(old.commit_prepared(||()).is_none());
+        assert_eq!(panel.status,"loaded second");
+    }
+    #[test]
+    fn preview_search_does_not_claim_complete_file_coverage() {
+        use super::*;
+        let mut panel=TestReportPanel::new(&AppConfig::default());
+        panel.commit_report_selection(Some(PathBuf::from("report.md")));
+        panel.commit_preview(PreviewKind::Text(std::sync::Arc::new("evidence".into())));
+        let reply=panel.agent_search(&serde_json::json!({"contains":"evidence"}),&egui::Context::default(),std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        let value=reply.receiver.unwrap().recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(value["data"]["matches"],1);
+        assert_eq!(value["data"]["entire_file_covered"],false);
+    }
+    #[test]
+    fn changing_report_selection_invalidates_shared_source_permit() {
+        use super::*;
+        use wiparse_core::ai::{AiConfig, AiRequest, AiService};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let source = wiparse_core::ai::source_lease::SourceLease::default();
+        let mut panel = TestReportPanel::new(&AppConfig::default());
+        panel.set_project_source_lease(source.clone());
+        let (request, permit) = source.snapshot(|| AiRequest { purpose:"fixture".into(), text:"fixture".into() }).unwrap();
+        let service = AiService::new(AiConfig { enabled:true, base_url:format!("http://{}",listener.local_addr().unwrap()), model:"fixture".into(), ..Default::default() });
+        let task = service.submit_conversation_reviewed_guarded(request, vec![], permit).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while task.outbound_preview().is_none() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panel.commit_report_selection(Some(PathBuf::from("new-report.md")));
+        assert!(task.approve_outbound());
+        assert!(matches!(task.result.recv_timeout(std::time::Duration::from_secs(3)).unwrap(), Err(wiparse_core::ai::AiError::Config(_))));
+        assert!(matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+    }
     use super::*;
 
     #[test]
@@ -3933,8 +4114,26 @@ mod tests {
 }
 
 impl TestReportPanel {
- pub(crate) fn agent_identity(&self)->String{let revision=self.selected.as_ref().and_then(|p|fs::metadata(p).ok()).map(|m|(m.len(),m.modified().ok()));format!("{}:{:?}:{:?}",self.project_id,self.selected,revision)}
- pub(crate) fn agent_index(&self,params:&serde_json::Value)->serde_json::Value{let offset=params["offset"].as_u64().unwrap_or(0) as usize;let limit=params["limit"].as_u64().unwrap_or(10).min(20) as usize;serde_json::json!({"ok":true,"data":{"project_id":self.project_id,"reports":self.agent_report_files().iter().skip(offset).take(limit).map(|(id,p)|serde_json::json!({"report_id":id,"source_id":wiparse_core::log_analysis::source_id_for_path(p).ok(),"name":p.file_name().map(|s|s.to_string_lossy())})).collect::<Vec<_>>(),"next_report_offset":if offset+limit<self.agent_report_files().len(){Some(offset+limit)}else{None},"total_reports":self.agent_report_files().len(),"total":self.index.tests.len(),"next_offset":if offset+limit<self.index.tests.len(){Some(offset+limit)}else{None},"tests":self.index.tests.iter().skip(offset).take(limit).map(|test|serde_json::json!({"id":test.id,"name":if test.name_zh.is_empty(){&test.name}else{&test.name_zh},"run_count":test.results.len(),"latest_ok":test.results.last().and_then(|r|r.ok),"latest_stamp":test.results.last().map(|r|&r.stamp)})).collect::<Vec<_>>()}})}
+ pub(crate) fn agent_identity(&self)->String{let revision=self.selected.as_ref().and_then(|p|fs::metadata(p).ok()).map(|m|(m.len(),m.modified().ok()));format!("{}:{:?}:{:?}:{}:{}",self.project_id,self.selected,revision,self.index_version,self.open_revision)}
+ pub(crate) fn agent_has_report(&self)->bool{self.selected.as_ref().is_some_and(|path|path.is_file())}
+ pub(crate) fn agent_index(&self,params:&serde_json::Value,root:&Path,ctx:&egui::Context,cancel:std::sync::Arc<std::sync::atomic::AtomicBool>)->crate::ai::agent::HostReply {
+  let offset=params["offset"].as_u64().unwrap_or(0) as usize;
+  let limit=params["limit"].as_u64().unwrap_or(10).min(20) as usize;
+  let files=self.agent_report_files();let total_reports=files.len();
+  let files=files.into_iter().skip(offset).take(limit).collect::<Vec<_>>();
+  let total=self.index.tests.len();
+  let tests=self.index.tests.iter().skip(offset).take(limit).map(|test|serde_json::json!({"id":test.id,"name":if test.name_zh.is_empty(){&test.name}else{&test.name_zh},"run_count":test.results.len(),"latest_ok":test.results.last().and_then(|r|r.ok),"latest_stamp":test.results.last().map(|r|&r.stamp)})).collect::<Vec<_>>();
+  let project=self.project_id.clone();let root=root.to_owned();
+  crate::ai::agent::spawn_work(ctx,move||{
+   let mut reports=Vec::with_capacity(files.len());
+   for (id,path) in files {
+    if cancel.load(std::sync::atomic::Ordering::Acquire){return crate::ai::agent::failure("AGENT.CANCELLED");}
+    reports.push(serde_json::json!({"report_id":id,"source_id":wiparse_core::log_analysis::source_id_for_path(&path).ok(),"name":path.file_name().map(|s|s.to_string_lossy()),"run_provenance":ai_read::report_run_provenance(&root,&project,&path)}));
+   }
+   let next=offset.saturating_add(limit);
+   serde_json::json!({"ok":true,"data":{"project_id":project,"reports":reports,"next_report_offset":if next<total_reports{Some(next)}else{None},"total_reports":total_reports,"total":total,"next_offset":if next<total{Some(next)}else{None},"tests":tests}})
+  })
+ }
  pub(crate) fn agent_search(&self,params:&serde_json::Value,ctx:&egui::Context,cancel:std::sync::Arc<std::sync::atomic::AtomicBool>)->crate::ai::agent::HostReply{
   let preview=self.preview.clone();let path=self.selected.clone();let query=params["contains"].as_str().unwrap_or("").to_lowercase();let offset=params["offset"].as_u64().unwrap_or(0) as usize;let limit=params["limit"].as_u64().unwrap_or(6).min(12) as usize;
   crate::ai::agent::spawn_work(ctx,move||{
@@ -3944,8 +4143,7 @@ impl TestReportPanel {
     Some(PreviewKind::Text(text))=>{for (line,text)in text.lines().enumerate(){inspect(format!("line:{}",line+1),text);}},
     _=>return crate::ai::agent::failure("请先在测试报告工具中打开Markdown或文本报告")
    }
-   let source_bytes=path.as_ref().and_then(|p|std::fs::metadata(p).ok()).map(|m|m.len());
-   serde_json::json!({"ok":true,"data":{"file":path.as_ref().and_then(|p|p.file_name()).map(|n|n.to_string_lossy().into_owned()),"scope":"cached open report preview, block locators are not original line numbers","preview_byte_limit":MAX_PREVIEW_CHARS,"entire_file_covered":source_bytes.is_some_and(|bytes|bytes<=MAX_PREVIEW_CHARS as u64),"matches":total,"next_offset":if offset+limit<total{Some(offset+limit)}else{None},"evidence":examples}})
+   serde_json::json!({"ok":true,"data":{"file":path.as_ref().and_then(|p|p.file_name()).map(|n|n.to_string_lossy().into_owned()),"scope":"cached open report preview; parsed block locators are not original line numbers","preview_byte_limit":MAX_PREVIEW_CHARS,"entire_file_covered":false,"coverage_reason":"Preview may be truncated or omit source syntax; the file may have changed since loading. Use report.read or full source search for complete coverage.","matches":total,"next_offset":if offset.saturating_add(limit)<total{Some(offset.saturating_add(limit))}else{None},"evidence":examples}})
   })
  }
 }

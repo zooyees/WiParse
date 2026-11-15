@@ -4,7 +4,7 @@ impl Session {
     pub(crate) fn set_report_context(&mut self, context:ContextState) {
         let changed=self.context.as_ref().is_some_and(|old|old.project!=context.project || binding_for(old,"test_report")!=binding_for(&context,"test_report"));
         self.set_context(context);
-        if changed {self.messages.clear();self.steps.clear();self.observations.clear();self.plan.clear();self.stream_preview=None;self.status="报告来源已切换，请基于当前报告重新提问。".into();}
+        if changed {self.turn_scope=None;self.awaiting_input=false;self.messages.clear();self.steps.clear();self.observations.clear();self.plan.clear();self.stream_preview=None;self.status="报告来源已切换，请基于当前报告重新提问。".into();}
     }
     pub(crate) fn report_ui(&mut self,ui:&mut egui::Ui,ctx:&Context,lang:Lang,t:&Tokens,service:&AiService,ready:bool) {
         // Fixed composer, scrolling conversation: growing evidence never pushes input out of view.
@@ -13,6 +13,8 @@ impl Session {
                 ui.checkbox(&mut self.read_data,text(lang,"读取报告","Read reports"));
                 ui.checkbox(&mut self.cross_tools,text(lang,"跨工具","Across tools"));
                 ui.checkbox(&mut self.application,text(lang,"界面操作","UI actions"));
+                ui.checkbox(&mut self.review_outbound,text(lang,"外发前审阅","Review outgoing requests"))
+                    .on_hover_text(text(lang,"逐次审阅请求；来源未受保护时不能发送。","Review each request; unguarded sources cannot be sent."));
             });});
             let editor=ui.add(egui::TextEdit::multiline(&mut self.prompt).desired_rows(3).desired_width(f32::INFINITY).char_limit(16000)
                 .hint_text(text(lang,"总结报告、核查异常或生成分析报告…\nCtrl+Enter 发送","Summarize, investigate or create an analysis…\nCtrl+Enter to send")));
@@ -47,6 +49,24 @@ impl Session {
                 });
             }
             if let Some(preview)=&self.stream_preview {ui.push_id("report-stream",|ui|{ui.weak(text(lang,"AI · 正在生成（尚未完成）","AI · Generating (not final)"));preview.ui_chat(ui,t,lang);});}
+            if let Some(preview)=self.model.as_ref().and_then(|model|model.outbound_preview()) {
+                ui.separator();ui.label(text(lang,"外发请求审阅","Outgoing request review"));
+                ui.label(&preview.endpoint);
+                egui::ScrollArea::vertical().id_salt("report-outbound-body").max_height(220.).show(ui,|ui|{
+                    ui.add(egui::Label::new(serde_json::to_string_pretty(&preview.body).unwrap_or_default()).wrap().selectable(true));
+                });
+                if !self.reviewed_source_guarded {ui.colored_label(t.warning,text(lang,"报告来源尚无法可靠锁定，暂不能发送。","Report source cannot yet be guarded; sending is disabled."));}
+                ui.horizontal(|ui|{
+                    if ui.add_enabled(self.reviewed_source_guarded,egui::Button::new(text(lang,"发送此请求","Send request"))).clicked() {
+                        if self.context.as_ref()==self.review_context.as_ref(){if let Some(model)=&self.model{model.approve_outbound();}}
+                        else {self.cancel_task("来源已变化，审阅请求未发送。");}
+                    }
+                    if ui.button(text(lang,"拒绝发送","Reject")).clicked(){
+                        let rejected=self.model.as_ref().is_some_and(|model|model.reject_outbound());
+                        self.cancel_task(if rejected {"已拒绝外发，当前请求未发送。"}else{"已停止等待；请求可能已发送。"});
+                    }
+                });
+            }
             if !self.steps.is_empty(){egui::CollapsingHeader::new(format!("{} · {}",text(lang,"执行记录与证据","Activity and evidence"),self.steps.len())).show(ui,|ui|{
                 for step in &self.steps {egui::CollapsingHeader::new(format!("{} · {}",step.title,step.status)).id_salt(&step.id).show(ui,|ui|{
                     ui.add(egui::Label::new(serde_json::to_string_pretty(&step.data).unwrap_or_default()).wrap().selectable(true));
@@ -70,6 +90,14 @@ impl Session {
 
 #[cfg(test)]mod tests {
     use super::*;
+    #[test]fn report_review_stays_blocked_and_close_cancels_staged_request(){
+        let config=AiConfig{enabled:true,base_url:"http://127.0.0.1:1".into(),model:"fixture".into(),..Default::default()};
+        let service=AiService::new(config);let mut session=Session::default();
+        session.set_report_context(ContextState{page:"test_report".into(),project:"default".into(),binding:json!({"test_report":"fixture"}).to_string(),testing:false});
+        session.review_outbound=true;session.question="分析当前报告中的异常".into();session.request_model(&service);
+        assert!(!session.reviewed_source_guarded);
+        session.close_review();assert!(session.model.is_none());assert!(session.review_context.is_none());
+    }
     #[test]fn changing_report_clears_old_conversation_without_crossing_sources(){
         let mut session=Session::default();
         let mut context=ContextState{page:"test_report".into(),project:"default".into(),binding:json!({"test_report":"first.md"}).to_string(),testing:false};

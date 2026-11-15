@@ -43,11 +43,19 @@ test('F03 Stop between screenshot and source never starts source',async t=>{
  assert.equal(calls,0);
 });
 test('F02 hung I/O is bounded and cancellation must confirm quiescence',async()=>{
- let unknown=false,cancelled=0;const clock={now:()=>performance.now()};
- let io=guardedAdapter({capture:()=>new Promise(()=>{}),cancelAndConfirm:async()=>{cancelled++;return {quiescent:true};}},{clock,stopped:()=>false,deadline:clock.now()+20});
- await assert.rejects(io.capture({config:{timeout_s:0.01}}),/IO.TIMEOUT/);assert.equal(cancelled,1);
- io=guardedAdapter({capture:()=>new Promise(()=>{})},{clock,stopped:()=>false,deadline:clock.now()+20,onUnknown:()=>unknown=true});
+ let unknown=false,cancelled=0,started=0;const clock={now:()=>performance.now()};
+ // Separate the outer deadline from the deliberately short operation timeout:
+ // an already-expired deadline legitimately rejects before capture starts.
+ let io=guardedAdapter({capture:()=>{started++;return new Promise(()=>{});},cancelAndConfirm:async()=>{cancelled++;return {quiescent:true};}},{clock,stopped:()=>false,deadline:clock.now()+5000});
+ await assert.rejects(io.capture({config:{timeout_s:0.01}}),/IO.TIMEOUT/);assert.equal(started,1);assert.equal(cancelled,1);
+ io=guardedAdapter({capture:()=>new Promise(()=>{})},{clock,stopped:()=>false,deadline:clock.now()+5000,onUnknown:()=>unknown=true});
  await assert.rejects(io.capture({config:{timeout_s:0.01}}),/IO.STATE_UNKNOWN/);assert.equal(unknown,true);
+});
+test('F02 expired deadline rejects without starting or cancelling I/O',async()=>{
+ let started=0,cancelled=0;
+ const io=guardedAdapter({capture:()=>{started++;},cancelAndConfirm:()=>{cancelled++;}},{clock:{now:()=>10},stopped:()=>false,deadline:10});
+ await assert.rejects(io.capture({}),/IO.TIMEOUT/);
+ assert.equal(started,0);assert.equal(cancelled,0);
 });
 test('F05 matrix is validated before a lease, and post-acquire file failure releases once',async t=>{
  const {ctx,a}=fixture(t);let acquisitions=0,releases=0;a.acquire=async()=>{acquisitions++;return {};};a.release=async()=>{releases++;};assert.equal((await preflight(ctx)).ok,true);

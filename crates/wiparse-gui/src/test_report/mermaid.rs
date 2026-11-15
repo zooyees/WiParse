@@ -100,13 +100,23 @@ pub(super) fn show(ui: &mut egui::Ui, source: &str, lang: Lang) {
         s.source = source.into(); s.dark = dark; s.changed = Instant::now(); s.attempted = false; s.error = None;
         s.export_status.clear();
     }
-    if let Some(result) = s.job.as_ref().and_then(|rx| rx.try_recv().ok()) {
-        s.job = None;
-        if result.0 == s.source && result.1 == s.dark {
-            match result.2 {
-                Ok(mut output) => { s.texture = Some(ui.ctx().load_texture("mermaid", output.image.clone(), egui::TextureOptions::LINEAR)); output.image.pixels = Vec::new(); s.output = Some(output); s.error = None; }
-                Err(e) => s.error = Some(e),
+    if let Some(received) = s.job.as_ref().map(|rx| rx.try_recv()) {
+        match received {
+            Ok(result) => {
+                s.job = None;
+                if result.0 == s.source && result.1 == s.dark {
+                    match result.2 {
+                        Ok(mut output) => { s.texture = Some(ui.ctx().load_texture("mermaid", output.image.clone(), egui::TextureOptions::LINEAR)); output.image.pixels = Vec::new(); s.output = Some(output); s.error = None; }
+                        Err(e) => s.error = Some(e),
+                    }
+                }
             }
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                s.job = None;
+                s.attempted = true;
+                s.error = Some("渲染任务意外结束，请检查源码后重试 / Renderer stopped unexpectedly; check the source and retry".into());
+            }
+            Err(crossbeam_channel::TryRecvError::Empty) => {}
         }
     }
     if !s.attempted && s.job.is_none() && s.changed.elapsed() >= Duration::from_millis(250) {
@@ -132,6 +142,12 @@ pub(super) fn show(ui: &mut egui::Ui, source: &str, lang: Lang) {
                 s.expanded=true;s.expanded_zoom=1.0;
             }
             if ui.small_button(if zh {"复制源码"} else {"Copy source"}).clicked() { ui.ctx().copy_text(source.into()); }
+            if s.error.is_some() && s.job.is_none() && ui.small_button(if zh {"重试"} else {"Retry"}).clicked() {
+                s.error = None;
+                s.attempted = false;
+                s.changed = Instant::now() - Duration::from_millis(250);
+                ui.ctx().request_repaint();
+            }
             for (name, ext) in [("SVG","svg"),("PNG","png")] {
                 if ui.add_enabled(s.output.is_some() && !pending && s.error.is_none() && s.export.is_none(), egui::Button::new(name).small()).clicked() {
                     let output = s.output.as_ref().unwrap();
@@ -205,6 +221,23 @@ mod tests {
         assert!((image.width()-fit.x).abs()<1.);
     }
     #[test]
+    #[ignore = "intentionally saturates process-wide renderer slots; run in isolation"]
+    fn saturated_renderer_stays_pending_and_resumes_after_slots_release() {
+        assert!(RUNNING.compare_exchange(0,2,Ordering::AcqRel,Ordering::Acquire).is_ok());
+        let slots=(Slot,Slot);
+        let ctx=egui::Context::default();let source="flowchart LR\n A --> B";
+        let tick=||{let _=ctx.run(Default::default(),|ctx|{egui::CentralPanel::default().show(ctx,|ui|show(ui,source,Lang::En));});};
+        tick();
+        let cache=ctx.data(|d|d.get_temp::<Cache>(egui::Id::new("mermaid-cache-v1")).unwrap());
+        let state=cache.lock().unwrap().back().unwrap().1.clone();
+        state.lock().unwrap().changed=Instant::now()-Duration::from_secs(1);
+        tick();
+        {let s=state.lock().unwrap();assert!(!s.attempted && s.job.is_none());}
+        drop(slots);
+        let deadline=Instant::now()+Duration::from_secs(20);
+        loop {tick();if state.lock().unwrap().texture.is_some(){break;}assert!(Instant::now()<deadline,"render did not resume");std::thread::sleep(Duration::from_millis(25));}
+    }
+    #[test]
     fn chat_diagram_updates_and_failure_keeps_last_valid_texture() {
         fn tick(ctx:&egui::Context,source:&str) {
             let _=ctx.run(egui::RawInput { screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(280.0,600.0))), ..Default::default() }, |ctx| {
@@ -231,6 +264,24 @@ mod tests {
         { let s=state.lock().unwrap(); assert!(s.error.is_some());assert!(s.texture.is_some()); }
         ctx.set_visuals(egui::Visuals::light());tick(&ctx,valid);settle(valid);
         let s=state.lock().unwrap();assert!(s.error.is_none());assert!(!s.dark);
+    }
+    #[test]
+    fn disconnected_render_worker_does_not_leave_permanent_spinner() {
+        let ctx = egui::Context::default();
+        let source = "flowchart LR\n A --> B";
+        let frame = || { let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| show(ui, source, Lang::En));
+        }); };
+        frame();
+        let cache = ctx.data(|d| d.get_temp::<Cache>(egui::Id::new("mermaid-cache-v1")).unwrap());
+        let state = cache.lock().unwrap().back().unwrap().1.clone();
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        drop(tx);
+        { let mut s = state.lock().unwrap(); s.job = Some(rx); s.attempted = true; }
+        frame();
+        let s = state.lock().unwrap();
+        assert!(s.job.is_none());
+        assert!(s.error.as_deref().is_some_and(|error| error.contains("Renderer stopped unexpectedly")));
     }
     #[test]
     fn offline_mermaid_diagrams_and_limits() {

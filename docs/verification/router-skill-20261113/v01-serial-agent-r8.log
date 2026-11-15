@@ -1,0 +1,1050 @@
+note: did not finalize incremental compilation session directory `\\?\D:\windlink\windlink\WiParse-R\target\debug\incremental\winit-2ua2zgdwt6x11\s-ho021uitx0-0urfoci-working`: Access is denied. (os error 5)
+  |
+  = help: the next build will not be able to reuse work from this compilation
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\D:\windlink\windlink\WiParse-R\target\debug\incremental\wiparse_core-3sdu06l92e62w\s-ho6c4embxy-057b5tw-working`
+
+warning: variable does not need to be mutable
+   --> crates\wiparse-core\src\protocol\decode.rs:891:17
+    |
+891 |             let mut fields = vec![field("pattern", name, "", Some(format!("0x{header:02X}")))];
+    |                 ----^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `commit` is never used
+   --> crates\wiparse-core\src\ai\source_lease.rs:158:19
+    |
+119 | impl SourcePermit {
+    | ----------------- method in this implementation
+...
+158 |     pub(crate) fn commit(&self, commit: impl FnOnce() -> bool) -> bool {
+    |                   ^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `lfsr_msequence` is never used
+   --> crates\wiparse-core\src\bus_decode\ddsss.rs:181:8
+    |
+181 | pub fn lfsr_msequence(width: u8, taps: &[u8]) -> Vec<bool> {
+    |        ^^^^^^^^^^^^^^
+
+warning: methods `scope_screen_point_count`, `tek_screen_point_count`, `keysight_screen_point_count`, `prepare_keysight_screen_waveform`, and `apply_tek_visible_data_window` are never used
+    --> crates\wiparse-core\src\instrument\drivers.rs:1361:8
+     |
+ 882 | impl InstrumentDevice {
+     | --------------------- methods in this implementation
+...
+1361 |     fn scope_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1399 |     fn tek_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^
+...
+1406 |     fn keysight_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1449 |     fn prepare_keysight_screen_waveform(&mut self, channel: u8) -> Result<(), InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2018 |     fn apply_tek_visible_data_window(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `parse_keysight_preamble_points` is never used
+    --> crates\wiparse-core\src\instrument\drivers.rs:3167:4
+     |
+3167 | fn parse_keysight_preamble_points(pre: &str) -> Option<usize> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `verify_file_against_meta` is never used
+   --> crates\wiparse-core\src\marketplace\trust.rs:160:8
+    |
+160 | pub fn verify_file_against_meta(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `open_tcp_uart_from_info` is never used
+   --> crates\wiparse-core\src\serial.rs:624:4
+    |
+624 | fn open_tcp_uart_from_info(info: &PortInfo, baud: u32) -> Result<SerialSession, SerialError> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `load_tek_wfm` is never used
+   --> crates\wiparse-core\src\waveform_file.rs:968:4
+    |
+968 | fn load_tek_wfm(bytes: &[u8], default_channel: &str) -> Result<WaveformTrace, WaveformFileError> {
+    |    ^^^^^^^^^^^^
+
+warning: `wiparse-core` (lib) generated 9 warnings (run `cargo fix --lib -p wiparse-core` to apply 1 suggestion)
+warning: unused import: `std::sync::atomic::Ordering`
+   --> crates\wiparse-gui\src\agent_host.rs:492:9
+    |
+492 |     use std::sync::atomic::Ordering;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Color32`
+ --> crates\wiparse-gui\src\calculator.rs:4:12
+  |
+4 | use egui::{Color32, CornerRadius, Frame, Margin, Pos2, Rect, Sense, Stroke, Vec2};
+  |            ^^^^^^^
+
+warning: unused import: `Color32`
+ --> crates\wiparse-gui\src\converter.rs:3:12
+  |
+3 | use egui::{Color32, CornerRadius, Frame, Margin, Stroke};
+  |            ^^^^^^^
+
+warning: unused import: `wiparse_core::protocol::describe_ask_bytes`
+  --> crates\wiparse-gui\src\waveform_analysis.rs:31:5
+   |
+31 | use wiparse_core::protocol::describe_ask_bytes;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> crates\wiparse-gui\src\app.rs:1743:29
+     |
+1743 |                 Stroke::new(1.0, t.focus_ring), egui::StrokeKind::Inside);
+     |                             ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+     = note: `#[warn(float_literal_f32_fallback)]` (part of `#[warn(future_incompatible)]`) on by default
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> crates\wiparse-gui\src\ai\report.rs:36:86
+   |
+36 |             .frame(Frame::NONE.fill(t.surface_bg).inner_margin(8).stroke(Stroke::new(1.0,t.divider)))
+   |                                                                                      ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\alerts.rs:202:41
+    |
+202 |                     .stroke(Stroke::new(1.0, t.warning))
+    |                                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> crates\wiparse-gui\src\serial_tool\ai_chat\host.rs:1024:41
+     |
+1024 |                     .stroke(Stroke::new(1.0, t.divider))
+     |                                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> crates\wiparse-gui\src\serial_tool\ai_chat.rs:1022:69
+     |
+1022 |                 .vline(drag.center().x, drag.y_range(), Stroke::new(1.0, t.accent));
+     |                                                                     ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> crates\wiparse-gui\src\theme.rs:75:67
+   |
+75 |         Stroke::new(if response.hovered() || response.dragged() { 2.0 } else { 1.0 },
+   |                                                                   ^^^ help: explicitly specify the type as `f32`: `2.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> crates\wiparse-gui\src\theme.rs:75:80
+   |
+75 |         Stroke::new(if response.hovered() || response.dragged() { 2.0 } else { 1.0 },
+   |                                                                                ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> crates\wiparse-gui\src\data_analysis.rs:878:64
+    |
+878 | ...   Frame::NONE.fill(tokens.surface_bg).stroke(Stroke::new(1.,tokens.divider)).corner_radius(CornerRadius::same(ui_theme::RADIUS_...
+    |                                                              ^^ help: explicitly specify the type as `f32`: `1._f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> crates\wiparse-gui\src\test_tool\workspace\chrome.rs:127:41
+    |
+127 | ...                   Stroke::new(1.0, tokens.divider),
+    |                                   ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> crates\wiparse-gui\src\test_tool\workspace\chrome.rs:274:13
+    |
+274 |             1.0,
+    |             ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: use of deprecated method `egui::Ui::set_enabled`: Use disable(), add_enabled_ui(), or add_enabled() instead
+   --> crates\wiparse-gui\src\test_tool.rs:784:16
+    |
+784 |             ui.set_enabled(false);
+    |                ^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `egui::Ui::set_enabled`: Use disable(), add_enabled_ui(), or add_enabled() instead
+   --> crates\wiparse-gui\src\test_tool.rs:881:12
+    |
+881 |         ui.set_enabled(was_enabled);
+    |            ^^^^^^^^^^^
+
+warning: use of deprecated method `egui::Ui::set_enabled`: Use disable(), add_enabled_ui(), or add_enabled() instead
+    --> crates\wiparse-gui\src\test_tool.rs:1466:20
+     |
+1466 |                 ui.set_enabled(self.job.is_none());
+     |                    ^^^^^^^^^^^
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> crates\wiparse-gui\src\waveform_analysis\protocol_view.rs:341:33
+    |
+341 |                     Stroke::new(1., tokens.divider),
+    |                                 ^^ help: explicitly specify the type as `f32`: `1._f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: unused import: `std::io::Read`
+   --> crates\wiparse-gui\src\ai\agent\remediation_tests.rs:229:9
+    |
+229 |     use std::io::Read;
+    |         ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Read`
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\platform_tests.rs:105:9
+    |
+105 |     use std::io::Read;
+    |         ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Read`
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\platform_tests.rs:141:9
+    |
+141 |     use std::io::Read;
+    |         ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Read`
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\platform_tests.rs:184:9
+    |
+184 |     use std::io::Read;
+    |         ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Read`
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\platform_tests.rs:228:9
+    |
+228 |     use std::io::Read;
+    |         ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Read`
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\platform_tests.rs:266:9
+    |
+266 |     use std::io::Read;
+    |         ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Read`
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\responsiveness_tests.rs:275:9
+    |
+275 |     use std::io::Read;
+    |         ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Read`
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\responsiveness_tests.rs:345:9
+    |
+345 |     use std::io::Read;
+    |         ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Read`
+ --> crates\wiparse-gui\src\serial_tool\ai_chat\agent_workflow_tests.rs:2:5
+  |
+2 | use std::io::Read;
+  |     ^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> crates\wiparse-gui\src\backend\mod.rs:193:19
+    |
+193 | fn handle_request(mut request: Request, bridge: &ApiBridge) -> Result<(), String> {
+    |                   ----^^^^^^^
+    |                   |
+    |                   help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `defer`
+   --> crates\wiparse-gui\src\instrument_control\workbench\flat.rs:222:9
+    |
+222 |         defer: bool,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_defer`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `defer`
+   --> crates\wiparse-gui\src\instrument_control\workbench.rs:195:9
+    |
+195 |         defer: bool,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_defer`
+
+warning: unused variable: `hud`
+    --> crates\wiparse-gui\src\instrument_control.rs:4781:32
+     |
+4781 | fn hud_chip(ui: &mut egui::Ui, hud: &HudTokens, label: impl Into<String>, color: Color32) {
+     |                                ^^^ help: if this is intentional, prefix it with an underscore: `_hud`
+
+warning: unused variable: `border`
+    --> crates\wiparse-gui\src\log_tab.rs:2429:60
+     |
+2429 |     let (ask, fsk, code, hex, ok, err, warn, field, muted, border) = if light {
+     |                                                            ^^^^^^ help: if this is intentional, prefix it with an underscore: `_border`
+
+warning: unreachable pattern
+    --> crates\wiparse-gui\src\serial_tool\ai_chat\host.rs:1183:33
+     |
+1183 | ...                   _ => Err("AI.APPROVAL_INVALID_ACTION".into()),
+     |                       ^ no value can reach this
+     |
+note: multiple earlier patterns match some of the same values
+    --> crates\wiparse-gui\src\serial_tool\ai_chat\host.rs:1183:33
+     |
+1142 | ...                   Action::Platform { method, params } => {
+     |                       ----------------------------------- matches some of the same values
+...
+1150 | ...                   action @ (Action::SerialStart | Action::SerialStop) => {
+     |                                 ---------------------------------------- matches some of the same values
+...
+1160 | ...                   action @ (Action::MonitorStart { .. } | Action::MonitorConfigure { .. } | Action::MonitorStop) => {
+     |                                 ----------------------------------------------------------------------------------- matches some of the same values
+...
+1183 | ...                   _ => Err("AI.APPROVAL_INVALID_ACTION".into()),
+     |                       ^ collectively making this unreachable
+     = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: unreachable pattern
+   --> crates\wiparse-gui\src\serial_tool\ai_chat.rs:588:13
+    |
+588 |             _ => "control.unknown",
+    |             ^ no value can reach this
+    |
+note: multiple earlier patterns match some of the same values
+   --> crates\wiparse-gui\src\serial_tool\ai_chat.rs:588:13
+    |
+582 |             Action::SerialStart => "serial.start",
+    |             ------------------- matches some of the same values
+583 |             Action::SerialStop => "serial.stop",
+    |             ------------------ matches some of the same values
+584 |             Action::Platform { method, .. } => method.as_str(),
+    |             ------------------------------- matches some of the same values
+585 |             Action::MonitorStart { .. } => "monitor.start",
+    |             --------------------------- matches some of the same values
+...
+588 |             _ => "control.unknown",
+    |             ^ ...and 2 other patterns collectively make this unreachable
+
+warning: variable does not need to be mutable
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\view_tests.rs:458:9
+    |
+458 |     let mut goto = |p: &mut SerialToolPanel, target: &str| {
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `output`
+   --> crates\wiparse-gui\src\test_tool\line_trigger_editor.rs:769:13
+    |
+769 |         let output = click(&ctx, &mut raw, add);
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_output`
+
+warning: variable does not need to be mutable
+    --> crates\wiparse-gui\src\waveform_analysis.rs:5164:10
+     |
+5164 |     let (mut ymin, mut ymax) = robust_y_range(&trace.y[..n]);
+     |          ----^^^^
+     |          |
+     |          help: remove this `mut`
+
+warning: associated function `new` is never used
+   --> crates\wiparse-gui\src\app.rs:254:12
+    |
+253 | impl WiParseApp {
+    | --------------- associated function in this implementation
+254 |     pub fn new(cfg: AppConfig) -> Self {
+    |            ^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `next_seq` is never used
+  --> crates\wiparse-gui\src\backend\events.rs:96:12
+   |
+23 | impl EventBus {
+   | ------------- method in this implementation
+...
+96 |     pub fn next_seq(&self) -> u64 {
+   |            ^^^^^^^^
+
+warning: field `points` is never read
+  --> crates\wiparse-gui\src\instrument_control.rs:84:9
+   |
+81 |     Waveform {
+   |     -------- field in this variant
+...
+84 |         points: usize,
+   |         ^^^^^^
+
+warning: field `channel` is never read
+   --> crates\wiparse-gui\src\instrument_control.rs:281:5
+    |
+280 | struct CachedWavePlot {
+    |        -------------- field in this struct
+281 |     channel: String,
+    |     ^^^^^^^
+
+warning: field `max_points` is never read
+   --> crates\wiparse-gui\src\instrument_control.rs:471:5
+    |
+452 | pub struct InstrumentControlPanel {
+    |            ---------------------- field in this struct
+...
+471 |     max_points: usize,
+    |     ^^^^^^^^^^
+
+warning: methods `visible_instrument_kinds` and `discovered_resources_panel` are never used
+    --> crates\wiparse-gui\src\instrument_control.rs:692:8
+     |
+ 519 | impl InstrumentControlPanel {
+     | --------------------------- methods in this implementation
+...
+ 692 |     fn visible_instrument_kinds(&self) -> Vec<InstrumentKind> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2220 |     fn discovered_resources_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `mean` is never read
+    --> crates\wiparse-gui\src\instrument_control.rs:3662:5
+     |
+3656 | struct WaveformStats {
+     |        ------------- field in this struct
+...
+3662 |     mean: f64,
+     |     ^^^^
+     |
+     = note: `WaveformStats` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: function `export_waveform_csv` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:3712:4
+     |
+3712 | fn export_waveform_csv(
+     |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `waveform_csv_cell` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:3737:4
+     |
+3737 | fn waveform_csv_cell(value: &str) -> String {
+     |    ^^^^^^^^^^^^^^^^^
+
+warning: function `scope_panel` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:3791:4
+     |
+3791 | fn scope_panel(ui: &mut egui::Ui, tokens: &Tokens, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+     |    ^^^^^^^^^^^
+
+warning: function `card` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4099:4
+     |
+4099 | fn card(ui: &mut egui::Ui, tokens: &Tokens, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+     |    ^^^^
+
+warning: constant `CARD_PANEL_WIDTH` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4114:7
+     |
+4114 | const CARD_PANEL_WIDTH: f32 = 258.0;
+     |       ^^^^^^^^^^^^^^^^
+
+warning: constant `CARD_CONTROL_HEIGHT` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4115:7
+     |
+4115 | const CARD_CONTROL_HEIGHT: f32 = 26.0;
+     |       ^^^^^^^^^^^^^^^^^^^
+
+warning: constant `CARD_ICON_COLUMN_WIDTH` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4116:7
+     |
+4116 | const CARD_ICON_COLUMN_WIDTH: f32 = 42.0;
+     |       ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `InstrumentCardAction` is never constructed
+    --> crates\wiparse-gui\src\instrument_control.rs:4119:8
+     |
+4119 | struct InstrumentCardAction {
+     |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `instrument_type_card` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4125:4
+     |
+4125 | fn instrument_type_card(
+     |    ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `instrument_control_hint` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4480:4
+     |
+4480 | fn instrument_control_hint(lang: Lang, kind: InstrumentKind) -> &'static str {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `instrument_acquisition_hint` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4525:4
+     |
+4525 | fn instrument_acquisition_hint(lang: Lang, kind: InstrumentKind) -> &'static str {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `instrument_settings_hint` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4565:4
+     |
+4565 | fn instrument_settings_hint(lang: Lang, kind: InstrumentKind) -> &'static str {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `instrument_features` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4610:4
+     |
+4610 | fn instrument_features(lang: Lang, kind: InstrumentKind) -> [(&'static str, &'static str); 3] {
+     |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `setting_row` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4678:4
+     |
+4678 | fn setting_row(ui: &mut egui::Ui, label: &str, value: &str) {
+     |    ^^^^^^^^^^^
+
+warning: function `capability_badge` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4684:4
+     |
+4684 | fn capability_badge(ui: &mut egui::Ui, tokens: &Tokens, label: impl Into<String>) {
+     |    ^^^^^^^^^^^^^^^^
+
+warning: function `resource_address_hint` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4708:4
+     |
+4708 | fn resource_address_hint(kind: InstrumentKind) -> &'static str {
+     |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `resource_empty_prompt` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4717:4
+     |
+4717 | fn resource_empty_prompt(lang: Lang, kind: InstrumentKind) -> &'static str {
+     |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `overview_type_card` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:6399:4
+     |
+6399 | fn overview_type_card(
+     |    ^^^^^^^^^^^^^^^^^^
+
+warning: function `paint_mesh_icon` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:7066:4
+     |
+7066 | fn paint_mesh_icon(painter: &egui::Painter, rect: Rect, selected: bool) {
+     |    ^^^^^^^^^^^^^^^
+
+warning: field `scroll_generation` is never read
+   --> crates\wiparse-gui\src\log_tab.rs:122:16
+    |
+101 | pub(crate) struct PaneState {
+    |                   --------- field in this struct
+...
+122 |     pub(crate) scroll_generation: u64,
+    |                ^^^^^^^^^^^^^^^^^
+    |
+    = note: `PaneState` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: methods `release_display_buffers` and `store_file` are never used
+   --> crates\wiparse-gui\src\log_tab.rs:935:12
+    |
+415 | impl LogTabPage {
+    | --------------- methods in this implementation
+...
+935 |     pub fn release_display_buffers(&mut self) {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^
+...
+941 |     fn store_file(&self) -> Option<&Arc<FileLogStore>> {
+    |        ^^^^^^^^^^
+
+warning: method `clear` is never used
+    --> crates\wiparse-gui\src\log_view.rs:1653:12
+     |
+1616 | impl LineEditorSession {
+     | ---------------------- method in this implementation
+...
+1653 |     pub fn clear(&mut self) {
+     |            ^^^^^
+
+warning: field `wifi_scan_pending` is never read
+   --> crates\wiparse-gui\src\serial_tool.rs:148:5
+    |
+101 | pub struct SerialToolPanel {
+    |            --------------- field in this struct
+...
+148 |     wifi_scan_pending: bool,
+    |     ^^^^^^^^^^^^^^^^^
+
+warning: methods `open_path_and_show` and `needs_repaint` are never used
+    --> crates\wiparse-gui\src\serial_tool.rs:374:19
+     |
+ 199 | impl SerialToolPanel {
+     | -------------------- methods in this implementation
+...
+ 374 |     pub(crate) fn open_path_and_show(&mut self, path: PathBuf) -> Option<usize> {
+     |                   ^^^^^^^^^^^^^^^^^^
+...
+2142 |     pub fn needs_repaint(&self) -> bool {
+     |            ^^^^^^^^^^^^^
+
+warning: function `elide_tab_title` is never used
+    --> crates\wiparse-gui\src\serial_tool.rs:3348:4
+     |
+3348 | fn elide_tab_title(title: &str, max_chars: usize) -> String {
+     |    ^^^^^^^^^^^^^^^
+
+warning: method `open_ai_window` is never used
+    --> crates\wiparse-gui\src\serial_tool\ai_chat\host.rs:1309:19
+     |
+  46 | impl SerialToolPanel {
+     | -------------------- method in this implementation
+...
+1309 |     pub(crate) fn open_ai_window(&mut self) {
+     |                   ^^^^^^^^^^^^^^
+
+warning: function `tokens_for_panel` is never used
+   --> crates\wiparse-gui\src\theme.rs:297:8
+    |
+297 | pub fn tokens_for_panel(light_pref: bool, _scope_workbench: bool) -> Tokens {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `secondary_button` is never used
+   --> crates\wiparse-gui\src\theme.rs:329:8
+    |
+329 | pub fn secondary_button(ui: &mut egui::Ui, t: &Tokens, label: impl Into<String>) -> egui::Response {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `ghost_button` is never used
+   --> crates\wiparse-gui\src\theme.rs:346:8
+    |
+346 | pub fn ghost_button(ui: &mut egui::Ui, t: &Tokens, label: impl Into<String>) -> egui::Response {
+    |        ^^^^^^^^^^^^
+
+warning: function `field_label` is never used
+   --> crates\wiparse-gui\src\theme.rs:716:8
+    |
+716 | pub fn field_label(ui: &mut egui::Ui, t: &Tokens, label: &str, label_w: f32, row_h: f32) {
+    |        ^^^^^^^^^^^
+
+warning: function `caption` is never used
+   --> crates\wiparse-gui\src\theme.rs:727:8
+    |
+727 | pub fn caption(ui: &mut egui::Ui, t: &Tokens, text: &str) {
+    |        ^^^^^^^
+
+warning: function `mono_body` is never used
+   --> crates\wiparse-gui\src\theme.rs:735:8
+    |
+735 | pub fn mono_body(text: impl Into<String>, t: &Tokens) -> RichText {
+    |        ^^^^^^^^^
+
+warning: function `add_singleline` is never used
+   --> crates\wiparse-gui\src\theme.rs:764:8
+    |
+764 | pub fn add_singleline(
+    |        ^^^^^^^^^^^^^^
+
+warning: variant `Progress` is never constructed
+  --> crates\wiparse-gui\src\update\mod.rs:41:5
+   |
+39 | enum UpdateMsg {
+   |      --------- variant in this enum
+40 |     Checked(Result<UpdateAvailability, String>),
+41 |     Progress { received: u64, total: u64 },
+   |     ^^^^^^^^
+
+warning: method `set_config` is never used
+  --> crates\wiparse-gui\src\update\mod.rs:59:12
+   |
+45 | impl UpdateController {
+   | --------------------- method in this implementation
+...
+59 |     pub fn set_config(&mut self, cfg: UpdateConfig) {
+   |            ^^^^^^^^^^
+
+warning: function `layout_and_map_drafts` is never used
+    --> crates\wiparse-gui\src\data_analysis.rs:2888:4
+     |
+2888 | fn layout_and_map_drafts(series: &mut [SeriesDraft]) {
+     |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `map_drafts_inplace` is never used
+    --> crates\wiparse-gui\src\data_analysis.rs:2925:4
+     |
+2925 | fn map_drafts_inplace(series: &mut [SeriesDraft]) {
+     |    ^^^^^^^^^^^^^^^^^^
+
+warning: method `clear` is never used
+  --> crates\wiparse-gui\src\data_analysis\history.rs:90:12
+   |
+81 | impl Points {
+   | ----------- method in this implementation
+...
+90 |     pub fn clear(&mut self) {
+   |            ^^^^^
+
+warning: function `ensure_cache_dir` is never used
+  --> crates\wiparse-gui\src\data_extract_cache.rs:60:8
+   |
+60 | pub fn ensure_cache_dir() -> std::io::Result<PathBuf> {
+   |        ^^^^^^^^^^^^^^^^
+
+warning: function `save_wida` is never used
+   --> crates\wiparse-gui\src\data_extract_cache.rs:128:8
+    |
+128 | pub fn save_wida(path: &Path, payload: &WidaPayload) -> Result<(), String> {
+    |        ^^^^^^^^^
+
+warning: function `save_wida_with_progress` is never used
+   --> crates\wiparse-gui\src\data_extract_cache.rs:132:8
+    |
+132 | pub fn save_wida_with_progress<F>(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `channel` is never read
+  --> crates\wiparse-gui\src\market_jobs.rs:39:9
+   |
+33 | pub struct CatalogRow {
+   |            ---------- field in this struct
+...
+39 |     pub channel: String,
+   |         ^^^^^^^
+   |
+   = note: `CatalogRow` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `entry` is never read
+   --> crates\wiparse-gui\src\test_tool.rs:125:5
+    |
+116 | struct PluginInfo {
+    |        ---------- field in this struct
+...
+125 |     entry: String,
+    |     ^^^^^
+    |
+    = note: `PluginInfo` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: method `status_tone` is never used
+   --> crates\wiparse-gui\src\test_tool.rs:504:12
+    |
+264 | impl TestToolPanel {
+    | ------------------ method in this implementation
+...
+504 |     pub fn status_tone(&self) -> crate::theme::StatusTone {
+    |            ^^^^^^^^^^^
+
+warning: method `report_waves` is never used
+    --> crates\wiparse-gui\src\waveform_analysis.rs:1998:8
+     |
+ 378 | impl WaveformAnalysisPanel {
+     | -------------------------- method in this implementation
+...
+1998 |     fn report_waves(&self, lanes: &[ProtocolReportLane]) -> Vec<ProtocolReportWave> {
+     |        ^^^^^^^^^^^^
+
+warning: function `thin_columns` is never used
+    --> crates\wiparse-gui\src\waveform_analysis.rs:5528:4
+     |
+5528 | fn thin_columns(columns: &[[f64; 4]], max_cols: usize) -> Vec<[f64; 4]> {
+     |    ^^^^^^^^^^^^
+
+warning: function `wave_overview_columns` is never used
+    --> crates\wiparse-gui\src\waveform_analysis.rs:5557:4
+     |
+5557 | fn wave_overview_columns(wave: &LoadedWave) -> Vec<[f64; 4]> {
+     |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `detail_windows` is never used
+    --> crates\wiparse-gui\src\waveform_analysis.rs:5568:4
+     |
+5568 | fn detail_windows(lanes: &[ProtocolReportLane]) -> Vec<(f64, f64)> {
+     |    ^^^^^^^^^^^^^^
+
+warning: unused return value of `Ui::button` that must be used
+   --> crates\wiparse-gui\src\theme.rs:839:78
+    |
+839 |                     egui::Layout::left_to_right(egui::Align::Center), |ui| { ui.button("button"); });
+    |                                                                              ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: You should check if the user clicked this with `if ui.button(…).clicked() { … } 
+    = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+839 |                     egui::Layout::left_to_right(egui::Align::Center), |ui| { let _ = ui.button("button"); });
+    |                                                                              +++++++
+
+warning: calls to `std::mem::drop` with a reference instead of an owned value does nothing
+    --> crates\wiparse-gui\src\test_tool.rs:3441:13
+     |
+3441 |             drop(job);
+     |             ^^^^^---^
+     |                  |
+     |                  argument has type `&mut RunningJob`
+     |
+     = note: `#[warn(dropping_references)]` on by default
+help: use `let _ = ...` to ignore the expression or result
+     |
+3441 -             drop(job);
+3441 +             let _ = job;
+     |
+
+warning: linker stdout: 正在创建库 D:\windlink\windlink\WiParse-R\target\debug\deps\wiparse_gui-7eac5e33b084ea9d.lib 和对象 D:\windlink\windlink\WiParse-R\target\debug\deps\wiparse_gui-7eac5e33b084ea9d.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `wiparse-gui` (bin "wiparse-gui" test) generated 95 warnings (run `cargo fix --bin "wiparse-gui" -p wiparse-gui --tests` to apply 23 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.65s
+     Running unittests src\main.rs (target\debug\deps\wiparse_gui-7eac5e33b084ea9d.exe)
+
+running 160 tests
+test serial_tool::ai_chat::agent_workflow_tests::budget_boundary_preserves_evidence_and_never_dispatches_a_summary_action ... ok
+test serial_tool::ai_chat::agent_workflow_tests::budget_summary_accepts_segmented_text_from_a_tool_free_provider ... ok
+test serial_tool::ai_chat::agent_workflow_tests::cancelled_native_and_json_replies_cannot_pollute_new_task ... ok
+test serial_tool::ai_chat::agent_workflow_tests::capability_question_needs_no_log_scan_or_artificial_tool_call ... ok
+test serial_tool::ai_chat::agent_workflow_tests::continuation_requires_matching_scope_skills_and_control_cap ... ok
+test serial_tool::ai_chat::agent_workflow_tests::delayed_native_and_json_control_calls_do_not_regain_revoked_grant ... ok
+test serial_tool::ai_chat::agent_workflow_tests::followup_reuses_task_evidence_in_the_next_model_request ... ok
+test serial_tool::ai_chat::agent_workflow_tests::locked_test_control_catalog_exposes_only_owned_test_operations ... ok
+test serial_tool::ai_chat::agent_workflow_tests::native_adapter_rejects_unknown_actions_and_requires_explicit_final_references ... ok
+test serial_tool::ai_chat::agent_workflow_tests::native_timeline_then_standard_markdown_finishes_one_task_and_exposes_real_chart ... ok
+test serial_tool::ai_chat::agent_workflow_tests::one_user_request_acquires_evidence_repairs_stalling_and_finishes_without_confirmation ... FAILED
+test serial_tool::ai_chat::agent_workflow_tests::open_serial_goals_wait_for_real_input_without_scanning_or_repair ... ok
+test serial_tool::ai_chat::agent_workflow_tests::plan_read_batch_recall_and_completion_check_finish_without_user_orchestration ... FAILED
+test serial_tool::ai_chat::agent_workflow_tests::repeated_native_stalls_switch_this_task_to_json_and_keep_scan_result ... FAILED
+test serial_tool::ai_chat::agent_workflow_tests::reviewed_serial_snapshot_survives_append_but_expires_on_clear ... ok
+test serial_tool::ai_chat::agent_workflow_tests::selected_scope_authorizes_reads_but_not_device_actions ... ok
+test serial_tool::ai_chat::agent_workflow_tests::source_change_cancels_staged_outbound_request_before_review ... ok
+test serial_tool::ai_chat::agent_workflow_tests::unadvertised_native_call_is_rejected_then_recovers_without_dispatch ... ok
+test serial_tool::ai_chat::alerts::long_line_regressions::numeric_and_keyword_alerts_at_long_line_tail_are_evaluated_before_excerpting ... ok
+test serial_tool::ai_chat::library::tests::charging_fixture_scan_preserves_source_and_full_coverage ... FAILED
+test serial_tool::ai_chat::library::tests::current_disk_scope_ignores_other_tabs_and_directory_and_scans_past_100_lines ... FAILED
+test serial_tool::ai_chat::library::tests::default_current_and_explicit_range_scan_all_retained_rows_without_raw_upload ... FAILED
+test serial_tool::ai_chat::library::tests::local_preview_is_read_only_and_does_not_require_an_ai_provider ... FAILED
+test serial_tool::ai_chat::library::tests::local_preview_keeps_manual_task_budget_and_evidence_intact ... FAILED
+test serial_tool::ai_chat::library::tests::local_tools_reject_paths_and_malformed_continuations ... ok
+test serial_tool::ai_chat::library::tests::log_scope_consent_and_manual_only_are_checked_before_dispatch ... ok
+test serial_tool::ai_chat::library::tests::rejected_local_preview_preserves_manual_task_and_queue_state ... ok
+test serial_tool::ai_chat::live_eval::promptfoo_live_serial_session ... ignored, explicit paid model evaluation through tools/agent-eval
+test serial_tool::ai_chat::monitor_review::tests::math_rejects_division_by_zero_and_nonfinite_results ... ok
+test serial_tool::ai_chat::monitor_review::tests::search_uses_frozen_rows_and_reports_bounded_coverage ... ok
+test serial_tool::ai_chat::platform::reviewed_stop_handoff_tests::queued_stop_revocation_prevents_claim_and_closes_durable_intent ... ok
+test serial_tool::ai_chat::platform_tests::ai_tool_loop_waits_for_completed_job_then_uses_actual_result ... ok
+test serial_tool::ai_chat::platform_tests::automatic_reply_does_not_enter_a_replacement_watch_on_same_port ... ok
+test serial_tool::ai_chat::platform_tests::broker_control_guard_rejects_scope_change_without_device_change ... ok
+test serial_tool::ai_chat::platform_tests::broker_guard_rejects_project_switch_even_if_device_is_unchanged ... ok
+test serial_tool::ai_chat::platform_tests::control_failure_text_distinguishes_declined_from_unknown_outcomes ... ok
+test serial_tool::ai_chat::platform_tests::delayed_automatic_model_reply_is_discarded_after_source_switch ... ok
+test serial_tool::ai_chat::platform_tests::failed_read_receipt_does_not_release_later_queued_device_action ... ok
+test serial_tool::ai_chat::platform_tests::invalid_management_arguments_are_returned_as_repairable_local_result ... ok
+test serial_tool::ai_chat::platform_tests::late_automatic_broker_reply_cannot_cross_source_switch_or_consume_queue ... ok
+test serial_tool::ai_chat::platform_tests::late_platform_reply_cannot_enter_replacement_task ... ok
+test serial_tool::ai_chat::platform_tests::local_alerts_keep_running_when_ai_is_paused_or_service_changes ... ok
+test serial_tool::ai_chat::platform_tests::local_numeric_alerts_are_immediate_bounded_and_never_product_verdicts ... ok
+test serial_tool::ai_chat::platform_tests::mock_serial_session_reads_adapter_matrix_through_real_broker_and_runs_recipe ... ok
+test serial_tool::ai_chat::platform_tests::platform_registry_rejects_raw_commands_arbitrary_files_and_extra_fields ... ok
+test serial_tool::ai_chat::platform_tests::queued_controls_are_fenced_and_cancelled_before_dispatch ... ok
+test serial_tool::ai_chat::platform_tests::reviewed_automatic_device_action_is_rejected_before_dispatch ... ok
+test serial_tool::ai_chat::platform_tests::revoked_automatic_model_request_never_regains_control_after_reenable ... ok
+test serial_tool::ai_chat::platform_tests::revoked_dispatched_control_ignores_late_success_and_requires_readback ... ok
+test serial_tool::ai_chat::platform_tests::serial_charging_skill_uses_log_events_and_sourced_waveform ... ok
+test serial_tool::ai_chat::platform_tests::serial_qi_skill_reads_decoded_isf_through_broker_and_finishes ... ok
+test serial_tool::ai_chat::platform_tests::serial_report_skill_reads_demo_markdown_through_broker_and_finishes ... ok
+test serial_tool::ai_chat::platform_tests::serial_wave_skill_measures_wfm_through_api_bridge_and_finishes ... ok
+test serial_tool::ai_chat::platform_tests::test_control_permission_does_not_unlock_instrument_control ... ok
+test serial_tool::ai_chat::platform_tests::three_cloud_failures_pause_only_ai_and_keep_local_alerts ... ok
+test serial_tool::ai_chat::protocol::recovery_tests::explanations_and_displayed_calls_are_distinct ... ok
+test serial_tool::ai_chat::protocol::recovery_tests::retry_matches_transport_and_preserves_json_execution ... ok
+test serial_tool::ai_chat::queue_tests::busy_send_button_really_enqueues_through_the_host_ui ... ok
+test serial_tool::ai_chat::queue_tests::changed_source_pauses_queue_without_sending_or_losing_draft ... ok
+test serial_tool::ai_chat::queue_tests::closing_chat_permanently_revokes_queued_control_grants ... ok
+test serial_tool::ai_chat::queue_tests::edited_serial_recovery_starts_new_task_and_releases_pending_selection ... ok
+test serial_tool::ai_chat::queue_tests::failed_queued_start_preserves_both_message_and_current_draft ... ok
+test serial_tool::ai_chat::queue_tests::full_queue_feedback_is_visible_and_keeps_draft_without_failing_active_task ... ok
+test serial_tool::ai_chat::queue_tests::incompatible_recovery_keeps_serial_draft_and_recovery ... ok
+test serial_tool::ai_chat::queue_tests::messages_submitted_during_analysis_run_fifo_and_accumulate_reported_usage ... ok
+test serial_tool::ai_chat::queue_tests::older_queued_messages_never_gain_new_device_permission_and_queue_is_bounded ... ok
+test serial_tool::ai_chat::queue_tests::queued_composer_keeps_tabs_buttons_and_input_visible_in_both_themes ... ok
+test serial_tool::ai_chat::queue_tests::queued_library_request_is_paused_when_directory_changes ... ok
+test serial_tool::ai_chat::queue_tests::queued_question_waits_for_operator_clarification ... ok
+test serial_tool::ai_chat::queue_tests::queued_test_control_does_not_grant_device_control_and_revocation_is_permanent ... ok
+test serial_tool::ai_chat::queue_tests::revocation_invalidates_deferred_control_even_after_reenable ... ok
+test serial_tool::ai_chat::responsiveness_tests::authorized_serial_stop_rejects_unconfirmed_log_instructions ... ok
+test serial_tool::ai_chat::responsiveness_tests::one_second_interval_is_valid_and_an_active_watch_can_be_reconfigured ... ok
+test serial_tool::ai_chat::responsiveness_tests::revoked_task_control_is_not_restored_by_reenabling_the_switch ... ok
+test serial_tool::ai_chat::responsiveness_tests::serial_start_tool_waits_for_actual_connection_before_returning_success ... ok
+test serial_tool::ai_chat::responsiveness_tests::serial_stop_result_drives_the_next_instrument_tool_without_a_stale_binding ... ok
+test serial_tool::ai_chat::responsiveness_tests::serial_tools_require_permission_and_reject_other_ports_and_payloads ... ok
+test serial_tool::ai_chat::responsiveness_tests::slow_ai_requests_do_not_overlap_or_queue_missed_ticks ... ok
+test serial_tool::ai_chat::responsiveness_tests::specifically_confirmed_serial_stop_uses_the_host_path_once ... ok
+test serial_tool::ai_chat::responsiveness_tests::untrusted_log_instruction_does_not_grant_serial_control ... ok
+test serial_tool::ai_chat::run::budget_tests::only_distinct_successful_reads_extend_the_budget ... ok
+test serial_tool::ai_chat::run::budget_tests::recovery_only_accepts_the_original_host_scan_and_complete_final_page ... ok
+test serial_tool::ai_chat::run::budget_tests::rejected_dispatches_stop_without_spending_successful_read_allowance ... ok
+test serial_tool::ai_chat::run::owned_test_followup_tests::recognizes_explicit_run_control_without_capturing_new_tasks ... ok
+test serial_tool::ai_chat::tests::ai_local_log_tool_scans_full_files_and_sends_only_one_bounded_summary ... FAILED
+test serial_tool::ai_chat::tests::ai_start_waits_for_actual_tcp_open_and_watch_captures_new_data ... ok
+test serial_tool::ai_chat::tests::automatic_confirmed_control_also_requires_a_durable_intent ... ok
+test serial_tool::ai_chat::tests::automatic_control_approval_expires_when_monitor_instance_is_replaced ... ok
+test serial_tool::ai_chat::tests::automatic_rejection_does_not_consume_manual_evidence_id ... ok
+test serial_tool::ai_chat::tests::automation_permissions_test_lock_and_offline_sources_are_enforced ... ok
+test serial_tool::ai_chat::tests::background_error_preserves_manual_run_and_history ... ok
+test serial_tool::ai_chat::tests::background_failure_preserves_manual_status_and_marks_background_entry ... ok
+test serial_tool::ai_chat::tests::cancelling_a_dispatched_control_preserves_an_unknown_outcome ... ok
+test serial_tool::ai_chat::tests::cancelling_automatic_control_preserves_manual_task_and_local_alerts ... ok
+test serial_tool::ai_chat::tests::cancelling_replaced_watch_approval_preserves_new_watch ... ok
+test serial_tool::ai_chat::tests::changing_serial_scope_retires_monitor_authority ... ok
+test serial_tool::ai_chat::tests::confirmed_platform_permit_is_exact_and_one_use ... ok
+test serial_tool::ai_chat::tests::confirmed_stop_of_inactive_serial_port_is_not_reported_as_dispatched ... ok
+test serial_tool::ai_chat::tests::control_approval_is_bound_to_source_skill_task_permission_and_deadline ... ok
+test serial_tool::ai_chat::tests::detached_chat_and_host_placeholder_share_monitor_invalidation ... ok
+test serial_tool::ai_chat::tests::disconnected_completion_is_unknown_and_cannot_impersonate_another_session ... ok
+test serial_tool::ai_chat::tests::failed_intent_journal_blocks_serial_dispatch ... ok
+test serial_tool::ai_chat::tests::failed_intent_journal_prevents_broker_enqueue ... ok
+test serial_tool::ai_chat::tests::failed_monitor_request_restores_checkpoint_without_losing_new_samples ... ok
+test serial_tool::ai_chat::tests::host_source_transition_retires_old_evidence_and_native_context ... ok
+test serial_tool::ai_chat::tests::initial_evidence_is_referenced_only_when_the_same_result_is_available ... ok
+test serial_tool::ai_chat::tests::invalid_queued_tool_stops_batch_before_later_device_action ... ok
+test serial_tool::ai_chat::tests::monitor_context_changes_retire_lease_without_invalidating_unchanged_context ... ok
+test serial_tool::ai_chat::tests::monitor_lease_retires_on_watch_creation_and_control_revocation ... ok
+test serial_tool::ai_chat::tests::monitor_reply_requires_a_real_final_result_before_commit ... ok
+test serial_tool::ai_chat::tests::monitor_review_permit_cannot_survive_overlapping_update ... ok
+test serial_tool::ai_chat::tests::monitor_transaction_survives_tool_round_and_restores_at_most_once ... ok
+test serial_tool::ai_chat::tests::monitoring_changes_require_confirmation_but_not_a_device_grant ... ok
+test serial_tool::ai_chat::tests::observed_serial_error_invalidates_prior_session_approval ... ok
+test serial_tool::ai_chat::tests::pending_connection_does_not_report_confirmed_after_transport_error ... ok
+test serial_tool::ai_chat::tests::primary_stop_signals_worker_and_retires_reviewed_session ... ok
+test serial_tool::ai_chat::tests::project_switch_stops_monitoring_and_resets_permission ... ok
+test serial_tool::ai_chat::tests::protocol_rejects_unknown_arguments_and_conflicting_actions ... ok
+test serial_tool::ai_chat::tests::queued_model_control_waits_for_its_own_confirmation ... ok
+test serial_tool::ai_chat::tests::queued_serial_state_change_invalidates_monitor_reply_and_tool_sources_before_drain ... ok
+test serial_tool::ai_chat::tests::replaced_watch_never_inherits_old_inflight_statistics_on_rejection ... ok
+test serial_tool::ai_chat::tests::reviewed_automatic_call_rejects_unprotected_tool_before_dispatch ... ok
+test serial_tool::ai_chat::tests::reviewed_automatic_monitor_stops_before_creating_unprotected_request ... ok
+test serial_tool::ai_chat::tests::reviewed_monitor_cannot_prepare_request_after_authorization_revoked ... ok
+test serial_tool::ai_chat::tests::reviewed_monitor_preparation_rejects_stale_authority_and_unleased_tool_results ... ok
+test serial_tool::ai_chat::tests::reviewed_monitor_read_only_request_and_continuation_use_frozen_sample ... ok
+test serial_tool::ai_chat::tests::reviewed_monitor_window_is_frozen_and_exposes_coverage ... ok
+test serial_tool::ai_chat::tests::reviewed_standalone_question_contains_no_log_and_has_source_permit ... ok
+test serial_tool::ai_chat::tests::revocation_records_unexecuted_approval_and_pauses_queue ... ok
+test serial_tool::ai_chat::tests::revoking_automatic_pending_control_restores_watch_and_keeps_local_alerts ... ok
+test serial_tool::ai_chat::tests::serial_ai_pane_renders_responsively_with_markdown_and_no_split_controls ... ok
+test serial_tool::ai_chat::tests::serial_completion_survives_closed_log_receiver_and_carries_session_command ... ok
+test serial_tool::ai_chat::tests::serial_confirmation_cannot_follow_a_session_or_authorization_change ... ok
+test serial_tool::ai_chat::tests::serial_control_permit_rejects_changed_scope_even_with_same_device ... ok
+test serial_tool::ai_chat::tests::serial_error_event_blocks_review_until_host_publishes_error_state ... ok
+test serial_tool::ai_chat::tests::serial_worker_unwind_blocks_review_until_stopped_is_published ... ok
+test serial_tool::ai_chat::tests::shared_ai_transport_decodes_reply_and_records_actual_stop_result ... ok
+test serial_tool::ai_chat::tests::shared_test_ownership_blocks_controls_before_next_ui_sync ... ok
+test serial_tool::ai_chat::tests::snapshots_are_bounded_and_clear_changes_source_identity ... ok
+test serial_tool::ai_chat::tests::source_switch_keeps_unknown_device_receipt_visible_but_out_of_new_context ... ok
+test serial_tool::ai_chat::tests::stale_dispatched_control_stops_remaining_actions_and_pauses_queue ... ok
+test serial_tool::ai_chat::tests::stale_manual_review_does_not_block_independent_local_preview ... ok
+test serial_tool::ai_chat::tests::stale_monitor_action_drops_old_checkpoint_without_replaying_it ... ok
+test serial_tool::ai_chat::tests::stale_requests_cancel_before_result_and_late_permission_cannot_upgrade_request ... ok
+test serial_tool::ai_chat::tests::stale_watch_cleanup_never_discards_another_watch_transaction ... ok
+test serial_tool::ai_chat::tests::unexpected_serial_event_channel_loss_fails_closed ... ok
+test serial_tool::ai_chat::timeline_view::tests::real_plot_and_quality_text_fit_narrow_light_and_dark_panes ... ok
+test serial_tool::ai_chat::view::confirmation_text_tests::numeric_limits_are_readable_and_empty_state_is_explicit ... ok
+test serial_tool::ai_chat::view_tests::ai_divider_drag_changes_panel_width ... ok
+test serial_tool::ai_chat::view_tests::analyse_and_monitor_views_keep_their_own_results_and_suggestions_only_fill_draft ... ok
+test serial_tool::ai_chat::view_tests::assistant_and_monitor_dashboard_export_aligned_source_frames ... ok
+test serial_tool::ai_chat::view_tests::chat_typography_and_activity_match_a_narrow_conversation_not_a_report ... ok
+test serial_tool::ai_chat::view_tests::data_scope_never_falls_back_to_recent_logs_for_empty_selection ... ok
+test serial_tool::ai_chat::view_tests::local_library_popup_keeps_preview_accessible_inside_small_windows ... ok
+test serial_tool::ai_chat::view_tests::local_library_settings_entry_preserves_composer_on_narrow_and_short_panes ... ok
+test serial_tool::ai_chat::view_tests::serial_control_checkbox_is_keyboard_operable_after_pointer_selection ... ok
+test serial_tool::ai_chat::view_tests::serial_skill_and_control_are_reachable_using_only_keyboard ... ok
+test serial_tool::ai_chat::view_tests::serial_skills_menu_keyboard_reaches_and_toggles_skill ... ok
+test serial_tool::ai_chat::view_tests::short_and_narrow_panes_keep_composer_visible_and_outside_conversation ... ok
+test serial_tool::ai_chat::view_tests::source_change_clears_old_context_and_control_authorization ... ok
+
+failures:
+
+---- serial_tool::ai_chat::agent_workflow_tests::one_user_request_acquires_evidence_repairs_stalling_and_finishes_without_confirmation stdout ----
+
+thread 'serial_tool::ai_chat::agent_workflow_tests::one_user_request_acquires_evidence_repairs_stalling_and_finishes_without_confirmation' (24092) panicked at crates\wiparse-gui\src\serial_tool\ai_chat\agent_workflow_tests.rs:215:5:
+assertion `left == right` failed
+  left: Null
+ right: true
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- serial_tool::ai_chat::agent_workflow_tests::plan_read_batch_recall_and_completion_check_finish_without_user_orchestration stdout ----
+
+thread 'serial_tool::ai_chat::agent_workflow_tests::plan_read_batch_recall_and_completion_check_finish_without_user_orchestration' (5000) panicked at crates\wiparse-gui\src\serial_tool\ai_chat\agent_workflow_tests.rs:408:49:
+called `Result::unwrap()` on an `Err` value: PoisonError { .. }
+
+---- serial_tool::ai_chat::agent_workflow_tests::repeated_native_stalls_switch_this_task_to_json_and_keep_scan_result stdout ----
+
+thread 'serial_tool::ai_chat::agent_workflow_tests::repeated_native_stalls_switch_this_task_to_json_and_keep_scan_result' (32532) panicked at crates\wiparse-gui\src\serial_tool\ai_chat\agent_workflow_tests.rs:701:47:
+called `Result::unwrap()` on an `Err` value: PoisonError { .. }
+
+---- serial_tool::ai_chat::library::tests::charging_fixture_scan_preserves_source_and_full_coverage stdout ----
+
+thread 'serial_tool::ai_chat::library::tests::charging_fixture_scan_preserves_source_and_full_coverage' (32704) panicked at crates\wiparse-gui\src\serial_tool\ai_chat\library.rs:571:46:
+called `Result::unwrap()` on an `Err` value: PoisonError { .. }
+
+---- serial_tool::ai_chat::library::tests::current_disk_scope_ignores_other_tabs_and_directory_and_scans_past_100_lines stdout ----
+
+thread 'serial_tool::ai_chat::library::tests::current_disk_scope_ignores_other_tabs_and_directory_and_scans_past_100_lines' (17116) panicked at crates\wiparse-gui\src\serial_tool\ai_chat\library.rs:538:46:
+called `Result::unwrap()` on an `Err` value: PoisonError { .. }
+
+---- serial_tool::ai_chat::library::tests::default_current_and_explicit_range_scan_all_retained_rows_without_raw_upload stdout ----
+
+thread 'serial_tool::ai_chat::library::tests::default_current_and_explicit_range_scan_all_retained_rows_without_raw_upload' (29688) panicked at crates\wiparse-gui\src\serial_tool\ai_chat\library.rs:483:46:
+called `Result::unwrap()` on an `Err` value: PoisonError { .. }
+
+---- serial_tool::ai_chat::library::tests::local_preview_is_read_only_and_does_not_require_an_ai_provider stdout ----
+
+thread 'serial_tool::ai_chat::library::tests::local_preview_is_read_only_and_does_not_require_an_ai_provider' (32024) panicked at crates\wiparse-gui\src\serial_tool\ai_chat\library.rs:343:46:
+called `Result::unwrap()` on an `Err` value: PoisonError { .. }
+
+---- serial_tool::ai_chat::library::tests::local_preview_keeps_manual_task_budget_and_evidence_intact stdout ----
+
+thread 'serial_tool::ai_chat::library::tests::local_preview_keeps_manual_task_budget_and_evidence_intact' (27560) panicked at crates\wiparse-gui\src\serial_tool\ai_chat\library.rs:435:46:
+called `Result::unwrap()` on an `Err` value: PoisonError { .. }
+
+---- serial_tool::ai_chat::tests::ai_local_log_tool_scans_full_files_and_sends_only_one_bounded_summary stdout ----
+
+thread 'serial_tool::ai_chat::tests::ai_local_log_tool_scans_full_files_and_sends_only_one_bounded_summary' (32644) panicked at crates\wiparse-gui\src\serial_tool\ai_chat\tests.rs:882:49:
+called `Result::unwrap()` on an `Err` value: PoisonError { .. }
+
+
+failures:
+    serial_tool::ai_chat::agent_workflow_tests::one_user_request_acquires_evidence_repairs_stalling_and_finishes_without_confirmation
+    serial_tool::ai_chat::agent_workflow_tests::plan_read_batch_recall_and_completion_check_finish_without_user_orchestration
+    serial_tool::ai_chat::agent_workflow_tests::repeated_native_stalls_switch_this_task_to_json_and_keep_scan_result
+    serial_tool::ai_chat::library::tests::charging_fixture_scan_preserves_source_and_full_coverage
+    serial_tool::ai_chat::library::tests::current_disk_scope_ignores_other_tabs_and_directory_and_scans_past_100_lines
+    serial_tool::ai_chat::library::tests::default_current_and_explicit_range_scan_all_retained_rows_without_raw_upload
+    serial_tool::ai_chat::library::tests::local_preview_is_read_only_and_does_not_require_an_ai_provider
+    serial_tool::ai_chat::library::tests::local_preview_keeps_manual_task_budget_and_evidence_intact
+    serial_tool::ai_chat::tests::ai_local_log_tool_scans_full_files_and_sends_only_one_bounded_summary
+
+test result: FAILED. 150 passed; 9 failed; 1 ignored; 0 measured; 432 filtered out; finished in 11.57s
+
+error: test failed, to rerun pass `-p wiparse-gui --bin wiparse-gui`

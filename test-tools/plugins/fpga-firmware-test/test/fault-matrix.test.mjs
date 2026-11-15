@@ -120,10 +120,12 @@ for(const method of ['probeReset','collectLog','waveformSource','cleanup'])for(c
   let stopped=false,unknown=false,calls=0,cancelled=0,finish;
   const a={[method]:()=>{calls++;if(scenario==='stop')stopped=true;return new Promise(resolve=>{finish=resolve;});},cancelAndConfirm:async()=>{cancelled++;if(scenario==='late'){finish({ok:true});await sleep(10);}return {quiescent:scenario!=='unknown'};}};
   const clock={now:()=>performance.now()};
-  const io=guardedAdapter(a,{clock,stopped:()=>stopped,deadline:clock.now()+8,cleanupTimeoutMs:8,onUnknown:()=>unknown=true});
+  // The short budget is for the started operation, not the scheduling gap
+  // before dispatch; the latter can exceed 8ms under parallel test load.
+  const io=guardedAdapter(a,{clock,stopped:()=>stopped,deadline:clock.now()+5000,cleanupTimeoutMs:8,onUnknown:()=>unknown=true});
   const expected=scenario==='unknown'?'IO.STATE_UNKNOWN':scenario==='stop'&&method!=='cleanup'?'RUN.ABORTED':'IO.TIMEOUT';
-  await assert.rejects(io[method]({}),e=>e.code===expected);
-  assert.equal(cancelled,1);assert.equal(unknown,scenario==='unknown');
+  await assert.rejects(io[method]({config:{timeout_s:0.008}}),e=>e.code===expected);
+  assert.equal(calls,1);assert.equal(cancelled,1);assert.equal(unknown,scenario==='unknown');
   if(unknown){await assert.rejects(io[method]({}),e=>e.code==='IO.STATE_UNKNOWN');assert.equal(calls,1);}
  });
 }

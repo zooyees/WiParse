@@ -7,6 +7,8 @@ pub(super) struct SourceRequest {
     pub auto_dir: Option<PathBuf>,
     pub auto_filename: Option<String>,
     pub overwrite: bool,
+    pub cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+    pub secure_destination: Option<secure_output::Destination>,
 }
 
 pub(super) enum PipelineJob {
@@ -33,6 +35,7 @@ pub(super) enum SaveSelection {
         filename: Option<String>,
         overwrite: bool,
     },
+    Secure { destination: secure_output::Destination },
 }
 
 pub(super) fn worker(jobs: Receiver<PipelineJob>, events: Sender<Event>) {
@@ -50,8 +53,22 @@ pub(super) fn worker(jobs: Receiver<PipelineJob>, events: Sender<Event>) {
 
 fn save_source(pending: PendingWaveformSave, selection: SaveSelection, events: &Sender<Event>) {
     let update_save_dir = matches!(&selection, SaveSelection::Dialog { .. });
+    let secure_archive = matches!(&selection, SaveSelection::Secure { .. });
     let result = (|| -> Result<Option<Vec<PathBuf>>, String> {
+        if pending.cancel.as_ref().is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+            return Err("AI.CANCELLED_BEFORE_SAVE".into());
+        }
         let path = match selection {
+            SaveSelection::Secure { destination } => {
+                if pending.conversion_incomplete {
+                    return Err("AI.EVIDENCE_INCOMPLETE_CHANNELS: multi-channel conversion omitted unreadable channels".into());
+                }
+                if pending.bytes.is_empty() { return Err("AI.EVIDENCE_NO_WAVEFORM_BYTES".into()); }
+                if pending.cancel.as_ref().is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+                    return Err("AI.CANCELLED_BEFORE_SAVE".into());
+                }
+                return destination.write_new(&pending.bytes, &pending.effective_ext, pending.cancel.as_deref()).map(|path| Some(vec![path]));
+            }
             SaveSelection::Dialog { dir } => {
                 let name = format!(
                     "{}_{}.{}",
@@ -103,8 +120,17 @@ fn save_source(pending: PendingWaveformSave, selection: SaveSelection, events: &
                 wiparse_core::paths::unique_file_path(&dir, &name, overwrite)
             }
         };
+        // The native dialog may have remained open after task cancellation.
+        // Do not start a file write after it returns in that case.
+        if pending.cancel.as_ref().is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+            return Err("AI.CANCELLED_BEFORE_SAVE".into());
+        }
         save_pending_waveform_source(&path, &pending).map(Some)
     })();
+    let project_relative = if secure_archive {
+        result.as_ref().ok().and_then(|saved| saved.as_ref()).and_then(|saved| saved.first())
+            .and_then(|path| path.file_name()).map(|name| PathBuf::from("ai-evidence").join(name))
+    } else { None };
     let _ = events.send(Event::WaveformSaved {
         id: pending.id,
         job_id: pending.job_id,
@@ -112,6 +138,10 @@ fn save_source(pending: PendingWaveformSave, selection: SaveSelection, events: &
         bytes: pending.bytes.len(),
         metrics: pending.metrics,
         update_save_dir,
+        project_relative,
+        source_parse_error: pending.source_parse_error,
+        source_representation: pending.source_representation,
+        source_channels: pending.source_channels,
     });
 }
 
@@ -127,11 +157,21 @@ fn process_source(
         auto_dir,
         auto_filename,
         overwrite,
+        cancel,
+        secure_destination,
     } = request;
+    if cancel.as_ref().is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+        send_error_job(events, Some(id), job_id, "AI.CANCELLED_BEFORE_PROCESSING");
+        return;
+    }
     let mut channel_files = Vec::new();
     let mut errors = Vec::new();
     let mut total_bytes = 0usize;
     for (ch, bytes, suggested_name) in parts {
+        if cancel.as_ref().is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire)) {
+            send_error_job(events, Some(id), job_id, "AI.CANCELLED_DURING_PROCESSING");
+            return;
+        }
         total_bytes += bytes.len();
         let _ = events.send(Event::Progress {
             id: Some(id),
@@ -249,6 +289,8 @@ fn process_source(
             auto_dir,
             auto_filename,
             overwrite,
+            cancel,
+            secure_destination,
             bytes,
             suggested_name,
             plot,

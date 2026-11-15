@@ -280,7 +280,10 @@ impl AiPanel {
                                 false,
                                 text(lang, "AI 助手", "Assistant"),
                             );
-                            if !self.settings{ui.selectable_value(&mut self.agent_mode,true,"智能任务");ui.selectable_value(&mut self.agent_mode,false,"摘要对话");}
+                            if !self.settings {
+                                ui.selectable_value(&mut self.agent_mode, true, text(lang,"智能任务","Agent task"));
+                                ui.selectable_value(&mut self.agent_mode, false, text(lang,"摘要对话","Summary chat"));
+                            }
                             ui.separator();
                             ui.label(
                                 RichText::new(if self.draft.enabled {
@@ -314,6 +317,7 @@ impl AiPanel {
                         });
                 });
         }
+        if self.open && !open && !self.settings { self.agent.close_review(); }
         self.open = open;
     }
 
@@ -1011,6 +1015,11 @@ impl AiPanel {
                 updated.ai = config.clone();
                 match save_config(&updated) {
                     Ok(()) => {
+                        // Publish through the shared service first. Its config
+                        // write lock is held against the reviewed dispatch
+                        // commit, so a stale request cannot slip through while
+                        // the GUI-visible configuration is being updated.
+                        self.service.configure(config.clone());
                         cfg.ai = config.clone();
                         self.draft = config.clone();
                         if let Some(task) = self.pending.take() {
@@ -1031,7 +1040,6 @@ impl AiPanel {
                         }
                         self.applied = config.clone();
                         self.draft = config.clone();
-                        self.service.configure(config);
                         self.status_error = false;
                         self.details.clear();
                         self.key_input.clear();
@@ -1109,6 +1117,7 @@ fn error_message(error: &AiError) -> &'static str {
         AiError::Disabled=>"AI 尚未启用，请在连接设置中启用并保存。 / Enable and save AI settings first.",
         AiError::Credential=>"密钥无法读取：请重新输入密钥，或检查密钥环境变量。 / Credential unavailable.",
         AiError::Input=>"请求为空或对话内容过长，请缩短摘要或开始新对话。 / Empty or oversized request.",
+        AiError::ResponseDetail(detail)=>detail,
         AiError::Response=>"未取得有效文本回复：检查模型、接口类型及思考模式；请求详情中保留错误码。 / Invalid or incomplete reply.",
         AiError::Truncated=>"回复达到输出上限，请提高上限或缩短问题。 / Output token limit reached.",
         AiError::Busy=>"AI 请求繁忙，请等待当前请求结束。 / AI concurrency limit reached.",
@@ -1155,6 +1164,23 @@ fn ai_field_label(ui: &mut egui::Ui, t: &Tokens, label: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn resizable_window_exposes_eight_unnamed_edge_drag_nodes() {
+        let ctx=Context::default();ctx.enable_accesskit();
+        let mut layer=None;
+        let out=ctx.run(egui::RawInput::default(),|ctx|{
+            let response=egui::Window::new("AI window test").id(egui::Id::new("ai-window-test"))
+                .resizable(true).show(ctx,|ui|{ui.label("Content");}).unwrap();
+            layer=Some(response.response.layer_id);
+        });
+        let layer=layer.unwrap();let base=egui::Id::new(layer).with("edge_drag");
+        let update=out.platform_output.accesskit_update.expect("accessibility update");
+        for side in ["right","left","bottom","top","right_bottom","right_top","left_bottom","left_top"] {
+            let id=base.with(side).value();
+            let node=update.nodes.iter().find(|(node_id,_)|node_id.0==id).expect(side);
+            assert!(node.1.label().is_none(),"unexpected label for {side}");
+        }
+    }
     #[test]
     fn ai_window_layout_and_provider_switch_never_send_requests() {
         for light in [false, true] {

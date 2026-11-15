@@ -20,6 +20,12 @@ export async function execute(bundle,{root,dir,client,signal,stopRequested=()=>f
   try {
     guard();
     if(bundle.args.mode==='live'){
+      // The execution gate is unconditionally unavailable. Report that local
+      // blocker before making any external request, even when the service is
+      // offline; capability discovery cannot make this integration safe.
+      const localCheck=preflightBundle(bundle);
+      if(localCheck.blocking.includes('INTEGRATION.TX_RX_FT4222_GATE_NOT_IMPLEMENTED'))
+        throw Error(localCheck.blocking.join(';'));
       const caps=await client.invoke('system.capabilities');
       const check=preflightBundle(bundle,caps);
       if(!check.ok)throw Error(check.blocking.join(';'));

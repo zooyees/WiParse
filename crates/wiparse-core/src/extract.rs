@@ -3,26 +3,33 @@ use regex::{Regex, RegexBuilder};
 use serde_json::Value;
 use std::{borrow::Cow, cell::OnceCell};
 
+/// Number of field series supported by the data-analysis plot and its AI inputs.
+pub const MAX_SERIES: usize = 8;
+pub const MAX_SELECTOR_BYTES: usize = 512;
+
 pub const HELP: &str = "Use key:VIN for named numbers, json:/samples/0/v for a JSON Pointer, csv:2, tsv:2, semi:2, pipe:2 or ws:2 for a 1-based column, and re: with capture group 1 for custom text. Select one physical record at a time. Column and JSON values use their declared source units.";
 
-/// Sample a bounded prefix. Suggestions are validated by an observed numeric cell.
-pub fn discover(text: &str) -> Vec<(String, String)> {
-    use std::sync::OnceLock;
-    static KEYS: OnceLock<Regex> = OnceLock::new();
-    let keys = KEYS.get_or_init(|| {
-        Regex::new(
-            r"([\p{L}_][\p{L}\p{N}_.-]{0,47})(?:[ \t]*[:=][ \t]*|[ \t]+)[+-]?(?:[0-9]|\.[0-9])",
-        )
-        .unwrap()
+pub const MAX_DISCOVERED_FIELDS: usize = 4096;
+#[derive(Default)]
+pub struct FieldCatalog {
+    pub fields: Vec<(String, String)>,
+    pub truncated: bool,
+}
+
+/// Return candidates in first-observed order, scanning until EOF or actual catalog overflow.
+pub fn discover_catalog(text: &str) -> FieldCatalog {
+    use std::{collections::HashSet, sync::LazyLock};
+    static KEYS: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"([\p{L}_][\p{L}\p{N}_.-]*)(?:[ \t]*[:=][ \t]*|[ \t]+)[+-]?(?:[0-9]|\.[0-9])")
+            .unwrap()
     });
-    let mut fields = Vec::new();
-    let mut size = 0;
+    let mut catalog = FieldCatalog::default();
+    let mut seen = HashSet::new();
+    let mut seen_keys = HashSet::new();
     let mut first = None;
-    for line in text.lines().take(64) {
-        size += line.len();
-        if size > 64 * 1024 || fields.len() >= 16 {
-            break;
-        }
+    let mut known_columns = HashSet::new();
+    let mut headers = std::collections::HashMap::new();
+    for line in text.lines() {
         let line = line.trim().trim_start_matches('\u{feff}');
         if line.is_empty() {
             continue;
@@ -30,14 +37,23 @@ pub fn discover(text: &str) -> Vec<(String, String)> {
         let header = *first.get_or_insert(line);
         if line.starts_with(['{', '[']) {
             if let Ok(value) = serde_json::from_str::<Value>(line) {
-                json_fields(&value, "", 0, &mut fields);
+                json_fields(&value, "", &mut catalog, &mut seen);
+                if catalog.truncated {
+                    break;
+                }
                 continue;
             }
         }
         let mut named = false;
-        for cap in keys.captures_iter(line).take(16) {
+        for cap in KEYS.captures_iter(line) {
             named = true;
-            add_field(&mut fields, &cap[1], format!("key:{}", &cap[1]));
+            let key = cap.get(1).unwrap().as_str();
+            if key.len() + 4 <= MAX_SELECTOR_BYTES && seen_keys.insert(key) {
+                add_field(&mut catalog, &mut seen, key, format!("key:{key}"));
+                if catalog.truncated {
+                    return catalog;
+                }
+            }
         }
         if named {
             continue;
@@ -46,53 +62,82 @@ pub fn discover(text: &str) -> Vec<(String, String)> {
             if !line.contains(sep) {
                 continue;
             }
-            for i in 0..32 {
-                let Some(cell) = column(line, sep, i) else {
-                    break;
-                };
-                if number(&cell).is_some() {
-                    let selector = format!("{prefix}:{}", i + 1);
-                    let label = column(header, sep, i)
-                        .filter(|s| s.len() <= 64 && !s.is_empty() && number(s).is_none());
-                    add_field(
-                        &mut fields,
-                        label.as_deref().unwrap_or(&selector),
-                        selector.clone(),
-                    );
+            let names = headers
+                .entry(sep)
+                .or_insert_with(|| cells(header, sep).take(4096).collect::<Vec<_>>());
+            for (i, cell) in cells(line, sep).take(4096).enumerate() {
+                if known_columns.contains(&(sep, i)) || number(&cell).is_none() {
+                    continue;
+                }
+                known_columns.insert((sep, i));
+                let selector = format!("{prefix}:{}", i + 1);
+                let label = names
+                    .get(i)
+                    .map(|s| s.as_ref())
+                    .filter(|s| s.len() <= 64 && !s.is_empty() && number(s).is_none())
+                    .unwrap_or(&selector);
+                add_field(&mut catalog, &mut seen, label, selector.clone());
+                if catalog.truncated {
+                    return catalog;
                 }
             }
             break;
         }
     }
-    fields
+    catalog
 }
-fn add_field(fields: &mut Vec<(String, String)>, label: &str, selector: String) {
-    if fields.len() < 16 && selector.len() <= 256 && !fields.iter().any(|(_, s)| s == &selector) {
-        fields.push((label.to_owned(), selector));
+pub fn discover(text: &str) -> Vec<(String, String)> {
+    discover_catalog(text).fields
+}
+
+fn add_field(
+    catalog: &mut FieldCatalog,
+    seen: &mut std::collections::HashSet<String>,
+    label: &str,
+    selector: String,
+) {
+    if selector.len() > MAX_SELECTOR_BYTES || !seen.insert(selector.clone()) {
+        return;
     }
+    if catalog.fields.len() == MAX_DISCOVERED_FIELDS {
+        catalog.truncated = true;
+        return;
+    }
+    catalog.fields.push((label.to_owned(), selector));
 }
-fn json_fields(value: &Value, path: &str, depth: usize, fields: &mut Vec<(String, String)>) {
-    if fields.len() >= 16 || depth > 8 || path.len() > 240 {
+fn json_fields(
+    value: &Value,
+    path: &str,
+    catalog: &mut FieldCatalog,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    if path.len() + 5 > MAX_SELECTOR_BYTES || catalog.truncated {
         return;
     }
     match value {
-        Value::Object(o) => {
-            for (key, v) in o.iter().take(64) {
+        Value::Object(obj) => {
+            for (key, v) in obj {
                 json_fields(
                     v,
                     &format!("{path}/{}", key.replace('~', "~0").replace('/', "~1")),
-                    depth + 1,
-                    fields,
+                    catalog,
+                    seen,
                 );
+                if catalog.truncated {
+                    break;
+                }
             }
         }
-        Value::Array(a) => {
-            for (i, v) in a.iter().take(16).enumerate() {
-                json_fields(v, &format!("{path}/{i}"), depth + 1, fields);
+        Value::Array(arr) => {
+            for (i, v) in arr.iter().enumerate() {
+                json_fields(v, &format!("{path}/{i}"), catalog, seen);
+                if catalog.truncated {
+                    break;
+                }
             }
         }
         _ if value.is_number() || value.as_str().is_some_and(|s| number(s).is_some()) => {
-            add_field(fields, path, format!("json:{path}"))
+            add_field(catalog, seen, path, format!("json:{path}"))
         }
         _ => {}
     }
@@ -129,7 +174,7 @@ impl<'a> Record<'a> {
 }
 
 pub enum Selector {
-    Capture(Regex),
+    Capture(Regex, usize),
     Pointer(String),
     Column(char, usize),
     Words(usize),
@@ -142,7 +187,21 @@ impl Selector {
         literal_default: bool,
         case_sensitive: bool,
     ) -> Result<Self, String> {
-        if input.is_empty() || input.len() > 512 {
+        Self::compile_inner(input, literal_default, case_sensitive, false)
+    }
+
+    /// A bare clock regex may match the whole timestamp. A prefixed match can still use group 1.
+    pub fn timestamp(input: &str, literal_default: bool) -> Result<Self, String> {
+        Self::compile_inner(input, literal_default, true, true)
+    }
+
+    fn compile_inner(
+        input: &str,
+        literal_default: bool,
+        case_sensitive: bool,
+        whole_match: bool,
+    ) -> Result<Self, String> {
+        if input.is_empty() || input.len() > MAX_SELECTOR_BYTES {
             return Err("字段规则长度须为 1–512 字节".into());
         }
         let (prefix, arg) = input.split_once(':').unwrap_or(("", input));
@@ -187,17 +246,18 @@ impl Selector {
             .dfa_size_limit(1024 * 1024)
             .build()
             .map_err(|e| e.to_string())?;
-        if regex.captures_len() < 2 {
+        let group = usize::from(regex.captures_len() > 1);
+        if group == 0 && !whole_match {
             return Err("正则表达式需要第一个捕获组".into());
         }
-        Ok(Self::Capture(regex))
+        Ok(Self::Capture(regex, group))
     }
 
     pub fn first<'a>(&self, record: &'a Record<'_>) -> Option<Cow<'a, str>> {
         match self {
-            Self::Capture(re) => re
+            Self::Capture(re, group) => re
                 .captures(record.text)?
-                .get(1)
+                .get(*group)
                 .map(|v| Cow::Borrowed(v.as_str())),
             Self::Pointer(path) => {
                 let value = record
@@ -219,9 +279,9 @@ impl Selector {
     }
 
     pub fn visit(&self, record: &Record<'_>, mut consume: impl FnMut(&str)) {
-        if let Self::Capture(re) = self {
+        if let Self::Capture(re, group) = self {
             for cap in re.captures_iter(record.text) {
-                if let Some(v) = cap.get(1) {
+                if let Some(v) = cap.get(*group) {
                     consume(v.as_str());
                 }
             }
@@ -233,8 +293,13 @@ impl Selector {
 
 /// Scan one delimited record, preserving empty columns and doubled quotes.
 fn column(text: &str, sep: char, wanted: usize) -> Option<Cow<'_, str>> {
-    let mut rest = text.trim_start_matches('\u{feff}');
-    for index in 0..=wanted {
+    cells(text, sep).nth(wanted)
+}
+
+fn cells(text: &str, sep: char) -> impl Iterator<Item = Cow<'_, str>> {
+    let mut next = Some(text.trim_start_matches('\u{feff}'));
+    std::iter::from_fn(move || {
+        let rest = next.take()?;
         let (cell, tail) = if let Some(quoted) = rest.strip_prefix('"') {
             let mut pos = 0;
             loop {
@@ -256,16 +321,13 @@ fn column(text: &str, sep: char, wanted: usize) -> Option<Cow<'_, str>> {
                 None => (rest, None),
             }
         };
-        if index == wanted {
-            return Some(if cell.contains("\"\"") {
-                Cow::Owned(cell.replace("\"\"", "\""))
-            } else {
-                Cow::Borrowed(cell.trim())
-            });
-        }
-        rest = tail?;
-    }
-    None
+        next = tail;
+        Some(if cell.contains("\"\"") {
+            Cow::Owned(cell.replace("\"\"", "\""))
+        } else {
+            Cow::Borrowed(cell.trim())
+        })
+    })
 }
 
 #[cfg(test)]
@@ -309,6 +371,35 @@ mod tests {
             .unwrap()
             .first(&Record::new("\"unterminated,2"))
             .is_none());
+    }
+    #[test]
+    fn file_catalog_includes_dense_records_and_sparse_late_telemetry() {
+        let row = (0..40)
+            .map(|i| format!("k{i}=1"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let noise = format!("{}\n", ".".repeat(1024)).repeat(70);
+        let catalog = discover_catalog(&format!("{row}\n{row}\n{noise}Vcoil=12 Tcoil=37"));
+        assert_eq!(catalog.fields.len(), 42);
+        assert_eq!(catalog.fields[41].1, "key:Tcoil");
+        assert!(!catalog.truncated);
+        let csv = (0..80).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+        assert_eq!(discover(&csv).last().unwrap().1, "csv:80");
+        let json = format!("[{csv}]");
+        assert!(discover(&json).iter().any(|(_, s)| s == "json:/79"));
+    }
+
+    #[test]
+    fn catalog_flags_only_real_overflow() {
+        let mut text = (0..MAX_DISCOVERED_FIELDS)
+            .map(|i| format!("key{i}=1\n"))
+            .collect::<String>();
+        text.push_str("key0=2\n");
+        assert!(!discover_catalog(&text).truncated);
+        text.push_str("extra=3");
+        let catalog = discover_catalog(&text);
+        assert_eq!(catalog.fields.len(), MAX_DISCOVERED_FIELDS);
+        assert!(catalog.truncated);
     }
     #[test]
     fn detected_rules_reproduce_observed_values() {

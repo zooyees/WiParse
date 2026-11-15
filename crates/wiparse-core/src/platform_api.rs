@@ -220,7 +220,7 @@ pub fn effect(method:&str)->crate::engineering_agent::Effect {
  use crate::engineering_agent::Effect::*;
  if matches!(method,"agent.tasks"|"system.version"|"system.ui.state"|"ui.state"|"serial.ports"|"serial.monitor.status"|"serial.status"|"serial.read"|"log.tabs.list"|"log.lines.get"|"log.brief"|"parse.line"|"parse.metrics"|"session.list"|"session.show"|"wave.session"|"scope.list"|"instrument.list"|"instrument.overview"|"instrument.job.get"|"ui.calc.get"|"ui.project.list"|"test.status"|"convert.expr"|"convert.radix"|"automation.capabilities"|"device.capabilities"|"job.get"|"check.evaluate"|"time.mapping.fit"|"time.mapping.convert"|"ui.test_tool.config.list"|"ui.test_tool.config.get"|"ui.test_tool.config.archives"|"ui.test_tool.project.get"|"ui.test_tool.result.get"|"ui.test_tool.matrix.get"|"ui.test_tool.preflight.state"|"ui.data.get"){return Read;}
  if matches!(method,"ui.show"|"ui.panels"|"ui.prefs"|"ui.serial.filter"|"ui.serial.name"|"ui.wave.select"|"ui.wave.bus"|"ui.wave.cursor"|"ui.wave.fit"|"ui.calc.set"|"ui.instrument.select"|"ui.data.configure"|"ui.data.view"){return Application;}
- if matches!(method,"instrument.scan"|"instrument.connect"|"instrument.connect_all"|"instrument.disconnect"|"instrument.command"|"instrument.measure"|"instrument.capture"|"instrument.waveform"|"serial.select"|"serial.monitor.start"|"serial.monitor.stop"|"serial.send"|"scope.wave"){return Device;}
+ if matches!(method,"instrument.scan"|"instrument.connect"|"instrument.connect_all"|"instrument.disconnect"|"instrument.command"|"instrument.measure"|"instrument.capture"|"instrument.waveform"|"instrument.waveform_source"|"serial.select"|"serial.monitor.start"|"serial.monitor.stop"|"serial.send"|"scope.wave"|"scope.shot"){return Device;}
  Test
 }
 pub fn page(method:&str)->&'static str {
@@ -239,6 +239,15 @@ pub fn catalog(p:&Value)->Value {
  let rows=entries.iter().skip(offset).take(limit).map(|v|{let mut v=v.clone();let method=v["method"].as_str().unwrap().to_string();
      if let Some(tool)=crate::engineering_agent::tool(&method) {
          v["canonical_tool"]=json!({"method":tool.method,"params_contract":tool.schema,"applies_to":"canonical tool only"});
+     }
+     if matches!(method.as_str(), "scope.wave" | "scope.shot") {
+         v["ai_execution"]=json!("Use a connected instrument session and the canonical instrument.waveform_source or instrument.capture tool; external scope indexes are not session-bound.");
+     } else if matches!(method.as_str(), "instrument.waveform_source" | "instrument.capture") {
+         v["ai_execution"]=json!("Use the canonical tool; platform.invoke does not accept model-selected output paths. Windows source save uses a new host-owned project evidence file.");
+         v["params"]=json!({"device_id":1});
+         v["parameter_example_scope"]=json!("canonical AI tool only; device_id is illustrative and must be discovered from the current session");
+     } else if matches!(method.as_str(), "serial.monitor.start" | "serial.monitor.stop") {
+         v["ai_execution"]=json!("Use the canonical serial monitor tool so confirmation and unknown-outcome tracking bind the current port.");
      }
      v["page"]=json!(page(&method));v["effect"]=json!(effect(&method));v}).collect::<Vec<_>>();
  json!({"ok":true,"data":{"methods":rows,"total_entries":entries.len(),"next_offset":if offset+limit<entries.len(){Some(offset+limit)}else{None},"parameter_examples_are_not_defaults":true,"execution":"platform.invoke {method,params}; inspect real device IDs/resources and user-selected paths; queued/background acceptance is not completion; service_required depends on running service"}})
@@ -283,5 +292,13 @@ mod agent_access_tests {
   let page=catalog(&json!({"limit":2})); assert_eq!(page["data"]["methods"].as_array().unwrap().len(),2); assert_eq!(page["data"]["next_offset"],2);
   let clean=redact(json!({"params":[{"api_key":"not-a-real-key","voltage":5}],"usage":{"total_tokens":42}}));
   assert_eq!(clean["params"][0]["api_key"],"[redacted]"); assert_eq!(clean["usage"]["total_tokens"],42);
+ }
+ #[test]
+ fn ai_waveform_catalog_uses_canonical_session_example() {
+  let page=catalog(&json!({"filter":"instrument.waveform_source"}));
+  let entry=&page["data"]["methods"][0];
+  assert_eq!(entry["params"],json!({"device_id":1}));
+  assert_eq!(effect("instrument.waveform_source"),Effect::Device);
+  assert!(entry["ai_execution"].as_str().unwrap().contains("canonical"));
  }
 }

@@ -44,26 +44,32 @@ impl Default for Rule {
 }
 impl Rule {
     pub fn validate(&self) -> Result<(), String> {
-        Selector::compile(&self.timestamp_pattern, false, true)?;
-        if !matches!(self.timestamp_unit.as_str(), "clock" | "s" | "ms" | "us")
-            || self.fields.is_empty()
-            || self.fields.len() > 3
-            || !(8..=128).contains(&self.max_points)
-        {
-            return Err("LOG.INVALID_TIMELINE_RULE".into());
+        let max = crate::extract::MAX_SERIES;
+        if !(1..=max).contains(&self.fields.len()) {
+            return Err(format!("LOG.TIMELINE_FIELD_COUNT: requested {} fields; supported 1..={max}", self.fields.len()));
         }
+        if !matches!(self.timestamp_unit.as_str(), "clock" | "s" | "ms" | "us") {
+            return Err(format!("LOG.INVALID_TIMESTAMP_UNIT: {}; expected clock, s, ms or us", self.timestamp_unit));
+        }
+        if !(8..=128).contains(&self.max_points) {
+            return Err(format!("LOG.INVALID_TIMELINE_POINTS: requested {}; supported 8..=128 overview points", self.max_points));
+        }
+        Selector::timestamp(&self.timestamp_pattern, false)
+            .map_err(|e|format!("LOG.INVALID_TIMESTAMP_SELECTOR: {e}"))?;
         let mut names = HashSet::new();
         for f in &self.fields {
             if f.name.is_empty()
                 || f.name.len() > 32
-                || f.unit.len() > 16
+                || f.name.chars().any(char::is_control)
+                || f.unit.len() > 32
+                || f.unit.chars().any(char::is_control)
                 || !f.scale.is_finite()
                 || f.scale == 0.0
                 || !names.insert(&f.name)
             {
-                return Err("LOG.INVALID_TIMELINE_FIELD".into());
+                return Err(format!("LOG.INVALID_TIMELINE_FIELD: {:?}; use a unique name (1–32 bytes), unit up to 32 bytes and finite nonzero scale", f.name));
             }
-            Selector::compile(&f.pattern, false, true)?;
+            Selector::compile(&f.pattern, false, true).map_err(|e|format!("LOG.INVALID_FIELD_SELECTOR [{}]: {e}", f.name))?;
         }
         for p in [&self.start_pattern, &self.end_pattern]
             .into_iter()
@@ -95,6 +101,7 @@ impl Rule {
     }
 }
 pub fn parse_time(t: &str, unit: &str) -> Option<f64> {
+    let t=t.trim();
     if unit == "clock" {
         let parts = t.split(':').collect::<Vec<_>>();
         if parts.len() != 3 {
@@ -102,7 +109,8 @@ pub fn parse_time(t: &str, unit: &str) -> Option<f64> {
         }
         let h = parts[0].parse::<u32>().ok()?;
         let m = parts[1].parse::<u32>().ok()?;
-        let s = parts[2].parse::<f64>().ok()?;
+        let seconds=parts[2];
+        let s=if seconds.contains(','){seconds.replace(',',".").parse::<f64>()}else{seconds.parse::<f64>()}.ok()?;
         (h < 24 && m < 60 && s.is_finite() && (0.0..60.0).contains(&s))
             .then_some(h as f64 * 3600.0 + m as f64 * 60.0 + s)
     } else {
@@ -183,6 +191,8 @@ struct Series {
     start_confirmed: bool,
     end_confirmed: bool,
     missing_time: u64,
+    invalid_time: u64,
+    valid_time: u64,
     backwards: u64,
     matched_rows: u64,
 }
@@ -210,7 +220,7 @@ impl Extractor {
         if rule.power_pair.is_some(){fields.push(Field{name:"power_W".into(),pattern:String::new(),unit:"W".into(),scale:1.});}
         Ok(Self {
             dataset:Dataset{fields,rows:vec![],omitted:0,provenance:Value::Null},
-            time: Selector::compile(&rule.timestamp_pattern, false, true)?,
+            time: Selector::timestamp(&rule.timestamp_pattern, false)?,
             fields: rule
                 .fields
                 .iter()
@@ -233,7 +243,7 @@ impl Extractor {
     }
     pub fn observe(&mut self, id: &str, row: u64, text: &str) {
         if self.series.last().is_none_or(|s| s.id != id) {
-            if self.series.len() >= 4 {
+            if self.series.len() >= 32 {
                 self.omitted_sources += 1;
                 return;
             }
@@ -251,6 +261,7 @@ impl Extractor {
                 start_confirmed: false,
                 end_confirmed: false,
                 missing_time: 0,
+                invalid_time: 0,valid_time: 0,
                 backwards: 0,
                 matched_rows: 0,
             });
@@ -260,14 +271,13 @@ impl Extractor {
             return;
         }
         let record = Record::new(text);
-        let Some(clock) = self
-            .time
-            .first(&record)
-            .and_then(|v| parse_time(&v, &self.rule.timestamp_unit))
-        else {
-            s.missing_time += 1;
+        let token=self.time.first(&record);
+        let Some(clock)=token.as_deref().and_then(|v|parse_time(v,&self.rule.timestamp_unit)) else{
+            s.missing_time+=1;
+            if token.is_some(){s.invalid_time+=1;}
             return;
         };
+        s.valid_time+=1;
         if let Some(last) = s.last_clock {
             if clock < last {
                 if self.rule.timestamp_unit == "clock" && last - clock > 43200.0 {
@@ -358,6 +368,10 @@ impl Extractor {
     pub fn dataset(&self)->Result<Dataset,String>{
         if !self.rule.retain_dataset{return Err("DATA.RETENTION_NOT_REQUESTED: repeat timeline with retain_dataset:true".into());}
         if self.dataset.omitted>0 || self.omitted_sources>0{return Err("DATA.DATASET_LIMIT: narrow source/time range; no truncated import".into());}
+        if self.dataset.rows.is_empty(){
+            return Err(if self.series.iter().all(|s|s.valid_time==0){"DATA.NO_VALID_TIMESTAMPS: inspect the source timestamp selector and unit; no timed samples to plot"}
+                else{"DATA.NO_MATCHING_TIMED_VALUES: timestamps exist; check the requested window and numeric field selectors"}.into());
+        }
         let mut dataset=self.dataset.clone();dataset.provenance=self.report();dataset.provenance.as_object_mut().unwrap().remove("sources");
         dataset.provenance["sources"]=json!(self.series.iter().map(|s|json!({"source_id":s.id,"missing_timestamp_rows":s.missing_time,"backward_rows":s.backwards,"start_confirmed":s.start_confirmed,"end_confirmed":s.end_confirmed})).collect::<Vec<_>>());
         Ok(dataset)
@@ -374,7 +388,7 @@ impl Extractor {
                 json!({"name":"power_W","unit":"W","calculation":"same timestamped line V*A only"}),
             );
         }
-        let mut result = json!({"fields":fields,"sources_omitted_rows":self.omitted_sources,"sources":self.series.iter().map(|s|json!({"clock_domain":"source_local","external_alignment_verified":false,"timestamp_unit":self.rule.timestamp_unit,"source_id":s.id,"first_time_s":s.first.map(|v|v.0),"last_time_s":s.last.map(|v|v.0),"first_line":s.first.map(|v|v.1),"last_line":s.last.map(|v|v.1),"observed_duration_s":s.first.zip(s.last).map(|(a,b)|b.0-a.0),"start_marker_confirmed":s.start_confirmed,"end_marker_confirmed":s.end_confirmed,"missing_or_invalid_timestamp_rows":s.missing_time,"clock_midnight_rollovers_assumed":(s.day/86400.0) as u64,"backward_timestamp_rows_skipped":s.backwards,"matched_rows":s.matched_rows,"statistics":s.stats.iter().map(Stat::json).collect::<Vec<_>>(),"points":s.points.iter().map(|p|json!([p.t,p.row,p.values])).collect::<Vec<_>>()})).collect::<Vec<_>>(),"chart":"bounded sample-weighted bucket means; statistics use every valid sample. Missing values are not interpolated. Points: [seconds, first bucket row, field means]. Source files are separate. Duration is observed span, not verified charging time unless boundary evidence confirms it."});
+        let mut result = json!({"cycle_requested":self.start.is_some() || self.end.is_some() || self.rule.start_time.is_some(),"fields":fields,"sources_omitted_rows":self.omitted_sources,"sources":self.series.iter().map(|s|json!({"clock_domain":"source_local","external_alignment_verified":false,"timestamp_unit":self.rule.timestamp_unit,"source_id":s.id,"first_time_s":s.first.map(|v|v.0),"last_time_s":s.last.map(|v|v.0),"first_line":s.first.map(|v|v.1),"last_line":s.last.map(|v|v.1),"observed_duration_s":s.first.zip(s.last).map(|(a,b)|b.0-a.0),"start_marker_confirmed":s.start_confirmed,"end_marker_confirmed":s.end_confirmed,"missing_or_invalid_timestamp_rows":s.missing_time,"timestamp_selector_unmatched_rows":s.missing_time-s.invalid_time,"invalid_timestamp_value_rows":s.invalid_time,"parsed_timestamp_rows":s.valid_time,"clock_midnight_rollovers_assumed":(s.day/86400.0) as u64,"backward_timestamp_rows_skipped":s.backwards,"matched_rows":s.matched_rows,"statistics":s.stats.iter().map(Stat::json).collect::<Vec<_>>(),"points":s.points.iter().map(|p|json!([p.t,p.row,p.values])).collect::<Vec<_>>()})).collect::<Vec<_>>(),"chart":"bounded sample-weighted bucket means; statistics use every valid sample. Missing values are not interpolated. Points: [seconds, first bucket row, field means]. Source files are separate. Duration is observed span, not verified charging time unless boundary evidence confirms it."});
         result["local_dataset"]=json!({"retained":self.rule.retain_dataset,"rows":self.dataset.rows.len(),"omitted":self.dataset.omitted,"raw_uploaded":false});
         // Keep the local report compact without hiding total counts/statistics.
         while result.to_string().len() > 3600 {
@@ -431,6 +445,36 @@ fn compact(points: &mut Vec<Point>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn timestamp_diagnostics_distinguish_selection_parse_and_numeric_fields(){
+        let mut rule=rule();rule.timestamp_pattern=r"clock=(\S+)".into();rule.start_time=None;rule.retain_dataset=true;
+        let mut x=Extractor::new(rule).unwrap();
+        x.observe("a",1,"no clock");x.observe("a",2,"clock=25:00:00 v=5");
+        assert!(x.dataset().err().unwrap().contains("NO_VALID_TIMESTAMPS"));
+        x.observe("a",3,"clock=20:05:09,865 unrelated");
+        assert!(x.dataset().err().unwrap().contains("NO_MATCHING_TIMED_VALUES"));
+        x.observe("a",4,"clock=20:05:10,865 v=5000 i=100");
+        let report=x.report();let s=&report["sources"][0];
+        assert_eq!(s["parsed_timestamp_rows"],2);assert_eq!(s["timestamp_selector_unmatched_rows"],1);
+        assert_eq!(s["invalid_timestamp_value_rows"],1);assert_eq!(s["matched_rows"],1);
+        assert_eq!(s["observed_duration_s"],1.0);assert_eq!(x.dataset().unwrap().rows.len(),1);
+    }
+    #[test]
+    fn capacity_and_selector_errors_identify_the_actual_argument() {
+        let mut r=rule();
+        r.power_pair=None;
+        let template=r.fields[0].clone();
+        r.fields=(0..crate::extract::MAX_SERIES).map(|n| Field{name:format!("v{n}"),..template.clone()}).collect();
+        r.validate().unwrap();
+        r.fields.push(Field{name:"extra".into(),..template});
+        assert!(r.validate().unwrap_err().contains("requested 9"));
+        r.fields.pop();
+        r.fields[7].pattern=r"PH \d+ T \d+".into();
+        let error=r.validate().unwrap_err();
+        assert!(error.contains("v7") && error.contains("捕获组"));
+        r.timestamp_pattern="(".into();
+        assert!(r.validate().unwrap_err().contains("TIMESTAMP_SELECTOR"));
+    }
     fn rule() -> Rule {
         Rule {
             timestamp_pattern: r"(\d{2}:\d{2}:\d{2}\.\d+)".into(),
@@ -519,6 +563,10 @@ mod tests {
         assert!(r.validate().is_err());
         r.fields[0].unit = "V".into();
         r.timestamp_pattern = "no-capture".into();
+        let mut invalid_value = Extractor::new(r.clone()).unwrap();
+        invalid_value.observe("a", 1, "no-capture v=5000 i=1000");
+        assert_eq!(invalid_value.report()["sources"][0]["invalid_timestamp_value_rows"], 1);
+        r.timestamp_pattern = "(".into();
         assert!(r.validate().is_err());
     }
 }

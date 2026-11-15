@@ -50,6 +50,7 @@ const FORM_SECTION_H: f32 = 22.0;
 #[derive(Debug, Clone)]
 pub struct LiveDevice {
     pub device_id: u64,
+    pub session_id: String,
     pub resource: String,
     pub kind: String,
     pub model: String,
@@ -171,6 +172,9 @@ struct RunningJob {
     last_status_mtime: Option<std::time::SystemTime>,
     /// After Stop: force-kill child once this instant is reached (graceful window).
     kill_after: Option<Instant>,
+    wait_error_reported: bool,
+    stop_requested: bool,
+    force_stop_error: Option<String>,
     /// Run-scoped overlay JSON; deleted when the job ends. Not written to station.json.
     overlay_file: Option<PathBuf>,
 }
@@ -220,6 +224,8 @@ pub struct TestToolPanel {
     job: Option<RunningJob>,
     agent_exit_code: Option<i32>,
     agent_finished_key: Option<String>,
+    agent_preflight_pending: Option<(String, String)>,
+    agent_preflight_attestation: Option<String>,
     /// Extra free-form args after form params.
     extra_args: String,
     /// Values for selected plugin params (name → value).
@@ -236,6 +242,14 @@ pub struct TestToolPanel {
     serial_ports: Vec<wiparse_core::serial::PortInfo>,
     serial_ports_at: Option<Instant>,
     project_id: String,
+    project_source_lease: wiparse_core::ai::source_lease::SourceLease,
+    monitor_source_lease: wiparse_core::ai::source_lease::SourceLease,
+    monitor_test_active: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    workspace_review_lease: wiparse_core::ai::source_lease::SourceLease,
+    published_workspace_review: serde_json::Value,
+    published_ai_summary: serde_json::Value,
+    published_run_status: serde_json::Value,
+    ai_summary_dirty: bool,
     new_project_id: String,
     /// Bumped when a Hub job finishes so the report tree can refresh.
     artifact_epoch: u64,
@@ -244,6 +258,7 @@ pub struct TestToolPanel {
     workspace: Workspace,
     approved_config_roots: Vec<String>,
     hub_api_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    hub_api_mutations: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl TestToolPanel {
@@ -301,6 +316,8 @@ impl TestToolPanel {
             job: None,
             agent_exit_code: None,
             agent_finished_key: None,
+            agent_preflight_pending: None,
+            agent_preflight_attestation: None,
             extra_args: String::new(),
             param_values: HashMap::new(),
             preflight_only: false,
@@ -318,25 +335,83 @@ impl TestToolPanel {
                     id.to_owned()
                 }
             },
+            project_source_lease: Default::default(),
+            monitor_source_lease: Default::default(),
+            monitor_test_active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            workspace_review_lease: Default::default(),
+            published_workspace_review: serde_json::Value::Null,
+            published_ai_summary: serde_json::Value::Null,
+            published_run_status: serde_json::Value::Null,
+            ai_summary_dirty: false,
             new_project_id: String::new(),
             artifact_epoch: 0,
             param_advanced_open: false,
             workspace: Workspace::default(),
             approved_config_roots: cfg.apps.test_tool.approved_config_roots.clone(),
             hub_api_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            hub_api_mutations: Default::default(),
         };
         panel.refresh_plugins();
+        panel.ai_summary_dirty=true;
+        panel.publish_ai_summary();
         panel
     }
 
     pub fn set_project_id(&mut self, id: String) {
+        if self.project_id==wiparse_core::project::sanitize_id(&id,"default") {return;}
+        let update=self.begin_source_update();
+        self.set_project_id_inner(id);
+        self.publish_ai_summary();drop(update);
+    }
+    fn set_project_id_inner(&mut self, id: String) {
         let id = wiparse_core::project::sanitize_id(&id, "default");
         if self.project_id != id {
+            self.ai_summary_dirty=true;
             if self.workspace.dirty() { self.workspace_switch("__project",id);self.status="CONFIG.UNSAVED_CHANGES".into();return; }
-            self.project_id = id;
+            wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(
+                &self.project_source_lease.clone(), &self.monitor_source_lease.clone(), || self.project_id = id);
             self.persist_config();
         }
     }
+
+    pub(crate) fn set_project_source_lease(&mut self, lease: wiparse_core::ai::source_lease::SourceLease) {
+        self.project_source_lease = lease;
+    }
+    pub(crate) fn set_monitor_source_lease(&mut self, lease: wiparse_core::ai::source_lease::SourceLease) {
+        self.monitor_source_lease = lease;
+    }
+    pub(crate) fn set_monitor_test_state(&mut self, state:std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        let lease=self.monitor_source_lease.clone();
+        lease.mutate_always(|| {
+            state.store(self.job.is_some(),std::sync::atomic::Ordering::Release);
+            self.monitor_test_active=state;
+        });
+    }
+    pub(crate) fn begin_source_update(&self)->(wiparse_core::ai::source_lease::SourceUpdate,wiparse_core::ai::source_lease::SourceUpdate) {
+        (self.project_source_lease.begin_update(),self.workspace_review_lease.begin_update())
+    }
+    pub(crate) fn capture_workspace_review_source(&self)->Option<wiparse_core::ai::ReviewedSource<serde_json::Value>> {
+        wiparse_core::ai::ReviewedSource::capture(&self.workspace_review_lease,||self.published_workspace_review.clone())
+    }
+    pub(crate) fn publish_ai_summary(&mut self) {
+        if !self.ai_summary_dirty && self.published_run_status["project"].as_str()==Some(self.effective_project_id().as_str()) {return;}
+        let workspace_state=self.workspace.prepare_agent_publication();
+        let review=self.workspace.review_ui_state();
+        let next=self.ai_summary();
+        let status=self.build_agent_run_status();
+        if workspace_state.is_some() || review!=self.published_workspace_review || next!=self.published_ai_summary || status!=self.published_run_status {
+            let project_lease=self.project_source_lease.clone();
+            let review_lease=self.workspace_review_lease.clone();
+            let old=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&project_lease,&review_lease,||{
+                let previous=workspace_state.and_then(|state|self.workspace.replace_agent_publication(state));
+                (previous,std::mem::replace(&mut self.published_ai_summary,next),std::mem::replace(&mut self.published_run_status,status),std::mem::replace(&mut self.published_workspace_review,review))
+            });
+            drop(old);
+        }
+        self.ai_summary_dirty=false;
+    }
+    #[allow(dead_code)]
+    pub(crate) fn published_ai_summary(&self)->&serde_json::Value { &self.published_ai_summary }
 
     #[cfg(test)]
     pub(crate) fn prepare_layout_audit(&mut self) {
@@ -500,6 +575,12 @@ impl TestToolPanel {
     }
 
     pub fn api_set_plugins_dir(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        let update=self.begin_source_update();
+        let result=self.api_set_plugins_dir_inner(params);
+        self.publish_ai_summary();drop(update);result
+    }
+    fn api_set_plugins_dir_inner(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        self.ai_summary_dirty=true;
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let dir = params
             .get("dir")
@@ -517,6 +598,9 @@ impl TestToolPanel {
     }
 
     pub fn api_run(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
+        let _update=self.begin_source_update();self.ai_summary_dirty=true;let result=self.api_run_inner(params);self.publish_ai_summary();result
+    }
+    fn api_run_inner(&mut self, params: &serde_json::Value) -> crate::backend::InvokeReply {
         use crate::backend::{invoke_err as err, invoke_ok as ok};
         let id = params
             .get("id")
@@ -570,11 +654,14 @@ impl TestToolPanel {
     }
 
     pub fn api_stop(&mut self) -> crate::backend::InvokeReply {
+        let _update=self.begin_source_update();self.ai_summary_dirty=true;let result=self.api_stop_inner();self.publish_ai_summary();result
+    }
+    fn api_stop_inner(&mut self) -> crate::backend::InvokeReply {
         use crate::backend::invoke_ok as ok;
         self.stop_job(Lang::En);
-        self.status = "stopped".into();
+        self.status = if self.job.is_some() { "stop requested; process still active or status unknown".into() } else { "no active test".into() };
         self.loop_hud = LoopHud {
-            step: "stopped".into(),
+            step: if self.job.is_some() { "stopping".into() } else { "idle".into() },
             ..LoopHud::default()
         };
         ok("ui.test_tool.stop", self.api_snapshot())
@@ -587,15 +674,31 @@ impl TestToolPanel {
         tokens: &Tokens,
         devices: &[LiveDevice],
     ) {
+        let may_change=ui.input(|input| !input.events.is_empty()) || self.job.is_some() || self.market_job.is_some() || self.pending_station_merge || self.workspace.rx.is_some();
+        let update=may_change.then(||self.begin_source_update());
+        self.ui_inner(ui,lang,tokens,devices);
+        if update.is_some(){self.publish_ai_summary();}
+        drop(update);
+    }
+    fn ui_inner(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Lang,
+        tokens: &Tokens,
+        devices: &[LiveDevice],
+    ) {
+        if ui.input(|input| !input.events.is_empty()) {self.ai_summary_dirty=true;}
         self.live_devices.clear();
         self.live_devices.extend(devices.iter().cloned());
         if self.status.is_empty() {
+            self.ai_summary_dirty=true;
             self.status = tr(lang, "test_tool.status_ready");
         }
         // Plugin rows are painter-hit-tested; never let galley text-selection steal clicks.
         ui.style_mut().interaction.selectable_labels = false;
         // Apply deferred station.json AFTER the click frame, so selection feels instant.
         if self.pending_station_merge {
+            self.ai_summary_dirty=true;
             self.pending_station_merge = false;
             self.merge_station_into_params();
         }
@@ -1268,10 +1371,10 @@ impl TestToolPanel {
         }
         if stop_clicked {
             self.stop_job(lang);
-            self.status = tr(lang, "test_tool.status_stopped");
+            self.status = if matches!(lang, Lang::Zh) { "已请求停止，等待进程退出".into() } else { "Stop requested; waiting for process exit".into() };
             self.loop_hint.clear();
             self.loop_hud = LoopHud {
-                step: "stopped".into(),
+                step: "stopping".into(),
                 ..LoopHud::default()
             };
         } else if run_clicked {
@@ -1973,6 +2076,9 @@ impl TestToolPanel {
         }
         let step = self.loop_hud.step.trim();
         let step_l = step.to_ascii_lowercase();
+        if step_l == "stopping" {
+            return if matches!(lang, Lang::Zh) { "正在停止".into() } else { "Stopping".into() };
+        }
         if step == "stopped" {
             return tr(lang, "test_tool.hud_stopped").to_owned();
         }
@@ -2109,6 +2215,7 @@ impl TestToolPanel {
 
     /// Instant selection: fill param defaults from plugin.json only (no disk I/O).
     fn select_plugin(&mut self, id: String) {
+        self.ai_summary_dirty=true;
         if self.selected.as_deref() == Some(id.as_str()) {
             return;
         }
@@ -2184,6 +2291,7 @@ impl TestToolPanel {
     }
 
     fn refresh_plugins(&mut self) {
+        self.ai_summary_dirty=true;
         let mut by_id: HashMap<String, PluginInfo> = HashMap::new();
         for p in scan_plugins(&resolve_dir(self.plugins_dir.trim())) {
             by_id.insert(p.id.clone(), p);
@@ -2441,6 +2549,7 @@ impl TestToolPanel {
             return;
         }
 
+        if disconnected || !events.is_empty() {self.ai_summary_dirty=true;}
         let mut done = disconnected;
         for ev in events {
             match ev {
@@ -2962,6 +3071,10 @@ impl TestToolPanel {
     }
 
     fn start_selected(&mut self, lang: Lang) -> Result<(), String> {
+        // Hold an update interval across process creation and publication of
+        // job ownership. No network review may commit in between.
+        let _monitor_update = self.monitor_source_lease.begin_update();
+        self.ai_summary_dirty=true;
         if self.job.is_some() {
             return Err(tr(lang, "test_tool.status_busy"));
         }
@@ -3073,19 +3186,26 @@ impl TestToolPanel {
         self.loop_hint.clear();
         self.loop_hud = LoopHud::default();
 
+        // This host invocation identity is distinct from plugin/matrix run IDs.
+        // Pass it to the runner before spawning so the artifact manifest can
+        // associate its reports with the exact process acknowledged to the agent.
+        let host_run_id = uuid::Uuid::new_v4().to_string();
         let mut child = Command::new(&node);
         child
             .args(&args)
             .env("WIPARSE_PROJECT", self.effective_project_id())
             .env("WIPARSE_TEST_ID", &test_id)
+            .env("WIPARSE_HOST_RUN_ID", &host_run_id)
             .current_dir(project_path("test-tools"))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::null());
         hide_console_window(&mut child);
+        self.monitor_test_active.store(true,std::sync::atomic::Ordering::Release);
         let mut child = match child.spawn() {
             Ok(c) => c,
             Err(e) => {
+                self.monitor_test_active.store(false,std::sync::atomic::Ordering::Release);
                 if let Some(ref p) = overlay_file {
                     let _ = fs::remove_file(p);
                 }
@@ -3122,7 +3242,7 @@ impl TestToolPanel {
 
         self.agent_exit_code=None;
         self.job = Some(RunningJob {
-            agent_run_id: uuid::Uuid::new_v4().to_string(),
+            agent_run_id: host_run_id,
             child,
             rx,
             plugin_id: plugin.id.clone(),
@@ -3132,6 +3252,9 @@ impl TestToolPanel {
             last_status_read: Instant::now() - Duration::from_secs(1),
             last_status_mtime: None,
             kill_after: None,
+            wait_error_reported: false,
+            stop_requested: false,
+            force_stop_error: None,
             overlay_file,
         });
         self.status = format!("{} · {}", tr(lang, "test_tool.status_running"), plugin.id);
@@ -3142,13 +3265,19 @@ impl TestToolPanel {
         let mut pending = Vec::new();
         let mut finished: Option<(String, std::process::ExitStatus)> = None;
         let mut wait_err: Option<String> = None;
+        let mut force_stop_err: Option<String> = None;
+        let mut wait_recovered = false;
         let mut status_snapshot: Option<String> = None;
 
         if let Some(job) = self.job.as_mut() {
             // Honor graceful-stop deadline without releasing `job` early (keeps Run busy).
             if let Some(deadline) = job.kill_after {
                 if Instant::now() >= deadline {
-                    let _ = job.child.kill();
+                    if let Err(error) = job.child.kill() {
+                        let message = error.to_string();
+                        job.force_stop_error = Some(message.clone());
+                        force_stop_err = Some(message);
+                    }
                     job.kill_after = None;
                 }
             }
@@ -3167,8 +3296,10 @@ impl TestToolPanel {
                     }
                     finished = Some((id, status));
                 }
-                Ok(None) => {}
-                Err(e) => wait_err = Some(e.to_string()),
+                Ok(None) => { wait_recovered = job.wait_error_reported; job.wait_error_reported = false; }
+                Err(e) => {
+                    if !job.wait_error_reported { wait_err = Some(e.to_string()); job.wait_error_reported = true; }
+                }
             }
 
             // Throttle status-file IO: every 400ms, and only when mtime changes.
@@ -3191,6 +3322,16 @@ impl TestToolPanel {
             }
         }
 
+        if !pending.is_empty() || finished.is_some() || wait_err.is_some() || force_stop_err.is_some() || wait_recovered || status_snapshot.is_some() {self.ai_summary_dirty=true;}
+        if let Some(error) = force_stop_err {
+            self.append_log(LogKind::System, &format!("forced stop failed: {error}; waiting for process status\n"));
+            self.status = "forced stop failed; process state not yet confirmed".into();
+        }
+        if wait_recovered {
+            self.status = if self.job.as_ref().is_some_and(|job| job.stop_requested) {
+                "Stop requested; waiting for process exit".into()
+            } else { "Test process running".into() };
+        }
         for line in pending {
             if let Some(obj) = extract_json_value(&line.text) {
                 self.apply_suggested_params(&obj);
@@ -3203,8 +3344,7 @@ impl TestToolPanel {
             let stopping = self
                 .job
                 .as_ref()
-                .and_then(|j| j.kill_after)
-                .is_some();
+                .is_some_and(|j| j.stop_requested);
             if !stopping {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
                 let hud = parse_loop_hud(&v);
@@ -3222,28 +3362,34 @@ impl TestToolPanel {
         }
 
         if let Some(e) = wait_err {
-            self.agent_finished_key=self.agent_job_key();
-            self.append_log(LogKind::System, &format!("wait error: {e}\n"));
-            if let Some(job) = self.job.take() {
-                drop_overlay_file(job.overlay_file.as_deref());
-            }
-            self.bump_artifact_epoch();
-            self.loop_hud = LoopHud {
-                step: "stopped".into(),
-                ..LoopHud::default()
-            };
-            self.status = tr(lang, "test_tool.status_fail");
+            self.agent_preflight_pending = None;
+            self.agent_preflight_attestation = None;
+            self.append_log(LogKind::System, &format!("wait error: {e}; process state unknown, test slot remains occupied\n"));
+            self.status = "process state unknown; test slot remains occupied".into();
             return;
         }
 
         if let Some((id, status)) = finished {
             self.agent_finished_key=self.agent_job_key();
-            if let Some(job) = self.job.take() {
+            if let Some((key, fingerprint)) = self.agent_preflight_pending.take() {
+                if status.success() && self.agent_finished_key.as_deref() == Some(&key)
+                    && self.agent_preflight_fingerprint() == fingerprint {
+                    self.agent_preflight_attestation = Some(fingerprint);
+                } else {
+                    self.agent_preflight_attestation = None;
+                }
+            }
+            let job = self.monitor_source_lease.clone().mutate_always(|| {
+                let job=self.job.take();
+                self.monitor_test_active.store(false,std::sync::atomic::Ordering::Release);
+                job
+            });
+            if let Some(job) = job {
                 drop_overlay_file(job.overlay_file.as_deref());
             }
             self.bump_artifact_epoch();
-            let code = status.code().unwrap_or(-1);
-            self.agent_exit_code=Some(code);
+            let exit_code = status.code();
+            self.agent_exit_code=exit_code;
             if status.success() {
                 self.append_log(LogKind::System, &format!("—— done {id} (exit 0) ——\n"));
                 self.status = format!("{} · {}", tr(lang, "test_tool.status_ok"), id);
@@ -3257,10 +3403,10 @@ impl TestToolPanel {
             } else {
                 self.append_log(
                     LogKind::System,
-                    &format!("—— failed {id} (exit {code}) ——\n"),
+                    &format!("—— failed {id} (exit {}) ——\n", exit_code.map_or_else(|| "unknown".into(), |code| code.to_string())),
                 );
                 self.status =
-                    format!("{} · {} ({code})", tr(lang, "test_tool.status_fail"), id);
+                    format!("{} · {} ({})", tr(lang, "test_tool.status_fail"), id, exit_code.map_or_else(|| "unknown".into(), |code| code.to_string()));
                 if matches!(self.loop_hud.step.as_str(), "" | "armed" | "idle") {
                     self.loop_hud = LoopHud {
                         step: "stopped".into(),
@@ -3272,6 +3418,13 @@ impl TestToolPanel {
     }
 
     fn stop_job(&mut self, lang: Lang) {
+        self.ai_summary_dirty=true;
+        // An interrupted preflight cannot authorize a subsequent run even if
+        // the plugin handles the stop request and exits with status zero.
+        if self.job.is_some() {
+            self.agent_preflight_pending = None;
+            self.agent_preflight_attestation = None;
+        }
         let marketplace_dir = self.resolve_marketplace_root().display().to_string();
         let plugins_dir = resolve_dir(self.plugins_dir.trim()).display().to_string();
         let node = resolve_command(self.node_path.trim());
@@ -3280,13 +3433,16 @@ impl TestToolPanel {
         let Some(job) = self.job.as_mut() else {
             return;
         };
-        if let Some(deadline) = job.kill_after {
-            let left = deadline.saturating_duration_since(Instant::now()).as_secs();
-            let line = tr(lang, "test_tool.stop_grace").replace("{secs}", &left.to_string());
+        if job.stop_requested {
+            let line = if let Some(deadline) = job.kill_after {
+                let left = deadline.saturating_duration_since(Instant::now()).as_secs();
+                tr(lang, "test_tool.stop_grace").replace("{secs}", &left.to_string())
+            } else { "Stop already requested; waiting for process status".into() };
             drop(job);
             self.append_log(LogKind::System, &format!("—— {line} ——\n"));
             return;
         }
+        job.stop_requested = true;
         let wrote_stop = if let Some(ref stop) = job.stop_file {
             if let Some(parent) = stop.parent() {
                 let _ = fs::create_dir_all(parent);
@@ -3331,12 +3487,13 @@ impl TestToolPanel {
         self.append_log(LogKind::System, "—— stop requested (grace ≤30s) ——\n");
         self.loop_hint.clear();
         self.loop_hud = LoopHud {
-            step: "stopped".into(),
+            step: "stopping".into(),
             ..LoopHud::default()
         };
     }
 
     fn append_log(&mut self, kind: LogKind, text: &str) {
+        self.ai_summary_dirty=true;
         let prefix = match kind {
             LogKind::Stdout => "",
             LogKind::Stderr => "[err] ",
@@ -3370,10 +3527,54 @@ impl TestToolPanel {
     }
 }
 
+#[cfg(test)]
+mod summary_publication_tests {
+    use super::*;
+    #[test]
+    fn workspace_review_is_ui_only_and_invalidates_on_publication() {
+        let mut panel=TestToolPanel::new(&AppConfig::default());
+        let text=panel.published_workspace_review.to_string();
+        assert!(text.contains("editor_open"));
+        assert!(!text.contains("plugin"));
+        assert!(!text.contains("configuration_value"));
+        let (_,permit)=panel.workspace_review_lease.snapshot(||()).unwrap();
+        let update=panel.begin_source_update();
+        assert!(panel.capture_workspace_review_source().is_none());
+        panel.ai_summary_dirty=true;panel.status="changed".into();panel.publish_ai_summary();
+        drop(update);
+        assert!(permit.recapture(||()).is_none());
+        assert!(panel.capture_workspace_review_source().is_some());
+    }
+    #[test]
+    fn test_start_attempt_invalidates_monitor_source_without_waiting_for_tick() {
+        let mut panel=TestToolPanel::new(&AppConfig::default());
+        let lease=wiparse_core::ai::source_lease::SourceLease::default();
+        panel.set_monitor_source_lease(lease.clone());
+        panel.selected=None;
+        let old=wiparse_core::ai::ReviewedSource::capture(&lease, || ()).unwrap();
+        assert!(panel.start_selected(Lang::Zh).is_err());
+        assert!(!old.is_current());
+        assert!(wiparse_core::ai::ReviewedSource::capture(&lease, || ()).is_some());
+    }
+    #[test]
+    fn published_testing_summary_changes_only_on_commit() {
+        let mut panel=TestToolPanel::new(&AppConfig::default());
+        let lease=wiparse_core::ai::source_lease::SourceLease::default();panel.set_project_source_lease(lease.clone());
+        let previous=panel.published_ai_summary().clone();let (_,permit)=lease.snapshot(||()).unwrap();
+        panel.ai_summary_dirty=true;panel.status="new test state".into();assert_eq!(panel.published_ai_summary(),&previous);
+        assert_ne!(panel.agent_run_status()["status"],"new test state");
+        panel.publish_ai_summary();assert_ne!(panel.published_ai_summary(),&previous);assert!(permit.commit_prepared(||()).is_none());
+        assert_eq!(panel.agent_run_status()["status"],"new test state");
+        let (_,unchanged)=lease.snapshot(||()).unwrap();panel.publish_ai_summary();assert_eq!(unchanged.commit_prepared(||()),Some(()));
+        panel.append_log(LogKind::System,"new log\n");assert!(panel.ai_summary_dirty);panel.publish_ai_summary();assert!(!panel.ai_summary_dirty);
+    }
+}
+
 impl Drop for TestToolPanel {
     fn drop(&mut self) {
         // Panel teardown: no more poll frames — force-kill immediately.
-        if let Some(mut job) = self.job.take() {
+        let job = self.monitor_source_lease.clone().mutate_always(|| self.job.take());
+        if let Some(mut job) = job {
             drop_overlay_file(job.overlay_file.as_deref());
             if let Some(ref stop) = job.stop_file {
                 let _ = fs::write(stop, b"host exit\n");
@@ -4836,10 +5037,40 @@ mod visual_snapshot {
 }
 
 impl TestToolPanel{
- pub(crate) fn agent_tick(&mut self,lang:Lang){self.poll_job(lang);}
- pub(crate) fn agent_identity(&self)->String{format!("{}:{:?}:{}:{:?}",self.effective_project_id(),self.selected,self.workspace.agent_identity(),self.param_values)}
+ pub(crate) fn agent_sync_devices(&mut self,devices:Vec<LiveDevice>){self.live_devices=devices;}
+ pub(crate) fn agent_tick(&mut self,lang:Lang){let update=self.job.is_some().then(||self.begin_source_update());self.poll_job(lang);self.publish_ai_summary();drop(update);}
+ pub(crate) fn agent_identity(&self)->String{format!("{}:{:?}:{}:{:?}:{}:{}",self.effective_project_id(),self.selected,self.workspace.agent_identity(),self.param_values,self.hub_api_epoch.load(std::sync::atomic::Ordering::Acquire),self.hub_api_mutations.load(std::sync::atomic::Ordering::Acquire))}
+ fn agent_preflight_fingerprint(&self)->String {
+     let mut devices: Vec<_> = self.live_devices.iter().map(|device| (&device.device_id, &device.session_id, &device.resource, &device.serial)).collect();
+     devices.sort();
+     wiparse_core::update::hex_sha256(format!("{}:{:?}:{:?}",self.agent_identity(),self.extra_args,devices).as_bytes())
+ }
  pub(crate) fn agent_job_key(&self)->Option<String>{self.job.as_ref().map(|job|job.agent_run_id.clone())}
  pub(crate) fn agent_cases(&self,params:&serde_json::Value)->serde_json::Value{serde_json::json!({"ok":true,"data":self.workspace.agent_cases(params["offset"].as_u64().unwrap_or(0) as usize,params["limit"].as_u64().unwrap_or(10).min(20) as usize)})}
- pub(crate) fn agent_start(&mut self,preflight:bool)->crate::backend::InvokeReply{let Some(id)=self.selected.clone()else{return crate::backend::invoke_err("testing.run","请先在集成测试中选择并配置插件")};if self.job.is_some(){return crate::backend::invoke_err("testing.run","已有测试正在运行")};self.api_run(&serde_json::json!({"id":id,"lifecycle":if preflight{"preflight"}else{"run"}}))}
- pub(crate) fn agent_run_status(&self)->serde_json::Value{serde_json::json!({"running":self.job.is_some(),"run_id":self.agent_job_key(),"process_exit_code":self.agent_exit_code,"completed_run_identity":self.agent_finished_key,"status":self.status,"project":self.effective_project_id(),"plugin":self.selected,"workspace":self.workspace.ai_brief(),"log_tail":self.log.lines().rev().take(20).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>()})}
+ pub(crate) fn agent_start(&mut self,preflight:bool)->crate::backend::InvokeReply{
+     let Some(id)=self.selected.clone()else{return crate::backend::invoke_err("testing.run","请先在集成测试中选择并配置插件")};
+     if self.job.is_some(){return crate::backend::invoke_err("testing.run","已有测试正在运行")}
+     let fingerprint=self.agent_preflight_fingerprint();
+     if preflight { self.agent_preflight_attestation=None; self.agent_preflight_pending=None; }
+     let result=self.api_run(&serde_json::json!({"id":id,"lifecycle":if preflight{"preflight"}else{"run"}}));
+     if preflight && result.ok { if let Some(key)=self.agent_job_key(){self.agent_preflight_pending=Some((key,fingerprint));} }
+     result
+ }
+ pub(crate) fn agent_verified_preflight_gate(&self)->Result<(),String>{
+     let id=self.selected.as_ref().ok_or("PREFLIGHT.NO_PLUGIN")?;
+     let plugin=self.plugins.iter().find(|plugin| &plugin.id==id).ok_or("PREFLIGHT.PLUGIN_UNAVAILABLE")?;
+     if !plugin.configure { return Err("PREFLIGHT.BINDING_UNSUPPORTED: 当前插件无法绑定配置与预检版本".into()); }
+     for param in plugin.params.iter().filter(|param| param.type_name.eq_ignore_ascii_case("device")) {
+         let value=self.param_values.get(&param.name).map(String::as_str).unwrap_or(&param.default);
+         if !self.live_devices.iter().any(|device| !device.session_id.is_empty() && value.trim() == device.device_id.to_string()) {
+             return Err(format!("PREFLIGHT.DEVICE_SESSION_UNVERIFIED: {}",param.name));
+         }
+     }
+     if self.agent_preflight_attestation.as_deref()!=Some(self.agent_preflight_fingerprint().as_str()) {
+         return Err("PREFLIGHT.RUN_MISMATCH: 需要当前项目、配置和设备状态的成功预检".into());
+     }
+     self.workspace_run_gate(false)
+ }
+ pub(crate) fn agent_run_status(&self)->serde_json::Value{self.published_run_status.clone()}
+ fn build_agent_run_status(&self)->serde_json::Value{serde_json::json!({"running":self.job.is_some(),"run_id":self.agent_job_key(),"process_state_unknown":self.job.as_ref().is_some_and(|job|job.wait_error_reported),"stop_requested":self.job.as_ref().is_some_and(|job|job.stop_requested),"force_stop_error":self.job.as_ref().and_then(|job|job.force_stop_error.as_deref()),"process_exit_code":self.agent_exit_code,"completed_run_identity":self.agent_finished_key,"status":self.status,"project":self.effective_project_id(),"plugin":self.selected,"workspace":self.workspace.ai_brief(),"log_tail":self.log.lines().rev().take(20).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>()})}
 }

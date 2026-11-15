@@ -786,12 +786,65 @@ fn repository_drives_unrun_subset_stale_and_shared_results() {
 }
 
 #[cfg(test)]
+fn bind_reply(panel: &mut TestToolPanel, method: &str) {
+    let plugin=panel.selected_plugin().unwrap();
+    let context=panel.workspace_request(plugin,method,Value::Null,true)["context"].clone();
+    let config=matches!(method,"config.get"|"config.create"|"config.duplicate"|"config.save"|"config.validate");
+    panel.workspace.request_guard=Some(WorkspaceRequestGuard{context,current:panel.workspace.current.clone(),
+        document:config.then(||panel.workspace.document.clone()),
+        project_document:method.starts_with("project.").then(||panel.workspace.project_document.clone()),control_run:None,
+        matrix_host_run:(method=="matrix.get").then(||panel.agent_job_key())});
+}
+#[cfg(test)]
 fn deliver(panel: &mut TestToolPanel, method: &str, data: Value) {
     let (tx, rx) = mpsc::channel();
     tx.send((method.into(), Ok(json!({"ok":true,"data":data}))))
         .unwrap();
     panel.workspace.rx = Some(rx);
+    bind_reply(panel,method);
     panel.workspace_poll(&egui::Context::default());
+}
+#[test]
+fn stale_config_reply_does_not_overwrite_new_editor_contents() {
+    let mut panel=super::tests::fixture(1);
+    bind_reply(&mut panel,"config.save");
+    let (tx,rx)=mpsc::channel();
+    tx.send(("config.save".into(),Ok(json!({"ok":true,"data":{"valid":true,"value":{"name":"old"}}})))).unwrap();
+    panel.workspace.rx=Some(rx);
+    panel.workspace.document["name"]=json!("new edit");
+    panel.workspace_poll(&egui::Context::default());
+    assert_eq!(panel.workspace.document["name"],"new edit");
+    assert!(panel.workspace.error.contains("CONFIG.STALE_REPLY"));
+    assert_eq!(panel.workspace.snapshot["preflight"]["valid"],false);
+}
+#[test]
+fn workspace_publication_changes_for_each_edit_even_while_already_dirty() {
+    let mut panel=super::tests::fixture(1);
+    panel.ai_summary_dirty=true;panel.publish_ai_summary();
+    let clean=panel.agent_identity();
+    panel.workspace.document["name"]=json!("first");
+    panel.ai_summary_dirty=true;panel.publish_ai_summary();
+    let first=panel.agent_identity();
+    panel.workspace.document["name"]=json!("second");
+    panel.ai_summary_dirty=true;panel.publish_ai_summary();
+    let second=panel.agent_identity();
+    assert_ne!(clean,first);assert_ne!(first,second);
+    panel.ai_summary_dirty=true;panel.publish_ai_summary();
+    assert_eq!(second,panel.agent_identity());
+}
+#[test]
+fn external_workspace_write_invalidates_binding_and_blocks_preflight_until_refresh() {
+    let mut panel=super::tests::fixture(1);
+    panel.ai_summary_dirty=true;panel.publish_ai_summary();
+    let before=panel.agent_identity();
+    panel.hub_api_mutations.fetch_add(1,Ordering::AcqRel);
+    panel.hub_api_epoch.fetch_add(1,Ordering::AcqRel);
+    assert_ne!(before,panel.agent_identity());
+    assert!(panel.workspace_run_gate(true).is_err());
+    panel.hub_api_mutations.fetch_sub(1,Ordering::AcqRel);
+    assert!(panel.workspace_run_gate(true).is_err());
+    panel.workspace.api_epoch=panel.hub_api_epoch.load(Ordering::Acquire);
+    assert!(!panel.workspace_external_update_pending());
 }
 #[test]
 fn drafts_are_immediate_survive_reload_and_failures_then_save_or_discard() {
@@ -823,6 +876,7 @@ fn drafts_are_immediate_survive_reload_and_failures_then_save_or_discard() {
     ))
     .unwrap();
     p.workspace.rx = Some(rx);
+    bind_reply(&mut p,"config.save");
     p.workspace_poll(&egui::Context::default());
     assert_eq!(p.workspace.current, "new_case");
     assert_eq!(p.workspace.drafts.len(), 1);

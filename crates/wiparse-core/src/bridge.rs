@@ -20,6 +20,8 @@ pub struct Ft4222Session {
     pub identity: Identity,
     pub kind: InstrumentKind,
     inner: BridgeInner,
+    #[cfg(windows)]
+    _owner: Option<ownership::Guard>,
 }
 
 enum BridgeInner {
@@ -47,6 +49,7 @@ struct LiveBridge {
     set_suspend_out: unsafe extern "system" fn(*mut c_void, i32) -> u32,
     set_wakeup: unsafe extern "system" fn(*mut c_void, i32) -> u32,
     get_version: unsafe extern "system" fn(*mut c_void, *mut Ft4222Version) -> u32,
+    get_device_info: Option<unsafe extern "system" fn(*mut c_void, *mut u32, *mut u32, *mut u8, *mut u8, *mut c_void) -> u32>,
 }
 
 unsafe impl Send for LiveBridge {}
@@ -84,6 +87,8 @@ impl Ft4222Session {
                 gpio_dir: [true, true, true, true],
                 gpio_val: [false; 4],
             },
+            #[cfg(windows)]
+            _owner: None,
         }
     }
 
@@ -96,6 +101,8 @@ impl Ft4222Session {
                 "only FT4222 USB bridges are supported here".into(),
             ));
         }
+        #[cfg(windows)]
+        let owner = ownership::acquire(&spec.serial)?;
         let live = LiveBridge::open(if spec.serial.is_empty() {
             None
         } else {
@@ -106,6 +113,8 @@ impl Ft4222Session {
             identity: spec.identity(),
             kind: InstrumentKind::UsbBridge,
             inner: BridgeInner::Live(live),
+            #[cfg(windows)]
+            _owner: Some(owner),
         })
     }
 
@@ -133,6 +142,31 @@ impl Ft4222Session {
                 "FT4222 cannot run {other:?}"
             ))),
         }
+    }
+
+    /// Query the opened driver's actual serial for station identity checks.
+    /// Generic GUI access does not depend on this optional driver capability.
+    pub fn verified_serial(&self) -> Result<String, InstrumentError> {
+        let BridgeInner::Live(live) = &self.inner else {
+            return Err(InstrumentError::Unsupported("FT4222 identity unavailable for simulated device".into()));
+        };
+        let get_info = live.get_device_info.ok_or_else(|| InstrumentError::Unsupported("FT4222 driver identity readback unavailable".into()))?;
+        let mut device_type = 0u32;
+        let mut device_id = 0u32;
+        let mut serial = [0u8; 16];
+        let mut description = [0u8; 64];
+        let status = unsafe { get_info(live.handle, &mut device_type, &mut device_id,
+            serial.as_mut_ptr(), description.as_mut_ptr(), std::ptr::null_mut()) };
+        if status != FT_OK { return Err(InstrumentError::Io(format!("FT4222.IDENTITY_READ_FAILED: {status}"))); }
+        if device_id != 0x0403_601c { return Err(InstrumentError::Io("FT4222.IDENTITY_TYPE_MISMATCH".into())); }
+        let end = serial.iter().position(|b| *b == 0)
+            .ok_or_else(|| InstrumentError::Io("FT4222.IDENTITY_UNTERMINATED".into()))?;
+        let actual = std::str::from_utf8(&serial[..end]).ok().filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| InstrumentError::Io("FT4222.IDENTITY_INVALID".into()))?;
+        if !self.identity.serial.is_empty() && self.identity.serial != actual {
+            return Err(InstrumentError::Io("FT4222.IDENTITY_MISMATCH".into()));
+        }
+        Ok(actual.to_owned())
     }
 
     fn spi(
@@ -262,6 +296,92 @@ impl Ft4222Session {
     }
 }
 
+/// Cooperative locks shared by WiParse processes running under the same user.
+/// A serial-less open locks the whole FT4222 namespace; named sessions take a
+/// shared namespace lock and an exclusive serial lock. Older/third-party
+/// software does not participate, so this is not physical-identity proof.
+#[cfg(windows)]
+mod ownership {
+    use super::InstrumentError;
+    use std::{fs::{self, File, OpenOptions}, os::windows::io::AsRawHandle, path::Path};
+    use windows_sys::Win32::{Storage::FileSystem::{LockFileEx, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY}, System::IO::OVERLAPPED};
+
+    pub(super) struct Guard { _namespace: File, _serial: Option<File> }
+
+    fn lock(path: &Path, exclusive: bool) -> Result<File, InstrumentError> {
+        let file = OpenOptions::new().read(true).write(true).create(true).open(path)
+            .map_err(|e| InstrumentError::Io(format!("FT4222.OWNERSHIP_UNAVAILABLE: {e}")))?;
+        let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+        let flags = LOCKFILE_FAIL_IMMEDIATELY | if exclusive { LOCKFILE_EXCLUSIVE_LOCK } else { 0 };
+        let ok = unsafe { LockFileEx(file.as_raw_handle() as isize, flags, 0, 1, 0, &mut overlapped) };
+        if ok == 0 {
+            return Err(InstrumentError::Io(format!("FT4222.DEVICE_BUSY: {}", std::io::Error::last_os_error())));
+        }
+        // Windows releases byte-range locks when this handle closes, even if
+        // the session is dropped on a different thread.
+        Ok(file)
+    }
+
+    pub(super) fn acquire(serial: &str) -> Result<Guard, InstrumentError> {
+        let root = dirs::data_local_dir().ok_or_else(|| InstrumentError::Io("FT4222.OWNERSHIP_DIRECTORY_UNAVAILABLE".into()))?
+            .join("WiParse").join("device-locks");
+        acquire_at(&root, serial)
+    }
+
+    fn acquire_at(root: &Path, serial: &str) -> Result<Guard, InstrumentError> {
+        fs::create_dir_all(&root).map_err(|e| InstrumentError::Io(format!("FT4222.OWNERSHIP_UNAVAILABLE: {e}")))?;
+        let serial = serial.trim();
+        let namespace = lock(&root.join("ft4222-all.lock"), serial.is_empty())?;
+        let device = if serial.is_empty() { None } else {
+            let key = crate::update::hex_sha256(serial.to_ascii_uppercase().as_bytes());
+            Some(lock(&root.join(format!("ft4222-{key}.lock")), true)?)
+        };
+        Ok(Guard { _namespace: namespace, _serial: device })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn named_locks_conflict_per_device_and_unknown_locks_all() {
+            let root = std::env::temp_dir().join(format!("wiparse-ft-lock-{}", uuid::Uuid::new_v4()));
+            let one = acquire_at(&root, "FT1").unwrap();
+            assert!(acquire_at(&root, "ft1").is_err());
+            let two = acquire_at(&root, "FT2").unwrap();
+            assert!(acquire_at(&root, "").is_err());
+            drop(one); drop(two);
+            let unknown = acquire_at(&root, "").unwrap();
+            assert!(acquire_at(&root, "FT1").is_err());
+            drop(unknown);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn cross_process_child() {
+            let Some(root) = std::env::var_os("WIPARSE_FT_LOCK_TEST_ROOT") else { return; };
+            let root = std::path::PathBuf::from(root);
+            assert!(acquire_at(&root, "FT1").is_err());
+            assert!(acquire_at(&root, "").is_err());
+            assert!(acquire_at(&root, "FT2").is_ok());
+        }
+
+        #[test]
+        fn named_lock_is_cooperative_between_processes() {
+            use std::os::windows::process::CommandExt;
+            let root = std::env::temp_dir().join(format!("wiparse-ft-process-{}", uuid::Uuid::new_v4()));
+            let owner = acquire_at(&root, "FT1").unwrap();
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg("--exact").arg("bridge::ownership::tests::cross_process_child")
+                .env("WIPARSE_FT_LOCK_TEST_ROOT", &root)
+                .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                .status().unwrap();
+            assert!(status.success());
+            drop(owner);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+}
+
 impl LiveBridge {
     fn open(serial: Option<&str>) -> Result<Self, InstrumentError> {
         let _guard = FT_OPEN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -328,6 +448,8 @@ impl LiveBridge {
             > = ft4222
                 .get(b"FT4222_GetVersion\0")
                 .map_err(|e| InstrumentError::Io(e.to_string()))?;
+            let get_device_info = d2xx.get::<unsafe extern "system" fn(*mut c_void, *mut u32,
+                *mut u32, *mut u8, *mut u8, *mut c_void) -> u32>(b"FT_GetDeviceInfo\0").ok().map(|symbol| *symbol);
 
             let mut handle: *mut c_void = std::ptr::null_mut();
             let status = if let Some(serial) = serial {
@@ -356,6 +478,7 @@ impl LiveBridge {
                 set_suspend_out: *set_suspend_out,
                 set_wakeup: *set_wakeup,
                 get_version: *get_version,
+                get_device_info,
                 handle,
                 _d2xx: d2xx,
                 _ft4222: ft4222,

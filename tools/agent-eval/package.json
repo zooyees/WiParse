@@ -1,0 +1,1 @@
+{"name":"wiparse-agent-eval","private":true,"version":"1.0.0","engines":{"node":">=22.22.0"},"devDependencies":{"promptfoo":"0.125.1"}}

@@ -435,6 +435,15 @@ fn verify_lease(s: &State, resource: &str, p: &Value) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Internal station adapter only; never returns or logs the lease secret.
+#[allow(dead_code)]
+pub(crate) fn station_lease_valid(shared: &Arc<Mutex<State>>, resource: &str,
+    lease_token: &str, session_epoch: &str) -> bool {
+    if resource.is_empty() || lease_token.is_empty() || session_epoch.is_empty() { return false; }
+    let params = json!({"lease_token":lease_token,"session_epoch":session_epoch});
+    shared.lock().ok().is_some_and(|state| verify_lease(&state, resource, &params).is_ok())
+}
 fn checkpoint(c: &AtomicBool, end: Instant) -> Result<(), String> {
     if c.load(Ordering::SeqCst) {
         Err("JOB.CANCELLED".into())

@@ -41,22 +41,10 @@ pub(super) fn show(ui: &mut egui::Ui, data: &serde_json::Value, lang: Lang, t: &
     ui.data_mut(|d| d.insert_temp(id, selected));
     for source in sources {
         let start = source["first_time_s"].as_f64().unwrap_or(0.0);
-        let duration = source["observed_duration_s"].as_f64().unwrap_or(0.0);
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(format!(
-                    "{} {:.3} s · {} {}–{}",
-                    label(lang, "观测跨度", "Observed span"),
-                    duration,
-                    label(lang, "行", "rows"),
-                    source["first_line"],
-                    source["last_line"]
-                ))
-                .size(12.0)
-                .color(t.text_muted),
-            )
-            .wrap(),
-        );
+        if let Some(duration)=source["observed_duration_s"].as_f64() {
+            ui.small(format!("{} {:.3} s · {} {}–{}",label(lang,"观测跨度","Observed span"),duration,
+                label(lang,"行","rows"),source["first_line"],source["last_line"]));
+        }
         let mut segments: Vec<Vec<[f64; 2]>> = vec![vec![]];
         for point in source["points"].as_array().into_iter().flatten() {
             if let Some((x, y)) = point[0].as_f64().zip(point[2][selected].as_f64()) {
@@ -114,20 +102,20 @@ pub(super) fn show(ui: &mut egui::Ui, data: &serde_json::Value, lang: Lang, t: &
         {
             ui.add(
                 egui::Label::new(
-                    egui::RichText::new(format!(
-                        "{} {} · {} {}",
-                        label(lang, "无有效时间行", "Rows without time"),
-                        source["missing_or_invalid_timestamp_rows"],
-                        label(lang, "倒退时间跳过", "Backward rows skipped"),
-                        source["backward_timestamp_rows_skipped"]
-                    ))
+                    egui::RichText::new(if let Some(parsed)=source["parsed_timestamp_rows"].as_u64(){
+                        format!("{} {} · {} {} · {} {} · {} {}",label(lang,"时间已识别","Parsed time"),parsed,
+                            label(lang,"未匹配时间","No time match"),source["timestamp_selector_unmatched_rows"],
+                            label(lang,"格式无效","Invalid time"),source["invalid_timestamp_value_rows"],
+                            label(lang,"倒退跳过","Backward"),source["backward_timestamp_rows_skipped"])
+                    }else{format!("{} {} · {} {}",label(lang,"未识别时间的行数","Rows without parsed time"),
+                        source["missing_or_invalid_timestamp_rows"],label(lang,"倒退跳过","Backward"),source["backward_timestamp_rows_skipped"])})
                     .size(12.0)
                     .color(t.text_muted),
                 )
                 .wrap(),
             );
         }
-        if source["end_marker_confirmed"] != true || source["start_marker_confirmed"] != true {
+        if data["cycle_requested"] != false && source["observed_duration_s"].is_number() && (source["end_marker_confirmed"] != true || source["start_marker_confirmed"] != true) {
             ui.add(
                 egui::Label::new(
                     egui::RichText::new(label(

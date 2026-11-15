@@ -6,8 +6,8 @@ use wiparse_core::log_analysis::{self, LibrarySpec, Query, Scan};
 pub(super) fn catalog() -> &'static str {
     r#"Local text tools: ONLY manual conversation with a non-none data_scope; the host restricts sources and row ranges to the user selection, read-only, no device-control permission required.
 log.files {"offset":0,"limit":16}: inventory within the user-selected current log, row range, selected text, or opened disk logs and user-chosen directory recursively (.log/.txt/.jsonl/.csv and uncompressed rotations). Use opaque source IDs, never file paths. next_offset pages results. If no files, tell user to open logs or choose the visible log directory.
-log.analyze {}: scan ALL registered files locally, return bounded cumulative statistics/evidence. Start with samples:0 for a cheap overview. Optional fields: source_ids:[IDs] (empty=all,max32); contains:[literals] (any by default), require_all:false, exclude:[literals] (max8 each,64 UTF-8 bytes per item); case_sensitive:false; pattern:"Rust regex" (max256 bytes); first_line:1,last_line:N (per-file,1-based); context:0..2,samples:0..8,group:true; discover:true returns local field names, numeric ranges, observed units/state values and extraction recipes before choosing events/timeline. numeric:[{"name":"VIN","pattern":"VIN=([+-]?[0-9.]+)","min":4.5,"max":5.5}] (max4,group1 is numeric value, limits only if supplied by user, units from the log).
-Optional timeline:{retain_dataset?:true,timestamp_pattern:captureGroup1,timestamp_unit:"clock"|"s"|"ms"|"us",start_time?:"20:05:09.865",start_pattern?:RustRegex,end_pattern?:RustRegex,fields:[{name,pattern:captureGroup1,unit,scale?:1}],power_pair?:[voltageName,currentName],max_points?:48}. Max3 fields, power_pair requires units V and A after scale and same-line values. Returns bounded curves, exact all-sample stats and observed duration per source. Missing end marker means NOT verified full-cycle time. No line filters with timeline. For data analysis page presentation, set retain_dataset:true BEFORE scanning; all actual extracted rows stay local (maximum250000); use returned query_id with data.present. Finish continuation first. Host plots extracted curves; final report should interpret real data and cite evidence.
+log.analyze {}: scan ALL registered files locally, return bounded cumulative statistics/evidence. Start with samples:0 for a cheap overview. Optional fields: source_ids:[IDs] (empty=all,max32); contains:[literals] (any by default), require_all:false, exclude:[literals] (max8 each,64 UTF-8 bytes per item); case_sensitive:false; pattern:"Rust regex" (max256 bytes); first_line:1,last_line:N (per-file,1-based); context:0..2,samples:0..8,group:true; discover:true returns local field names, numeric ranges, observed units/state values and extraction recipes before choosing events/timeline. numeric:[{"name":"VIN","pattern":"VIN=([+-]?[0-9.]+)","min":4.5,"max":5.5}] (max8,group1 is numeric value, limits only if supplied by user, units from the log).
+Optional timeline:{retain_dataset?:true,timestamp_pattern:wholeTimestampOrCaptureGroup1,timestamp_unit:"clock"|"s"|"ms"|"us",start_time?:"20:05:09.865",start_pattern?:RustRegex,end_pattern?:RustRegex,fields:[{name,pattern:captureGroup1,unit,scale?:1}],power_pair?:[voltageName,currentName],max_points?:48}. 1..8 input fields, power_pair requires units V and A after scale and same-line values. Returns bounded curves, exact all-sample stats and observed duration per source. Missing end marker means NOT verified full-cycle time. No line filters with timeline. For data analysis page presentation, set retain_dataset:true BEFORE scanning; all actual extracted rows stay local (maximum250000); use returned query_id with data.present. Finish continuation first. Host plots extracted curves; final report should interpret real data and cite evidence.
 Optional events:{active_pattern:RustRegex,inactive_pattern:RustRegex,reason_pattern?:captureGroup1,timestamp_pattern?:captureGroup1,entity_pattern?:captureGroup1,context_lines?:0..8,offset?:0,limit?:1..32}. Infer patterns from observed evidence yourself; do not require user keywords. Events need an unfiltered sequence (no contains/exclude/pattern). Counts active-to-inactive per source/entity; duplicate inactive lines are not new events; an initial inactive state is unpaired, not a confirmed disconnect. Reasons are associated observations, NOT proven causes. No state crosses file boundaries. Use rule, next_offset, coverage and row-omission metadata. There is no fixed product vocabulary.
 Prefer aggregate counts first, then targeted examples around anomalies. Keyword counts are in-range before filtering; numeric statistics apply to matched lines. Grouping removes timestamps/numbers and tracks normalized prefixes, not semantic equivalence. Reports never contain the full raw input. Oversized lines, changing files, UTF-8 decoding issues and grouping limits are explicit. Unsaved disk edits are not read. Live logs use immutable retained-line snapshots; evicted rows are explicitly unavailable, never claimed as analyzed. Selection sources use relative row numbering.
 The user sets a local byte budget; text scanning also yields after a 15s working slice. If continuation is non-null, call log.analyze {"cursor":"host-issued token"} ONLY (no new filters). Results are cumulative; DO NOT sum successive reports. last_analysis is a previous snapshot: start a fresh query without cursor to refresh current data. complete=false cannot establish a full-log conclusion or a clean test. Latest analysis/cursor is in local_log_library. Follow the host task tool-call budget, explain remaining coverage and continue on a later user request if needed. Local preview uses no AI tokens. No edits, shell, arbitrary paths or invented measurements. Read-only tool execution and continuation are already authorized; do not ask scan/start/continue confirmation or narrate implementation budgets unless coverage is actually incomplete."#
@@ -431,6 +431,54 @@ mod tests {
         panic!("local preview did not finish");
     }
     #[test]
+    fn local_preview_keeps_manual_task_budget_and_evidence_intact() {
+        let _serial = LOCAL_TEST_LOCK.lock().unwrap();
+        let mut config = AppConfig::default();
+        config.log_monitor.save_live_to_disk = false;
+        config.log_monitor.open_log_files.clear();
+        let mut panel = SerialToolPanel::new(&config, Lang::Zh);
+        panel.tabs[0].append_lines(["ERROR example".into()], false);
+        let mut chat = SerialAiChat::default();
+        chat.scope = DataScope::Current;
+        chat.run = Some(run::Run::new());
+        chat.tool_round = 99;
+        chat.evidence_counter = 12;
+        chat.tool_results.push(json!({"evidence_id":"existing"}));
+        chat.local_preview_request = true;
+        let ctx = egui::Context::default();
+        panel.begin_platform_call(&ctx, &mut chat, "log.analyze".into(), json!({}), "preview".into(), false).unwrap();
+        chat.local_preview_request = false;
+        for _ in 0..1000 {
+            panel.poll_platform(&ctx, &mut chat, Lang::Zh);
+            if chat.tool.is_none() { break; }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(chat.tool.is_none());
+        assert_eq!(chat.tool_round, 99);
+        assert_eq!(chat.evidence_counter, 12);
+        assert_eq!(chat.preview_evidence_counter, 1);
+        assert_eq!(chat.tool_results, vec![json!({"evidence_id":"existing"})]);
+        assert!(chat.run.as_ref().unwrap().last_read.is_none());
+    }
+    #[test]
+    fn rejected_local_preview_preserves_manual_task_and_queue_state() {
+        let mut config = AppConfig::default();
+        config.log_monitor.save_live_to_disk = false;
+        let mut panel = SerialToolPanel::new(&config, Lang::Zh);
+        let mut chat = SerialAiChat::default();
+        chat.scope = DataScope::None;
+        chat.run = Some(run::Run::new());
+        let phase = chat.run.as_ref().unwrap().phase;
+        chat.local_preview_request = true;
+        let result = panel.begin_platform_call(&egui::Context::default(), &mut chat,
+            "log.analyze".into(), json!({}), "preview".into(), false);
+        chat.local_preview_request = false;
+        chat.note_background(result.unwrap_err(), true);
+        assert_eq!(chat.run.as_ref().unwrap().phase, phase);
+        assert!(!chat.status_error);
+        assert!(chat.history.is_empty());
+    }
+    #[test]
     fn default_current_and_explicit_range_scan_all_retained_rows_without_raw_upload() {
         let _serial = LOCAL_TEST_LOCK.lock().unwrap();
         let mut config = AppConfig::default();
@@ -517,5 +565,23 @@ mod tests {
         assert_eq!(report["coverage"]["matched_lines"], 2);
         assert_eq!(report["coverage"]["complete"], true);
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn charging_fixture_scan_preserves_source_and_full_coverage() {
+        let _serial = LOCAL_TEST_LOCK.lock().unwrap();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tools/agent-eval/charging-fixture.txt");
+        let mut config = AppConfig::default();
+        config.log_monitor.save_live_to_disk = false;
+        config.log_monitor.open_log_files.clear();
+        let mut panel = SerialToolPanel::new(&config, Lang::Zh);
+        panel.tabs.push(LogTabPage::file_tab_empty(path.display().to_string()));
+        panel.active_tab = 1;
+        let mut chat = SerialAiChat::default();
+        let report = preview_scope(&mut panel, &mut chat, json!({"contains":["cause:"],"samples":2}));
+        assert_eq!(report["coverage"]["files"], 1);
+        assert_eq!(report["coverage"]["lines_read"], 10);
+        assert_eq!(report["coverage"]["matched_lines"], 2);
+        assert_eq!(report["coverage"]["complete"], true);
     }
 }

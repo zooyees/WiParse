@@ -395,6 +395,7 @@ pub struct LogTabPage {
     auto_scroll: bool,
     edit_mode: bool,
     edit: LineEditorSession,
+    edit_source_lease: Option<wiparse_core::ai::source_lease::SourceLease>,
     edit_dirty: bool,
     edit_status: String,
     edit_find: String,
@@ -447,6 +448,7 @@ impl LogTabPage {
             auto_scroll: true,
             edit_mode: false,
             edit: LineEditorSession::default(),
+            edit_source_lease: None,
             edit_dirty: false,
             edit_status: String::new(),
             edit_find: String::new(),
@@ -471,6 +473,17 @@ impl LogTabPage {
         }
     }
 
+    pub(crate) fn set_edit_source_lease(&mut self, lease: wiparse_core::ai::source_lease::SourceLease) {
+        self.edit_source_lease = Some(lease);
+    }
+
+    fn edit_source_commit<T>(&mut self, change: impl FnOnce(&mut Self) -> T) -> T {
+        match self.edit_source_lease.clone() {
+            Some(lease) => lease.mutate_always(|| change(self)),
+            None => change(self),
+        }
+    }
+
     fn enter_edit_mode(&mut self) -> bool {
         if self.live || self.loading {
             return false;
@@ -482,22 +495,40 @@ impl LogTabPage {
         let Some(path) = self.filepath.as_ref() else {
             return false;
         };
+        let ticket = self.edit_source_lease.as_ref().map(|lease| lease.snapshot(|| ()).map(|(_, permit)| permit));
         match std::fs::read_to_string(path) {
             Ok(text) => {
+                let next_edit = LineEditorSession::from_text(&text);
                 // FileLogStore holds a Windows read-only mmap. Drop every mapping
                 // (backend + in-flight reload) before editing so Save can truncate.
-                self.release_mapped_file();
+                let commit = || {
+                    let old_backend = std::mem::replace(&mut self.backend, TabBackend::Pending);
+                    let old_reload = self.file_reload_rx.take();
+                    let old_edit = std::mem::replace(&mut self.edit, next_edit);
+                    self.edit_dirty = false;
+                    self.edit_status.clear();
+                    self.edit_match_status.clear();
+                    self.edit_cursor_status.clear();
+                    self.edit_mode = true;
+                    (old_backend, old_reload, old_edit)
+                };
+                let previous = match ticket {
+                    Some(Some(permit)) => permit.commit_prepared(commit),
+                    Some(None) => None,
+                    None => Some(commit()),
+                };
+                let Some((old_backend, old_reload, old_edit)) = previous else {
+                    self.edit_status = "来源已变化，未进入编辑，请重试 / Source changed; retry editing".into();
+                    return false;
+                };
+                drop(old_backend);
+                drop(old_edit);
+                if let Some(rx) = old_reload { while let Ok(ev) = rx.try_recv() { drop(ev); } }
                 for pane in &mut self.panes {
                     pane.filter_rx = None;
                     pane.filter_busy = false;
                     pane.clear_sel();
                 }
-                self.edit = LineEditorSession::from_text(&text);
-                self.edit_dirty = false;
-                self.edit_status.clear();
-                self.edit_match_status.clear();
-                self.edit_cursor_status.clear();
-                self.edit_mode = true;
                 true
             }
             Err(e) => {
@@ -508,16 +539,15 @@ impl LogTabPage {
     }
 
     fn clear_edit_ui_state(&mut self) {
-        self.edit.clear();
+        let old = self.edit_source_commit(|page| std::mem::take(&mut page.edit));
+        drop(old);
         self.edit_status.clear();
         self.edit_match_status.clear();
         self.edit_cursor_status.clear();
     }
 
     fn exit_edit_mode(&mut self) {
-        self.edit_mode = false;
-        self.edit_dirty = false;
-        self.edit_exit_confirm_open = false;
+        self.edit_source_commit(|page| { page.edit_mode = false; page.edit_dirty = false; page.edit_exit_confirm_open = false; });
         self.clear_edit_ui_state();
         if let Some(path) = self.filepath.as_ref().map(PathBuf::from) {
             self.start_file_reload(path);
@@ -536,8 +566,7 @@ impl LogTabPage {
         if !self.save_edit() {
             return false;
         }
-        self.edit_mode = false;
-        self.edit_exit_confirm_open = false;
+        self.edit_source_commit(|page| { page.edit_mode = false; page.edit_exit_confirm_open = false; });
         self.clear_edit_ui_state();
         if let Some(path) = self.filepath.as_ref().map(PathBuf::from) {
             self.start_file_reload(path);
@@ -547,11 +576,26 @@ impl LogTabPage {
 
     fn discard_edit(&mut self) {
         if let Some(path) = self.filepath.as_ref() {
-            if let Ok(text) = std::fs::read_to_string(path) {
-                self.edit = LineEditorSession::from_text(&text);
+            let ticket = self.edit_source_lease.as_ref().map(|lease| lease.snapshot(|| ()).map(|(_, permit)| permit));
+            match std::fs::read_to_string(path) {
+                Ok(text) => {
+                let next = LineEditorSession::from_text(&text);
+                let change = || std::mem::replace(&mut self.edit, next);
+                let old = match ticket {
+                    Some(Some(permit)) => permit.commit_prepared(change),
+                    Some(None) => None,
+                    None => Some(change()),
+                };
+                let Some(old) = old else {
+                    self.edit_status = "来源已变化，未丢弃编辑，请重试 / Source changed; retry discard".into();
+                    return;
+                };
+                drop(old);
+                }
+                Err(error) => { self.edit_status = error.to_string(); return; }
             }
         }
-        self.edit_dirty = false;
+        self.edit_source_commit(|page| page.edit_dirty = false);
         self.edit_status.clear();
         self.edit_match_status.clear();
     }
@@ -564,7 +608,7 @@ impl LogTabPage {
         self.release_mapped_file();
         match write_log_file(&path, self.edit.to_text().as_bytes()) {
             Ok(()) => {
-                self.edit_dirty = false;
+                self.edit_source_commit(|page| page.edit_dirty = false);
                 self.edit_status.clear();
                 true
             }
@@ -578,12 +622,12 @@ impl LogTabPage {
     fn save_edit_as(&mut self, path: PathBuf) -> bool {
         match write_log_file(&path, self.edit.to_text().as_bytes()) {
             Ok(()) => {
-                self.filepath = Some(path.to_string_lossy().into_owned());
-                self.title = path
+                let filepath = path.to_string_lossy().into_owned();
+                let title = path
                     .file_stem()
                     .map(|value| value.to_string_lossy().into_owned())
                     .unwrap_or_else(|| path.to_string_lossy().into_owned());
-                self.edit_dirty = false;
+                self.edit_source_commit(|page| { page.filepath = Some(filepath); page.title = title; page.edit_dirty = false; });
                 self.edit_status.clear();
                 true
             }
@@ -596,8 +640,9 @@ impl LogTabPage {
 
     /// Drop mmap / in-flight file workers so Windows can truncate the log.
     fn release_mapped_file(&mut self) {
-        self.backend = TabBackend::Pending;
-        if let Some(rx) = self.file_reload_rx.take() {
+        let (old_backend, old_reload) = self.edit_source_commit(|page| (std::mem::replace(&mut page.backend, TabBackend::Pending), page.file_reload_rx.take()));
+        drop(old_backend);
+        if let Some(rx) = old_reload {
             while let Ok(ev) = rx.try_recv() {
                 drop(ev);
             }
@@ -609,26 +654,28 @@ impl LogTabPage {
     }
 
     fn start_file_reload(&mut self, path: PathBuf) {
-        if !self.edit_mode {
-            self.backend = TabBackend::Pending;
-            self.loading = true;
-            self.index_progress = 0;
-        }
         let (tx, rx) = crossbeam_channel::unbounded();
-        self.file_reload_rx = Some(rx);
+        let old_backend = self.edit_source_commit(|page| {
+            let old = if !page.edit_mode { page.loading = true; page.index_progress = 0; Some(std::mem::replace(&mut page.backend, TabBackend::Pending)) } else { None };
+            page.file_reload_rx = Some(rx);
+            old
+        });
+        drop(old_backend);
         thread::spawn(move || build_file_store_worker(path, tx));
     }
 
     fn poll_file_reload(&mut self) {
-        let Some(rx) = self.file_reload_rx.take() else {
+        let Some(event) = self.file_reload_rx.as_ref().map(|rx| rx.try_recv()) else { return; };
+        if matches!(&event, Err(crossbeam_channel::TryRecvError::Empty)) { return; }
+        let Some(rx) = self.edit_source_commit(|page| page.file_reload_rx.take()) else {
             return;
         };
-        match rx.try_recv() {
+        match event {
             Ok(FileBuildEvent::Progress { lines }) => {
                 if !self.edit_mode {
-                    self.set_index_progress(lines);
+                    self.edit_source_commit(|page| page.set_index_progress(lines));
                 }
-                self.file_reload_rx = Some(rx);
+                self.edit_source_commit(|page| page.file_reload_rx = Some(rx));
             }
             Ok(FileBuildEvent::Done(store)) => {
                 if self.edit_mode {
@@ -636,21 +683,21 @@ impl LogTabPage {
                     // denies truncate/write on a mapped file (os error 5).
                     drop(store);
                 } else {
-                    self.set_file_store(store);
+                    self.edit_source_commit(|page| page.set_file_store(store));
                 }
             }
             Ok(FileBuildEvent::Err(e)) => {
                 self.edit_status = e;
                 if !self.edit_mode {
-                    self.finish_loading();
+                    self.edit_source_commit(|page| page.finish_loading());
                 }
             }
             Err(crossbeam_channel::TryRecvError::Empty) => {
-                self.file_reload_rx = Some(rx);
+                self.edit_source_commit(|page| page.file_reload_rx = Some(rx));
             }
             Err(crossbeam_channel::TryRecvError::Disconnected) => {
                 if !self.edit_mode {
-                    self.finish_loading();
+                    self.edit_source_commit(|page| page.finish_loading());
                 }
             }
         }
@@ -1129,12 +1176,9 @@ impl LogTabPage {
             if !self.edit_mode {
                 self.toolbar_row_find(ui, lang, t);
             }
-            // Keep navigation together when the search controls fill the row.
-            if self.live && ui.available_width() >= 320. {
-                ui.horizontal(|ui| self.toolbar_row_main(ui, lang, t));
-            } else {
-                self.toolbar_row_main(ui, lang, t);
-            }
+            // Let the same wrapping layout place navigation. A nested
+            // non-wrapping row can extend underneath an open AI panel.
+            self.toolbar_row_main(ui, lang, t);
         });
         Frame::NONE
             .fill(t.panel_bg)
@@ -1648,19 +1692,17 @@ impl LogTabPage {
 
     fn toolbar_edit_controls(&mut self, ui: &mut egui::Ui, lang: Lang, t: &Tokens) {
         let before = self.edit_mode;
+        let mut requested = before;
         if ui
             .checkbox(
-                &mut self.edit_mode,
+                &mut requested,
                 RichText::new(tr(lang, "log.edit_mode")).size(12.5),
             )
             .changed()
         {
-            if self.edit_mode && !before {
-                if !self.enter_edit_mode() {
-                    self.edit_mode = false;
-                }
-            } else if !self.edit_mode && before {
-                self.edit_mode = true;
+            if requested && !before {
+                self.enter_edit_mode();
+            } else if !requested && before {
                 self.request_exit_edit_mode();
             }
         }
@@ -1835,7 +1877,7 @@ impl LogTabPage {
         let available_height = ui.available_height().max(1.0);
         let status_h = 22.0;
         let editor_h = (available_height - status_h).max(80.0);
-        if show_virtual_line_editor(ui, &mut self.edit, font_size, &editor_id_salt, editor_h, t) {
+        if show_virtual_line_editor(ui, &mut self.edit, font_size, &editor_id_salt, editor_h, t, self.edit_source_lease.as_ref()) {
             self.edit_dirty = true;
         }
 
@@ -1880,7 +1922,11 @@ impl LogTabPage {
                         col,
                         self.case_sensitive,
                     ) {
-                        replace_char_range(&mut self.edit.lines[row], s, e, &self.edit_replace);
+                        if let Some(lease) = self.edit_source_lease.clone() {
+                            lease.mutate_always(|| replace_char_range(&mut self.edit.lines[row], s, e, &self.edit_replace));
+                        } else {
+                            replace_char_range(&mut self.edit.lines[row], s, e, &self.edit_replace);
+                        }
                         self.edit_dirty = true;
                         self.edit.rescan_max_chars();
                         let new_col = s + self.edit_replace.chars().count();
@@ -1893,15 +1939,32 @@ impl LogTabPage {
                     }
                 }
                 FindAction::ReplaceAll => {
+                    // Prepare a replacement outside the source lock, then swap
+                    // the complete edited buffer in one short transaction.
+                    let ticket = self.edit_source_lease.as_ref().map(|lease| lease.snapshot(|| ()).map(|(_, permit)| permit));
+                    let mut next_lines = self.edit.lines.clone();
                     let count = replace_all_in_lines(
-                        &mut self.edit.lines,
+                        &mut next_lines,
                         &self.edit_find,
                         &self.edit_replace,
                         self.case_sensitive,
                     );
                     if count > 0 {
-                        self.edit_dirty = true;
-                        self.edit.rescan_max_chars();
+                        let old = match ticket {
+                            Some(Some(permit)) => permit.commit_prepared(|| {
+                                self.edit_dirty = true;
+                                std::mem::replace(&mut self.edit.lines, next_lines)
+                            }),
+                            Some(None) => None,
+                            None => Some({ self.edit_dirty = true; std::mem::replace(&mut self.edit.lines, next_lines) }),
+                        };
+                        if let Some(old) = old {
+                            drop(old);
+                            self.edit.rescan_max_chars();
+                        } else {
+                            self.edit_match_status = "来源已变化，替换未提交，请重试 / Source changed; replacement not applied".into();
+                            return;
+                        }
                     }
                     self.edit_match_status = format!("{}: {count}", tr(lang, "log.replaced"));
                 }
@@ -2623,7 +2686,57 @@ fn line_column_at(text: &str, char_index: usize) -> (usize, usize) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn editing_commit_invalidates_guarded_source_snapshot() {
+        use super::*;
+        use wiparse_core::ai::{AiConfig, AiRequest, AiService};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let lease = wiparse_core::ai::source_lease::SourceLease::default();
+        let mut tab = LogTabPage::file_tab_empty("fixture.log".into());
+        tab.set_edit_source_lease(lease.clone());
+        let (request, permit) = lease.snapshot(|| AiRequest { purpose:"fixture".into(), text:"fixture".into() }).unwrap();
+        let service = AiService::new(AiConfig { enabled:true, base_url:format!("http://{}",listener.local_addr().unwrap()), model:"fixture".into(), ..Default::default() });
+        let task = service.submit_conversation_reviewed_guarded(request, vec![], permit).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while task.outbound_preview().is_none() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        tab.edit_source_commit(|page| page.edit.lines[0] = "updated".into());
+        assert!(task.approve_outbound());
+        assert!(matches!(task.result.recv_timeout(std::time::Duration::from_secs(3)).unwrap(), Err(wiparse_core::ai::AiError::Config(_))));
+        assert!(matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+    }
     use super::*;
+
+    #[test]
+    fn live_toolbar_navigation_wraps_inside_available_width() {
+        for width in [480.0, 800.0, 1200.0] {
+            for light in [false, true] {
+                let ctx = egui::Context::default();
+                crate::fonts::install_cjk_fonts(&ctx);
+                let tokens = crate::theme::apply_theme(&ctx, light);
+                let mut tab = LogTabPage::live_tab(Lang::En);
+                tab.ai_visible = true;
+                let output = ctx.run(egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 700.0))),
+                    ..Default::default()
+                }, |ctx| { egui::CentralPanel::default().show(ctx, |ui| tab.ui(ui, Lang::En, &tokens)); });
+                let mut found = false;
+                for clipped in &output.shapes {
+                    if let egui::Shape::Text(text) = &clipped.shape {
+                        if text.galley.text() == tr(Lang::En, "log.goto") {
+                            found = true;
+                            assert!(text.pos.x + text.galley.size().x <= clipped.clip_rect.max.x + 0.5,
+                                "Go to Line clipped at width {width}, light={light}");
+                        }
+                    }
+                }
+                assert!(found, "Go to Line was not rendered at width {width}, light={light}");
+            }
+        }
+    }
 
     #[test]
     fn paused_pane_keeps_filter_and_caret_context_while_live_api_advances() {

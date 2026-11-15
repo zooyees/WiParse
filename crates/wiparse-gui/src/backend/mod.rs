@@ -63,6 +63,8 @@ pub struct PendingRequest {
 /// Internal AI calls are fenced again when the GUI consumes them.
 #[derive(Debug, Clone)]
 pub struct AiGuard {
+    pub task_id: Option<String>,
+    pub skill_ids: Vec<String>,
     pub binding: String,
     pub project: String,
     pub controls: bool,

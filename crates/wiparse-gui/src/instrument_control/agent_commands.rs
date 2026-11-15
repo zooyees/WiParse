@@ -289,6 +289,110 @@ impl InstrumentControlPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn completed_failed_and_lost_demo_receipts_keep_distinct_audit_states() {
+        let root = tempfile::tempdir().unwrap();
+        let mut commands = AgentCommands::default();
+        for (operation, job) in [("demo-complete", 1), ("demo-failed", 2), ("demo-lost", 3)] {
+            let mut reservation = Reservation::open(root.path(), operation.into(), "session-a", job).unwrap();
+            assert_eq!(reservation.reserve().unwrap(), None);
+            commands.active.insert(job, (42, reservation));
+        }
+        commands.completed(1, true);
+        commands.completed(2, false);
+        // A duplicate late success for the already failed job cannot release it.
+        commands.completed(2, true);
+        // Disconnect drops the live owner without releasing its durable reservation.
+        commands.disconnected(42);
+        drop(commands);
+
+        let mut success = Reservation::open(root.path(), "demo-complete".into(), "session-b", 4).unwrap();
+        assert_eq!(success.reserve().unwrap(), None);
+        let mut failure = Reservation::open(root.path(), "demo-failed".into(), "session-b", 5).unwrap();
+        assert_eq!(failure.reserve().unwrap(), Some(("session-a".into(), 2)));
+        let mut unknown = Reservation::open(root.path(), "demo-lost".into(), "session-b", 6).unwrap();
+        assert_eq!(unknown.reserve().unwrap(), Some(("session-a".into(), 3)));
+        // A receipt from another session or job cannot release the lost action.
+        assert_eq!(unknown.resolve(&serde_json::json!({"kind":"driver_completed","physical_verified":false})).unwrap(), 0);
+        assert_eq!(unknown.reserve().unwrap(), Some(("session-a".into(), 3)));
+        let db = Connection::open_with_flags(root.path().join("agent-device-operations.sqlite3"), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let evidence: String = db.query_row("SELECT evidence FROM readbacks WHERE operation='demo-complete'", [], |row| row.get(0)).unwrap();
+        let evidence: serde_json::Value = serde_json::from_str(&evidence).unwrap();
+        assert_eq!(evidence["kind"], "driver_completed");
+        assert_eq!(evidence["physical_verified"], false);
+        let unresolved: i64 = db.query_row("SELECT count(*) FROM pending WHERE operation IN ('demo-failed','demo-lost')", [], |row| row.get(0)).unwrap();
+        assert_eq!(unresolved, 2);
+    }
+
+    #[test]
+    fn readback_confirmation_requires_valid_observation_and_measurement() {
+        let mut read = Readback::default();
+        assert!(read.evidence("demo target").is_none());
+        read.source = "  DMM-1  ".into();
+        assert!(read.evidence("demo target").is_none());
+        read.value = "  ".into();
+        assert!(read.evidence("demo target").is_none());
+        read.value = "observed off".into();
+        let operator = read.evidence("demo target").unwrap();
+        assert_eq!(operator["source"], "DMM-1");
+        assert_eq!(operator["physical_verified"], false);
+
+        read.kind = 2;
+        for invalid in ["observed off", "NaN", "inf"] {
+            read.value = invalid.into();
+            read.unit = "V".into();
+            assert!(read.evidence("demo target").is_none(), "{invalid}");
+        }
+        read.value = "4.99".into();
+        read.unit.clear();
+        assert!(read.evidence("demo target").is_none());
+        read.unit = "V".into();
+        for invalid in ["-0.1", "NaN", "not-a-number"] {
+            read.tolerance = invalid.into();
+            assert!(read.evidence("demo target").is_none(), "{invalid}");
+        }
+        read.tolerance = "0.02".into();
+        let measurement = read.evidence("demo target").unwrap();
+        assert_eq!(measurement["value"], 4.99);
+        assert_eq!(measurement["tolerance"], 0.02);
+        assert_eq!(measurement["physical_verified"], false);
+    }
+    #[test]
+    fn concurrent_same_operation_has_one_owner_and_old_receipts_cannot_release_it() {
+        use std::sync::{Arc, Barrier};
+        let root=tempfile::tempdir().unwrap();
+        let operation="fixture-scope/single";
+        // Initialize schema before starting the contenders; only reservation
+        // ownership is under test, not concurrent database creation.
+        drop(Reservation::open(root.path(),operation.into(),"initializer",0).unwrap());
+        let barrier=Arc::new(Barrier::new(5));let mut workers=Vec::new();
+        for n in 0..4_u64 {
+            let barrier=barrier.clone();let path=root.path().to_owned();
+            workers.push(std::thread::spawn(move||{
+                let session=format!("session-{n}");let mut reservation=Reservation::open(&path,operation.into(),&session,n).unwrap();
+                barrier.wait();(session,reservation.reserve())
+            }));
+        }
+        barrier.wait();
+        let results:Vec<_>=workers.into_iter().map(|worker|worker.join().unwrap()).collect();
+        let winners:Vec<_>=results.iter().filter(|(_,result)|matches!(result,Ok(None))).collect();
+        assert_eq!(winners.len(),1,"reservation outcomes: {results:?}");
+        let winner=&winners[0].0;
+        for (_,result) in &results {if let Ok(Some((session,_)))=result {assert_eq!(session,winner);}}
+        assert!(results.iter().all(|(_,result)|result.is_ok()),"reservation error: {results:?}");
+        let stale=Reservation::open(root.path(),operation.into(),"stale",999).unwrap();
+        assert_eq!(stale.release().unwrap(),0);
+        let mut later=Reservation::open(root.path(),operation.into(),"later",1000).unwrap();
+        assert_eq!(later.reserve().unwrap().unwrap().0,*winner);
+        let winner_job=winner.strip_prefix("session-").unwrap().parse::<u64>().unwrap();
+        let current=Reservation::open(root.path(),operation.into(),winner,winner_job).unwrap();
+        let readback=serde_json::json!({"kind":"simulated_readback","physical_verified":false});
+        assert_eq!(current.resolve(&readback).unwrap(),1);
+        assert_eq!(current.resolve(&readback).unwrap(),0,"duplicate readback must not release twice");
+        assert_eq!(later.reserve().unwrap(),None,"verified release must permit a new owner");
+        assert_eq!(current.release().unwrap(),0,"old owner cannot release the new reservation");
+    }
     #[test]
     fn reconnect_with_a_new_device_id_does_not_resubmit_a_scope_single() {
         let dir = tempfile::tempdir().unwrap();

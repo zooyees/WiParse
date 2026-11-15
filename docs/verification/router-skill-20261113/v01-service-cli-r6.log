@@ -1,0 +1,112 @@
+   Compiling probe-rs v0.27.0
+   Compiling wiparse-core v1.2.5 (D:\windlink\windlink\WiParse-R\crates\wiparse-core)
+warning: variable does not need to be mutable
+   --> crates\wiparse-core\src\protocol\decode.rs:891:17
+    |
+891 |             let mut fields = vec![field("pattern", name, "", Some(format!("0x{header:02X}")))];
+    |                 ----^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `commit` is never used
+   --> crates\wiparse-core\src\ai\source_lease.rs:158:19
+    |
+119 | impl SourcePermit {
+    | ----------------- method in this implementation
+...
+158 |     pub(crate) fn commit(&self, commit: impl FnOnce() -> bool) -> bool {
+    |                   ^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `lfsr_msequence` is never used
+   --> crates\wiparse-core\src\bus_decode\ddsss.rs:181:8
+    |
+181 | pub fn lfsr_msequence(width: u8, taps: &[u8]) -> Vec<bool> {
+    |        ^^^^^^^^^^^^^^
+
+warning: methods `scope_screen_point_count`, `tek_screen_point_count`, `keysight_screen_point_count`, `prepare_keysight_screen_waveform`, and `apply_tek_visible_data_window` are never used
+    --> crates\wiparse-core\src\instrument\drivers.rs:1361:8
+     |
+ 882 | impl InstrumentDevice {
+     | --------------------- methods in this implementation
+...
+1361 |     fn scope_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1399 |     fn tek_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^
+...
+1406 |     fn keysight_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1449 |     fn prepare_keysight_screen_waveform(&mut self, channel: u8) -> Result<(), InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2018 |     fn apply_tek_visible_data_window(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `parse_keysight_preamble_points` is never used
+    --> crates\wiparse-core\src\instrument\drivers.rs:3167:4
+     |
+3167 | fn parse_keysight_preamble_points(pre: &str) -> Option<usize> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `verify_file_against_meta` is never used
+   --> crates\wiparse-core\src\marketplace\trust.rs:160:8
+    |
+160 | pub fn verify_file_against_meta(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `open_tcp_uart_from_info` is never used
+   --> crates\wiparse-core\src\serial.rs:624:4
+    |
+624 | fn open_tcp_uart_from_info(info: &PortInfo, baud: u32) -> Result<SerialSession, SerialError> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `load_tek_wfm` is never used
+   --> crates\wiparse-core\src\waveform_file.rs:968:4
+    |
+968 | fn load_tek_wfm(bytes: &[u8], default_channel: &str) -> Result<WaveformTrace, WaveformFileError> {
+    |    ^^^^^^^^^^^^
+
+warning: `wiparse-core` (lib) generated 8 warnings (run `cargo fix --lib -p wiparse-core` to apply 1 suggestion)
+   Compiling wiparse-cli v1.2.5 (D:\windlink\windlink\WiParse-R\crates\wiparse-cli)
+   Compiling wiparse-service v1.2.5 (D:\windlink\windlink\WiParse-R\crates\wiparse-service)
+warning: linker stdout: 正在创建库 D:\windlink\windlink\WiParse-R\target\debug\deps\wiparse_service-8abeeafa000f282c.lib 和对象 D:\windlink\windlink\WiParse-R\target\debug\deps\wiparse_service-8abeeafa000f282c.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `wiparse-service` (bin "wiparse-service" test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 37.57s
+     Running unittests src\main.rs (target\debug\deps\wiparse-bf43005d4f288185.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (target\debug\deps\wiparse_service-8abeeafa000f282c.exe)
+
+running 17 tests
+test jobs::tests::cancellation_and_deadline_gate ... ok
+test jobs::tests::fencing_conflict_and_expiry ... ok
+test jobs::tests::replay_hash_and_idempotent_job ... ok
+test jobs::tests::restart_never_replays_ambiguous_jobs ... ok
+test jobs::tests::storage_failure_latches_new_work_but_keeps_queries_available ... ok
+test jobs::tests::unsupported_settings_and_mistyped_channels_are_not_silently_defaulted ... ok
+test wireless_gate::tests::discontinuity_cancellation_or_lost_readiness_cannot_rearm_attempt ... ok
+test wireless_gate::tests::evidence_is_bound_to_attempt_and_expires ... ok
+test wireless_gate::tests::no_rule_or_missing_withdrawal_cannot_arm_gate ... ok
+test wireless_gate::tests::rule_config_requires_both_indications_and_bounded_duration ... ok
+test wireless_gate::tests::unknown_dispatch_cannot_be_retried_in_the_same_attempt ... ok
+test wireless_gate::tests::unrelated_line_containing_ready_is_not_readiness_evidence ... ok
+test wireless_station::tests::active_session_fence_survives_reopen_and_blocks_new_attempt ... ok
+test wireless_station::tests::capture_requires_verified_continuity_and_complete_lines ... ok
+test wireless_station::tests::dispatch_without_matching_durable_session_is_rejected ... ok
+test wireless_station::tests::safety_action_is_recorded_unknown_and_duplicate_is_not_replayed ... ok
+test wireless_station::tests::unknown_dispatch_blocks_same_device_after_ledger_reopen ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+

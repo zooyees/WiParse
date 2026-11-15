@@ -1,4 +1,14 @@
 use super::*;
+
+#[test]
+fn revocation_invalidates_deferred_control_even_after_reenable() {
+    let mut chat = SerialAiChat::default();
+    chat.allow_automation = true;
+    chat.deferred_guard = Some(DeferredGuard { task_id:"old".into(), scope_key:"scope".into(), skills:vec![], controls:true, test_controls:false, revoked:false });
+    chat.revoke_controls();
+    chat.allow_automation = true;
+    assert!(chat.deferred_guard.as_ref().unwrap().revoked);
+}
 fn fixture(config: &AiConfig) -> SerialToolPanel {
     let mut cfg = AppConfig::default();
     cfg.log_monitor.open_log_files.clear();
@@ -7,6 +17,51 @@ fn fixture(config: &AiConfig) -> SerialToolPanel {
     p.ai_chat.set_context("queue-test".into(), config);
     p.ai_chat.open = true;
     p
+}
+#[test]
+fn queued_library_request_is_paused_when_directory_changes() {
+    let config = AiConfig::default();
+    let mut panel = fixture(&config);
+    panel.ai_chat.scope = DataScope::Library;
+    panel.ai_chat.library.directory = Some(std::path::PathBuf::from("first-library"));
+    let state = panel.ai_state("queue-test", false);
+    let key = panel.local_log_scope_key(&panel.ai_chat);
+    panel.ai_chat.enqueue_message("分析日志".into(), &state, key.clone()).unwrap();
+    panel.ai_chat.library.directory = Some(std::path::PathBuf::from("second-library"));
+    assert_ne!(key, panel.local_log_scope_key(&panel.ai_chat));
+    let mut chat = std::mem::take(&mut panel.ai_chat);
+    panel.pump_message_queue(&egui::Context::default(), &mut chat, &state);
+    assert!(chat.queue_paused);
+    assert_eq!(chat.messages.len(), 1);
+}
+#[test]
+fn closing_chat_permanently_revokes_queued_control_grants() {
+    let config=AiConfig::default();let mut panel=fixture(&config);
+    panel.ai_chat.allow_automation=true;
+    let state=panel.ai_state("queue-test",false);
+    let key=panel.local_log_scope_key(&panel.ai_chat);
+    panel.ai_chat.enqueue_message("停止设备".into(),&state,key).unwrap();
+    assert!(panel.ai_chat.messages.front().unwrap().controls);
+    panel.ai_chat.close();
+    assert!(!panel.ai_chat.messages.front().unwrap().controls);
+    panel.ai_chat.open=true;panel.ai_chat.allow_automation=true;
+    assert!(!panel.ai_chat.messages.front().unwrap().controls);
+    assert!(panel.ai_chat.queue_paused);
+}
+#[test]
+fn queued_test_control_does_not_grant_device_control_and_revocation_is_permanent() {
+    let config=AiConfig::default();let mut panel=fixture(&config);
+    panel.ai_chat.allow_automation=true;
+    let state=panel.ai_state("queue-test",true);
+    let key=panel.local_log_scope_key(&panel.ai_chat);
+    panel.ai_chat.enqueue_message("停止测试".into(),&state,key).unwrap();
+    let message=panel.ai_chat.messages.front().unwrap();
+    assert!(!message.controls);
+    assert!(message.test_controls);
+    panel.ai_chat.revoke_controls();
+    panel.ai_chat.allow_automation=true;
+    let message=panel.ai_chat.messages.front().unwrap();
+    assert!(!message.controls && !message.test_controls);
 }
 fn reply(text: &str) -> tiny_http::Response<std::io::Cursor<Vec<u8>>> {
     tiny_http::Response::from_string(json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":text}}],"usage":{"prompt_tokens":100,"completion_tokens":20}}).to_string()).with_header(tiny_http::Header::from_bytes("Content-Type","application/json").unwrap())
@@ -123,6 +178,59 @@ fn changed_source_pauses_queue_without_sending_or_losing_draft() {
         .recv_timeout(Duration::from_millis(120))
         .unwrap()
         .is_none());
+}
+#[test]
+fn failed_queued_start_preserves_both_message_and_current_draft() {
+    let config = AiConfig { enabled: false, ..Default::default() };
+    let ctx = egui::Context::default();
+    let mut panel = fixture(&config);
+    let state = panel.ai_state("queue-test", false);
+    let key = panel.local_log_scope_key(&panel.ai_chat);
+    panel.ai_chat.enqueue_message("排队任务".into(), &state, key).unwrap();
+    panel.ai_chat.prompt = "正在编辑的另一条消息".into();
+    let mut chat = std::mem::take(&mut panel.ai_chat);
+    panel.pump_message_queue(&ctx, &mut chat, &state);
+    assert!(chat.queue_paused);
+    assert_eq!(chat.messages.len(), 1);
+    assert_eq!(chat.messages.front().unwrap().text, "排队任务");
+    assert_eq!(chat.prompt, "正在编辑的另一条消息");
+}
+#[test]
+fn incompatible_recovery_keeps_serial_draft_and_recovery() {
+    let config = AiConfig { enabled: true, model: "fixture".into(), ..Default::default() };
+    let ctx = egui::Context::default();
+    let mut panel = fixture(&config);
+    let state = panel.ai_state("queue-test", false);
+    let mut chat = std::mem::take(&mut panel.ai_chat);
+    chat.prompt = "恢复任务".into();
+    chat.recovery = Some(crate::ai::journal::Recovery::incompatible_test_fixture(
+        &state.binding.project, "恢复任务"));
+    let result = panel.begin_manual_agent_capped(&ctx, &mut chat, &state, "恢复任务".into(), false);
+    assert!(result.unwrap_err().contains("SKILL.VERSION_CHANGED"));
+    assert_eq!(chat.prompt, "恢复任务");
+    assert!(chat.recovery.is_some());
+    assert!(chat.run.is_none());
+}
+#[test]
+fn edited_serial_recovery_starts_new_task_and_releases_pending_selection() {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let addr = server.server_addr().to_ip().unwrap();
+    let worker = thread::spawn(move || {
+        if let Some(request) = server.recv_timeout(Duration::from_secs(15)).unwrap() {
+            request.respond(reply("已说明")).unwrap();
+        }
+    });
+    let config = AiConfig { enabled: true, model: "fixture".into(), base_url: format!("http://{addr}"), ..Default::default() };
+    let ctx = egui::Context::default();
+    crate::ai::AiPanel::new(&config).install(&ctx);
+    let mut panel = fixture(&config);
+    let state = panel.ai_state("queue-test", false);
+    let mut chat = std::mem::take(&mut panel.ai_chat);
+    chat.recovery = Some(crate::ai::journal::Recovery::incompatible_test_fixture(&state.binding.project, "恢复任务"));
+    panel.begin_manual_agent_capped(&ctx, &mut chat, &state, "仅解释充电保护".into(), false).unwrap();
+    assert!(chat.recovery.is_none());
+    assert_eq!(chat.run.as_ref().unwrap().question, "仅解释充电保护");
+    worker.join().unwrap();
 }
 #[test]
 fn older_queued_messages_never_gain_new_device_permission_and_queue_is_bounded() {
@@ -371,4 +479,20 @@ fn full_queue_feedback_is_visible_and_keeps_draft_without_failing_active_task() 
         .shapes
         .iter()
         .any(|s| matches!(&s.shape,egui::Shape::Text(t) if t.galley.text().contains("队列已满"))));
+}
+
+#[test]
+fn queued_question_waits_for_operator_clarification() {
+    let ctx=egui::Context::default();
+    let mut panel=fixture(&AiConfig::default());
+    let state=panel.ai_state("queue-test",false);
+    let mut chat=std::mem::take(&mut panel.ai_chat);
+    chat.run=Some(run::Run::new());
+    chat.run.as_mut().unwrap().phase="needs_input";
+    let key=panel.local_log_scope_key(&chat);
+    chat.enqueue_message("另行分析温升".into(),&state,key).unwrap();
+    assert!(!chat.should_queue_input());
+    panel.pump_message_queue(&ctx,&mut chat,&state);
+    assert_eq!(chat.messages.len(),1);
+    assert!(!chat.queue_paused);
 }

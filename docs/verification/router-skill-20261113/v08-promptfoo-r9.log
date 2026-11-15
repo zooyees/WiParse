@@ -1,0 +1,31 @@
+deepseek decompose ran 
+Cache is disabled.
+Starting evaluation eval-dDL-2026-11-15T06:38:15
+Running 1 test cases (up to 1 at a time)...
+
+[90m┌────────────────────────────────────────────────────────────[39m[90m┬────────────────────────────────────────────────────────────┐[39m
+[90m│[39m[1m[34m scenario                                                   [39m[22m[90m│[39m[1m[34m [deepseek] {{scenario}}                                    [39m[22m[90m│[39m
+[90m├────────────────────────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────────────────┤[39m
+[90m│[39m decompose                                                  [90m│[39m [PASS]                                                     [90m│[39m
+[90m│[39m                                                            [90m│[39m {"availability":"ran","case":"decompose","model":"deepsee… [90m│[39m
+[90m│[39m                                                            [90m│[39m 计划与结果\n\n| 步骤 | 交付物 | 状态 | 证据                [90m│[39m
+[90m│[39m                                                            [90m│[39m |\n|---|---|---|---|\n| s1 | 统计 `power_state` 1→0        [90m│[39m
+[90m│[39m                                                            [90m│[39m 切换次数（去重） | done | S3 |\n| s2 | 列出每次切换紧邻的  [90m│[39m
+[90m│[39m                                                            [90m│[39m `cause` 代号 | do...                                       [90m│[39m
+[90m└────────────────────────────────────────────────────────────[39m[90m┴────────────────────────────────────────────────────────────┘[39m
+✓ Eval complete (ID: eval-dDL-2026-11-15T06:38:15)
+
+» View results: promptfoo view
+» Share with your team: https://promptfoo.app
+» Feedback: https://promptfoo.dev/feedback
+
+Total Tokens: 79,055
+  Provider: 79,055 (76,605 prompt, 2,450 completion, 57,472 cached)
+
+Results:
+  ✓ 1 passed (100%)
+  0 failed (0%)
+  0 errors (0%)
+Duration: 0s (concurrency: 1)
+
+Writing output to D:\windlink\windlink\WiParse-R\docs\verification\router-skill-20261113\promptfoo-candidate-r9\promptfoo-results.json

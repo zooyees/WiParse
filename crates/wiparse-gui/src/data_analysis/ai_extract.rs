@@ -102,7 +102,7 @@ impl DataAnalysisPanel {
             }
             let skip_first = params["skip_first_record"] == true;
             let timestamp = if let Some(t) = params.get("timestamp") {
-                match Selector::compile(t["selector"].as_str().unwrap_or(""), true, true) {
+                match Selector::timestamp(t["selector"].as_str().unwrap_or(""), true) {
                     Ok(s) => Some((s, t["unit"].as_str().unwrap_or(""))),
                     Err(e) => return failure(e),
                 }

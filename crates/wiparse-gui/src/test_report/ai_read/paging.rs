@@ -23,6 +23,14 @@ fn generation(path: &Path, file: fs::File) -> io::Result<u64> {
     )))
 }
 
+pub(super) fn current_source(path: &Path) -> io::Result<Value> {
+    let file = fs::File::open(path)?;
+    let bytes = file.metadata()?.len();
+    let version = generation(path, file)?;
+    Ok(json!({"source_id":wiparse_core::log_analysis::source_id_for_path(path).ok(),
+        "source_version":format!("{version:016x}"),"source_bytes":bytes}))
+}
+
 #[derive(Clone, Copy, Hash)]
 struct Position {
     offset: u64,
@@ -211,7 +219,7 @@ pub(super) fn read_page_at(
     }
     let next = (p.offset < size).then_some(p);
     Ok(
-        json!({"file":path.file_name().map(|s|s.to_string_lossy()),"source_id":wiparse_core::log_analysis::source_id_for_path(path).ok(),
+        json!({"file":path.file_name().map(|s|s.to_string_lossy()),"source_id":wiparse_core::log_analysis::source_id_for_path(path).ok(),"source_version":format!("{source:016x}"),
         "start_line":first,"lines":rows,"next_cursor":next.map(|pos|pos.cursor(source)),"next_line":next.map(|pos|pos.line),
         "next_byte":p.byte,"reached_eof":next.is_none(),"source_bytes":size,"scope":"report text page; linked images/waveforms have not been inspected"}),
     )
@@ -221,6 +229,57 @@ pub(super) fn read_page_at(
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn report_and_attachment_cursors_are_not_interchangeable() {
+        let dir = tempfile::tempdir().unwrap();
+        let report = dir.path().join("report.md");
+        let attachment = dir.path().join("data.csv");
+        fs::write(&report, "one\ntwo\nthree\n").unwrap();
+        fs::write(&attachment, "one\ntwo\nthree\n").unwrap();
+        let cancel = AtomicBool::new(false);
+        let body = read_page_at(&report, None, 1, 1, 0, &cancel).unwrap();
+        let csv = read_page_at(&attachment, None, 1, 1, 0, &cancel).unwrap();
+        assert_ne!(body["source_id"], csv["source_id"]);
+        assert_ne!(body["source_version"], csv["source_version"]);
+        assert_eq!(body["scope"], "report text page; linked images/waveforms have not been inspected");
+        assert!(read_page_at(&attachment, body["next_cursor"].as_str(), 1, 1, 0, &cancel).is_err());
+        assert!(read_page_at(&report, csv["next_cursor"].as_str(), 1, 1, 0, &cancel).is_err());
+        assert!(read_page_at(&report, body["next_cursor"].as_str(), 1, 1, 0, &cancel).is_ok());
+    }
+
+    #[test]
+    fn demo_report_cursor_pages_preserve_all_original_rows() {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../projects/default/tests/ScopeSerialDemo/runs/20261016_120000/artifacts/reports/ScopeSerialDemo_summary_20261016_120000.md");
+        let original = fs::read_to_string(&source).expect("demo report fixture");
+        let expected: Vec<&str> = original.lines().collect();
+        assert!(expected.len() > 3, "fixture must span multiple pages");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("report.md");
+        fs::copy(source, &path).unwrap();
+        let mut cursor = None::<String>;
+        let mut rows = Vec::new();
+        let mut version = None::<String>;
+        let mut pages = 0;
+        loop {
+            let page = read_page_at(&path, cursor.as_deref(), 1, 3, 0, &AtomicBool::new(false)).unwrap();
+            let current = page["source_version"].as_str().unwrap().to_owned();
+            if let Some(previous) = &version { assert_eq!(previous, &current); }
+            version = Some(current);
+            for row in page["lines"].as_array().unwrap() {
+                assert_eq!(row["line"].as_u64(), Some(rows.len() as u64 + 1));
+                assert_eq!(row["line_complete"], true);
+                assert_eq!(row["encoding_lossy"], false);
+                rows.push(row["text"].as_str().unwrap().to_owned());
+            }
+            pages += 1;
+            cursor = page["next_cursor"].as_str().map(str::to_owned);
+            if cursor.is_none() { assert_eq!(page["reached_eof"], true); break; }
+            assert!(pages <= expected.len(), "cursor did not advance");
+        }
+        assert!(pages > 1);
+        assert_eq!(rows, expected);
+    }
 
     #[test]
     fn sequential_cursor_reads_cover_every_row_of_a_large_attachment() {

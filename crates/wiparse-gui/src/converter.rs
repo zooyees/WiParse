@@ -497,6 +497,17 @@ pub struct ConverterPanel {
 }
 
 impl ConverterPanel {
+    pub(crate) fn api_snapshot_matches(&self, snapshot:&Value)->bool {
+        snapshot["tab"].as_str()==Some(format!("{:?}",self.tab).as_str())
+            && snapshot["radix_input"].as_str()==Some(self.radix_input.as_str())
+            && snapshot["source_base"].as_u64()==Some(self.source_base as u64)
+            && snapshot["target_base"].as_u64()==Some(self.target_base as u64)
+            && snapshot["radix_result"].as_str()==Some(self.radix_result.as_str())
+            && snapshot["expression"].as_str()==Some(self.expression.as_str())
+            && snapshot["expression_result"].as_str()==Some(self.expression_result.as_str())
+            && snapshot["byte_input"].as_str()==Some(self.byte_input.as_str())
+            && snapshot["byte_result"].as_str()==Some(self.byte_result.as_str())
+    }
     pub(crate) fn ai_summary(&self) -> Value {
         let clip = |text: &str, limit: usize| text.chars().take(limit).collect::<String>();
         json!({

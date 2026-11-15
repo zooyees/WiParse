@@ -9,6 +9,16 @@ use std::io::{Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static WORKERS: AtomicUsize = AtomicUsize::new(0);
+struct ActiveHubMutation {
+    count: std::sync::Arc<AtomicUsize>,
+    epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+impl Drop for ActiveHubMutation {
+    fn drop(&mut self) {
+        self.epoch.fetch_add(1, Ordering::AcqRel);
+        self.count.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 const HUB_CONTENT_MAX_W: f32 = 1680.0;
 const HUB_WIDE_MIN_W: f32 = 1120.0;
 const HUB_LIST_W: f32 = 320.0;
@@ -35,7 +45,9 @@ pub(super) struct Workspace {
     checks_tab: bool,
     form_section: usize,
     new_id: String,
-    rx: Option<Receiver<(String, Result<Value, String>)>>,
+    pub(super) rx: Option<Receiver<(String, Result<Value, String>)>>,
+    request_guard: Option<WorkspaceRequestGuard>,
+    control_receipt: Value,
     last_poll: Option<Instant>,
     reload: bool,
     pending: Option<(String, Value)>,
@@ -72,9 +84,61 @@ pub(super) struct Workspace {
     project_original: Value,
     project_migration: Value,
     select_enabled_on_open: bool,
+    published_agent_state: Option<Box<PublishedWorkspaceState>>,
 }
-struct AgentDraft {id:String,binding:String,config:String,revision:u64,sha:String,candidate:Value,changes:Value,validation:std::sync::Arc<std::sync::Mutex<Value>>}
+pub(super) struct PublishedWorkspaceState {
+    id: uuid::Uuid,
+    key: String,
+    current: String,
+    revision: u64,
+    sha: String,
+    document: Value,
+    original: Value,
+    project_document: Value,
+    project_original: Value,
+    items: Value,
+    project_files: Value,
+    project_config: Value,
+    matrix: Value,
+    preflight: Value,
+    api_binding: Option<Value>,
+    selected: HashSet<String>,
+}
+struct WorkspaceRequestGuard {
+    context: Value,
+    current: String,
+    document: Option<Value>,
+    project_document: Option<Value>,
+    control_run: Option<(String, Value, String)>,
+    matrix_host_run: Option<Option<String>>,
+}
+fn control_run_matches(control: &Option<(String, Value, String)>, host: Option<&str>, matrix: &Value) -> bool {
+    control.as_ref().is_none_or(|(expected_host, expected_matrix, _)|
+        host == Some(expected_host.as_str()) && matrix == expected_matrix)
+}
+struct AgentDraft {id:String,binding:String,config:String,revision:u64,sha:String,candidate:Value,changes:Value,validation:std::sync::Arc<std::sync::Mutex<Value>>,cancelled:std::sync::Arc<std::sync::atomic::AtomicBool>}
 impl Workspace {
+    /// UI-local facts only; no plugin data, configuration values or physical status.
+    pub(super) fn review_ui_state(&self)->Value {
+        json!({"editor_open":!self.current.is_empty(),"selection_count":self.selected.len(),
+            "unsaved_editor_changes":self.dirty(),"scope":"published UI state only; configuration contents, external files and device state are not verified"})
+    }
+    pub(super) fn prepare_agent_publication(&self) -> Option<Box<PublishedWorkspaceState>> {
+        if self.published_agent_state.as_ref().is_some_and(|old|
+            old.key==self.key && old.current==self.current && old.revision==self.original_revision && old.sha==self.original_sha
+            && old.document==self.document && old.original==self.original
+            && old.project_document==self.project_document && old.project_original==self.project_original
+            && old.items==self.snapshot["items"] && old.project_files==self.snapshot["project_files"]
+            && old.project_config==self.snapshot["project_config"] && old.api_binding==self.api_binding
+            && old.matrix==self.snapshot["matrix"] && old.preflight==self.snapshot["preflight"] && old.selected==self.selected) {return None;}
+        Some(Box::new(PublishedWorkspaceState {id:uuid::Uuid::new_v4(),key:self.key.clone(),current:self.current.clone(),revision:self.original_revision,sha:self.original_sha.clone(),
+            document:self.document.clone(),original:self.original.clone(),project_document:self.project_document.clone(),project_original:self.project_original.clone(),
+            items:self.snapshot["items"].clone(),project_files:self.snapshot["project_files"].clone(),project_config:self.snapshot["project_config"].clone(),matrix:self.snapshot["matrix"].clone(),
+            preflight:self.snapshot["preflight"].clone(),api_binding:self.api_binding.clone(),selected:self.selected.clone()}))
+    }
+    pub(super) fn replace_agent_publication(&mut self, next:Box<PublishedWorkspaceState>)->Option<Box<PublishedWorkspaceState>> {
+        self.published_agent_state.replace(next)
+    }
     pub(super) fn dirty(&self) -> bool {
         (!self.current.is_empty() && self.document != self.original)
             || self.project_document != self.project_original
@@ -119,6 +183,8 @@ impl Workspace {
             "selected_ids": selected,
             "cases": cases,
             "matrix_summary": self.snapshot["matrix"]["summary"].clone(),
+            "matrix_control": self.snapshot["matrix"]["control"].clone(),
+            "last_control_request": self.control_receipt.clone(),
             "preflight_valid": self.snapshot["preflight"]["valid"].as_bool(),
             "dirty": self.dirty(),
             "workspace_error": self.error.chars().take(240).collect::<String>(),
@@ -132,6 +198,26 @@ impl Workspace {
         let mut selected: Vec<_> = self.selected.iter().cloned().collect();
         selected.sort();
         json!({"config_manifest_sha256":p["manifest_sha256"],"preflight_revision":p["revision"],"selected_item_ids":selected,"filters":{"query":self.query}})
+    }
+}
+impl TestToolPanel {
+    pub(crate) fn agent_workspace_tick(&mut self, ctx: &egui::Context) {
+        let refresh = self.job.is_some() && self.workspace.rx.is_none()
+            && self.workspace.snapshot["ui"]["execution_controls"]["pause_mode"] == "between_items"
+            && self.workspace.last_poll.is_none_or(|at|at.elapsed() >= Duration::from_secs(1));
+        if refresh || self.workspace.rx.is_some() {
+            let update = self.begin_source_update();
+            if refresh {
+                self.workspace.last_poll = Some(Instant::now());
+                self.workspace_send("matrix.get", json!({"limit":500}));
+            }
+            self.workspace_poll(ctx);
+            self.publish_ai_summary();
+            drop(update);
+        }
+        if self.job.is_some() && self.workspace.snapshot["ui"]["execution_controls"]["pause_mode"] == "between_items" {
+            ctx.request_repaint_after(Duration::from_secs(1));
+        }
     }
 }
 fn run_worker(node: String, request: Value) -> Result<Value, String> {
@@ -207,7 +293,13 @@ fn run_worker(node: String, request: Value) -> Result<Value, String> {
     Ok(value)
 }
 impl TestToolPanel {
+    fn workspace_external_update_pending(&self)->bool {
+        self.hub_api_mutations.load(Ordering::Acquire)>0
+            || self.workspace.api_epoch != self.hub_api_epoch.load(Ordering::Acquire)
+            || self.workspace.reload
+    }
     pub(super) fn workspace_run_gate(&self, preflight: bool) -> Result<(), String> {
+        if self.workspace_external_update_pending() || self.workspace.rx.is_some() {return Err("CONFIG.WORKSPACE_UPDATE_IN_PROGRESS".into());}
         if self.workspace.dirty() {
             return Err("CONFIG.UNSAVED_CHANGES".into());
         }
@@ -232,6 +324,13 @@ impl TestToolPanel {
         Ok(())
     }
     pub fn workspace_close_guard(&mut self, ctx: &egui::Context, lang: Lang) {
+        let update=(self.workspace.rx.is_some() || ctx.input(|input| !input.events.is_empty())).then(||self.begin_source_update());
+        self.workspace_close_guard_inner(ctx,lang);
+        if update.is_some(){self.publish_ai_summary();}
+        drop(update);
+    }
+    fn workspace_close_guard_inner(&mut self, ctx: &egui::Context, lang: Lang) {
+        if ctx.input(|input| !input.events.is_empty()) {self.ai_summary_dirty=true;}
         self.workspace_poll(ctx);
         self.workspace_nav_dialog(ctx, lang);
         if ctx.input(|i| i.viewport().close_requested()) && self.workspace.dirty() {
@@ -328,7 +427,18 @@ impl TestToolPanel {
         }
         let node = resolve_command(self.node_path.trim());
         let epoch = self.hub_api_epoch.clone();
+        let mutation = [
+            "ui.test_tool.config.save","ui.test_tool.config.archive","ui.test_tool.config.restore",
+            "ui.test_tool.config.import","ui.test_tool.config.batch","ui.test_tool.project.save",
+            "ui.test_tool.project.migration.commit","ui.test_tool.project.file.activate","ui.test_tool.project.file.import",
+        ].contains(&req.method.as_str()) && req.params["validate_only"] != true;
+        let active=mutation.then(|| {
+            self.hub_api_mutations.fetch_add(1,Ordering::AcqRel);
+            epoch.fetch_add(1,Ordering::AcqRel);
+            ActiveHubMutation{count:self.hub_api_mutations.clone(),epoch:epoch.clone()}
+        });
         thread::spawn(move || {
+            let _active=active;
             if Instant::now() > req.deadline {
                 let _ = req.reply.try_send(crate::backend::invoke_err(
                     &req.method,
@@ -354,23 +464,6 @@ impl TestToolPanel {
                 },
                 Err(e) => crate::backend::invoke_err(&req.method, &e),
             };
-            if reply.ok
-                && [
-                    "ui.test_tool.config.save",
-                    "ui.test_tool.config.archive",
-                    "ui.test_tool.config.restore",
-                    "ui.test_tool.config.import",
-                    "ui.test_tool.config.batch",
-                    "ui.test_tool.project.save",
-                    "ui.test_tool.project.migration.commit",
-                    "ui.test_tool.project.file.activate",
-                    "ui.test_tool.project.file.import",
-                ]
-                .contains(&req.method.as_str())
-                && req.params["validate_only"] != true
-            {
-                epoch.fetch_add(1, Ordering::Release);
-            }
             let _ = req.reply.try_send(reply);
         });
     }
@@ -410,7 +503,23 @@ impl TestToolPanel {
         let Some(p) = self.selected_plugin() else {
             return;
         };
+        let control_run = if method == "run.control" {
+            self.agent_job_key().map(|id| (id, params["run_id"].clone(), params["action"].as_str().unwrap_or("").to_owned()))
+        } else { None };
+        let matrix_host_run = (method == "matrix.get").then(|| self.agent_job_key());
         let request = self.workspace_request(p, method, params, true);
+        if let Some((host, matrix, action)) = &control_run {
+            self.workspace.control_receipt = json!({"state":"requested","host_run_id":host,"matrix_run_id":matrix,"action":action,"completed":false});
+        }
+        let config_sensitive=matches!(method,"config.get"|"config.create"|"config.duplicate"|"config.save"|"config.validate");
+        let project_sensitive=method.starts_with("project.");
+        self.workspace.request_guard=Some(WorkspaceRequestGuard {
+            context:request["context"].clone(),current:self.workspace.current.clone(),
+            document:config_sensitive.then(||self.workspace.document.clone()),
+            project_document:project_sensitive.then(||self.workspace.project_document.clone()),
+            control_run,
+            matrix_host_run,
+        });
         let node = resolve_command(self.node_path.trim());
         let method = method.to_owned();
         let (tx, rx) = mpsc::channel();
@@ -418,7 +527,12 @@ impl TestToolPanel {
         let matrix_file = self.workspace.snapshot["matrix_file"]
             .as_str()
             .map(PathBuf::from);
-        let prior = self.workspace.matrix_signature;
+        // The control file changes independently of the matrix file. During
+        // a controllable run its state must be refreshed even if matrix.json
+        // has the same timestamp and length (including external requests).
+        let prior = if self.job.is_some() && self.workspace.snapshot["ui"]["execution_controls"]["pause_mode"] == "between_items" {
+            None
+        } else { self.workspace.matrix_signature };
         thread::spawn(move || {
             if method == "matrix.get" {
                 if let Some(file) = matrix_file.as_ref() {
@@ -460,9 +574,39 @@ impl TestToolPanel {
         });
     }
     fn workspace_poll(&mut self, ctx: &egui::Context) {
-        let result = self.workspace.rx.as_ref().and_then(|rx| rx.try_recv().ok());
+        let result = self.workspace.rx.as_ref().and_then(|rx| match rx.try_recv() {
+            Ok(value)=>Some(value),
+            Err(mpsc::TryRecvError::Empty)=>None,
+            Err(mpsc::TryRecvError::Disconnected)=>Some(("worker.disconnected".into(),Err("CONFIG.WORKER_DISCONNECTED: 请求结果未确认，请核对配置。".into()))),
+        });
         if let Some((method, result)) = result {
+            self.ai_summary_dirty=true;
             self.workspace.rx = None;
+            let guard=self.workspace.request_guard.take();
+            let valid=guard.as_ref().is_some_and(|guard|self.selected_plugin().is_some_and(|plugin|
+                self.workspace_request(plugin,&method,Value::Null,true)["context"]==guard.context)
+                && guard.document.as_ref().is_none_or(|document|document==&self.workspace.document && guard.current==self.workspace.current)
+                && guard.project_document.as_ref().is_none_or(|document|document==&self.workspace.project_document)
+                && guard.matrix_host_run.as_ref().is_none_or(|run|*run==self.agent_job_key())
+                && control_run_matches(&guard.control_run, self.agent_job_key().as_deref(), &self.workspace.snapshot["matrix"]["run_id"]));
+            if !valid {
+                if let Some((host, matrix, action)) = guard.as_ref().and_then(|g|g.control_run.as_ref()) {
+                    self.workspace.control_receipt=json!({"state":"unknown","host_run_id":host,"matrix_run_id":matrix,"action":action,"completed":false,"reason":"run or context changed before response; inspect original run"});
+                }
+                self.workspace.api_binding=None;
+                self.workspace.snapshot["preflight"]["valid"]=json!(false);
+                self.workspace.reload=true;
+                self.workspace.error="CONFIG.STALE_REPLY: 工程或配置已变化；旧回执未应用。若涉及保存，请先核对磁盘内容。".into();
+                return;
+            }
+            if let Some((host, matrix, action)) = guard.as_ref().and_then(|g|g.control_run.as_ref()) {
+                let (state, reason) = match &result {
+                    Ok(v) if v["ok"] == true => ("response_received", "plugin replied; inspect matrix state to verify effect"),
+                    Ok(_) => ("rejected_or_failed", "plugin reported failure; inspect matrix state before retry"),
+                    Err(_) => ("unknown", "worker response unavailable; inspect matrix state before retry"),
+                };
+                self.workspace.control_receipt=json!({"state":state,"host_run_id":host,"matrix_run_id":matrix,"action":action,"completed":false,"reason":reason});
+            }
             match result {
                 Ok(v) if v["ok"] == true => {
                     if let (Some(nanos), Some(size)) = (
@@ -3890,14 +4034,15 @@ fn workspace_typed_sections_and_variant_changes_preserve_common_fields() {
 }
 
 impl Workspace{
- pub(super) fn agent_identity(&self)->String{let mut selected:Vec<_>=self.selected.iter().cloned().collect();selected.sort();format!("{}:{}:{}:{:?}",self.key,self.original_revision,self.dirty(),selected)}
+ pub(super) fn agent_identity(&self)->String{self.published_agent_state.as_ref().map_or_else(||"unpublished".into(),|state|state.id.to_string())}
  pub(super) fn agent_cases(&self,offset:usize,limit:usize)->Value{let items=self.snapshot["items"].as_array();let total=items.map_or(0,Vec::len);json!({"total":total,"selected_count":self.selected.len(),"dirty":self.dirty(),"next_offset":if offset+limit<total{Some(offset+limit)}else{None},"items":items.into_iter().flatten().skip(offset).take(limit).map(|item|json!({"id":item["id"],"name":item["name"],"enabled":item["enabled"],"status":item["status"],"revision":item["revision"]})).collect::<Vec<_>>()})}
 }
 
 impl TestToolPanel {
- pub(crate) fn agent_propose(&mut self,p:&Value,ctx:&egui::Context)->crate::ai::agent::HostReply {
+ pub(crate) fn agent_propose(&mut self,p:&Value,ctx:&egui::Context,cancelled:std::sync::Arc<std::sync::atomic::AtomicBool>)->crate::ai::agent::HostReply {
+  self.ai_summary_dirty=true;
   let fail=|e:&str|crate::ai::agent::HostReply::value(crate::ai::agent::failure(e));
-  if self.workspace.dirty()||self.workspace.rx.is_some()||self.job.is_some()||self.workspace.current.is_empty(){return fail("TEST.DRAFT_REQUIRES_CLEAN_OPEN_CONFIGURATION_AND_IDLE_WORKSPACE");}
+  if self.workspace_external_update_pending()||self.workspace.dirty()||self.workspace.rx.is_some()||self.job.is_some()||self.workspace.current.is_empty(){return fail("TEST.DRAFT_REQUIRES_CLEAN_OPEN_CONFIGURATION_AND_IDLE_WORKSPACE");}
   let Some(plugin)=self.selected_plugin().cloned()else{return fail("TEST.NO_PLUGIN")};
   let mut candidate=self.workspace.document.clone();let Some(changes)=p["changes"].as_array().filter(|v|!v.is_empty()&&v.len()<=32)else{return fail("TEST.INVALID_CHANGES")};
   let mut diff=Vec::new();
@@ -3908,22 +4053,34 @@ impl TestToolPanel {
   }
   let node=resolve_command(self.node_path.trim());let request=self.workspace_request(&plugin,"config.validate",json!({"value":candidate}),true);
   let id=uuid::Uuid::new_v4().to_string();let validation=std::sync::Arc::new(std::sync::Mutex::new(Value::Null));
-  self.workspace.agent_draft=Some(AgentDraft{id:id.clone(),binding:self.agent_identity(),config:self.workspace.current.clone(),revision:self.workspace.original_revision,sha:self.workspace.original_sha.clone(),candidate,changes:json!(diff),validation:validation.clone()});
+  self.workspace.agent_draft=Some(AgentDraft{id:id.clone(),binding:self.agent_identity(),config:self.workspace.current.clone(),revision:self.workspace.original_revision,sha:self.workspace.original_sha.clone(),candidate,changes:json!(diff),validation:validation.clone(),cancelled:cancelled.clone()});
   crate::ai::agent::spawn_work(ctx,move||{
+   if cancelled.load(std::sync::atomic::Ordering::Acquire){return crate::ai::agent::failure("TEST.DRAFT_CANCELLED");}
    let result=match run_worker(node,request){Ok(v)=>v,Err(e)=>json!({"ok":false,"error":e})};
+   if cancelled.load(std::sync::atomic::Ordering::Acquire){return crate::ai::agent::failure("TEST.DRAFT_CANCELLED");}
    if let Ok(mut state)=validation.lock(){*state=result.clone();}
    json!({"ok":result["ok"]==true&&result["data"]["valid"]==true,"data":{"draft_id":id,"changes":diff,"schema_validation":result,"saved":false,"next":"testing.apply requires explicit confirmation; applies an unsaved UI draft only. Operator must review and save before preflight/run."}})
   })
  }
- pub(crate) fn agent_apply_draft(&mut self,p:&Value)->Value {
+ pub(crate) fn agent_apply_draft(&mut self,p:&Value,apply_cancelled:&std::sync::atomic::AtomicBool)->Value {
+  self.ai_summary_dirty=true;
   let Some(draft)=self.workspace.agent_draft.as_ref()else{return crate::ai::agent::failure("TEST.DRAFT_EXPIRED")};
+  if draft.cancelled.load(std::sync::atomic::Ordering::Acquire){return json!({"ok":false,"error":"TEST.DRAFT_CANCELLED","data":{"applied_to_editor":false,"executed":false}});}
   let valid=draft.validation.lock().ok().is_some_and(|v|v["ok"]==true&&v["data"]["valid"]==true);
-  if p["draft_id"]!=draft.id||!valid||draft.binding!=self.agent_identity()||draft.config!=self.workspace.current||draft.revision!=self.workspace.original_revision||draft.sha!=self.workspace.original_sha||self.workspace.dirty()||self.job.is_some()||self.workspace.rx.is_some(){return crate::ai::agent::failure("TEST.DRAFT_STALE_OR_NOT_VALIDATED");}
-  let draft=self.workspace.agent_draft.take().unwrap();self.workspace.document=draft.candidate;self.workspace.last_edit=Some(Instant::now());self.workspace.snapshot["preflight"]["valid"]=json!(false);self.workspace.api_binding=None;
-  json!({"ok":true,"data":{"applied_to_editor":true,"saved":false,"changes":draft.changes,"requires_operator_review_save_and_new_preflight":true}})
+  if p["draft_id"]!=draft.id||!valid||draft.binding!=self.agent_identity()||draft.config!=self.workspace.current||draft.revision!=self.workspace.original_revision||draft.sha!=self.workspace.original_sha||self.workspace_external_update_pending()||self.workspace.dirty()||self.job.is_some()||self.workspace.rx.is_some(){return crate::ai::agent::failure("TEST.DRAFT_STALE_OR_NOT_VALIDATED");}
+  let draft=self.workspace.agent_draft.take().unwrap();let cancelled=draft.cancelled.clone();let changes=draft.changes;let candidate=draft.candidate;
+  let old=crate::ai::agent::commit_host_call(apply_cancelled,||{
+   if cancelled.load(std::sync::atomic::Ordering::Acquire) {return None;}
+   let old=std::mem::replace(&mut self.workspace.document,candidate);
+   self.workspace.last_edit=Some(Instant::now());self.workspace.snapshot["preflight"]["valid"]=json!(false);self.workspace.api_binding=None;Some(old)
+  }).flatten();
+  let Some(old)=old else{return json!({"ok":false,"error":"TEST.DRAFT_CANCELLED_OR_COMMIT_UNAVAILABLE","data":{"applied_to_editor":false,"executed":false}})};
+  drop(old);
+  json!({"ok":true,"data":{"applied_to_editor":true,"saved":false,"execution_state":"committed","changes":changes,"requires_operator_review_save_and_new_preflight":true}})
  }
  pub(crate) fn agent_select_cases(&mut self,p:&Value)->Value {
-  if self.job.is_some()||self.workspace.rx.is_some()||self.workspace.dirty(){return crate::ai::agent::failure("TEST.WORKSPACE_BUSY_OR_DIRTY");}
+  self.ai_summary_dirty=true;
+  if self.workspace_external_update_pending()||self.job.is_some()||self.workspace.rx.is_some()||self.workspace.dirty(){return crate::ai::agent::failure("TEST.WORKSPACE_BUSY_OR_DIRTY");}
   let Some(ids)=p["ids"].as_array().filter(|ids|!ids.is_empty()&&ids.len()<=500)else{return crate::ai::agent::failure("TEST.INVALID_SELECTION")};
   let available=self.workspace.snapshot["items"].as_array().cloned().unwrap_or_default();let mut selected=HashSet::new();
   for id in ids {let Some(id)=id.as_str()else{return crate::ai::agent::failure("TEST.INVALID_ID")};if !available.iter().any(|v|v["id"]==id&&v["enabled"]==true){return crate::ai::agent::failure("TEST.UNKNOWN_OR_DISABLED_CASE");}selected.insert(id.into());}
@@ -3931,14 +4088,31 @@ impl TestToolPanel {
   json!({"ok":true,"data":{"selection":self.workspace.binding(),"requires_new_preflight":true}})
  }
  pub(crate) fn agent_run_control(&mut self,action:&str)->Value {
+  self.ai_summary_dirty=true;
   if self.job.is_none()||self.preflight_only||self.workspace.rx.is_some()||self.workspace.snapshot["ui"]["execution_controls"]["pause_mode"]!="between_items"{return crate::ai::agent::failure("TEST.CONTROL_UNSUPPORTED_OR_BUSY");}
   let run=self.workspace.snapshot["matrix"]["run_id"].clone();if run.is_null(){return crate::ai::agent::failure("TEST.NO_MATRIX_RUN_ID");}
+  let host_run_id=self.agent_job_key();
   self.workspace_send("run.control",json!({"action":action,"run_id":run}));
-  json!({"ok":true,"data":{"state":"requested","action":action,"run_id":run,"completed":false,"note":"Pause occurs between test items; inspect actual matrix control state before claiming paused."}})
+  if self.workspace.rx.is_none(){return json!({"ok":false,"executed":false,"error":"TEST.CONTROL_NOT_DISPATCHED"});}
+  json!({"ok":true,"data":{"state":"requested","action":action,"run_id":host_run_id,"matrix_run_id":run,"completed":false,"note":"Request dispatched; pause occurs between test items. Inspect actual matrix control state before claiming completion."}})
  }
 }
 
 #[cfg(test)]mod agent_draft_regressions{
  use super::*;
- #[test]fn validated_draft_cannot_apply_after_revision_change(){let mut panel=TestToolPanel::new(&AppConfig::default());panel.workspace.current="case1".into();panel.workspace.document=json!({"limit":5});panel.workspace.original=panel.workspace.document.clone();let id=uuid::Uuid::new_v4().to_string();panel.workspace.agent_draft=Some(AgentDraft{id:id.clone(),binding:panel.agent_identity(),config:"case1".into(),revision:0,sha:String::new(),candidate:json!({"limit":6}),changes:json!([]),validation:std::sync::Arc::new(std::sync::Mutex::new(json!({"ok":true,"data":{"valid":true}})))});panel.workspace.original_revision=1;assert_eq!(panel.agent_apply_draft(&json!({"draft_id":id}))["ok"],false);assert_eq!(panel.workspace.document["limit"],5);}
+ #[test]fn control_reply_requires_both_original_run_identities(){
+  let guard=Some(("host-a".to_owned(),json!("matrix-a"),"pause".to_owned()));
+  assert!(control_run_matches(&guard,Some("host-a"),&json!("matrix-a")));
+  assert!(!control_run_matches(&guard,Some("host-b"),&json!("matrix-a")));
+  assert!(!control_run_matches(&guard,Some("host-a"),&json!("matrix-b")));
+  assert!(!control_run_matches(&guard,None,&json!("matrix-a")));
+ }
+ fn draft_fixture()->(TestToolPanel,String,std::sync::Arc<std::sync::atomic::AtomicBool>){
+  let mut panel=TestToolPanel::new(&AppConfig::default());panel.workspace.current="case1".into();panel.workspace.document=json!({"limit":5});panel.workspace.original=panel.workspace.document.clone();
+  let id=uuid::Uuid::new_v4().to_string();let cancelled=std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+  panel.workspace.agent_draft=Some(AgentDraft{id:id.clone(),binding:panel.agent_identity(),config:"case1".into(),revision:0,sha:String::new(),candidate:json!({"limit":6}),changes:json!([]),validation:std::sync::Arc::new(std::sync::Mutex::new(json!({"ok":true,"data":{"valid":true}}))),cancelled:cancelled.clone()});(panel,id,cancelled)
+ }
+ #[test]fn validated_draft_cannot_apply_after_revision_change(){let(mut panel,id,_)=draft_fixture();panel.workspace.original_revision=1;assert_eq!(panel.agent_apply_draft(&json!({"draft_id":id}),&std::sync::atomic::AtomicBool::new(false))["ok"],false);assert_eq!(panel.workspace.document["limit"],5);}
+ #[test]fn validated_draft_cannot_apply_after_cancellation(){let(mut panel,id,cancelled)=draft_fixture();crate::ai::agent::cancel_host_call(&cancelled);assert_eq!(panel.agent_apply_draft(&json!({"draft_id":id}),&std::sync::atomic::AtomicBool::new(false))["ok"],false);assert_eq!(panel.workspace.document["limit"],5);}
+ #[test]fn distinct_apply_cancellation_blocks_validated_draft(){let(mut panel,id,_)=draft_fixture();let apply=std::sync::atomic::AtomicBool::new(false);crate::ai::agent::cancel_host_call(&apply);let result=panel.agent_apply_draft(&json!({"draft_id":id}),&apply);assert_eq!(result["ok"],false);assert_eq!(result["data"]["executed"],false);assert_eq!(panel.workspace.document["limit"],5);}
 }

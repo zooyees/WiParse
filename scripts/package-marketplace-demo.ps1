@@ -8,8 +8,7 @@
 
 param(
     [switch]$SkipBuild,
-    [string]$FpgaDemoRoot = "",
-    [string]$VerificationDir = "evidence/release-1.2.1-2026-10-18"
+    [string]$FpgaDemoRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,6 +19,10 @@ $Token = if ($env:TOKEN) { $env:TOKEN } else { "dev-token" }
 $Port = if ($env:PORT) { $env:PORT } else { "8787" }
 
 Set-Location $Root
+$versionMatch = [regex]::Match([IO.File]::ReadAllText((Join-Path $Root 'Cargo.toml')), '(?m)^version\s*=\s*"([^"]+)"')
+if (-not $versionMatch.Success) { throw 'Cannot read workspace version' }
+$WorkspaceVersion = $versionMatch.Groups[1].Value
+$McpVersion = (Get-Content -LiteralPath (Join-Path $Root 'mcp/wiparse/package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
 
 function Write-Utf8NoBom([string]$Path, [string]$Text) {
     $utf8 = New-Object System.Text.UTF8Encoding $false
@@ -61,7 +64,8 @@ $Archive = [IO.Path]::GetFullPath($Archive)
 if (-not $Out.StartsWith($RootPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Package output must be a child directory below workspace dist' }
 if (-not $Archive.StartsWith($RootPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Archive must stay within workspace' }
 
-if (Test-Path $Out) { Remove-Item $Out -Recurse -Force }
+if (Test-Path -LiteralPath $Out) { throw 'Choose a fresh package output directory; existing output is not overwritten' }
+if (Test-Path -LiteralPath $Archive) { throw 'Choose a fresh archive path; existing archive is not overwritten' }
 New-Item -ItemType Directory -Force -Path (Join-Path $Out "bin") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $Out "scripts") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $Out "marketplace") | Out-Null
@@ -72,20 +76,8 @@ Copy-Item -Force $ServiceExe (Join-Path $Out "bin\WiParse-Service.exe")
 Copy-Tree (Join-Path $Root "docs\specs\wireless-test") (Join-Path $Out "docs\specs\wireless-test")
 Copy-Item (Join-Path $Root "docs\AUTOMATION-SERVICE.md") (Join-Path $Out "docs\AUTOMATION-SERVICE.md") -Force
 Copy-Item (Join-Path $Root "docs\CHANGELOG.md") (Join-Path $Out "docs\CHANGELOG.md") -Force
-if (Test-Path -LiteralPath (Join-Path $Root 'evidence\software-spec-2026-10-11\verification-summary.json')) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $Out 'docs\verification') | Out-Null
-    Copy-Item -LiteralPath (Join-Path $Root 'evidence\software-spec-2026-10-11\verification-summary.json') -Destination (Join-Path $Out 'docs\verification\verification-summary.json') -Force
-}
 if (Test-Path -LiteralPath (Join-Path $Root 'docs/ui-layout-audit-2026-10-11.md')) {
     Copy-Item -LiteralPath (Join-Path $Root 'docs/ui-layout-audit-2026-10-11.md') -Destination (Join-Path $Out 'docs/ui-layout-audit-2026-10-11.md') -Force
-}
-if (Test-Path -LiteralPath (Join-Path $Root 'evidence/ui-layout-2026-10-11/verification-summary.json')) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $Out 'docs/verification') | Out-Null
-    Copy-Item -LiteralPath (Join-Path $Root 'evidence/ui-layout-2026-10-11/verification-summary.json') -Destination (Join-Path $Out 'docs/verification/ui-layout-verification.json') -Force
-}
-if (Test-Path -LiteralPath (Join-Path $Root 'evidence/wireless-plugin-2026-10-11/verification-summary.json')) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $Out 'docs/verification') | Out-Null
-    Copy-Item -LiteralPath (Join-Path $Root 'evidence/wireless-plugin-2026-10-11/verification-summary.json') -Destination (Join-Path $Out 'docs/verification/wireless-plugin-verification.json') -Force
 }
 New-Item -ItemType Directory -Force -Path (Join-Path $Out 'symbols') | Out-Null
 foreach ($symbolName in @('wiparse_gui','wiparse_service','wiparse')) {
@@ -139,7 +131,7 @@ Copy-Tree (Join-Path $Root 'mcp/wiparse') (Join-Path $Out 'mcp/wiparse')
 Remove-Item -LiteralPath (Join-Path $Out 'mcp/wiparse/cursor.mcp.generated.json') -Force -ErrorAction SilentlyContinue
 & robocopy (Join-Path $Root 'mcp/wiparse/node_modules') (Join-Path $Out 'mcp/wiparse/node_modules') /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
 if ($LASTEXITCODE -ge 8) { throw 'Copy MCP offline dependencies failed' }
-foreach ($document in @('DEPLOY_MCP.md','DEPLOY_API.md','CLI_REFERENCE.md','WORKSTATION_CLOSED_LOOP.md','UPDATE.md','AI_INTERFACE.md','TESTING_HUB_WORKSPACE.md','HUB_UI_FIELDS_CONTRACT.md','FPGA_PLUGIN_UPGRADE_0.4.0.md','FPGA_PLUGIN_INTEGRATION_REVIEW.md')) {
+foreach ($document in @('DEPLOY_MCP.md','DEPLOY_API.md','CLI_REFERENCE.md','WORKSTATION_CLOSED_LOOP.md','UPDATE.md','AI_INTERFACE.md','ROUTER_SKILLS.md','TESTING_HUB_WORKSPACE.md','HUB_UI_FIELDS_CONTRACT.md','FPGA_PLUGIN_UPGRADE_0.4.0.md','FPGA_PLUGIN_INTEGRATION_REVIEW.md')) {
     Copy-Item -LiteralPath (Join-Path $Root "docs/$document") -Destination (Join-Path $Out "docs/$document") -Force
 }
 New-Item -ItemType Directory -Force -Path (Join-Path $Out 'docs/reviews') | Out-Null
@@ -165,15 +157,11 @@ Copy-Tree (Join-Path $Root 'docs/ui-system-audit-1.1.32-2026-10-16') (Join-Path 
 Copy-Tree (Join-Path $Root 'docs/ui-instrument-redesign-2026-10-16') (Join-Path $Out 'docs/ui-instrument-redesign-2026-10-16')
 Copy-Item -LiteralPath (Join-Path $Root 'scripts/start-ui-demo.ps1') -Destination (Join-Path $Out 'start-ui-demo.ps1') -Force
 Copy-Tree (Join-Path $Root 'docs/examples') (Join-Path $Out 'docs/examples')
-Copy-Item -LiteralPath (Join-Path $Root "$VerificationDir/verification-summary.json") -Destination (Join-Path $Out 'docs/verification/release-1.2.1.json') -Force
-Copy-Item -LiteralPath (Join-Path $Root "$VerificationDir/source-freeze.json") -Destination (Join-Path $Out 'docs/verification/source-freeze.json') -Force
-$SafeVerificationLogs=@('build-release.log','rust-tests.log','node-tests.log','mcp-tests.log','hub-runtime.log','hub-controls.log','hub-lock-retry-tests.log','matrix-provenance-tests.log','fpga-20-pass.log','fpga-20-fail.log','resource-pressure.log','automation-service-smoke.log','wireless-service-smoke.log','fpga-ui-com.log','fpga-ui-dongle.log','rule-ui-pointer.log','gui-smoke.log','build-profile.json')
-New-Item -ItemType Directory -Force -Path (Join-Path $Out 'docs/verification/logs') | Out-Null
-foreach($log in $SafeVerificationLogs){Copy-Item -LiteralPath (Join-Path $Root "$VerificationDir/$log") -Destination (Join-Path $Out "docs/verification/logs/$log") -Force}
-
-Copy-Item -LiteralPath (Join-Path $Root 'evidence/serial-resource-1.1.32-2026-10-16/summary.json') -Destination (Join-Path $Out 'docs/verification/serial-resource-1.1.32.json') -Force
-Copy-Item -LiteralPath (Join-Path $Root 'evidence/serial-resource-2026-10-16/summary.json') -Destination (Join-Path $Out 'docs/verification/serial-resource-1.1.31.json') -Force
-Copy-Item -LiteralPath (Join-Path $Root "$VerificationDir/verification-summary.json") -Destination (Join-Path $Out 'docs/verification/wireless-plugin-verification.json') -Force
+$RouterEvidence = Join-Path $Out 'docs/verification/router-skill-20261113'
+New-Item -ItemType Directory -Force -Path $RouterEvidence | Out-Null
+foreach ($name in @('verification-r65.md','verification-r79-attachment-invalidation.md','verification-r81-cursor-version.md','verification-r82-delivery-audit.md','source-manifest-r82.json')) {
+    Copy-Item -LiteralPath (Join-Path $Root "docs/verification/router-skill-20261113/$name") -Destination (Join-Path $RouterEvidence $name) -Force
+}
 $DemoRelative = 'projects/default/tests/ScopeSerialDemo/runs/20261016_120000'
 Copy-Tree (Join-Path $Root $DemoRelative) (Join-Path $Out $DemoRelative)
 $DemoRunFile = Join-Path $Out "$DemoRelative/run.json"
@@ -328,14 +316,12 @@ Run .\start-automation-service.ps1 before calling the new APIs.
 Read docs/AUTOMATION-SERVICE.md and docs/specs/wireless-test/04-software-implementation-review.md.
 industrial_approved=false. Complete SW-01..SW-12 and physical system acceptance are pending.
 This bundle does not install a Windows Service or provide Dongle capture firmware.
-wireless-charge-validation 0.1.1 provides offline configuration/rule replay only; live stimulus and industrial acceptance remain blocked.
+Wireless live stimulus and industrial acceptance remain blocked; see docs/ROUTER_SKILLS.md.
 Testing Hub includes $FpgaCount FPGA simulation configurations under recipes/fpga-firmware-test/cases. Historical report snapshots use shortened simulation timing; editable configurations retain original frozen timing. Select execution_mode=simulation explicitly before preflight/run. Hardware mode requires a separately accepted host adapter.
-MCP 1.2.1 and its dependencies are bundled under mcp/wiparse; Node.js 18+ is still required.
-Read docs/releases/1.2.1.md. The Test Report default project includes ScopeSerialDemo (synthetic data only).
+MCP $McpVersion and its dependencies are bundled under mcp/wiparse; Node.js 18+ is still required.
+WiParse workspace version: $WorkspaceVersion. The Test Report default project includes ScopeSerialDemo (synthetic data only). Historical documentation is not verification of this build.
 "@
 Add-Content -LiteralPath (Join-Path $Out 'README-MARKETPLACE-DEMO.md') -Value $automationNotice -Encoding utf8
-$versionMatch = [regex]::Match([IO.File]::ReadAllText((Join-Path $Root 'Cargo.toml')), '(?m)^version\s*=\s*"([^"]+)"')
-if (-not $versionMatch.Success) { throw 'Cannot read workspace version' }
 $releaseManifest = @{
     version = $versionMatch.Groups[1].Value
     mcp_version = (Get-Content -LiteralPath (Join-Path $Out 'mcp/wiparse/package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
@@ -346,7 +332,7 @@ $releaseManifest = @{
     industrial_approved = $false
     scope = 'SW automation foundations; complete software spec and joint industrial acceptance pending'
     built_at_utc = [DateTime]::UtcNow.ToString('o')
-    source_freeze_sha256 = (Get-FileHash -LiteralPath (Join-Path $Out 'docs/verification/source-freeze.json') -Algorithm SHA256).Hash
+    verification = 'No verification of this build is asserted by this demo packaging script; bundled records are historical.'
     files = @(Get-ChildItem -LiteralPath (Join-Path $Out 'bin') -File | ForEach-Object { @{ path = "bin/$($_.Name)"; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash; bytes = $_.Length } })
     symbols = @(Get-ChildItem -LiteralPath (Join-Path $Out 'symbols') -File | ForEach-Object { @{ path = "symbols/$($_.Name)"; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash } })
 }

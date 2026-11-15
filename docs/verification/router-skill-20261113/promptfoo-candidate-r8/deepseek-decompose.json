@@ -1,0 +1,104 @@
+{
+  "availability": "ran",
+  "case": "decompose",
+  "model": "deepseek-flash",
+  "provider": "deepseek",
+  "turns": [
+    {
+      "answer": null,
+      "calls": [
+        {
+          "coverage": null,
+          "error": null,
+          "id": "S1",
+          "method": "agent.plan",
+          "ok": true,
+          "transitions": null
+        },
+        {
+          "coverage": null,
+          "error": null,
+          "id": "S2",
+          "method": "log.files",
+          "ok": true,
+          "transitions": null
+        },
+        {
+          "coverage": {
+            "bytes_read": 116,
+            "complete": true,
+            "files": 1,
+            "files_failed": 0,
+            "files_finished": 1,
+            "finished": true,
+            "growing_files": 0,
+            "incomplete_tail_lines_skipped": 0,
+            "inventory_incomplete": false,
+            "lines_in_range": 10,
+            "lines_read": 10,
+            "lossy_utf8_lines": 0,
+            "matched_lines": 10,
+            "nul_or_utf16_like_lines": 0,
+            "oversized_lines_skipped": 0,
+            "preceding_rows_unavailable": 0,
+            "snapshot_bytes": 116,
+            "source_windows": [
+              {
+                "first_row": 1,
+                "id": "26a5a5ff6a052d7ce0d58eb97d0286e2",
+                "memory_snapshot": false,
+                "preceding_rows_unavailable": 0
+              }
+            ]
+          },
+          "error": null,
+          "id": "S3",
+          "method": "log.analyze",
+          "ok": true,
+          "transitions": null
+        }
+      ],
+      "elapsed_ms": 4210,
+      "evidence_ids": [
+        "S2",
+        "S3"
+      ],
+      "phase": "cancelled",
+      "plan": [
+        {
+          "basis": "unavailable",
+          "deliverable": "analysis",
+          "evidence_ids": [],
+          "id": "s1",
+          "reason": null,
+          "state": "pending",
+          "title": "统计当前完整日志中 power_state 1→0 的状态切换次数（同一状态重复上报不重复计数）"
+        },
+        {
+          "basis": "unavailable",
+          "deliverable": "analysis",
+          "depends_on": [
+            "s1"
+          ],
+          "evidence_ids": [],
+          "id": "s2",
+          "reason": null,
+          "state": "pending",
+          "title": "列出每次 1→0 切换紧邻的 cause 代号"
+        }
+      ],
+      "status": "LOG.EVENT_CAPTURE_GROUP_1_REQUIRED · 批次已停止，后续动作未执行 / Batch stopped; later actions not executed",
+      "task": "039815cd-8320-4ee6-bd26-76b281f86347",
+      "timeout": false,
+      "usage_cumulative": {
+        "cached_input_tokens": 9984,
+        "failed_attempts": 0,
+        "input_tokens": 16653,
+        "output_tokens": 445,
+        "reported_responses": 3,
+        "responses": 3,
+        "total_tokens": 17098
+      }
+    }
+  ]
+}

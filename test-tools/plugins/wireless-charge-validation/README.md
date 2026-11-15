@@ -1,6 +1,6 @@
 # 无线充电自动检验插件
 
-插件通过 WiParse 自动化服务运行配置检查、回放、实采记录核对及已批准工位的受控测试。内置服务的能力清单见 system.capabilities。
+插件支持配置检查、模拟回放及实采记录的只读核对。**当前 live 实机执行不可用**：外部台站执行层尚未实现并证明本轮 TX 日志、RX 就绪与 FT4222 I²C 操作之间的强制门禁，预检和采集入口都会返回 `INTEGRATION.TX_RX_FT4222_GATE_NOT_IMPLEMENTED`。仅有能力声明或批准配置不能解除该阻断。内置服务的能力清单见 system.capabilities。
 
 ## 运行
 
@@ -29,11 +29,11 @@ node test-tools/runner.mjs --plugin wireless-charge-validation --lifecycle stop 
 
 ADP/CHG 和安全/追溯等 `integrity` 标量是模拟契约占位，不能替代实际刺激、量测、测量系统分析或审批。模板中的步骤、时间预算和 pre/post 窗尚未批准，只用于描述集成需求。smoke 保留高风险保护和历史故障项；其他四个 suite 均列出全矩阵。它们当前均执行一次离线回放，不代表已实现 soak 长稳或生产节拍测试。
 
-### 实机工位接入
+### 实机工位接入（尚未启用）
 
-工位服务通过已有本机令牌认证接口声明 live_contract=wiparse.fenced-wireless/1、工位 ID、审核过的 station.json SHA-256、看门狗核验状态和实际方法清单。配置中的 station.live.resource 对应唯一夹具。产品限值、保护及停止顺序、角色绑定和采样时间预算分别批准。默认配置保留 UNCOMMISSIONED。
+以下是后续接入所需的条件和拟定流程，并非当前可用的实机功能。工位服务需要通过认证接口声明 live_contract=wiparse.fenced-wireless/1、工位 ID、审核过的 station.json SHA-256、看门狗核验状态和实际方法清单；还必须实现并验证逐次 RX 就绪门禁，不能仅凭能力声明放行。配置中的 station.live.resource 对应唯一夹具。产品限值、保护及停止顺序、角色绑定和采样时间预算分别批准。默认配置保留 UNCOMMISSIONED。
 
-每个用例独立获取租约。宿主按 capture.arm、dongle.capture.start、capture.status、stimulus.apply 顺序调用。响应必须对应本次工位、用例、运行、尝试、DUT 序列号和固件。加电前回读示波器已布防、Dongle 就绪、初态安全和保护健康。输出命令带唯一 ID，迟到或丢失回执不重发。采集返回同一 capture_id 的观测、原文、源坐标和摘要。完成、超时和取消均进入 station.safe_stop，收到独立安全反馈后释放租约。工位固件负责看门狗、掉线保护及断电后的恢复。
+计划中的每个用例独立获取租约，调用 capture.arm、dongle.capture.start、capture.status、stimulus.apply；当前代码在发出这些设备请求之前即阻断。响应应对应本次工位、用例、运行、尝试、DUT 序列号和固件。加电前须回读示波器布防、Dongle 就绪、初态安全和保护健康。输出命令使用唯一 ID，迟到或丢失回执不重发。采集应返回同一 capture_id 的观测、原文、源坐标和摘要。完成、超时和取消时须安全退出，并在收到独立安全反馈后释放租约；工位固件负责看门狗、掉线保护及断电后的恢复。这些行为须在实际执行层实现并通过验证后才可声明支持。
 
 当前仓库附带的设备服务未声明该实机契约。内置站点和合成测试不能取得产品验收资格。连接用户工位后仍需验证实物接线、独立反馈、掉线安全和同步误差。
 

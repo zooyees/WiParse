@@ -1,0 +1,31 @@
+deepseek decompose ran 
+Cache is disabled.
+Starting evaluation eval-fc7-2026-11-15T06:12:15
+Running 1 test cases (up to 1 at a time)...
+
+[90m┌────────────────────────────────────────────────────────────[39m[90m┬────────────────────────────────────────────────────────────┐[39m
+[90m│[39m[1m[34m scenario                                                   [39m[22m[90m│[39m[1m[34m [deepseek] {{scenario}}                                    [39m[22m[90m│[39m
+[90m├────────────────────────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────────────────┤[39m
+[90m│[39m decompose                                                  [90m│[39m [PASS]                                                     [90m│[39m
+[90m│[39m                                                            [90m│[39m {"availability":"ran","case":"decompose","model":"deepsee… [90m│[39m
+[90m│[39m                                                            [90m│[39m 完整日志（charging-fixture.log，共 10                      [90m│[39m
+[90m│[39m                                                            [90m│[39m 行，全量扫描覆盖完成）中 power_state 从 1 变 0 共 **2      [90m│[39m
+[90m│[39m                                                            [90m│[39m 次**，紧邻的 cause 代号为 **UV** 与 **THERMAL**。\n\n##    [90m│[39m
+[90m│[39m                                                            [90m│[39m 证据与状态序列\n\n来...                                    [90m│[39m
+[90m└────────────────────────────────────────────────────────────[39m[90m┴────────────────────────────────────────────────────────────┘[39m
+✓ Eval complete (ID: eval-fc7-2026-11-15T06:12:15)
+
+» View results: promptfoo view
+» Share with your team: https://promptfoo.app
+» Feedback: https://promptfoo.dev/feedback
+
+Total Tokens: 71,428
+  Provider: 71,428 (68,836 prompt, 2,592 completion, 49,152 cached)
+
+Results:
+  ✓ 1 passed (100%)
+  0 failed (0%)
+  0 errors (0%)
+Duration: 0s (concurrency: 1)
+
+Writing output to D:\windlink\windlink\WiParse-R\docs\verification\router-skill-20261113\promptfoo-candidate-r7\promptfoo-results.json

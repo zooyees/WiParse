@@ -28,8 +28,8 @@ pub struct Discovery {
 impl Discovery {
     pub fn new() -> Self {
         Self {
-            pairs: Regex::new(r#"["']?([\p{L}_][\p{L}\p{N}_.-]{0,39})["']?\s*[:=]\s*["']?([+-]?(?:0[xX][0-9A-Fa-f]+|0[bB][01]+|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)|[\p{L}_][\p{L}\p{N}_.-]{0,39})([a-zA-Zµ°%/]{0,12})"#).unwrap(),
-            clock: Regex::new(r"\b\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?\b").unwrap(),
+            pairs: Regex::new(r#"["']?([\p{L}_][\p{L}\p{N}_.-]{0,39})["']?(?:\s*[:=]\s*["']?([\p{L}_][\p{L}\p{N}_.-]{0,39})|(?:\s*[:=]\s*["']?|[ \t]+)([+-]?(?:0[xX][0-9A-Fa-f]+|0[bB][01]+|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?))([a-zA-Zµ°%/]{0,12}))"#).unwrap(),
+            clock: Regex::new(r"\b\d{2}:\d{2}:\d{2}(?:[.,]\d{1,9})?\b").unwrap(),
             fields: BTreeMap::new(), omitted: 0, clock_lines: 0, sample:String::new(),sample_source:String::new(),sample_lines:0,
         }
     }
@@ -47,16 +47,17 @@ impl Discovery {
             let position = (source.to_owned(), line);
             if f.first.is_none() { f.first = Some(position.clone()); }
             f.last = Some(position);
-            if let Some(number) = crate::extract::number(&c[2]) {
+            if let Some(raw) = c.get(3) {
+                let Some(number) = crate::extract::number(raw.as_str()) else { continue };
                 if !number.is_finite() { continue; }
                 f.numeric += 1;
                 f.min = Some(f.min.map_or(number, |v|v.min(number)));
                 f.max = Some(f.max.map_or(number, |v|v.max(number)));
-                let unit = &c[3];
+                let unit = &c[4];
                 if f.units.contains_key(unit) || f.units.len()<8 { *f.units.entry(unit.into()).or_default() += 1; }
                 else { f.values_omitted += 1; }
             } else {
-                let value = format!("{}{}", &c[2], &c[3]);
+                let value = c[2].to_owned();
                 if f.values.contains_key(&value) || f.values.len() < 8 { *f.values.entry(value).or_default() += 1; }
                 else { f.values_omitted += 1; }
             }
@@ -66,9 +67,9 @@ impl Discovery {
         let mut fields: Vec<_> = self.fields.iter().collect();
         fields.sort_by(|a,b|b.1.count.cmp(&a.1.count).then(a.0.cmp(b.0)));
         json!({"kind":"observed_key_value_schema","selector_candidates":crate::extract::discover(&self.sample).into_iter().take(8).collect::<Vec<_>>(),"candidate_source":self.sample_source,"fields_tracked":fields.len(),"untracked_field_occurrences":self.omitted,"fields_list_truncated":fields.len()>8,
-            "clock_lines":self.clock_lines,"timestamp_recipe":if self.clock_lines>0{json!({"timestamp_pattern":"(\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?)","timestamp_unit":"clock","warning":"clock-only; date/timezone unknown, day rollover must be checked"})}else{Value::Null},
+            "clock_lines":self.clock_lines,"timestamp_recipe":if self.clock_lines>0{json!({"timestamp_pattern":"(\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d+)?)","timestamp_unit":"clock","warning":"clock-only; date/timezone unknown, day rollover must be checked"})}else{Value::Null},
             "fields":fields.into_iter().take(8).map(|(name,f)|{
-                let pattern=format!(r#"["']?{}["']?\s*[:=]\s*["']?([+-]?(?:0[xX][0-9A-Fa-f]+|0[bB][01]+|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?))"#,regex::escape(name));
+                let pattern=format!(r#"(?:^|[^\p{{L}}\p{{N}}_])["']?{}["']?(?:\s*[:=]\s*|[ \t]+)["']?([+-]?(?:0[xX][0-9A-Fa-f]+|0[bB][01]+|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?))"#,regex::escape(name));
                 json!({"name":name,"occurrences":f.count,"numeric":f.numeric,"min":f.min,"max":f.max,"units":f.units,"states":f.values,"untracked_values":f.values_omitted,"first":f.first,"last":f.last,"numeric_pattern":if f.numeric>0{Some(pattern)}else{None}})
             }).collect::<Vec<_>>(),"meaning":"Units are literal attached suffixes. Empty unit means unknown. Mixed units must not be combined without conversion. State values are observed codes, not inferred business meaning. Recipes are candidates; inspect examples before choosing transition rules. Selector candidates are [label, pattern] pairs from a bounded source sample. Use the pattern directly in numeric or timeline fields."})
     }
@@ -87,6 +88,16 @@ mod tests {
         let regex=Regex::new(vin["numeric_pattern"].as_str().unwrap()).unwrap();
         assert_eq!(&regex.captures("VIN=-2e-3V").unwrap()[1],"-2e-3");
         assert!(fields.iter().any(|f|f["states"]["idle"]==1));
+    }
+    #[test] fn spaced_keys_and_generated_selectors_keep_short_field_boundaries() {
+        let mut d=Discovery::new();
+        d.observe("s",1,"12:30:00,125 ASK PH 0 T 27");
+        d.observe("s",2,"STAT 81301");
+        let report=d.report();
+        let field=report["fields"].as_array().unwrap().iter().find(|f|f["name"]=="T").unwrap();
+        assert_eq!(field["max"],27.0);
+        let pattern=Regex::new(field["numeric_pattern"].as_str().unwrap()).unwrap();
+        assert!(!pattern.is_match("STAT 81301"));assert_eq!(&pattern.captures("PH 0 T 27").unwrap()[1],"27");
     }
     #[test] fn schema_and_enum_memory_are_bounded() {
         let mut d=Discovery::new();

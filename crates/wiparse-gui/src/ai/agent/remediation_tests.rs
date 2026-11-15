@@ -43,6 +43,22 @@ fn evidence_survives_followups_and_cancelled_actions_are_audited() {
     assert_ne!(s.steps[0].task, s.steps[1].task);
 }
 #[test]
+fn historical_evidence_obeys_current_read_and_cross_tool_permissions() {
+    let mut s = session();
+    s.cross_tools = true;
+    s.enqueue(call("wave.channels"), false);
+    let request = s.take_request().unwrap();
+    s.attach(&request.id, HostReply::value(json!({"ok":true,"data":{"channels":["CH1"]}})));
+    assert_eq!(s.evidence("E1")["data"]["historical"], true);
+    s.cross_tools = false;
+    assert_eq!(s.evidence("E1")["ok"], false);
+    s.cross_tools = true;
+    s.read_data = false;
+    assert_eq!(s.evidence("E1")["ok"], false);
+    s.read_data = true;
+    assert_eq!(s.evidence("E1")["data"]["result"]["data"]["channels"][0], "CH1");
+}
+#[test]
 fn unrelated_tool_changes_do_not_cancel_source_bound_work() {
     let mut s = session();
     s.cross_tools = true;

@@ -429,6 +429,7 @@ export function normalizeArtifacts(raw, { runDir, outputs } = {}) {
     items.push({
       output: output ? String(output) : undefined,
       path: abs,
+      ...(runDir ? { relative_path: path.relative(path.resolve(runDir), abs).split(path.sep).join('/') } : {}),
       view: view || viewForOutput(outputs, output),
     });
   };
@@ -459,7 +460,7 @@ export function collectOutputFiles(outputs, vars = {}) {
   for (const o of outputs || []) {
     if (!o?.id) continue;
     const dir = expandString(o.dir || `{artifacts_dir}/${o.id}`, vars);
-    if (!dir || dir.includes("{") || !fs.existsSync(dir)) continue;
+    if (!dir || /\{\w+\}/.test(dir) || !fs.existsSync(dir)) continue;
     const include = Array.isArray(o.include) && o.include.length ? o.include : ["*"];
     const files = [];
     for (const name of fs.readdirSync(dir)) {
@@ -501,6 +502,10 @@ export function writeRunJson(layout, plugin, result) {
     industrial_approved: result?.industrial_approved === true,
     simulation_only: result?.simulation_only === true,
     run_id: result?.run_id ?? null,
+    // Assigned by the GUI to the spawned runner; do not substitute the plugin's
+    // own run_id or the Testing Hub matrix run_id, which have different scopes.
+    host_run_id: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(process.env.WIPARSE_HOST_RUN_ID || '')
+      ? process.env.WIPARSE_HOST_RUN_ID : null,
     attempt_id: result?.attempt_id ?? null,
     artifacts,
   };

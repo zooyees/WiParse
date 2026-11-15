@@ -224,7 +224,7 @@ impl PluginMeta {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexedFile {
     pub name: String,
     pub path: PathBuf,
@@ -234,7 +234,7 @@ pub struct IndexedFile {
     pub output_id: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexedGroup {
     pub id: String,
     pub label: String,
@@ -244,7 +244,7 @@ pub struct IndexedGroup {
 }
 
 /// One Hub `run` (stamp folder under the test case).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexedResult {
     pub stamp: String,
     pub ok: Option<bool>,
@@ -317,7 +317,7 @@ pub fn format_run_stamp(stamp: &str) -> String {
 }
 
 /// A test case (`tests/{id}/`), usually named by Hub report / file_prefix.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexedTest {
     pub id: String,
     pub name: String,
@@ -348,7 +348,7 @@ impl IndexedTest {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexedProject {
     pub id: String,
     pub name: String,

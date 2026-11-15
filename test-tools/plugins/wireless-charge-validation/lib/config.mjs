@@ -68,6 +68,11 @@ export function loadBundle(root, args={}) {
 export function preflightBundle(b, capabilities={implemented:[],industrial_approved:false}) {
   const blocking=[];
   if(b.args.mode==='live') {
+    // The external live service owns the hardware sequence. Its advertised
+    // capabilities cannot prove enforcement of the per-run RX-to-I2C gate,
+    // and product identifiers are supplied by configuration. Fence this live
+    // integration until the execution backend provides a verified contract.
+    blocking.push('INTEGRATION.TX_RX_FT4222_GATE_NOT_IMPLEMENTED');
     // Match the approved station configuration and its independent watchdog before allowing a case.
     const live=b.station.live;
     if(!live?.resource || !b.station.station_id || b.station.station_id==='UNCOMMISSIONED' ||

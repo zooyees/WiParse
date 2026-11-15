@@ -1,0 +1,30 @@
+
+running 1 test
+test test_report::ai_read::attachment_tests::linked_adapter_matrix_feeds_recipe_and_shares_paging_source_version ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 593 filtered out; finished in 0.03s
+
+
+running 1 test
+test test_report::ai_read::attachment_tests::linked_attachment_requires_its_own_cursor_and_detects_replacement ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 593 filtered out; finished in 0.04s
+
+
+running 1 test
+test test_report::ai_read::tests::read_rejects_outside_project_and_unknown_index_id ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 593 filtered out; finished in 0.01s
+
+
+running 1 test
+test ai::agent::workflow_test::selected_wave_skill_measures_wfm_before_completing_plan ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 593 filtered out; finished in 0.06s
+
+
+running 1 test
+test instrument_control::summary_publication_tests::instrument_receipt_invalidates_prior_source_permit ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 593 filtered out; finished in 0.01s
+

@@ -13,6 +13,8 @@ pub(crate) mod ai_extract;
 mod source_location;
 mod retained_rows;
 mod history;
+mod reviewed_data;
+pub(crate) use reviewed_data::ReviewedDataSnapshot;
 use history::Points as HistoryPoints;
 use wiparse_core::extract::{Record, Selector};
 use crate::theme::{self as ui_theme, Tokens};
@@ -38,7 +40,7 @@ const TOOLBAR_H: f32 = 40.0;
 const SIDE_W: f32 = 248.0;
 const PANEL_GAP: f32 = ui_theme::PANEL_GAP;
 const CARD_MARGIN_X: i8 = 6;
-const MAX_SERIES: usize = 8;
+use wiparse_core::extract::MAX_SERIES;
 const VIEW_MIN_SPAN_ABS: f64 = 1e-12;
 const VIEW_MAX_PAD: f64 = 8.0;
 const VIEW_MAX_PAD_Y: f64 = 20.0;
@@ -68,6 +70,15 @@ struct PlotDrawItem {
 /// Background open/parse job (keeps UI responsive with a spinner).
 struct PendingDataLoad {
     rx: Receiver<LoadEvent>,
+    rules_revision: u64,
+}
+
+struct CacheJob {
+    session_id: String,
+    series_count: usize,
+    handle: thread::JoinHandle<Result<Vec<HistoryPoints>, String>>,
+    rebuilding: bool,
+    cancel: Arc<std::sync::atomic::AtomicBool>,
 }
 
 enum LoadEvent {
@@ -87,6 +98,7 @@ struct SeriesDraft {
 }
 
 struct DataLoadOk {
+    field_catalog: Option<wiparse_core::extract::FieldCatalog>,
     path: Option<PathBuf>,
     file_text: Option<Arc<String>>,
     frame_count: usize,
@@ -214,7 +226,35 @@ struct DataSeries {
     disp_dirty: bool,
 }
 
+/// Immutable metadata and field catalogue captured at one publication boundary.
+/// Raw samples remain local and are not represented by this snapshot.
+pub(crate) struct PublishedDataSnapshot {
+    id: String,
+    summary: Value,
+    fields: Arc<Vec<(String, String)>>,
+}
+
+impl PublishedDataSnapshot {
+    pub(crate) fn review_ui_state(&self)->Value {
+        json!({"source_mode":self.summary["source"],"series_slots":self.summary["series_count"],
+            "view":self.summary.get("view").cloned().unwrap_or_else(||json!("source")),
+            "live_view":self.summary["live_view"],
+            "scope":"published UI state only; raw samples, source contents, fields, measurements and external file integrity are not included"})
+    }
+    pub(crate) fn page(&self, offset: usize, limit: usize) -> Value {
+        let mut page = self.summary.clone();
+        page["snapshot_id"] = json!(self.id);
+        let end = offset.saturating_add(limit).min(self.fields.len());
+        page["field_candidates"] = json!(&self.fields[offset.min(end)..end]);
+        page["next_offset"] = json!((end < self.fields.len()).then_some(end));
+        page
+    }
+}
+
 pub struct DataAnalysisPanel {
+    // The primary panel continues to own acquisition and file jobs while this plot is visible.
+    result_plot: Option<Box<DataAnalysisPanel>>,
+    showing_result: bool,
     source_view: Option<source_location::Viewer>,
     status: String,
     browser_dir: String,
@@ -230,7 +270,12 @@ pub struct DataAnalysisPanel {
     kinds: Vec<DataKind>,
 
     series: Vec<DataSeries>,
+    agent_instance: uuid::Uuid,
     agent_generation: u64,
+    load_rules_revision: u64,
+    source_lease: wiparse_core::ai::source_lease::SourceLease,
+    data_review_lease: wiparse_core::ai::source_lease::SourceLease,
+    published_ai: Option<Arc<PublishedDataSnapshot>>,
     extract_cache: Arc<std::sync::Mutex<ai_extract::ExtractCache>>,
     imported_query: Option<String>,
     imported_quality: Option<Value>,
@@ -242,6 +287,8 @@ pub struct DataAnalysisPanel {
     source: DataSource,
     live_cursor: usize,
     discovered_fields: Vec<(String,String)>,
+    field_catalog_truncated: bool,
+    field_search: String,
     live_rules: Option<(Vec<String>, Result<Vec<Option<Selector>>,String>)>,
     live_tail: String,
     live_auto_fit: bool,
@@ -250,9 +297,11 @@ pub struct DataAnalysisPanel {
     export_message:Option<String>,
     manual_y: bool,
     history_error: Option<String>,
+    cache_quarantined: bool,
+    cache_rebuilding: bool,
     live_source_generation: Option<u64>,
     gap_notice: Option<String>,
-    cache_job: Option<thread::JoinHandle<Result<Vec<HistoryPoints>, String>>>,
+    cache_job: Option<CacheJob>,
     last_checkpoint: std::time::Instant,
     /// Set when live ingest added frames; cleared after UI observes it.
     live_plot_dirty: bool,
@@ -287,6 +336,7 @@ pub struct DataAnalysisPanel {
 fn agent_display_unit(unit:&str)->Result<(DataKind,f64),String>{match unit{"V"=>Ok((DataKind::Voltage,1000.)),"mV"=>Ok((DataKind::Voltage,1.)),"A"=>Ok((DataKind::Current,1000.)),"mA"=>Ok((DataKind::Current,1.)),"C"|"°C"=>Ok((DataKind::Temperature,1.)),"W"=>Ok((DataKind::Power,1.)),"mW"=>Ok((DataKind::Power,0.001)),"Hz"=>Ok((DataKind::Frequency,1.)),"kHz"=>Ok((DataKind::Frequency,1000.)),_ if unit.len()<=32 && !unit.chars().any(char::is_control)=>Ok((DataKind::Scalar,1.)),_=>Err(format!("DATA.INVALID_UNIT: {}",unit))}}
 
 impl DataAnalysisPanel {
+    pub(crate) fn set_source_lease(&mut self, lease: wiparse_core::ai::source_lease::SourceLease) { self.source_lease = lease; }
     pub fn new(cfg: &AppConfig) -> Self {
         let da = &cfg.apps.data_analysis;
         let browser_dir = da.browser_dir.clone();
@@ -311,6 +361,7 @@ impl DataAnalysisPanel {
             browser_scanned_dir: String::new(),
             browser_folders: Vec::new(),
             last_open_path: None,
+            result_plot: None, showing_result: false,
             source_view:None,
             file_text: None,
             frame_header: da.frame_header.clone(),
@@ -318,7 +369,12 @@ impl DataAnalysisPanel {
             filters,
             kinds,
             series: Vec::new(),
+            agent_instance: uuid::Uuid::new_v4(),
             agent_generation: 0,
+            load_rules_revision: 0,
+            source_lease: Default::default(),
+            data_review_lease: Default::default(),
+            published_ai: None,
             extract_cache: Default::default(),
             imported_query: None,
             imported_quality:None,
@@ -328,7 +384,7 @@ impl DataAnalysisPanel {
             dragging_scale: None,
             source,
             live_cursor: 0,
-            discovered_fields:Vec::new(),
+            discovered_fields:Vec::new(), field_catalog_truncated:false, field_search:String::new(),
             live_rules:None,
             live_tail: String::new(),
             recent_view: false,
@@ -336,6 +392,8 @@ impl DataAnalysisPanel {
             export_message:None,
             manual_y: false,
             history_error: None,
+            cache_quarantined: false,
+            cache_rebuilding: false,
             live_source_generation: None,
             gap_notice: None,
             cache_job: None,
@@ -362,11 +420,16 @@ impl DataAnalysisPanel {
             load_progress_target: 0,
         };
         panel.refresh_data_browser();
+        panel.publish_ai_snapshot();
         panel
     }
 
     pub fn status_text(&self) -> &str {
-        &self.status
+        self.visible_result().map_or(&self.status, |view| &view.status)
+    }
+
+    fn visible_result(&self)->Option<&Self>{
+        self.result_plot.as_deref().filter(|_|self.showing_result)
     }
 
     pub fn needs_repaint(&self) -> bool {
@@ -405,6 +468,15 @@ impl DataAnalysisPanel {
         source: (u64, usize),
         lang: Lang,
     ) -> bool {
+        let may_change=self.wants_live_serial() && (self.live_source_generation!=Some(source.0)
+            || self.live_cursor>total || self.live_cursor<dropped
+            || (self.last_checkpoint.elapsed()>=std::time::Duration::from_secs(1) && self.live_frames_since_flush>0));
+        let update=may_change.then(||self.source_lease.begin_update());
+        let result=self.prepare_live_poll_inner(total,dropped,source,lang);
+        if update.is_some() { self.publish_ai_snapshot(); }
+        drop(update);result
+    }
+    fn prepare_live_poll_inner(&mut self,total:usize,dropped:usize,source:(u64,usize),lang:Lang)->bool {
         if !self.wants_live_serial() {return false;}
         if self.last_checkpoint.elapsed() >= std::time::Duration::from_secs(1) && self.live_frames_since_flush>0 {
             self.checkpoint_live(false);
@@ -438,6 +510,13 @@ impl DataAnalysisPanel {
 
     /// Append serial RX lines; `next_cursor` becomes the new live cursor after ingest.
     pub fn ingest_live_lines(&mut self, lines: &[String], next_cursor: usize, lang: Lang) {
+        if !matches!(self.source,DataSource::SerialLive){return;}
+        let update=(!lines.is_empty() || self.live_cursor!=next_cursor).then(||self.source_lease.begin_update());
+        self.ingest_live_lines_inner(lines,next_cursor,lang);
+        if update.is_some() { self.publish_ai_snapshot(); }
+        drop(update);
+    }
+    fn ingest_live_lines_inner(&mut self, lines: &[String], next_cursor: usize, lang: Lang) {
         if !matches!(self.source, DataSource::SerialLive) {
             return;
         }
@@ -446,7 +525,7 @@ impl DataAnalysisPanel {
             return;
         }
 
-        if self.cache_job.as_ref().is_some_and(|job|job.is_finished()){self.finish_checkpoint();}
+        if self.cache_job.as_ref().is_some_and(|job|job.handle.is_finished()){self.finish_checkpoint();}
         let header = self.frame_header.trim().to_owned();
         if !header.is_empty(){
         if !self.live_tail.is_empty() && !self.live_tail.ends_with('\n') {
@@ -493,12 +572,21 @@ impl DataAnalysisPanel {
         let base_fi = self.frame_count;
 
 
+        let mut updates = vec![Vec::new(); selectors.len()];
         for (rel, frame) in complete.iter().enumerate() {
             let x = (base_fi + rel) as f64;
             let record = Record::new(frame);
             for (si, selector) in selectors.iter().enumerate() {
                 if let Some(value) = selected_number(selector.as_ref(), &record) {
-                    let s = &mut self.series[si];
+                    updates[si].push([x, value]);
+                }
+            }
+        }
+        let added = complete.len();
+        self.source_lease.clone().mutate_always(|| {
+            for (si, points) in updates.into_iter().enumerate() {
+                let s = &mut self.series[si];
+                for [x, value] in points {
                     if s.points.is_empty() {
                         s.y_min = value;
                         s.y_max = value;
@@ -511,13 +599,9 @@ impl DataAnalysisPanel {
                     s.disp_dirty = true;
                 }
             }
-        }
-
-        for series in &mut self.series {
-            series.points.seal();
-        }
-        let added = complete.len();
-        self.frame_count = base_fi + added;
+            for series in &mut self.series { series.points.seal(); }
+            self.frame_count = base_fi + added;
+        });
         const MAX_PARTIAL_FRAME:usize=256*1024;
         if remain.len()>MAX_PARTIAL_FRAME {
             self.gap_notice=Some(format!("串口日志第 {next_cursor} 行存在超长未结束帧，已跳过该帧"));
@@ -552,8 +636,17 @@ impl DataAnalysisPanel {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+        let may_change=ui.input(|input|!input.events.is_empty()) || self.pending_load.is_some()
+            || self.cache_job.as_ref().is_some_and(|job|job.handle.is_finished())
+            || self.export_job.as_ref().is_some_and(|job|job.is_finished());
+        let update=may_change.then(||self.source_lease.begin_update());
+        self.ui_inner(ui,lang,tokens);
+        if update.is_some() { self.publish_ai_snapshot(); }
+        drop(update);
+    }
+    fn ui_inner(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
         if let Some(view)=&mut self.source_view {if !view.show(ui.ctx()) {self.source_view=None;}}
-        if self.cache_job.as_ref().is_some_and(|job|job.is_finished()) {self.finish_checkpoint();}
+        if self.cache_job.as_ref().is_some_and(|job|job.handle.is_finished()) {self.finish_checkpoint();}
         if self.export_job.as_ref().is_some_and(|job|job.is_finished()) {
             self.export_message=Some(self.export_job.take().unwrap().join().unwrap_or_else(|_|Err("导出线程退出".into())).unwrap_or_else(|e|e));
         }
@@ -561,6 +654,26 @@ impl DataAnalysisPanel {
         if self.pending_load.is_some() {
             // Keep spinner animating even if this frame started before the job was queued.
             ui.ctx().request_repaint();
+        }
+        if self.result_plot.is_some(){
+            ui.horizontal(|ui|{
+                let mut showing = self.showing_result;
+                ui.selectable_value(&mut showing,false,if lang==Lang::Zh{"当前数据源"}else{"Data source"});
+                ui.selectable_value(&mut showing,true,if lang==Lang::Zh{"AI 提取结果"}else{"AI result"});
+                if showing != self.showing_result { wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),|| self.showing_result=showing); }
+                if self.showing_result && ui.button(tr(lang,"data.fit")).clicked(){
+                    if let Some(view)=self.result_plot.as_mut(){view.manual_y=false;view.fit_request=true;view.pending_bounds=None;}
+                }
+                if ui.small_button("×").on_hover_text(if lang==Lang::Zh{"关闭提取结果"}else{"Close result"}).clicked(){
+                    let old=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),|| {self.showing_result=false;self.result_plot.take()});
+                    drop(old);
+                }
+            });
+            if self.showing_result{
+                if let Some(view)=&mut self.result_plot {
+                    ui.push_id("ai-result-plot",|ui|view.plot_area(ui,lang,tokens));return;
+                }
+            }
         }
         let avail = ui.available_size();
         let (full, _) = ui.allocate_exact_size(avail, egui::Sense::hover());
@@ -735,6 +848,15 @@ impl DataAnalysisPanel {
                 if let Some(message)=&self.export_message {ui.label(message);}
                 if let Some(notice)=&self.gap_notice {ui.label(notice);}
                 if let Some(error)=&self.history_error { ui.colored_label(tokens.text_primary,error); }
+                if self.cache_quarantined && ui.button(if lang==Lang::Zh {"保留数据并重建历史缓存"} else {"Rebuild history cache without clearing data"}).clicked() {
+                    self.rebuild_quarantined_cache();
+                }
+                if self.cache_rebuilding {
+                    ui.weak(if lang==Lang::Zh {"历史缓存重建中；停止后已开始的写入可能仍会完成。"} else {"Rebuilding history cache; an in-progress write may still finish after cancellation."});
+                    if ui.button(if lang==Lang::Zh {"停止重建"} else {"Stop rebuild"}).clicked() {
+                        if let Some(job)=self.cache_job.as_ref().filter(|job|job.rebuilding) { job.cancel.store(true,std::sync::atomic::Ordering::Release); }
+                    }
+                }
                 let points: usize = self.series.iter().map(|s| s.points.len()).sum();
                 if self.frame_count > 0 {
                     ui.label(
@@ -762,39 +884,63 @@ impl DataAnalysisPanel {
                 ui.set_width(width);ui.spacing_mut().item_spacing=egui::vec2(6.,6.);
                 ui_theme::form_row(ui,&tr(lang,"data.source"),|ui|{
                     let before=self.source;
-                    egui::ComboBox::from_id_salt("data_source").selected_text(tr(lang,if self.source==DataSource::File{"data.source_file"}else{"data.source_serial"})).width(ui.available_width()).show_ui(ui,|ui|{ui.selectable_value(&mut self.source,DataSource::File,tr(lang,"data.source_file"));ui.selectable_value(&mut self.source,DataSource::SerialLive,tr(lang,"data.source_serial"));});
-                    source_changed|=before!=self.source;
+                    let mut next=before;
+                    egui::ComboBox::from_id_salt("data_source").selected_text(tr(lang,if self.source==DataSource::File{"data.source_file"}else{"data.source_serial"})).width(ui.available_width()).show_ui(ui,|ui|{ui.selectable_value(&mut next,DataSource::File,tr(lang,"data.source_file"));ui.selectable_value(&mut next,DataSource::SerialLive,tr(lang,"data.source_serial"));});
+                    if before!=next {wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),||{self.source=next;self.load_rules_revision=self.load_rules_revision.saturating_add(1);});source_changed=true;}
                 });
-                ui_theme::form_row(ui,&tr(lang,"data.frame_header"),|ui|{let r=ui.add_sized([ui.available_width(),ui_theme::CTRL_H],egui::TextEdit::singleline(&mut self.frame_header).hint_text(if lang==Lang::Zh{"留空按行"}else{"Blank: one row per line"}));apply_now|=r.lost_focus();r.on_hover_text(tr(lang,"data.frame_header_hint"));});
-                ui_theme::form_row(ui,&tr(lang,"data.series_count"),|ui|{let before=self.series_count;egui::ComboBox::from_id_salt("data_series_count").selected_text(self.series_count.to_string()).width(ui.available_width()).show_ui(ui,|ui|{for n in 1..=MAX_SERIES{ui.selectable_value(&mut self.series_count,n,n.to_string());}});apply_now|=before!=self.series_count;});
+                ui_theme::form_row(ui,&tr(lang,"data.frame_header"),|ui|{let mut next=self.frame_header.clone();let r=ui.add_sized([ui.available_width(),ui_theme::CTRL_H],egui::TextEdit::singleline(&mut next).hint_text(if lang==Lang::Zh{"留空按行"}else{"Blank: one row per line"}));apply_now|=r.lost_focus();if r.changed(){wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),||{self.frame_header=next;self.load_rules_revision=self.load_rules_revision.saturating_add(1);});}r.on_hover_text(tr(lang,"data.frame_header_hint"));});
+                ui_theme::form_row(ui,&tr(lang,"data.series_count"),|ui|{let before=self.series_count;let mut next=before;egui::ComboBox::from_id_salt("data_series_count").selected_text(before.to_string()).width(ui.available_width()).show_ui(ui,|ui|{for n in 1..=MAX_SERIES{ui.selectable_value(&mut next,n,n.to_string());}});if before!=next{wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),||{self.series_count=next;self.load_rules_revision=self.load_rules_revision.saturating_add(1);});apply_now=true;}});
                 ui.add_space(2.);ui.separator();
                 for i in 0..self.series_count{
                     ui.push_id(i,|ui|{
                         ui.horizontal(|ui|{
                             let(rect,_)=ui.allocate_exact_size(egui::vec2(8.,8.),egui::Sense::hover());ui.painter().rect_filled(rect,2,series_color(i));
                             ui.label(RichText::new(format!("{} {}",if lang==Lang::Zh{"数据"}else{"Series"},i+1)).strong());
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{let before=self.kinds[i];egui::ComboBox::from_id_salt("data_kind").width(68.).selected_text(self.kinds[i].short_axis()).show_ui(ui,|ui|{for k in [DataKind::Voltage,DataKind::Current,DataKind::Temperature,DataKind::Power,DataKind::Frequency,DataKind::Scalar]{ui.selectable_value(&mut self.kinds[i],k,format!("{} ({})",k.label(lang),k.short_axis()));}});apply_now|=before!=self.kinds[i];});
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{let before=self.kinds[i];let mut next=before;egui::ComboBox::from_id_salt("data_kind").width(68.).selected_text(before.short_axis()).show_ui(ui,|ui|{for k in [DataKind::Voltage,DataKind::Current,DataKind::Temperature,DataKind::Power,DataKind::Frequency,DataKind::Scalar]{ui.selectable_value(&mut next,k,format!("{} ({})",k.label(lang),k.short_axis()));}});if before!=next{wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),||{self.kinds[i]=next;self.load_rules_revision=self.load_rules_revision.saturating_add(1);});apply_now=true;}});
                         });
                         if self.source == DataSource::File && self.file_text.is_some() && !self.discovered_fields.is_empty() {
                             ui.menu_button(if lang==Lang::Zh{"选择已识别字段"}else{"Detected fields"},|ui|{
-                                for (label,selector) in &self.discovered_fields {
-                                    if ui.button(format!("{label}  ·  {selector}")).clicked(){
-                                        self.filters[i]=selector.clone();apply_now=true;ui.close_menu();
+                                ui.set_min_width(200.);
+                                ui.add(egui::TextEdit::singleline(&mut self.field_search).hint_text(if lang==Lang::Zh{"搜索字段或选择器"}else{"Search fields or selectors"}));
+                                let query=self.field_search.trim().to_lowercase();
+                                let visible: Vec<_> = self.discovered_fields.iter().filter(|(label,sel)|query.is_empty() || label.to_lowercase().contains(&query) || sel.to_lowercase().contains(&query)).collect();
+                                ui.small(format!("{} / {}{}",visible.len(),self.discovered_fields.len(),if self.field_catalog_truncated {"+"} else {""}));
+                                let height=ui.spacing().interact_size.y;
+                                egui::ScrollArea::vertical().max_height(320.).show_rows(ui,height,visible.len(),|ui,rows|{
+                                    for row in rows {
+                                        let (label,selector)=visible[row];
+                                        if ui.selectable_label(self.filters[i]==*selector,format!("{label}  ·  {selector}")).clicked(){
+                                            let next=selector.clone();wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),||{self.filters[i]=next;self.load_rules_revision=self.load_rules_revision.saturating_add(1);});apply_now=true;ui.close_menu();
+                                        }
                                     }
-                                }
+                                });
                             });
                         }
-                        let edit=ui.add_sized([ui.available_width(),ui_theme::CTRL_H],egui::TextEdit::singleline(&mut self.filters[i]).hint_text(if lang==Lang::Zh{"提取字段，如 TEMP"}else{"Field, e.g. TEMP"}));apply_now|=edit.lost_focus();edit.on_hover_text(tr(lang,"data.filter_hint"));
+                        let mut next=self.filters[i].clone();let edit=ui.add_sized([ui.available_width(),ui_theme::CTRL_H],egui::TextEdit::singleline(&mut next).hint_text(if lang==Lang::Zh{"提取字段，如 TEMP"}else{"Field, e.g. TEMP"}));apply_now|=edit.lost_focus();if edit.changed(){wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),||{self.filters[i]=next;self.load_rules_revision=self.load_rules_revision.saturating_add(1);});}edit.on_hover_text(tr(lang,"data.filter_hint"));
                     });
                 }
                 ui.separator();ui.label(RichText::new(tr(lang,"data.thresholds")).strong()).on_hover_text(tr(lang,"data.threshold_hint"));
-                let mut dirty=threshold_row(ui,tokens,lang,DataKind::Voltage,&mut self.thr_voltage_on,&mut self.thr_voltage);
-                dirty|=threshold_row(ui,tokens,lang,DataKind::Current,&mut self.thr_current_on,&mut self.thr_current);
-                dirty|=threshold_row(ui,tokens,lang,DataKind::Temperature,&mut self.thr_temperature_on,&mut self.thr_temperature);
+                let mut voltage=(self.thr_voltage_on,self.thr_voltage);
+                let mut current=(self.thr_current_on,self.thr_current);
+                let mut temperature=(self.thr_temperature_on,self.thr_temperature);
+                let mut dirty=threshold_row(ui,tokens,lang,DataKind::Voltage,&mut voltage.0,&mut voltage.1);
+                dirty|=threshold_row(ui,tokens,lang,DataKind::Current,&mut current.0,&mut current.1);
+                dirty|=threshold_row(ui,tokens,lang,DataKind::Temperature,&mut temperature.0,&mut temperature.1);
+                self.commit_thresholds(voltage,current,temperature);
                 if dirty{self.persist_rules();}
             });
         });
         if source_changed{self.on_source_changed(lang);self.persist_rules();}else if apply_now{self.persist_rules();self.apply_rules(lang);}
+    }
+
+    fn commit_thresholds(&mut self, voltage:(bool,f64), current:(bool,f64), temperature:(bool,f64)) {
+        let old=[(self.thr_voltage_on,self.thr_voltage.to_bits()),(self.thr_current_on,self.thr_current.to_bits()),(self.thr_temperature_on,self.thr_temperature.to_bits())];
+        let next=[(voltage.0,voltage.1.to_bits()),(current.0,current.1.to_bits()),(temperature.0,temperature.1.to_bits())];
+        if old != next { wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),|| {
+            (self.thr_voltage_on,self.thr_voltage)=voltage;
+            (self.thr_current_on,self.thr_current)=current;
+            (self.thr_temperature_on,self.thr_temperature)=temperature;
+        }); }
     }
 
     fn browser_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
@@ -1598,6 +1744,8 @@ impl DataAnalysisPanel {
 
     fn start_live_session(&mut self) {
         self.live_session_id = uuid::Uuid::new_v4().to_string();
+        self.cache_quarantined = false;
+        self.cache_rebuilding = false;
         self.recent_view = false;
         self.gap_notice = None;
         self.live_source_generation = None;
@@ -1605,16 +1753,20 @@ impl DataAnalysisPanel {
     }
 
     fn clear_data(&mut self, lang: Lang) {
-        self.imported_query=None;self.imported_quality=None;
+        self.data_review_lease.mutate_always(||());
         if matches!(self.source, DataSource::SerialLive) && self.frame_count > 0 {
             self.flush_live_cache();
             if self.history_error.is_some(){return;}
         }
-        self.last_open_path = None;
-        self.file_text = None;
-        self.series.clear();
-        self.agent_generation = self.agent_generation.wrapping_add(1);
-        self.frame_count = 0;
+        let (old_series,old_text,old_load) = wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),|| {
+            self.imported_query=None;self.imported_quality=None;
+            self.last_open_path = None;
+            self.agent_generation = self.agent_generation.wrapping_add(1);
+            self.load_rules_revision = self.load_rules_revision.saturating_add(1);
+            self.frame_count = 0;
+            (std::mem::take(&mut self.series), self.file_text.take(), self.pending_load.take())
+        });
+        drop((old_series,old_text,old_load));
         self.cached_extent = None;
         self.last_x_range = None;
         self.last_y_range = None;
@@ -1628,7 +1780,6 @@ impl DataAnalysisPanel {
         self.live_plot_dirty = false;
         self.live_frames_since_flush = 0;
         self.invalidate_lod();
-        self.pending_load = None;
         self.status = tr(lang, "data.status_cleared");
         if matches!(self.source, DataSource::SerialLive) {
             self.start_live_session();
@@ -1640,18 +1791,18 @@ impl DataAnalysisPanel {
     fn on_source_changed(&mut self, lang: Lang) {
         match self.source {
             DataSource::SerialLive => {
-                self.start_live_session();
-                for s in &mut self.series {
-                    s.points.clear();
-                    s.mapped.clear();
-                    s.disp_dirty = true;
-                    s.y_min = 0.0;
-                    s.y_max = 0.0;
-                    s.y_scale = 1.0;
-                    s.y_offset = 0.0;
-                }
-                self.agent_generation = self.agent_generation.wrapping_add(1);
-        self.frame_count = 0;
+                let (old_points,old_text,old_load)=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),|| {
+                    self.start_live_session();
+                    let old_points:Vec<_>=self.series.iter_mut().map(|s| {
+                        let old=(std::mem::take(&mut s.points),std::mem::take(&mut s.mapped));
+                        s.disp_dirty=true;s.y_min=0.0;s.y_max=0.0;s.y_scale=1.0;s.y_offset=0.0;old
+                    }).collect();
+                    self.agent_generation=self.agent_generation.wrapping_add(1);
+                    self.load_rules_revision=self.load_rules_revision.saturating_add(1);
+                    self.frame_count=0;
+                    (old_points,self.file_text.take(),self.pending_load.take())
+                });
+                drop((old_points,old_text,old_load));
                 self.live_tail.clear();
                 self.live_cursor = 0;
                 self.live_auto_fit = true;
@@ -1660,22 +1811,20 @@ impl DataAnalysisPanel {
                 self.cached_extent = None;
                 self.pending_bounds = None;
                 self.fit_request = false;
-                self.file_text = None;
-                self.pending_load = None;
                 self.invalidate_lod();
                 self.status = tr(lang, "data.status_live_wait");
             }
             DataSource::File => {
                 if self.frame_count > 0 {
                     self.flush_live_cache();
-                    if self.history_error.is_some(){self.source=DataSource::SerialLive;return;}
+                    if self.history_error.is_some(){wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),||{self.source=DataSource::SerialLive;self.load_rules_revision=self.load_rules_revision.saturating_add(1);});return;}
                 }
                 self.refresh_data_browser();
                 self.live_auto_fit = false;
                 self.live_tail.clear();
                 self.live_cursor = 0;
                 self.live_plot_dirty = false;
-                self.pending_load = None;
+                let old_load=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),||self.pending_load.take());drop(old_load);
                 if self.file_text.is_some() {
                     self.reparse(lang);
                 } else {
@@ -1695,17 +1844,14 @@ impl DataAnalysisPanel {
                     self.flush_live_cache();
                     if self.history_error.is_some(){return;}
                 }
-                for s in &mut self.series {
-                    s.points.clear();
-                    s.mapped.clear();
-                    s.disp_dirty = true;
-                    s.y_min = 0.0;
-                    s.y_max = 0.0;
-                }
-                self.series.clear();
-                self.start_live_session();
-                self.agent_generation = self.agent_generation.wrapping_add(1);
-        self.frame_count = 0;
+                let old=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),||{
+                    let old=std::mem::take(&mut self.series);
+                    self.start_live_session();
+                    self.agent_generation=self.agent_generation.wrapping_add(1);
+                    self.load_rules_revision=self.load_rules_revision.saturating_add(1);
+                    self.frame_count=0;old
+                });
+                drop(old);
                 self.live_tail.clear();
                 self.live_cursor = 0;
                 self.live_auto_fit = true;
@@ -1834,24 +1980,24 @@ impl DataAnalysisPanel {
             self.status = tr(lang, "data.status_loading_busy");
             return;
         }
-        self.imported_query=None;self.imported_quality=None;
         if self.wants_live_serial() {self.flush_live_cache();if self.history_error.is_some(){return;}}
-        self.source = DataSource::File;
-        self.live_auto_fit = false;
-        self.live_tail.clear();
-        self.live_cursor = 0;
-        self.last_open_path = Some(path.clone());
-
         let header = self.frame_header.trim().to_owned();
         let filters = self.rules_filter_vec();
         let kinds = self.rules_kind_vec();
         let (tx, rx) = unbounded();
-        self.pending_load = Some(PendingDataLoad { rx });
+        let old=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),|| {
+            self.imported_query=None;
+            let old_quality=self.imported_quality.take();
+            self.source=DataSource::File;self.live_auto_fit=false;self.live_tail.clear();self.live_cursor=0;
+            self.last_open_path=Some(path.clone());
+            self.load_rules_revision=self.load_rules_revision.saturating_add(1);
+            self.pending_load=Some(PendingDataLoad{rx,rules_revision:self.load_rules_revision});
+            self.agent_generation=self.agent_generation.wrapping_add(1);self.frame_count=0;
+            (std::mem::take(&mut self.series),old_quality)
+        });
+        drop(old);
         self.load_progress = 0;
         self.load_progress_target = 0;
-        self.series.clear();
-        self.agent_generation = self.agent_generation.wrapping_add(1);
-        self.frame_count = 0;
         self.cached_extent = None;
         self.invalidate_lod();
         let name = path
@@ -1877,9 +2023,12 @@ impl DataAnalysisPanel {
         let header = self.frame_header.trim().to_owned();
         let filters = self.rules_filter_vec();
         if filters.iter().all(|f| f.is_empty()) {
-            self.series.clear();
-            self.agent_generation = self.agent_generation.wrapping_add(1);
-        self.frame_count = 0;
+            let old=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),|| {
+                self.agent_generation=self.agent_generation.wrapping_add(1);self.frame_count=0;
+                self.load_rules_revision=self.load_rules_revision.saturating_add(1);
+                std::mem::take(&mut self.series)
+            });
+            drop(old);
             self.cached_extent = None;
             self.invalidate_lod();
             self.status = tr(lang, "data.status_need_filter");
@@ -1888,7 +2037,7 @@ impl DataAnalysisPanel {
         let kinds = self.rules_kind_vec();
         let path = self.last_open_path.clone();
         let (tx, rx) = unbounded();
-        self.pending_load = Some(PendingDataLoad { rx });
+        wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),||self.pending_load=Some(PendingDataLoad { rx, rules_revision:self.load_rules_revision }));
         self.load_progress = 0;
         self.load_progress_target = 0;
         self.status = tr(lang, "data.status_loading");
@@ -1908,7 +2057,7 @@ impl DataAnalysisPanel {
                     Ok(ev) => ev,
                     Err(crossbeam_channel::TryRecvError::Empty) => break,
                     Err(crossbeam_channel::TryRecvError::Disconnected) => {
-                        self.pending_load = None;
+                        let old=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),||self.pending_load.take());drop(old);
                         self.load_progress = 0;
                         self.load_progress_target = 0;
                         self.status = tr(lang, "data.status_read_err");
@@ -1928,22 +2077,31 @@ impl DataAnalysisPanel {
         }
 
         if let Some(msg) = done_msg {
+            let stale = self.pending_load.as_ref().is_none_or(|pending| pending.rules_revision == u64::MAX || pending.rules_revision != self.load_rules_revision);
+            if stale {
+                let old=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),||self.pending_load.take());drop(old);
+                self.load_progress = 0;
+                self.load_progress_target = 0;
+                self.status = if lang == Lang::Zh {"规则或来源已变化，旧加载结果未应用，请重新加载。"} else {"Rules or source changed; stale load discarded. Reload to apply."}.into();
+                return;
+            }
             // Drain any trailing progress that arrived with Done.
             if let Some(pending) = self.pending_load.as_ref() {
                 while let Ok(LoadEvent::Progress(p)) = pending.rx.try_recv() {
                     self.load_progress_target = self.load_progress_target.max(p.min(99));
                 }
             }
-            self.pending_load = None;
+            let old=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),||self.pending_load.take());drop(old);
             self.load_progress = 100;
             self.load_progress_target = 100;
             match msg {
                 Ok(ok) => self.apply_load_ok(ok, lang),
                 Err(e) => {
-                    self.series.clear();
-                    self.file_text = None;
-                    self.agent_generation = self.agent_generation.wrapping_add(1);
-        self.frame_count = 0;
+                    let old=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),|| {
+                        self.agent_generation=self.agent_generation.wrapping_add(1);self.frame_count=0;
+                        (std::mem::take(&mut self.series),self.file_text.take())
+                    });
+                    drop(old);
                     self.cached_extent = None;
                     self.invalidate_lod();
                     self.load_progress = 0;
@@ -1968,31 +2126,7 @@ impl DataAnalysisPanel {
     }
 
     fn apply_load_ok(&mut self, ok: DataLoadOk, lang: Lang) {
-        self.imported_query=None;self.imported_quality=None;
-        self.source = DataSource::File;
-        self.live_auto_fit = false;
-        if let Some(path) = ok.path {
-            self.last_open_path = Some(path);
-        }
-        self.discovered_fields = ok.file_text.as_ref().map(|text|wiparse_core::extract::discover(text)).unwrap_or_default();
-        self.file_text = ok.file_text;
-        if let Some(h) = ok.frame_header {self.frame_header = h;}
-        if let Some(filters) = ok.filters {
-            while self.filters.len() < MAX_SERIES {
-                self.filters.push(String::new());
-            }
-            for (i, f) in filters.into_iter().enumerate().take(MAX_SERIES) {
-                self.filters[i] = f;
-            }
-        }
-        if let Some(kinds) = ok.kinds {
-            for (i, k) in kinds.into_iter().enumerate().take(MAX_SERIES) {
-                self.kinds[i] = DataKind::from_config_str(&k);
-            }
-        }
-        self.frame_count = ok.frame_count;
-        self.agent_generation=self.agent_generation.wrapping_add(1);
-        self.series = ok
+        let next_series = ok
             .series
             .into_iter()
             .enumerate()
@@ -2010,7 +2144,33 @@ impl DataAnalysisPanel {
                 disp_dirty: false,
             })
             .collect();
-        self.series_count = self.series.len().clamp(1, MAX_SERIES);
+        let old = wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),|| {
+            self.imported_query=None;
+            let old_quality=self.imported_quality.take();
+            self.source = DataSource::File;
+            self.live_auto_fit = false;
+            if let Some(path) = ok.path { self.last_open_path = Some(path); }
+            if let Some(catalog) = ok.field_catalog {
+                self.discovered_fields = catalog.fields;
+                self.field_catalog_truncated = catalog.truncated;
+                self.field_search.clear();
+            }
+            let old_text=std::mem::replace(&mut self.file_text,ok.file_text);
+            if let Some(h) = ok.frame_header {self.frame_header = h;}
+            if let Some(filters) = ok.filters {
+                while self.filters.len() < MAX_SERIES { self.filters.push(String::new()); }
+                for (i, f) in filters.into_iter().enumerate().take(MAX_SERIES) { self.filters[i] = f; }
+            }
+            if let Some(kinds) = ok.kinds {
+                for (i, k) in kinds.into_iter().enumerate().take(MAX_SERIES) { self.kinds[i] = DataKind::from_config_str(&k); }
+            }
+            self.frame_count = ok.frame_count;
+            self.agent_generation=self.agent_generation.wrapping_add(1);
+            let old_series=std::mem::replace(&mut self.series, next_series);
+            self.series_count = self.series.len().clamp(1, MAX_SERIES);
+            (old_series,old_text,old_quality)
+        });
+        drop(old);
         self.invalidate_lod();
         self.refresh_cached_extent();
         self.fit_request = true;
@@ -2141,11 +2301,12 @@ impl DataAnalysisPanel {
         if self
             .cache_job
             .as_ref()
-            .is_some_and(|j| !wait && !j.is_finished())
+            .is_some_and(|j| !wait && !j.handle.is_finished())
         {
             return;
         }
         self.finish_checkpoint();
+        if self.cache_quarantined { return; }
         if self.frame_count == 0 || self.live_frames_since_flush == 0 {
             return;
         }
@@ -2177,16 +2338,25 @@ impl DataAnalysisPanel {
             .iter()
             .map(|s| s.points.clone())
             .collect::<Vec<_>>();
-        self.cache_job = Some(thread::spawn(move || {
+        let session_id=self.live_session_id.clone();
+        let series_count=points.len();
+        let rebuilding=self.cache_rebuilding;
+        let cancel=Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_cancel=cancel.clone();
+        let handle=thread::spawn(move || {
             for series in &mut points {
+                if worker_cancel.load(std::sync::atomic::Ordering::Acquire) { return Err("已请求停止；新缓存可能已部分写入 / Cancelled; new cache may be partial".into()); }
                 series
                     .page_out()
                     .map_err(|e| format!("历史分块写入失败：{e}"))?;
             }
+            if worker_cancel.load(std::sync::atomic::Ordering::Acquire) { return Err("已请求停止；新缓存可能已部分写入 / Cancelled; new cache may be partial".into()); }
             history::checkpoint(&path, &header, &points)
                 .map_err(|e| format!("历史缓存写入失败：{e}"))?;
+            if worker_cancel.load(std::sync::atomic::Ordering::Acquire) { return Err("已请求停止；写入可能已经完成，请检查新缓存 / Cancelled; write may have completed, inspect the new cache".into()); }
             Ok(points)
-        }));
+        });
+        self.cache_job = Some(CacheJob { session_id, series_count, handle, rebuilding, cancel });
         self.live_frames_since_flush = 0;
         if wait {
             self.finish_checkpoint();
@@ -2197,21 +2367,63 @@ impl DataAnalysisPanel {
         let Some(job) = self.cache_job.take() else {
             return;
         };
-        match job
+        let same_session=job.session_id==self.live_session_id;
+        let is_current=same_session && job.series_count==self.series.len();
+        let rebuilding=job.rebuilding;
+        let cancel=job.cancel.clone();
+        let mut result=job.handle
             .join()
-            .unwrap_or_else(|_| Err("历史写入线程退出".into()))
-        {
+            .unwrap_or_else(|_| Err("历史写入线程退出".into()));
+        if rebuilding && cancel.load(std::sync::atomic::Ordering::Acquire) {
+            result=Err("已停止等待；写入可能已经完成，新缓存需检查 / Cancelled; write may have completed, inspect the new cache".into());
+        }
+        if !is_current {
+            if same_session {
+                self.data_review_lease.mutate_always(||());
+                self.cache_rebuilding=false;self.cache_quarantined=true;self.live_frames_since_flush=self.frame_count;
+                self.history_error=Some("曲线集合已变化，历史缓存已隔离 / Series changed; history cache quarantined".into());
+            } else if let Err(error)=result { self.status=format!("上一会话历史缓存失败 / Previous session cache failed: {error}"); }
+            return;
+        }
+        if rebuilding { self.cache_rebuilding=false; }
+        match result {
             Ok(snapshot) => {
-                for (s, points) in self.series.iter_mut().zip(snapshot) {
-                    s.points.adopt_pages(points);
+                if snapshot.len()!=self.series.len() { self.data_review_lease.mutate_always(||());self.cache_quarantined=true;self.history_error=Some("历史快照通道数不匹配，缓存已隔离 / History series count mismatch; cache quarantined".into());self.live_frames_since_flush=self.frame_count;return; }
+                let adopted=self.source_lease.clone().mutate_always(|| {
+                    if !self.series.iter().zip(&snapshot).all(|(s,points)|s.points.can_adopt_pages(points)) {return false;}
+                    for (s, points) in self.series.iter_mut().zip(snapshot) { let _=s.points.adopt_pages(points); }
+                    true
+                });
+                if adopted { self.history_error = None;if rebuilding {self.status="历史缓存重建完成 / History cache rebuilt".into();} }
+                else {
+                    self.data_review_lease.mutate_always(||());
+                    self.cache_quarantined=true;
+                    self.history_error=Some("历史缓存快照与当前数据不一致；保留内存数据，请检查并重新开始采集 / Cache snapshot differs; memory data retained, inspect and restart acquisition".into());
+                    self.live_frames_since_flush=self.frame_count;
                 }
-                self.history_error = None;
             }
             Err(error) => {
+                self.data_review_lease.mutate_always(||());
                 self.live_frames_since_flush = self.frame_count;
+                if rebuilding { self.cache_quarantined=true; }
                 self.history_error = Some(error);
             }
         }
+    }
+
+    fn rebuild_quarantined_cache(&mut self) {
+        if !self.cache_quarantined || self.cache_job.is_some() { return; }
+        let next_id=uuid::Uuid::new_v4().to_string();
+        wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),|| {
+            self.live_session_id=next_id;
+            self.agent_generation=self.agent_generation.wrapping_add(1);
+            self.cache_quarantined=false;
+            self.cache_rebuilding=self.frame_count>0;
+            self.history_error=None;
+            self.live_frames_since_flush=self.frame_count;
+        });
+        self.status=if self.cache_rebuilding {"已保留当前数据，将在新的缓存文件中重建 / Data retained; rebuilding into a new cache file"} else {"当前没有数据，已清除缓存隔离状态 / No data; cache quarantine cleared"}.into();
+        if self.cache_rebuilding { self.checkpoint_live(false); }
     }
 
     fn ensure_series_shells(&mut self, lang: Lang) {
@@ -2503,12 +2715,23 @@ impl DataAnalysisPanel {
     }
 
     pub fn api_snapshot(&self) -> Value {
+        self.snapshot_fields(0,usize::MAX)
+    }
+    fn snapshot_fields(&self, offset:usize, limit:usize) -> Value {
+        if let Some(view)=self.visible_result(){
+            let mut value=view.snapshot_fields(offset,limit);value["view"]=json!("ai_result");value["background_source"]=json!(self.source.as_config_str());return value;
+        }
+        let fields=if self.source==DataSource::File && self.file_text.is_some() {self.discovered_fields.as_slice()} else {&[]};
+        let end=offset.saturating_add(limit).min(fields.len());
         json!({
+            "field_candidates_total":fields.len(),
+            "field_catalog_truncated":!fields.is_empty() && self.field_catalog_truncated,
+            "next_offset":(end<fields.len()).then_some(end),
             "imported_query":self.imported_query,
             "imported_quality":self.imported_quality,
             "browser_dir": self.browser_dir,
             "frame_header": self.frame_header,
-            "field_candidates": if self.source==DataSource::File && self.file_text.is_some(){self.discovered_fields.as_slice()}else{&[]},
+            "field_candidates": &fields[offset.min(end)..end],
             "extract_rules": wiparse_core::extract::HELP,
             "series_count": self.series_count,
             "filters": self.filters[..self.series_count],
@@ -2537,16 +2760,66 @@ impl DataAnalysisPanel {
 
     /// Series, scales and thresholds. Local paths and raw samples stay on this machine.
     pub(crate) fn ai_summary(&self) -> Value {
-        let mut summary = self.api_snapshot();
+        self.ai_field_page(0,32)
+    }
+    pub(crate) fn ai_field_page(&self, offset:usize, limit:usize) -> Value {
+        self.published_ai_snapshot().map(|snapshot| snapshot.page(offset,limit))
+            .unwrap_or_else(||json!({"snapshot_available":false}))
+    }
+    fn build_ai_field_page(&self, offset:usize, limit:usize) -> Value {
+        let mut summary = self.snapshot_fields(offset,limit);
         if let Some(object) = summary.as_object_mut() {
             object.remove("browser_dir");
             object.remove("last_open");
             object.insert(
                 "status".into(),
-                json!(self.status.chars().take(240).collect::<String>()),
+                json!(self.status_text().chars().take(240).collect::<String>()),
             );
         }
         summary
+    }
+
+    fn published_field_source(&self) -> &[(String, String)] {
+        if let Some(view) = self.visible_result() {
+            return view.published_field_source();
+        }
+        if self.source == DataSource::File && self.file_text.is_some() {
+            &self.discovered_fields
+        } else {
+            &[]
+        }
+    }
+
+    /// Publish only after the current mutation has completed, while its update guard is active.
+    fn publish_ai_snapshot(&mut self) {
+        let mut summary = self.build_ai_field_page(0, 0);
+        if let Some(object) = summary.as_object_mut() {
+            object.remove("field_candidates");
+            object.remove("next_offset");
+            object.insert("snapshot_kind".into(), json!("immutable_published_metadata"));
+            object.insert("raw_samples_included".into(), json!(false));
+            object.insert("pagination_consistency".into(), json!("pass snapshot_id on subsequent pages; restart if changed"));
+        }
+        let fields = self.published_field_source();
+        if self.published_ai.as_ref().is_some_and(|old| old.summary == summary && old.fields.as_slice() == fields) {
+            return;
+        }
+        let catalog = match &self.published_ai {
+            Some(old) if old.fields.as_slice() == fields => old.fields.clone(),
+            _ => Arc::new(fields.to_vec()),
+        };
+        let next = Arc::new(PublishedDataSnapshot { id: uuid::Uuid::new_v4().to_string(), summary, fields: catalog });
+        let lease = self.source_lease.clone();
+        let previous = lease.mutate_always(|| self.published_ai.replace(next));
+        drop(previous);
+    }
+
+    pub(crate) fn published_ai_snapshot(&self) -> Option<Arc<PublishedDataSnapshot>> {
+        self.published_ai.clone()
+    }
+    pub(crate) fn capture_review_source(&self)->Option<wiparse_core::ai::ReviewedSource<Arc<PublishedDataSnapshot>>> {
+        let snapshot=self.published_ai.as_ref()?;
+        wiparse_core::ai::ReviewedSource::capture(&self.source_lease,||snapshot.clone())
     }
 }
 
@@ -2726,6 +2999,7 @@ fn save_extract_cache_worker(
 fn wida_to_load_ok(
     path: PathBuf,
     payload: WidaPayload,
+    field_catalog: Option<wiparse_core::extract::FieldCatalog>,
     file_text: Option<Arc<String>>,
     tx: Option<&Sender<LoadEvent>>,
 ) -> DataLoadOk {
@@ -2754,6 +3028,7 @@ fn wida_to_load_ok(
         .collect();
     map_drafts_inplace_progress(&mut series, tx, 70, 95);
     DataLoadOk {
+        field_catalog,
         path: Some(path),
         file_text,
         frame_count: payload.meta.frame_count as usize,
@@ -2786,7 +3061,7 @@ fn load_file_worker(
         match load_wida(&path) {
             Ok(payload) => {
                 send_progress(tx, 55);
-                send_done(Ok(wida_to_load_ok(path, payload, None, Some(tx))));
+                send_done(Ok(wida_to_load_ok(path, payload, Some(Default::default()), None, Some(tx))));
             }
             Err(e) => send_done(Err(e)),
         }
@@ -2803,8 +3078,9 @@ fn load_file_worker(
     };
     send_progress(tx, 12);
     let detect = filters.iter().all(|s|s.trim().is_empty());
-    let candidates = if detect { wiparse_core::extract::discover(&text) } else { Vec::new() };
-    let (filters,kinds) = if candidates.is_empty() { (filters,kinds) } else {
+    let catalog = wiparse_core::extract::discover_catalog(&text);
+    let candidates = &catalog.fields;
+    let (filters,kinds) = if !detect || candidates.is_empty() { (filters,kinds) } else {
         let selectors:Vec<_> = candidates.iter().take(MAX_SERIES).map(|(_,s)|s.clone()).collect();
         let kinds=vec!["scalar".into();selectors.len()];
         (selectors,kinds)
@@ -2817,6 +3093,7 @@ fn load_file_worker(
             send_done(Ok(wida_to_load_ok(
                 path,
                 payload,
+                Some(catalog),
                 Some(Arc::clone(&text)),
                 Some(tx),
             )));
@@ -2871,6 +3148,7 @@ fn load_file_worker(
     );
     send_progress(tx, 98);
     send_done(Ok(DataLoadOk {
+        field_catalog: Some(catalog),
         path: Some(path),
         file_text: Some(text),
         frame_count,
@@ -2909,6 +3187,7 @@ fn reparse_text_worker(
                 send_done(Ok(wida_to_load_ok(
                     p.clone(),
                     payload,
+                    None,
                     Some(Arc::clone(&text)),
                     Some(tx),
                 )));
@@ -2964,6 +3243,7 @@ fn reparse_text_worker(
     }
     send_progress(tx, 98);
     send_done(Ok(DataLoadOk {
+        field_catalog: None,
         path,
         file_text: Some(text),
         frame_count,
@@ -3480,6 +3760,90 @@ mod tests {
     use super::*;
 
     #[test]
+    fn separate_data_panel_instances_have_distinct_source_identity() {
+        let a=DataAnalysisPanel::new(&AppConfig::default());
+        let b=DataAnalysisPanel::new(&AppConfig::default());
+        assert_ne!(a.agent_identity(),b.agent_identity());
+    }
+    #[test]
+    fn review_snapshot_excludes_external_data_and_old_permit_expires() {
+        let mut panel=DataAnalysisPanel::new(&AppConfig::default());
+        panel.source=DataSource::File;
+        panel.file_text=Some(Arc::new("sensitive sample".into()));
+        panel.discovered_fields.push(("sensitive field".into(),"key:secret".into()));
+        panel.imported_query=Some("private-query".into());
+        panel.publish_ai_snapshot();
+        let snapshot=panel.published_ai_snapshot().unwrap();
+        let review=snapshot.review_ui_state().to_string();
+        assert!(!review.contains("sensitive"));assert!(!review.contains("private-query"));assert!(!review.contains("key:secret"));
+        let (_,permit)=panel.source_lease.snapshot(||()).unwrap();
+        let update=panel.source_lease.begin_update();
+        assert!(panel.capture_review_source().is_none());
+        panel.series_count=2;panel.publish_ai_snapshot();drop(update);
+        assert!(permit.recapture(||()).is_none());
+    }
+
+    #[test]
+    fn published_catalog_pages_keep_the_same_immutable_boundary() {
+        let mut panel = DataAnalysisPanel::new(&AppConfig::default());
+        panel.source = DataSource::File;
+        panel.file_text = Some(Arc::new("fixture".into()));
+        panel.discovered_fields = (0..70).map(|i|(format!("f{i}"), format!("key:f{i}"))).collect();
+        panel.publish_ai_snapshot();
+        let old = panel.published_ai_snapshot().unwrap();
+        let first = old.page(0, 32);
+        panel.discovered_fields.remove(0);
+        panel.publish_ai_snapshot();
+        let later = old.page(32, 32);
+        let current = panel.published_ai_snapshot().unwrap().page(0, 32);
+        assert_eq!(first["snapshot_id"], later["snapshot_id"]);
+        assert_ne!(first["snapshot_id"], current["snapshot_id"]);
+        assert_eq!(later["field_candidates"][0][0], "f32");
+        assert_eq!(later["field_candidates_total"], 70);
+        assert_eq!(current["field_candidates_total"], 69);
+        assert_eq!(first["raw_samples_included"], false);
+    }
+
+    #[test]
+    fn publication_changes_invalidate_permits_and_unchanged_publication_does_not() {
+        let mut panel = DataAnalysisPanel::new(&AppConfig::default());
+        let lease = panel.source_lease.clone();
+        let (_, unchanged) = lease.snapshot(|| ()).unwrap();
+        panel.publish_ai_snapshot();
+        assert!(unchanged.recapture(|| ()).is_some());
+        let (_, previous) = lease.snapshot(|| ()).unwrap();
+        panel.status = "changed".into();
+        panel.publish_ai_snapshot();
+        assert!(previous.recapture(|| ()).is_none());
+    }
+
+    #[test]
+    fn file_catalog_is_paged_independently_of_plot_rules_and_survives_reparse() {
+        fn next_result(rx: &Receiver<LoadEvent>) -> DataLoadOk {
+            rx.try_iter().find_map(|e|match e {LoadEvent::Done(r)=>Some(r.unwrap()), _=>None}).unwrap()
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("many-fields.log");
+        let text = (0..43).map(|i|format!("field{i}={i}\n")).collect::<String>();
+        std::fs::write(&path,&text).unwrap();
+        let (tx, rx) = unbounded();
+        let mut panel=DataAnalysisPanel::new(&AppConfig::default());
+        load_file_worker(path, String::new(), vec!["key:field4".into()], vec!["scalar".into()], &tx);
+        panel.apply_load_ok(next_result(&rx), Lang::Zh);
+        panel.publish_ai_snapshot();
+        assert_eq!(panel.filters[0],"key:field4");
+        assert_eq!(panel.ai_summary()["field_candidates_total"],43);
+        assert_eq!(panel.ai_summary()["next_offset"],32);
+        let page=panel.ai_field_page(32,32);
+        assert_eq!(page["field_candidates"][10][1],"key:field42");
+        assert!(page["next_offset"].is_null());
+        reparse_text_worker(Arc::new(text),None,String::new(),vec!["key:field42".into()],vec!["scalar".into()],&tx);
+        panel.apply_load_ok(next_result(&rx),Lang::Zh);
+        panel.publish_ai_snapshot();
+        assert_eq!(panel.discovered_fields.len(),43);
+        assert_eq!(panel.series[0].points.last().unwrap()[1],42.);
+    }
+    #[test]
     fn file_and_live_extract_identical_rows_without_a_marker() {
         let lines: Vec<String>=["id,note,VIN","1,\"a,b\",5.1","2,missing,","3,ok,5.3"].iter().map(|s|s.to_string()).collect();
         let parsed=parse_data_file(&lines.join("\n"),"", &["csv:3"]);
@@ -3561,14 +3925,15 @@ VOLT 3.4
 
 #[derive(Default)]
 struct AgentReducer{count:u64,invalid:u64,min:Option<f64>,max:Option<f64>,mean:f64,scale:f64,ssq:f64,above:u64}
-pub(crate) struct AgentDataStats{signature:String,cutoffs:Vec<usize>,edges:Vec<(Option<[f64;2]>,Option<[f64;2]>)>,series:usize,offset:usize,reducers:Vec<AgentReducer>}
+pub(crate) struct AgentDataStats{signature:String,cutoffs:Vec<usize>,identities:Vec<Arc<()>>,series:usize,offset:usize,reducers:Vec<AgentReducer>}
 impl DataAnalysisPanel{
  fn imported_seconds(&self)->bool {self.imported_query.is_some() && !self.imported_quality.as_ref().is_some_and(|q| q["provenance"]["x_axis"]=="record_index")}
- pub(crate) fn agent_identity(&self)->String{format!("{}:{:?}:{}:{:?}:{:?}",self.source==DataSource::SerialLive,self.last_open_path,self.series_count,self.filters,(self.agent_generation,&self.kinds))}
+ pub(crate) fn agent_identity(&self)->String{if let Some(view)=self.visible_result(){return format!("result:{}:{:?}:{}",self.agent_instance,view.imported_query,view.agent_identity());}format!("{}:{}:{:?}:{}:{:?}:{:?}",self.agent_instance,self.source==DataSource::SerialLive,self.last_open_path,self.series_count,self.filters,(self.agent_generation,&self.kinds))}
  pub(crate) fn agent_statistics(&self,job:&mut Option<AgentDataStats>,begin:bool)->Value{
-  let signature=format!("{}:{:?}:{:?}",self.agent_identity(),self.series.iter().map(|s|(&s.label,s.kind)).collect::<Vec<_>>(),[(self.thr_voltage_on,self.thr_voltage),(self.thr_current_on,self.thr_current),(self.thr_temperature_on,self.thr_temperature)]);
-  if begin{*job=Some(AgentDataStats{signature:signature.clone(),cutoffs:self.series.iter().map(|s|s.points.len()).collect(),edges:self.series.iter().map(|s|(s.points.first().copied(),s.points.last().copied())).collect(),series:0,offset:0,reducers:self.series.iter().map(|_|AgentReducer::default()).collect()});}
-  let Some(job)=job.as_mut()else{return json!({"ok":false,"error":"数据统计任务不存在"})};if signature!=job.signature||self.series.iter().enumerate().any(|(i,s)|s.points.len()<job.cutoffs[i]||format!("{:?}",(if job.cutoffs[i]>0{s.points.first().copied()}else{None},job.cutoffs[i].checked_sub(1).and_then(|n|s.points.get(n).copied())))!=format!("{:?}",job.edges[i])){return json!({"ok":false,"error":"数据源在统计过程中发生变化，未报告全量结论；实时采集请先保存快照"});}
+  if self.showing_result {if let Some(view)=&self.result_plot{return view.agent_statistics(job,begin);}}
+  let signature=format!("{:?}:{}:{:?}:{:?}",self.imported_query,self.agent_identity(),self.series.iter().map(|s|(&s.label,s.kind)).collect::<Vec<_>>(),[(self.thr_voltage_on,self.thr_voltage),(self.thr_current_on,self.thr_current),(self.thr_temperature_on,self.thr_temperature)]);
+  if begin{*job=Some(AgentDataStats{signature:signature.clone(),cutoffs:self.series.iter().map(|s|s.points.len()).collect(),identities:self.series.iter().map(|s|s.points.identity()).collect(),series:0,offset:0,reducers:self.series.iter().map(|_|AgentReducer::default()).collect()});}
+  let Some(job)=job.as_mut()else{return json!({"ok":false,"error":"数据统计任务不存在"})};if signature!=job.signature||self.series.len()!=job.cutoffs.len()||self.series.iter().enumerate().any(|(i,s)|s.points.len()<job.cutoffs[i]||!s.points.has_identity(&job.identities[i])){return json!({"ok":false,"error":"数据源在统计过程中发生变化，未报告全量结论；实时采集请先保存快照"});}
   let at=std::time::Instant::now();let mut processed=0;
   while job.series<self.series.len()&&processed<20000&&at.elapsed()<std::time::Duration::from_millis(4){
    let series=&self.series[job.series];if job.offset>=job.cutoffs[job.series]{job.series+=1;job.offset=0;continue;}
@@ -3586,48 +3951,122 @@ impl DataAnalysisPanel{
  use super::*;
  #[test]fn all_points_are_reduced_once_and_missing_values_are_explicit(){let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.series_count=2;panel.ensure_series_shells(Lang::Zh);panel.series[0].points=vec![[0.,1.],[1.,2.],[2.,3.],[3.,f64::NAN]].into();panel.thr_voltage_on=true;panel.thr_voltage=2.;let mut job=None;let result=panel.agent_statistics(&mut job,true);let s=&result["data"]["series"][0];assert_eq!(s["sample_count"],3);assert_eq!(s["invalid_samples"],1);assert_eq!(s["mean"],2.);assert!((s["rms"].as_f64().unwrap()-(14f64/3.).sqrt()).abs()<1e-12);assert_eq!(s["above_configured_upper_limit"],1);assert_eq!(s["quality_complete"],false);let empty=&result["data"]["series"][1];assert!(empty["min"].is_null());assert!(empty["mean"].is_null());}
  #[test]fn incremental_statistics_reject_replaced_sources(){let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.series_count=2;panel.ensure_series_shells(Lang::Zh);panel.series[0].points=(0..50000).map(|i|[i as f64,5.]).collect();let mut job=None;let result=panel.agent_statistics(&mut job,true);assert!(result.get("_agent_wait").is_some());panel.series[0].points[0]=[0.,99.];assert_eq!(panel.agent_statistics(&mut job,false)["ok"],false);}
+ #[test]fn incremental_statistics_reject_middle_edit_and_equal_length_clone_replacement(){
+  let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.series_count=1;panel.ensure_series_shells(Lang::Zh);
+  panel.series[0].points=(0..50000).map(|i|[i as f64,5.]).collect();let mut job=None;
+  assert!(panel.agent_statistics(&mut job,true).get("_agent_wait").is_some());
+  panel.series[0].points[25000]=[25000.,99.];assert_eq!(panel.agent_statistics(&mut job,false)["ok"],false);
+  assert!(panel.agent_statistics(&mut job,true).get("_agent_wait").is_some());
+  panel.series[0].points=panel.series[0].points.clone();assert_eq!(panel.agent_statistics(&mut job,false)["ok"],false);
+ }
 }
 
 #[cfg(test)]impl DataAnalysisPanel{pub(crate) fn prepare_style_audit(&mut self){self.series_count=3;self.filters[0]="VIN".into();self.filters[1]="IOUT".into();self.filters[2]="TEMP".into();self.kinds[0]=DataKind::Voltage;self.kinds[1]=DataKind::Current;self.kinds[2]=DataKind::Temperature;self.ensure_series_shells(Lang::Zh);for(i,series)in self.series.iter_mut().enumerate(){series.points=(0..240).map(|n|[n as f64,match i{0=>5000.+(n as f64*0.05).sin()*100.,1=>1000.+(n as f64*0.08).cos()*50.,_=>25.+n as f64*0.04}]).collect();series.y_min=series.points.iter().map(|p|p[1]).fold(f64::INFINITY,f64::min);series.y_max=series.points.iter().map(|p|p[1]).fold(f64::NEG_INFINITY,f64::max);series.disp_dirty=true;}self.frame_count=240;self.thr_voltage=5400.;self.thr_voltage_on=true;self.thr_current=1500.;self.thr_current_on=true;self.thr_temperature=45.;self.thr_temperature_on=true;self.fit_request=true;}}
 
 #[cfg(test)]mod remediation_snapshot_tests{
  use super::*;
+ #[test]fn quarantined_cache_does_not_start_another_writer(){let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.cache_quarantined=true;panel.frame_count=100;panel.live_frames_since_flush=100;panel.checkpoint_live(false);assert!(panel.cache_job.is_none());assert_eq!(panel.frame_count,100);}
+ #[test]fn old_checkpoint_error_does_not_modify_new_session(){let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.live_session_id="new".into();panel.frame_count=17;panel.history_error=None;panel.cache_job=Some(CacheJob{session_id:"old".into(),series_count:panel.series.len(),handle:std::thread::spawn(||Err("old failure".into())),rebuilding:false,cancel:Arc::new(std::sync::atomic::AtomicBool::new(false))});panel.finish_checkpoint();assert!(panel.history_error.is_none());assert_eq!(panel.frame_count,17);}
+ #[test]fn cancelled_rebuild_is_quarantined_and_keeps_current_data(){let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.frame_count=17;panel.cache_rebuilding=true;panel.cache_job=Some(CacheJob{session_id:panel.live_session_id.clone(),series_count:panel.series.len(),handle:std::thread::spawn(||Err("cancelled".into())),rebuilding:true,cancel:Arc::new(std::sync::atomic::AtomicBool::new(true))});panel.finish_checkpoint();assert!(panel.cache_quarantined);assert!(!panel.cache_rebuilding);assert_eq!(panel.frame_count,17);assert!(panel.history_error.as_deref().is_some_and(|error|error.contains("写入可能")));}
+ #[test]fn same_session_changed_series_quarantines_old_job(){let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.frame_count=17;panel.cache_rebuilding=true;panel.cache_job=Some(CacheJob{session_id:panel.live_session_id.clone(),series_count:panel.series.len()+1,handle:std::thread::spawn(||Ok(Vec::new())),rebuilding:true,cancel:Arc::new(std::sync::atomic::AtomicBool::new(false))});panel.finish_checkpoint();assert!(panel.cache_quarantined);assert!(!panel.cache_rebuilding);assert_eq!(panel.frame_count,17);}
+ #[test]fn stale_worker_result_cannot_clear_new_view(){let mut panel=DataAnalysisPanel::new(&AppConfig::default());let(tx,rx)=crossbeam_channel::unbounded();panel.pending_load=Some(PendingDataLoad{rx,rules_revision:3});panel.load_rules_revision=4;panel.imported_query=Some("preserved".into());tx.send(LoadEvent::Done(Err("stale worker".into()))).unwrap();panel.poll_pending_load(Lang::Zh);assert_eq!(panel.imported_query.as_deref(),Some("preserved"));assert!(panel.status.contains("旧加载结果未应用"));}
  #[test]fn live_append_reallocation_does_not_change_snapshot_cutoff(){let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.source=DataSource::SerialLive;panel.series_count=1;panel.ensure_series_shells(Lang::Zh);panel.series[0].points=(0..60000).map(|i|[i as f64,2.]).collect();let identity=panel.agent_identity();let mut job=None;assert!(panel.agent_statistics(&mut job,true).get("_agent_wait").is_some());panel.series[0].points.extend((60000..90000).map(|i|[i as f64,100.]));assert_eq!(identity,panel.agent_identity());let result=loop{let r=panel.agent_statistics(&mut job,false);if r.get("_agent_wait").is_none(){break r;}};assert_eq!(result["data"]["series"][0]["sample_count"],60000);assert_eq!(result["data"]["series"][0]["mean"],2.);assert_eq!(result["data"]["series"][0]["new_points_excluded"],30000);}
  #[test]fn empty_curves_are_not_complete_measurements(){let panel=DataAnalysisPanel::new(&AppConfig::default());let mut job=None;let r=panel.agent_statistics(&mut job,true);assert_eq!(r["ok"],false);for series in r["data"]["series"].as_array().unwrap(){assert_eq!(series["quality_complete"],false);}}
 }
 
 impl DataAnalysisPanel {
  pub(crate) fn agent_present(&mut self,d:&wiparse_core::log_analysis::timeline::Dataset,query:&str,lang:Lang)->Result<Value,String>{
-  if self.pending_load.is_some() || self.source==DataSource::SerialLive {return Err("DATA.DESTINATION_BUSY: stop live analysis or finish loading before importing".into());}
+  let update=self.source_lease.begin_update();let review_update=self.data_review_lease.begin_update();let result=self.agent_present_inner(d,query,lang);self.publish_ai_snapshot();drop(review_update);drop(update);result
+ }
+ fn agent_present_inner(&mut self,d:&wiparse_core::log_analysis::timeline::Dataset,query:&str,lang:Lang)->Result<Value,String>{
+  if self.pending_load.is_some() || self.source==DataSource::SerialLive || self.result_plot.is_some() {
+      let mut view=Self::new(&AppConfig::default());
+      view.set_source_lease(self.source_lease.clone());
+      view.data_review_lease=self.data_review_lease.clone();
+      view.source=DataSource::File;
+      view.extract_cache=self.extract_cache.clone();
+      let mut receipt=view.import_dataset(d,query,lang)?;
+      receipt["view"]=json!("ai_result");
+      let old = wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),|| {
+          self.showing_result=true;
+          self.result_plot.replace(Box::new(view))
+      });
+      drop(old);
+      return Ok(receipt);
+  }
+  self.import_dataset(d,query,lang)
+ }
+ fn import_dataset(&mut self,d:&wiparse_core::log_analysis::timeline::Dataset,query:&str,lang:Lang)->Result<Value,String>{
   if d.rows.is_empty()||d.omitted>0{return Err("DATA.EMPTY_OR_TRUNCATED_DATASET".into());}
   if d.rows.iter().any(|row|row.3.len()!=d.fields.len()){return Err("DATA.INVALID_ROW_WIDTH".into());}
   let units=d.fields.iter().map(|f|agent_display_unit(&f.unit)).collect::<Result<Vec<_>,_>>()?;
   let full=self.extract_cache.lock().ok().and_then(|cache|cache.full_curves(query,d));
 
-  let mut sources=Vec::new();for (id,_,_,_) in &d.rows{if !sources.contains(id){sources.push(id.clone());}}
-  if sources.len()*d.fields.len()>MAX_SERIES{return Err("DATA.TOO_MANY_SERIES: select fewer log sources or fields (maximum 8)".into());}
-  let mut series=Vec::new();
-  for id in &sources{for (i,field) in d.fields.iter().enumerate(){
-   let points:Vec<_>=d.rows.iter().filter(|r|&r.0==id).filter_map(|r|r.3[i].map(|y|[r.1,y*units[i].1])).collect();
-   if points.iter().any(|v|!v[0].is_finite()||!v[1].is_finite()){return Err("DATA.NONFINITE_CONVERSION".into());}
-   if points.is_empty(){continue;}
-   let low=points.iter().map(|p|p[1]).fold(f64::INFINITY,f64::min);let high=points.iter().map(|p|p[1]).fold(f64::NEG_INFINITY,f64::max);
-   series.push(DataSeries{unit_override:(units[i].0==DataKind::Scalar).then(||field.unit.clone()),label:format!("{}{} · {}",field.name,if units[i].0==DataKind::Scalar&&!field.unit.is_empty(){format!(" [{}]",field.unit)}else{String::new()},id.chars().take(8).collect::<String>()),color:series_color(series.len()),kind:units[i].0,points:full.as_ref().map(|curves|curves[i].clone()).unwrap_or_else(||points.into()),y_scale:1.,y_offset:0.,y_min:low,y_max:high,mapped:vec![],disp_dirty:true});
-  }}
+  // Count populated source/field pairs. Different record types often have disjoint fields.
+  let mut sources = Vec::new();
+  let mut by_source = std::collections::HashMap::new();
+  let mut present = Vec::<Vec<bool>>::new();
+  for (id, _, _, row) in &d.rows {
+      let index = *by_source.entry(id.as_str()).or_insert_with(|| {
+          sources.push(id.as_str());
+          present.push(vec![false; d.fields.len()]);
+          sources.len() - 1
+      });
+      for (found, value) in present[index].iter_mut().zip(row) {
+          *found |= value.is_some();
+      }
+  }
+  let total = present.iter().flatten().filter(|&&found| found).count();
+  if total > MAX_SERIES {
+      return Err(format!("DATA.TOO_MANY_SERIES: {total} populated source/field curves; this view supports {MAX_SERIES}. Select fewer sources or fields."));
+  }
+  let mut series = Vec::with_capacity(total);
+  let mut curves = Vec::with_capacity(total);
+  for (source_index, &id) in sources.iter().enumerate() {
+      for (i, field) in d.fields.iter().enumerate() {
+          if !present[source_index][i] { continue; }
+          let points: Vec<_> = d.rows.iter().filter(|r| r.0 == id)
+              .filter_map(|r| r.3[i].map(|y| [r.1, y * units[i].1])).collect();
+          if points.iter().any(|p| !p[0].is_finite() || !p[1].is_finite()) {
+              return Err("DATA.NONFINITE_CONVERSION".into());
+          }
+          // The file overview preserves each bucket's extrema. The plotted history retains every sample.
+          let low = points.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min);
+          let high = points.iter().map(|p| p[1]).fold(f64::NEG_INFINITY, f64::max);
+          let points = full.as_ref().map(|cached| cached[i].clone()).unwrap_or_else(|| points.into());
+          let unit_override = (units[i].0 == DataKind::Scalar).then(|| field.unit.clone());
+          let unit = unit_override.as_deref().unwrap_or(units[i].0.unit());
+          curves.push(json!({"field":field.name,"source_id":id,"unit":unit,"sample_count":points.len()}));
+          let suffix = if units[i].0 == DataKind::Scalar && !field.unit.is_empty() {format!(" [{}]", field.unit)} else {String::new()};
+          series.push(DataSeries {unit_override, label:format!("{}{suffix} · {}", field.name, id.chars().take(8).collect::<String>()),
+              color:series_color(series.len()), kind:units[i].0, points, y_scale:1., y_offset:0.,
+              y_min:low, y_max:high, mapped:vec![], disp_dirty:true});
+      }
+  }
+  let missing_fields: Vec<_> = d.fields.iter().enumerate().filter(|(i,_)| !present.iter().any(|p| p[*i]))
+      .map(|(_,f)| &f.name).collect();
   if series.is_empty(){return Err("DATA.NO_VALID_VALUES".into());}
   let indexed=d.provenance["x_axis"]=="record_index";
   let file=(d.provenance["producer"]=="data.extract").then(||(self.file_text.clone(),self.last_open_path.clone()));
-  self.clear_data(lang);self.series_count=series.len();self.series=series;
-  for (i,s) in self.series.iter().enumerate(){self.filters[i]=s.label.clone();self.kinds[i]=s.kind;}
+  self.clear_data(lang);
   let missing=d.rows.iter().map(|r|r.3.iter().filter(|v|v.is_none()).count()).sum::<usize>();
   let missing=d.provenance["missing_plotted_fields"].as_u64().unwrap_or(missing as u64);
-  self.imported_quality=Some(json!({"missing_field_values":missing,"provenance":d.provenance,"quality_complete":missing==0&&(indexed||d.provenance["sources"].as_array().is_some_and(|a|a.iter().all(|s|s["missing_timestamp_rows"]==0&&s["backward_rows"]==0)))}));
+  let quality=json!({"curves":curves,"missing_fields":missing_fields,"missing_field_values":missing,"provenance":d.provenance,"quality_complete":missing_fields.is_empty()&&missing==0&&(indexed||d.provenance["sources"].as_array().is_some_and(|a|!a.is_empty()&&a.iter().all(|s|s["missing_timestamp_rows"]==0&&s["backward_rows"]==0)))});
   let records=d.provenance["plottable_rows"].as_u64().and_then(|n|usize::try_from(n).ok()).unwrap_or(d.rows.len());
-  self.frame_count=records;self.file_text=None;self.last_open_path=None;if let Some((text,path))=file{self.file_text=text;self.last_open_path=path;}self.imported_query=Some(query.into());
-  self.thr_voltage_on=false;self.thr_current_on=false;self.thr_temperature_on=false;
+  let labels:Vec<_>=series.iter().map(|s|(s.label.clone(),s.kind)).collect();
+  let old=wiparse_core::ai::source_lease::SourceLease::mutate_pair_always(&self.source_lease.clone(),&self.data_review_lease.clone(),||{
+      self.series_count=series.len();
+      let old=std::mem::replace(&mut self.series,series);
+      for (i,(label,kind)) in labels.into_iter().enumerate(){self.filters[i]=label;self.kinds[i]=kind;}
+      self.load_rules_revision=self.load_rules_revision.saturating_add(1);
+      self.frame_count=records;self.file_text=None;self.last_open_path=None;if let Some((text,path))=file{self.file_text=text;self.last_open_path=path;}self.imported_query=Some(query.into());self.imported_quality=Some(quality);
+      self.thr_voltage_on=false;self.thr_current_on=false;self.thr_temperature_on=false;
+      old
+  });
+  drop(old);
   self.auto_layout_scales();self.fit_request=true;self.pending_bounds=None;self.cached_extent=None;self.lod_key=None;self.lod_lines.clear();
   self.status=format!("AI提取 · {} 条记录 · {} 条曲线 · 横轴 {} · 缺失值未补齐",records,self.series.len(),if indexed{"记录序号"}else{"时间 / s"});
-  Ok(json!({"query_id":query,"presented":true,"records":records,"report_overview_rows":d.rows.len(),"series":self.series.len(),"raw_samples_uploaded":false,"x_unit":if indexed{"record_index"}else{"s"},"missing_values":"omitted, never filled; incomplete datasets use scatter rather than connecting gaps","source_ids":sources,"display_units":self.series.iter().map(|s|s.unit_override.as_deref().unwrap_or(s.kind.unit())).collect::<Vec<_>>()}))
+  Ok(json!({"query_id":query,"presented":true,"records":records,"report_overview_rows":d.rows.len(),"series":self.series.len(),"curves":curves,"missing_fields":missing_fields,"raw_samples_uploaded":false,"x_unit":if indexed{"record_index"}else{"s"},"missing_values":"omitted, never filled; incomplete datasets use scatter rather than connecting gaps","source_ids":sources,"display_units":self.series.iter().map(|s|s.unit_override.as_deref().unwrap_or(s.kind.unit())).collect::<Vec<_>>()}))
  }
 }
 
@@ -3636,6 +4075,36 @@ mod ai_dataset_flow_tests {
  use super::*;
  use wiparse_core::log_analysis::{Inventory,Source,Query,Scan};
  use std::sync::atomic::AtomicBool;
+ #[test]fn live_cursor_update_invalidates_old_source_permit(){
+  let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.source=DataSource::SerialLive;
+  let (_,old)=panel.source_lease.snapshot(||()).unwrap();
+  panel.ingest_live_lines(&[],8,Lang::Zh);
+  assert_eq!(panel.live_cursor,8);assert!(old.commit_prepared(||()).is_none());
+  let (_,unchanged)=panel.source_lease.snapshot(||()).unwrap();panel.ingest_live_lines(&[],8,Lang::Zh);
+  assert_eq!(unchanged.commit_prepared(||()),Some(()));
+ }
+ #[test]fn threshold_change_invalidates_source_permit_but_unchanged_values_do_not(){
+  let mut panel=DataAnalysisPanel::new(&AppConfig::default());
+  let voltage=(panel.thr_voltage_on,panel.thr_voltage);let current=(panel.thr_current_on,panel.thr_current);let temperature=(panel.thr_temperature_on,panel.thr_temperature);
+  let (_,unchanged)=panel.source_lease.snapshot(||()).unwrap();
+  panel.commit_thresholds(voltage,current,temperature);
+  assert_eq!(unchanged.commit_prepared(||()),Some(()));
+  let (_,old)=panel.source_lease.snapshot(||()).unwrap();
+  panel.commit_thresholds((!voltage.0,voltage.1),current,temperature);
+  assert!(old.commit_prepared(||()).is_none());
+ }
+ #[test]fn programmatic_import_invalidates_prior_source_permit(){
+  use wiparse_core::ai::{AiConfig,AiRequest,AiService};
+  let listener=std::net::TcpListener::bind("127.0.0.1:0").unwrap();listener.set_nonblocking(true).unwrap();
+  let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.source=DataSource::File;
+  let(request,permit)=panel.source_lease.snapshot(||AiRequest{purpose:"fixture".into(),text:"fixture".into()}).unwrap();
+  let service=AiService::new(AiConfig{enabled:true,base_url:format!("http://{}",listener.local_addr().unwrap()),model:"fixture".into(),..Default::default()});
+  let task=service.submit_conversation_reviewed_guarded(request,vec![],permit).unwrap();let deadline=std::time::Instant::now()+std::time::Duration::from_secs(2);
+  while task.outbound_preview().is_none(){assert!(std::time::Instant::now()<deadline);std::thread::sleep(std::time::Duration::from_millis(5));}
+  panel.agent_present(&dataset(),"query",Lang::Zh).unwrap();assert!(task.approve_outbound());
+  assert!(matches!(task.result.recv_timeout(std::time::Duration::from_secs(3)).unwrap(),Err(wiparse_core::ai::AiError::Config(_))));
+  assert!(matches!(listener.accept(),Err(e) if e.kind()==std::io::ErrorKind::WouldBlock));
+ }
  fn dataset()->wiparse_core::log_analysis::timeline::Dataset {
   let lines=(0..1000).map(|i|Arc::<str>::from(format!("t={i} VIN=5 IOUT=2"))).collect();
   let source=Source::memory("synthetic",lines,1,0);
@@ -3653,9 +4122,75 @@ mod ai_dataset_flow_tests {
   assert_eq!(panel.series[0].points[999],[0.999,5000.]);assert_eq!(panel.series[1].points[999],[0.999,2000.]);assert_eq!(panel.series[2].points[999],[0.999,10.]);assert_eq!(panel.series[2].kind.unit(),"W");
   let stats=panel.agent_statistics(&mut None,true);assert_eq!(stats["data"]["series"][2]["sample_count"],1000);assert!((stats["data"]["series"][2]["mean"].as_f64().unwrap()-10.).abs()<1e-10);
  }
+ #[test]
+ fn serial_timeline_plots_four_named_fields_and_reports_absent_values() {
+     use wiparse_core::ai::tools::{host_functions, normalized, ToolCall};
+     let fields = json!([
+         {"name":"VIN","pattern":"key:VIN","unit":"mV"},
+         {"name":"VBRG","pattern":"key:VBRG","unit":"mV"},
+         {"name":"IBRG","pattern":"key:IBRG","unit":"mA"},
+         {"name":"T","pattern":r"\bPH\s+\d+\s+T\s+(\d+)$","unit":"°C"}
+     ]);
+     let tool = host_functions(vec!["log.analyze"]).into_iter().find(|f|f.name=="wiparse_log_timeline").unwrap();
+     assert_eq!(tool.parameters["properties"]["fields"]["maxItems"],MAX_SERIES);
+     let call = ToolCall{id:"call".into(), name:tool.name, arguments:json!({"timestamp_pattern":r"(?:\d\d:\d\d:\d\d)",
+         "fields":fields,"retain_dataset":true}).to_string()};
+     let (_,p)=normalized(&call).unwrap();
+     let mut panel=DataAnalysisPanel::new(&AppConfig::default());
+     panel.source=DataSource::File;
+     for (name,lines,want) in [
+         ("all",vec!["12:00:00 ASK VIN 5 VBRG 6 IBRG 7 PH 0 T 27","12:00:01 STAT 81301"],4),
+         ("missing",vec!["12:00:00 ASK VIN 5 VBRG 6 IBRG 7","12:00:01 STAT 81301"],3)
+     ]{
+         let source=Source::memory("fixture",lines.into_iter().map(Arc::<str>::from).collect(),1,0);
+         let mut scan=Scan::new(Inventory{sources:vec![source],incomplete:false,issues:vec![]},serde_json::from_value(p.clone()).unwrap()).unwrap();
+         scan.run_chunk(65536,std::time::Duration::from_secs(2),&AtomicBool::new(false)).unwrap();
+         let receipt=panel.agent_present(&scan.dataset().unwrap(),name,Lang::Zh).unwrap();
+         assert_eq!(receipt["series"],want);
+         assert_eq!(receipt["curves"].as_array().unwrap().len(),want);
+         assert_eq!(receipt["curves"][0]["sample_count"],1);
+         if want==4 {assert_eq!(receipt["curves"][3]["field"],"T"); assert_eq!(panel.series[3].points[0][1],27.);}
+         else {assert_eq!(receipt["missing_fields"],json!(["T"]));}
+     }
+ }
+ #[test]
+ fn sparse_sources_count_actual_series_and_overflow_keeps_previous_view() {
+     let mut data=dataset();
+     data.rows=(0..8).map(|i|(format!("source{i}"),0.,1,vec![Some(1.),None,None])).collect();
+     let mut panel=DataAnalysisPanel::new(&AppConfig::default()); panel.source=DataSource::File;
+     let receipt=panel.agent_present(&data,"eight",Lang::Zh).unwrap();
+     assert_eq!(receipt["series"],8);
+     data.rows[0].3[1]=Some(2.);
+     assert!(panel.agent_present(&data,"nine",Lang::Zh).unwrap_err().contains("9 populated"));
+     assert_eq!(panel.imported_query.as_deref(),Some("eight"));
+ }
+ #[test]
+ fn absent_requested_field_cannot_be_marked_complete_by_provenance_count() {
+  let mut data=dataset();
+  for row in &mut data.rows { row.3[1]=None; }
+  data.provenance["missing_plotted_fields"]=json!(0);
+  let mut panel=DataAnalysisPanel::new(&AppConfig::default());
+  panel.source=DataSource::File;
+  let receipt=panel.agent_present(&data,"missing-field",Lang::Zh).unwrap();
+  assert!(receipt["missing_fields"].as_array().unwrap().iter().any(|v|v=="IOUT"));
+  assert_eq!(panel.imported_quality.as_ref().unwrap()["quality_complete"],false);
+ }
+ #[test]fn loading_file_keeps_its_worker_and_ai_plot(){
+  let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.source=DataSource::File;
+  let (tx,rx)=crossbeam_channel::unbounded();panel.pending_load=Some(PendingDataLoad{rx,rules_revision:panel.load_rules_revision});
+  panel.agent_present(&dataset(),"q",Lang::Zh).unwrap();tx.send(LoadEvent::Progress(37)).unwrap();
+  panel.poll_pending_load(Lang::Zh);assert!(panel.is_loading());assert_eq!(panel.load_progress_target,37);
+  let mut bad=dataset();bad.rows[0].3.clear();assert!(panel.agent_present(&bad,"invalid",Lang::Zh).is_err());
+  assert_eq!(panel.api_snapshot()["imported_query"],"q");drop(tx);panel.poll_pending_load(Lang::Zh);
+  assert!(!panel.is_loading());assert_eq!(panel.api_snapshot()["imported_query"],"q");
+ }
  #[test]fn live_destination_and_malformed_rows_preserve_previous_curves(){
-  let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.source=DataSource::SerialLive;assert!(panel.agent_present(&dataset(),"q",Lang::Zh).is_err());
-  panel.source=DataSource::File;panel.agent_present(&dataset(),"old",Lang::Zh).unwrap();
+  let mut panel=DataAnalysisPanel::new(&AppConfig::default());panel.source=DataSource::SerialLive;panel.live_cursor=123;
+  assert!(panel.agent_present(&dataset(),"q",Lang::Zh).is_ok());
+  assert!(panel.wants_live_serial());assert_eq!(panel.live_line_cursor(),123);assert_eq!(panel.frame_count,0);
+  assert_eq!(panel.api_snapshot()["imported_query"],"q");assert_eq!(panel.agent_statistics(&mut None,true)["data"]["series"][0]["sample_count"],1000);
+  panel.showing_result=false;assert_eq!(panel.api_snapshot()["source"],"serial");
+  panel.result_plot=None;panel.source=DataSource::File;panel.agent_present(&dataset(),"old",Lang::Zh).unwrap();
   let mut bad=dataset();bad.rows[0].3.clear();assert!(panel.agent_present(&bad,"new",Lang::Zh).is_err());assert_eq!(panel.imported_query.as_deref(),Some("old"));assert_eq!(panel.series[0].points.len(),1000);
  }
 }

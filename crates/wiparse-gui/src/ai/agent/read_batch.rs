@@ -6,6 +6,7 @@ impl Session {
     /// Recover a stalled investigation with one observation of the bound page.
     /// Successful inspection is evidence about the source, never a physical verdict.
     pub(super) fn try_scope_read(&mut self)->bool {
+        if self.reviewed_local_task() {return false;}
         let Some(c)=&self.context else{return false;};
         if !self.read_data || self.round>=self.max_rounds{return false;}
         let method=match c.page.as_str(){
@@ -31,13 +32,16 @@ impl Session {
             let (method, params) = tools::normalized(request)
                 .map_err(|_| "AGENT.INVALID_BATCH_ARGUMENTS".to_owned())?;
             let call = Call { method, params };
+            if self.reviewed_local_task() && !(self.reviewed_tool_allowed(&call.method) && call.method!="agent.plan") {
+                return Err("AGENT.REVIEWED_CALCULATION_SCOPE".into());
+            }
             let tool = contract::validate(&call)?;
             // Async jobs that replace a shared dataset or require a previous
             // result must use their ordinary single-call path.
             if !matches!(call.method.as_str(),
                 "agent.help" | "agent.evidence" | "evidence.get" | "platform.catalog" |
                 "page.inspect" | "wave.channels" | "wave.measure" | "wave.timing" | "wave.frames" |
-                "serial.inspect" | "log.files" | "data.inspect" | "report.read" | "report.inspect" |
+                "serial.inspect" | "log.files" | "data.snapshot.read" | "data.snapshot.stats" | "data.inspect" | "report.read" | "report.inspect" |
                 "report.search" | "testing.status" | "testing.inspect" | "testing.cases" |
                 "calc.inspect" | "calc.evaluate" | "instrument.list") ||
                 !matches!(tool.effect, Effect::Read | Effect::LocalCompute) {

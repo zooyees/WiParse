@@ -4,7 +4,7 @@
 //! root items with ▶ flyouts (Panels / Language / Theme), accent hover, checkmarks.
 
 #[path = "agent_host.rs"]
-mod agent_host;
+pub(crate) mod agent_host;
 use crate::backend::{self, ApiBridge};
 use crate::calculator::CalculatorPanel;
 use crate::data_analysis::DataAnalysisPanel;
@@ -238,6 +238,8 @@ pub struct WiParseApp {
     settings_root_rect: Option<Rect>,
     settings_sub_rect: Option<Rect>,
     settings_leave_since: Option<f64>,
+    settings_keyboard_mode: bool,
+    settings_focus_pending: bool,
     about_open: bool,
     updater: UpdateController,
     update_startup_checked: bool,
@@ -254,6 +256,15 @@ impl WiParseApp {
     }
 
     pub fn new_with_warning(cfg: AppConfig, startup_warning: Option<String>) -> Self {
+        Self::new_inner(cfg, startup_warning, true)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_without_api_for_test(cfg: AppConfig) -> Self {
+        Self::new_inner(cfg, None, false)
+    }
+
+    fn new_inner(cfg: AppConfig, startup_warning: Option<String>, start_api: bool) -> Self {
         let lang = parse_lang(&cfg.ui.language);
         let show_serial = cfg.ui.panels.serial_tool;
         let show_calculator = cfg.ui.panels.calculator;
@@ -272,26 +283,44 @@ impl WiParseApp {
         );
         let light = cfg.ui.theme == "light";
         let api = ApiBridge::new();
-        if let Err(e) = backend::start(api.clone()) {
-            tracing::error!("Failed to start WiParse API: {e}");
+        if start_api {
+            if let Err(e) = backend::start(api.clone()) {
+                tracing::error!("Failed to start WiParse API: {e}");
+            }
         }
         let updater = UpdateController::new(cfg.update.clone());
+        let serial = SerialToolPanel::new(&cfg, lang);
+        let mut instruments = InstrumentControlPanel::new(&cfg);
+        instruments.set_source_lease(serial.source_lease());
+        let mut test_tool = TestToolPanel::new(&cfg);
+        test_tool.set_project_source_lease(serial.source_lease());
+        test_tool.set_monitor_source_lease(serial.review_source_lease());
+        test_tool.set_monitor_test_state(serial.integrated_test_state());
+        let mut test_report = TestReportPanel::new(&cfg);
+        test_report.set_project_source_lease(serial.source_lease());
+        let mut waveform = WaveformAnalysisPanel::new(&cfg);
+        waveform.set_source_lease(serial.source_lease());
+        let mut data_analysis = DataAnalysisPanel::new(&cfg);
+        data_analysis.set_source_lease(serial.source_lease());
+        // Calculator-only review has its own source lease so unrelated live
+        // serial updates do not invalidate an otherwise unchanged snapshot.
+        let calculator = CalculatorPanel::new();
         Self {
             ai: crate::ai::AiPanel::new(&cfg.ai),
             serial_agent: Default::default(),
             report_ai: Default::default(),
-            serial: SerialToolPanel::new(&cfg, lang),
+            serial,
             instruments: {
-                let mut panel = InstrumentControlPanel::new(&cfg);
+                let mut panel = instruments;
                 if cfg.ui.debug_mode {
                     panel.apply_debug_mode(true, lang);
                 }
                 panel
             },
-            waveform: WaveformAnalysisPanel::new(&cfg),
-            data_analysis: DataAnalysisPanel::new(&cfg),
-            test_report: TestReportPanel::new(&cfg),
-            test_tool: TestToolPanel::new(&cfg),
+            waveform,
+            data_analysis,
+            test_report,
+            test_tool,
             cfg,
             lang,
             active,
@@ -303,7 +332,7 @@ impl WiParseApp {
             show_data_analysis,
             show_test_report,
             show_test_tool,
-            calculator: CalculatorPanel::new(),
+            calculator,
             api,
             settings_open: false,
             settings_sub: SettingsSub::None,
@@ -312,6 +341,8 @@ impl WiParseApp {
             settings_root_rect: None,
             settings_sub_rect: None,
             settings_leave_since: None,
+            settings_keyboard_mode: false,
+            settings_focus_pending: false,
             about_open: false,
             updater,
             update_startup_checked: false,
@@ -424,6 +455,8 @@ impl WiParseApp {
         self.settings_open = false;
         self.settings_sub = SettingsSub::None;
         self.settings_leave_since = None;
+        self.settings_keyboard_mode = false;
+        self.settings_focus_pending = false;
         self.settings_root_rect = None;
         self.settings_sub_rect = None;
     }
@@ -455,6 +488,10 @@ impl WiParseApp {
             self.settings_sub == SettingsSub::Panels,
             ROOT_W,
         );
+        if self.settings_focus_pending {
+            panels.request_focus();
+            self.settings_focus_pending = false;
+        }
         if panels.hovered() || panels.clicked() {
             self.settings_sub = SettingsSub::Panels;
             self.settings_sub_anchor_y = panels.rect.top();
@@ -634,6 +671,10 @@ impl WiParseApp {
     }
 
     fn paint_settings_menus(&mut self, ctx: &egui::Context, t: &Tokens) {
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            self.close_settings();
+            return;
+        }
         let btn = self.settings_btn_rect.unwrap_or_else(|| {
             Rect::from_min_size(
                 Pos2::new(ui_right_fallback(ctx) - 80.0, 4.0),
@@ -692,6 +733,11 @@ impl WiParseApp {
             .pointer_interact_pos()
             .or_else(|| ctx.pointer_hover_pos());
         let now = ctx.input(|i| i.time);
+        // Once the pointer moves, return to the existing mouse hover/leave
+        // behaviour. Keyboard navigation must not depend on a parked pointer.
+        if self.settings_keyboard_mode && ctx.input(|i| i.pointer.delta().length_sq() > 0.0) {
+            self.settings_keyboard_mode = false;
+        }
         if let Some(pos) = pointer {
             if self.settings_over_any(pos) {
                 self.settings_leave_since = None;
@@ -702,7 +748,7 @@ impl WiParseApp {
                     if !on_btn {
                         self.close_settings();
                     }
-                } else {
+                } else if !self.settings_keyboard_mode {
                     let since = self.settings_leave_since.get_or_insert(now);
                     if now - *since > 0.28 {
                         self.close_settings();
@@ -947,6 +993,11 @@ impl WiParseApp {
     }
 
     fn dispatch_test_instrument_job(&mut self, job: crate::serial_tool::TestInstrumentJob) {
+        let update=self.instruments.begin_source_update();
+        self.dispatch_test_instrument_job_inner(job);
+        self.instruments.publish_ai_summary();drop(update);
+    }
+    fn dispatch_test_instrument_job_inner(&mut self, job: crate::serial_tool::TestInstrumentJob) {
         use crate::serial_tool::TestInstrumentJob;
         let fallback = self.instruments.first_oscilloscope_id();
         match job {
@@ -1152,6 +1203,7 @@ impl eframe::App for WiParseApp {
             }
         }
         for tag in self.serial.take_scope_captures() {
+            let update=self.instruments.begin_source_update();
             let id = self.instruments.first_oscilloscope_id();
             let ok = if let Some(device_id) = id {
                 self.instruments
@@ -1161,6 +1213,7 @@ impl eframe::App for WiParseApp {
                 false
             };
             self.serial.note_scope_capture(&tag, id, ok);
+            self.instruments.publish_ai_summary();drop(update);
         }
         for job in self.serial.take_test_instrument_jobs() {
             self.dispatch_test_instrument_job(job);
@@ -1171,6 +1224,7 @@ impl eframe::App for WiParseApp {
         // Always drain instrument worker so Agent API jobs complete; UI widgets
         // for heavy scope views only render on the Instruments tab.
         self.instruments.pump_with_bus(ctx, Some(&self.api.events));
+        self.instruments.publish_ai_summary();
         for result in self.instruments.take_job_results() {
             self.serial.notify_test_job(&result);
         }
@@ -1265,6 +1319,7 @@ impl eframe::App for WiParseApp {
                         // Gear icon settings — quieter than text label.
                         let (rect, resp) =
                             ui.allocate_exact_size(Vec2::new(32.0, 28.0), Sense::click());
+                        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tr(self.lang, "menu.settings")));
                         let fill = if self.settings_open {
                             t.accent_soft
                         } else if resp.hovered() {
@@ -1304,6 +1359,8 @@ impl eframe::App for WiParseApp {
                                 self.settings_open = true;
                                 self.settings_sub = SettingsSub::None;
                                 self.settings_leave_since = None;
+                                self.settings_keyboard_mode = ui.input(|i| i.key_pressed(egui::Key::Space) || i.key_pressed(egui::Key::Enter));
+                                self.settings_focus_pending = self.settings_keyboard_mode;
                             }
                         }
                     });
@@ -1397,9 +1454,10 @@ impl eframe::App for WiParseApp {
             });
 
         if self.active == MainTab::TestReport && self.show_test_report {
-            let label=self.test_report.agent_selected_label();
+            let label=self.test_report.agent_selected_label(self.lang);
             if self.report_ai.ui(ctx,self.lang,&t,&self.cfg.ai,&label) {self.ai.open_settings();}
         }
+        let publication_needed_after_ui=matches!(self.active,MainTab::Instruments|MainTab::TestTool|MainTab::TestReport);
         egui::CentralPanel::default()
             .frame(Frame::NONE.fill(t.canvas_bg).inner_margin(Margin::same(if matches!(self.active,MainTab::Waveform){2}else{4})))
             .show(ctx, |ui| match self.active {
@@ -1438,7 +1496,10 @@ impl eframe::App for WiParseApp {
                         Some(&mut self.waveform),
                     ) {
                         crate::test_report::ReportAction::None => {}
-                        crate::test_report::ReportAction::ToggleAi => self.report_ai.open = !self.report_ai.open,
+                        crate::test_report::ReportAction::ToggleAi => {
+                            self.report_ai.open = !self.report_ai.open;
+                            if !self.report_ai.open {self.report_ai.session.close_review();}
+                        },
                         crate::test_report::ReportAction::GoHub => {
                             self.show_test_tool = true;
                             self.active = MainTab::TestTool;
@@ -1476,6 +1537,7 @@ impl eframe::App for WiParseApp {
                     });
                 }
             });
+        if publication_needed_after_ui {self.instruments.publish_ai_summary();self.test_tool.publish_ai_summary();}
         if let Some(path) = self.test_tool.take_workspace_result() {
             let root = self.test_tool.data_root_path();
             if let Ok((path, view)) = self.test_report.prepare_open(&root, &path, None) {
@@ -1529,7 +1591,8 @@ fn menu_cascade_row(
 ) -> egui::Response {
     let h = 28.0;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, h), Sense::click());
-    let hot = resp.hovered() || open;
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+    let hot = resp.hovered() || resp.has_focus() || open;
     if hot {
         ui.painter().rect_filled(rect, CornerRadius::ZERO, t.accent_fill);
     }
@@ -1555,7 +1618,8 @@ fn menu_cascade_row(
 fn menu_action_row(ui: &mut egui::Ui, t: &Tokens, label: &str, width: f32) -> egui::Response {
     let h = 28.0;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, h), Sense::click());
-    let hot = resp.hovered();
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+    let hot = resp.hovered() || resp.has_focus();
     if hot {
         ui.painter().rect_filled(rect, CornerRadius::ZERO, t.accent_fill);
     }
@@ -1575,7 +1639,8 @@ fn menu_check_row(
 ) -> egui::Response {
     let h = 28.0;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, h), Sense::click());
-    let hot = resp.hovered();
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), checked, label));
+    let hot = resp.hovered() || resp.has_focus();
     if hot {
         ui.painter().rect_filled(rect, CornerRadius::ZERO, t.accent_fill);
     }
@@ -1663,6 +1728,7 @@ fn main_tab(
     let pad_x = 14.0;
     let size = Vec2::new(galley.size().x + pad_x * 2.0, 36.0);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, ui.is_enabled(), selected, label));
 
     if ui.is_rect_visible(rect) {
         if resp.hovered() || selected {
@@ -1671,6 +1737,10 @@ fn main_tab(
                 CornerRadius::same(ui_theme::RADIUS_CTRL),
                 t.accent_soft,
             );
+        }
+        if resp.has_focus() {
+            ui.painter().rect_stroke(rect.shrink(1.0), CornerRadius::same(ui_theme::RADIUS_CTRL),
+                Stroke::new(1.0, t.focus_ring), egui::StrokeKind::Inside);
         }
         let text_pos = Pos2::new(
             rect.center().x - galley.size().x * 0.5,
@@ -1696,6 +1766,39 @@ fn main_tab(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn main_navigation_exposes_labels_to_accessibility() {
+        let ctx=egui::Context::default();ctx.enable_accesskit();
+        let t=ui_theme::tokens_for_preference(false);
+        let mut active=MainTab::Serial;
+        let out=ctx.run(egui::RawInput::default(),|ctx|{
+            egui::CentralPanel::default().show(ctx,|ui|{
+                main_tab(ui,&t,&mut active,MainTab::Serial,true,"Serial Tool");
+                main_tab(ui,&t,&mut active,MainTab::Waveform,true,"Waveform Analysis");
+            });
+        });
+        let update=out.platform_output.accesskit_update.expect("accessibility update");
+        let labels=update.nodes.iter().filter_map(|(_,node)|node.label()).collect::<Vec<_>>();
+        assert!(labels.contains(&"Serial Tool"));assert!(labels.contains(&"Waveform Analysis"));
+    }
+
+    #[test]
+    fn settings_keyboard_mode_keeps_menu_open_and_escape_closes_it() {
+        let ctx=egui::Context::default();
+        let mut app=WiParseApp::new_without_api_for_test(AppConfig::default());
+        let theme=ui_theme::tokens_for_preference(false);
+        let raw=|time,events|egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(800.0,600.0))),time:Some(time),events,..Default::default()};
+        let _=ctx.run(raw(0.0,vec![egui::Event::PointerMoved(Pos2::new(10.0,10.0))]),|_|{});
+        app.settings_open=true;app.settings_keyboard_mode=true;app.settings_focus_pending=true;
+        let _=ctx.run(raw(0.1,vec![]),|ctx|app.paint_settings_menus(ctx,&theme));
+        let _=ctx.run(raw(1.0,vec![]),|ctx|app.paint_settings_menus(ctx,&theme));
+        assert!(app.settings_open);
+        let escape=egui::Event::Key{key:egui::Key::Escape,physical_key:None,pressed:true,repeat:false,modifiers:egui::Modifiers::NONE};
+        let _=ctx.run(raw(1.1,vec![escape]),|ctx|app.paint_settings_menus(ctx,&theme));
+        assert!(!app.settings_open);
+        assert!(!app.settings_keyboard_mode);
+    }
 
     #[test]
     fn calculator_visibility_does_not_force_startup_tab() {

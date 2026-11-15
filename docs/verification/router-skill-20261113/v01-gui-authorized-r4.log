@@ -1,0 +1,1489 @@
+note: did not finalize incremental compilation session directory `\\?\D:\windlink\windlink\WiParse-R\target\debug\incremental\winit-2ua2zgdwt6x11\s-ho021uitx0-0urfoci-working`: Access is denied. (os error 5)
+  |
+  = help: the next build will not be able to reuse work from this compilation
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\D:\windlink\windlink\WiParse-R\target\debug\incremental\wiparse_core-3sdu06l92e62w\s-ho6c4embxy-057b5tw-working`
+
+warning: variable does not need to be mutable
+   --> crates\wiparse-core\src\protocol\decode.rs:891:17
+    |
+891 |             let mut fields = vec![field("pattern", name, "", Some(format!("0x{header:02X}")))];
+    |                 ----^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `commit` is never used
+   --> crates\wiparse-core\src\ai\source_lease.rs:158:19
+    |
+119 | impl SourcePermit {
+    | ----------------- method in this implementation
+...
+158 |     pub(crate) fn commit(&self, commit: impl FnOnce() -> bool) -> bool {
+    |                   ^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `lfsr_msequence` is never used
+   --> crates\wiparse-core\src\bus_decode\ddsss.rs:181:8
+    |
+181 | pub fn lfsr_msequence(width: u8, taps: &[u8]) -> Vec<bool> {
+    |        ^^^^^^^^^^^^^^
+
+warning: methods `scope_screen_point_count`, `tek_screen_point_count`, `keysight_screen_point_count`, `prepare_keysight_screen_waveform`, and `apply_tek_visible_data_window` are never used
+    --> crates\wiparse-core\src\instrument\drivers.rs:1361:8
+     |
+ 882 | impl InstrumentDevice {
+     | --------------------- methods in this implementation
+...
+1361 |     fn scope_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1399 |     fn tek_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^
+...
+1406 |     fn keysight_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1449 |     fn prepare_keysight_screen_waveform(&mut self, channel: u8) -> Result<(), InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2018 |     fn apply_tek_visible_data_window(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `parse_keysight_preamble_points` is never used
+    --> crates\wiparse-core\src\instrument\drivers.rs:3167:4
+     |
+3167 | fn parse_keysight_preamble_points(pre: &str) -> Option<usize> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `verify_file_against_meta` is never used
+   --> crates\wiparse-core\src\marketplace\trust.rs:160:8
+    |
+160 | pub fn verify_file_against_meta(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `open_tcp_uart_from_info` is never used
+   --> crates\wiparse-core\src\serial.rs:624:4
+    |
+624 | fn open_tcp_uart_from_info(info: &PortInfo, baud: u32) -> Result<SerialSession, SerialError> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `load_tek_wfm` is never used
+   --> crates\wiparse-core\src\waveform_file.rs:968:4
+    |
+968 | fn load_tek_wfm(bytes: &[u8], default_channel: &str) -> Result<WaveformTrace, WaveformFileError> {
+    |    ^^^^^^^^^^^^
+
+warning: `wiparse-core` (lib) generated 9 warnings (run `cargo fix --lib -p wiparse-core` to apply 1 suggestion)
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\D:\windlink\windlink\WiParse-R\target\debug\incremental\wiparse_gui-020y6im6tla4d\s-ho6c4i3ypd-148kqo9-working`
+
+warning: unused import: `std::sync::atomic::Ordering`
+   --> crates\wiparse-gui\src\agent_host.rs:492:9
+    |
+492 |     use std::sync::atomic::Ordering;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Color32`
+ --> crates\wiparse-gui\src\calculator.rs:4:12
+  |
+4 | use egui::{Color32, CornerRadius, Frame, Margin, Pos2, Rect, Sense, Stroke, Vec2};
+  |            ^^^^^^^
+
+warning: unused import: `Color32`
+ --> crates\wiparse-gui\src\converter.rs:3:12
+  |
+3 | use egui::{Color32, CornerRadius, Frame, Margin, Stroke};
+  |            ^^^^^^^
+
+warning: unused import: `wiparse_core::protocol::describe_ask_bytes`
+  --> crates\wiparse-gui\src\waveform_analysis.rs:31:5
+   |
+31 | use wiparse_core::protocol::describe_ask_bytes;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> crates\wiparse-gui\src\app.rs:1743:29
+     |
+1743 |                 Stroke::new(1.0, t.focus_ring), egui::StrokeKind::Inside);
+     |                             ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+     = note: `#[warn(float_literal_f32_fallback)]` (part of `#[warn(future_incompatible)]`) on by default
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> crates\wiparse-gui\src\ai\report.rs:36:86
+   |
+36 |             .frame(Frame::NONE.fill(t.surface_bg).inner_margin(8).stroke(Stroke::new(1.0,t.divider)))
+   |                                                                                      ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\alerts.rs:202:41
+    |
+202 |                     .stroke(Stroke::new(1.0, t.warning))
+    |                                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> crates\wiparse-gui\src\serial_tool\ai_chat\host.rs:1024:41
+     |
+1024 |                     .stroke(Stroke::new(1.0, t.divider))
+     |                                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> crates\wiparse-gui\src\serial_tool\ai_chat.rs:1014:69
+     |
+1014 |                 .vline(drag.center().x, drag.y_range(), Stroke::new(1.0, t.accent));
+     |                                                                     ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> crates\wiparse-gui\src\theme.rs:75:67
+   |
+75 |         Stroke::new(if response.hovered() || response.dragged() { 2.0 } else { 1.0 },
+   |                                                                   ^^^ help: explicitly specify the type as `f32`: `2.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> crates\wiparse-gui\src\theme.rs:75:80
+   |
+75 |         Stroke::new(if response.hovered() || response.dragged() { 2.0 } else { 1.0 },
+   |                                                                                ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> crates\wiparse-gui\src\data_analysis.rs:878:64
+    |
+878 | ...   Frame::NONE.fill(tokens.surface_bg).stroke(Stroke::new(1.,tokens.divider)).corner_radius(CornerRadius::same(ui_theme::RADIUS_...
+    |                                                              ^^ help: explicitly specify the type as `f32`: `1._f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> crates\wiparse-gui\src\test_tool\workspace\chrome.rs:127:41
+    |
+127 | ...                   Stroke::new(1.0, tokens.divider),
+    |                                   ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> crates\wiparse-gui\src\test_tool\workspace\chrome.rs:274:13
+    |
+274 |             1.0,
+    |             ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: use of deprecated method `egui::Ui::set_enabled`: Use disable(), add_enabled_ui(), or add_enabled() instead
+   --> crates\wiparse-gui\src\test_tool.rs:784:16
+    |
+784 |             ui.set_enabled(false);
+    |                ^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `egui::Ui::set_enabled`: Use disable(), add_enabled_ui(), or add_enabled() instead
+   --> crates\wiparse-gui\src\test_tool.rs:881:12
+    |
+881 |         ui.set_enabled(was_enabled);
+    |            ^^^^^^^^^^^
+
+warning: use of deprecated method `egui::Ui::set_enabled`: Use disable(), add_enabled_ui(), or add_enabled() instead
+    --> crates\wiparse-gui\src\test_tool.rs:1466:20
+     |
+1466 |                 ui.set_enabled(self.job.is_none());
+     |                    ^^^^^^^^^^^
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+   --> crates\wiparse-gui\src\waveform_analysis\protocol_view.rs:341:33
+    |
+341 |                     Stroke::new(1., tokens.divider),
+    |                                 ^^ help: explicitly specify the type as `f32`: `1._f32`
+    |
+    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+    = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: unused import: `std::io::Read`
+   --> crates\wiparse-gui\src\ai\agent\remediation_tests.rs:229:9
+    |
+229 |     use std::io::Read;
+    |         ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Read`
+  --> crates\wiparse-gui\src\serial_tool\ai_chat\platform_tests.rs:93:9
+   |
+93 |     use std::io::Read;
+   |         ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Read`
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\platform_tests.rs:129:9
+    |
+129 |     use std::io::Read;
+    |         ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Read`
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\platform_tests.rs:172:9
+    |
+172 |     use std::io::Read;
+    |         ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Read`
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\platform_tests.rs:216:9
+    |
+216 |     use std::io::Read;
+    |         ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Read`
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\platform_tests.rs:254:9
+    |
+254 |     use std::io::Read;
+    |         ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Read`
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\responsiveness_tests.rs:275:9
+    |
+275 |     use std::io::Read;
+    |         ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Read`
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\responsiveness_tests.rs:345:9
+    |
+345 |     use std::io::Read;
+    |         ^^^^^^^^^^^^^
+
+warning: unused import: `std::io::Read`
+ --> crates\wiparse-gui\src\serial_tool\ai_chat\agent_workflow_tests.rs:2:5
+  |
+2 | use std::io::Read;
+  |     ^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> crates\wiparse-gui\src\backend\mod.rs:193:19
+    |
+193 | fn handle_request(mut request: Request, bridge: &ApiBridge) -> Result<(), String> {
+    |                   ----^^^^^^^
+    |                   |
+    |                   help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `defer`
+   --> crates\wiparse-gui\src\instrument_control\workbench\flat.rs:222:9
+    |
+222 |         defer: bool,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_defer`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `defer`
+   --> crates\wiparse-gui\src\instrument_control\workbench.rs:195:9
+    |
+195 |         defer: bool,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_defer`
+
+warning: unused variable: `hud`
+    --> crates\wiparse-gui\src\instrument_control.rs:4781:32
+     |
+4781 | fn hud_chip(ui: &mut egui::Ui, hud: &HudTokens, label: impl Into<String>, color: Color32) {
+     |                                ^^^ help: if this is intentional, prefix it with an underscore: `_hud`
+
+warning: unused variable: `border`
+    --> crates\wiparse-gui\src\log_tab.rs:2429:60
+     |
+2429 |     let (ask, fsk, code, hex, ok, err, warn, field, muted, border) = if light {
+     |                                                            ^^^^^^ help: if this is intentional, prefix it with an underscore: `_border`
+
+warning: unreachable pattern
+    --> crates\wiparse-gui\src\serial_tool\ai_chat\host.rs:1183:33
+     |
+1183 | ...                   _ => Err("AI.APPROVAL_INVALID_ACTION".into()),
+     |                       ^ no value can reach this
+     |
+note: multiple earlier patterns match some of the same values
+    --> crates\wiparse-gui\src\serial_tool\ai_chat\host.rs:1183:33
+     |
+1142 | ...                   Action::Platform { method, params } => {
+     |                       ----------------------------------- matches some of the same values
+...
+1150 | ...                   action @ (Action::SerialStart | Action::SerialStop) => {
+     |                                 ---------------------------------------- matches some of the same values
+...
+1160 | ...                   action @ (Action::MonitorStart { .. } | Action::MonitorConfigure { .. } | Action::MonitorStop) => {
+     |                                 ----------------------------------------------------------------------------------- matches some of the same values
+...
+1183 | ...                   _ => Err("AI.APPROVAL_INVALID_ACTION".into()),
+     |                       ^ collectively making this unreachable
+     = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: unreachable pattern
+   --> crates\wiparse-gui\src\serial_tool\ai_chat.rs:582:13
+    |
+582 |             _ => "control.unknown",
+    |             ^ no value can reach this
+    |
+note: multiple earlier patterns match some of the same values
+   --> crates\wiparse-gui\src\serial_tool\ai_chat.rs:582:13
+    |
+576 |             Action::SerialStart => "serial.start",
+    |             ------------------- matches some of the same values
+577 |             Action::SerialStop => "serial.stop",
+    |             ------------------ matches some of the same values
+578 |             Action::Platform { method, .. } => method.as_str(),
+    |             ------------------------------- matches some of the same values
+579 |             Action::MonitorStart { .. } => "monitor.start",
+    |             --------------------------- matches some of the same values
+...
+582 |             _ => "control.unknown",
+    |             ^ ...and 2 other patterns collectively make this unreachable
+
+warning: variable does not need to be mutable
+   --> crates\wiparse-gui\src\serial_tool\ai_chat\view_tests.rs:461:9
+    |
+461 |     let mut goto = |p: &mut SerialToolPanel, target: &str| {
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `output`
+   --> crates\wiparse-gui\src\test_tool\line_trigger_editor.rs:769:13
+    |
+769 |         let output = click(&ctx, &mut raw, add);
+    |             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_output`
+
+warning: variable does not need to be mutable
+    --> crates\wiparse-gui\src\waveform_analysis.rs:5164:10
+     |
+5164 |     let (mut ymin, mut ymax) = robust_y_range(&trace.y[..n]);
+     |          ----^^^^
+     |          |
+     |          help: remove this `mut`
+
+warning: associated function `new` is never used
+   --> crates\wiparse-gui\src\app.rs:254:12
+    |
+253 | impl WiParseApp {
+    | --------------- associated function in this implementation
+254 |     pub fn new(cfg: AppConfig) -> Self {
+    |            ^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `next_seq` is never used
+  --> crates\wiparse-gui\src\backend\events.rs:96:12
+   |
+23 | impl EventBus {
+   | ------------- method in this implementation
+...
+96 |     pub fn next_seq(&self) -> u64 {
+   |            ^^^^^^^^
+
+warning: field `points` is never read
+  --> crates\wiparse-gui\src\instrument_control.rs:84:9
+   |
+81 |     Waveform {
+   |     -------- field in this variant
+...
+84 |         points: usize,
+   |         ^^^^^^
+
+warning: field `channel` is never read
+   --> crates\wiparse-gui\src\instrument_control.rs:281:5
+    |
+280 | struct CachedWavePlot {
+    |        -------------- field in this struct
+281 |     channel: String,
+    |     ^^^^^^^
+
+warning: field `max_points` is never read
+   --> crates\wiparse-gui\src\instrument_control.rs:471:5
+    |
+452 | pub struct InstrumentControlPanel {
+    |            ---------------------- field in this struct
+...
+471 |     max_points: usize,
+    |     ^^^^^^^^^^
+
+warning: methods `visible_instrument_kinds` and `discovered_resources_panel` are never used
+    --> crates\wiparse-gui\src\instrument_control.rs:692:8
+     |
+ 519 | impl InstrumentControlPanel {
+     | --------------------------- methods in this implementation
+...
+ 692 |     fn visible_instrument_kinds(&self) -> Vec<InstrumentKind> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2220 |     fn discovered_resources_panel(&mut self, ui: &mut egui::Ui, lang: Lang, tokens: &Tokens) {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `mean` is never read
+    --> crates\wiparse-gui\src\instrument_control.rs:3662:5
+     |
+3656 | struct WaveformStats {
+     |        ------------- field in this struct
+...
+3662 |     mean: f64,
+     |     ^^^^
+     |
+     = note: `WaveformStats` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: function `export_waveform_csv` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:3712:4
+     |
+3712 | fn export_waveform_csv(
+     |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `waveform_csv_cell` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:3737:4
+     |
+3737 | fn waveform_csv_cell(value: &str) -> String {
+     |    ^^^^^^^^^^^^^^^^^
+
+warning: function `scope_panel` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:3791:4
+     |
+3791 | fn scope_panel(ui: &mut egui::Ui, tokens: &Tokens, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+     |    ^^^^^^^^^^^
+
+warning: function `card` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4099:4
+     |
+4099 | fn card(ui: &mut egui::Ui, tokens: &Tokens, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+     |    ^^^^
+
+warning: constant `CARD_PANEL_WIDTH` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4114:7
+     |
+4114 | const CARD_PANEL_WIDTH: f32 = 258.0;
+     |       ^^^^^^^^^^^^^^^^
+
+warning: constant `CARD_CONTROL_HEIGHT` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4115:7
+     |
+4115 | const CARD_CONTROL_HEIGHT: f32 = 26.0;
+     |       ^^^^^^^^^^^^^^^^^^^
+
+warning: constant `CARD_ICON_COLUMN_WIDTH` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4116:7
+     |
+4116 | const CARD_ICON_COLUMN_WIDTH: f32 = 42.0;
+     |       ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `InstrumentCardAction` is never constructed
+    --> crates\wiparse-gui\src\instrument_control.rs:4119:8
+     |
+4119 | struct InstrumentCardAction {
+     |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `instrument_type_card` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4125:4
+     |
+4125 | fn instrument_type_card(
+     |    ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `instrument_control_hint` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4480:4
+     |
+4480 | fn instrument_control_hint(lang: Lang, kind: InstrumentKind) -> &'static str {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `instrument_acquisition_hint` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4525:4
+     |
+4525 | fn instrument_acquisition_hint(lang: Lang, kind: InstrumentKind) -> &'static str {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `instrument_settings_hint` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4565:4
+     |
+4565 | fn instrument_settings_hint(lang: Lang, kind: InstrumentKind) -> &'static str {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `instrument_features` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4610:4
+     |
+4610 | fn instrument_features(lang: Lang, kind: InstrumentKind) -> [(&'static str, &'static str); 3] {
+     |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `setting_row` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4678:4
+     |
+4678 | fn setting_row(ui: &mut egui::Ui, label: &str, value: &str) {
+     |    ^^^^^^^^^^^
+
+warning: function `capability_badge` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4684:4
+     |
+4684 | fn capability_badge(ui: &mut egui::Ui, tokens: &Tokens, label: impl Into<String>) {
+     |    ^^^^^^^^^^^^^^^^
+
+warning: function `resource_address_hint` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4708:4
+     |
+4708 | fn resource_address_hint(kind: InstrumentKind) -> &'static str {
+     |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `resource_empty_prompt` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:4717:4
+     |
+4717 | fn resource_empty_prompt(lang: Lang, kind: InstrumentKind) -> &'static str {
+     |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `overview_type_card` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:6399:4
+     |
+6399 | fn overview_type_card(
+     |    ^^^^^^^^^^^^^^^^^^
+
+warning: function `paint_mesh_icon` is never used
+    --> crates\wiparse-gui\src\instrument_control.rs:7066:4
+     |
+7066 | fn paint_mesh_icon(painter: &egui::Painter, rect: Rect, selected: bool) {
+     |    ^^^^^^^^^^^^^^^
+
+warning: field `scroll_generation` is never read
+   --> crates\wiparse-gui\src\log_tab.rs:122:16
+    |
+101 | pub(crate) struct PaneState {
+    |                   --------- field in this struct
+...
+122 |     pub(crate) scroll_generation: u64,
+    |                ^^^^^^^^^^^^^^^^^
+    |
+    = note: `PaneState` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: methods `release_display_buffers` and `store_file` are never used
+   --> crates\wiparse-gui\src\log_tab.rs:935:12
+    |
+415 | impl LogTabPage {
+    | --------------- methods in this implementation
+...
+935 |     pub fn release_display_buffers(&mut self) {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^
+...
+941 |     fn store_file(&self) -> Option<&Arc<FileLogStore>> {
+    |        ^^^^^^^^^^
+
+warning: method `clear` is never used
+    --> crates\wiparse-gui\src\log_view.rs:1653:12
+     |
+1616 | impl LineEditorSession {
+     | ---------------------- method in this implementation
+...
+1653 |     pub fn clear(&mut self) {
+     |            ^^^^^
+
+warning: field `wifi_scan_pending` is never read
+   --> crates\wiparse-gui\src\serial_tool.rs:148:5
+    |
+101 | pub struct SerialToolPanel {
+    |            --------------- field in this struct
+...
+148 |     wifi_scan_pending: bool,
+    |     ^^^^^^^^^^^^^^^^^
+
+warning: methods `open_path_and_show` and `needs_repaint` are never used
+    --> crates\wiparse-gui\src\serial_tool.rs:374:19
+     |
+ 199 | impl SerialToolPanel {
+     | -------------------- methods in this implementation
+...
+ 374 |     pub(crate) fn open_path_and_show(&mut self, path: PathBuf) -> Option<usize> {
+     |                   ^^^^^^^^^^^^^^^^^^
+...
+2142 |     pub fn needs_repaint(&self) -> bool {
+     |            ^^^^^^^^^^^^^
+
+warning: function `elide_tab_title` is never used
+    --> crates\wiparse-gui\src\serial_tool.rs:3348:4
+     |
+3348 | fn elide_tab_title(title: &str, max_chars: usize) -> String {
+     |    ^^^^^^^^^^^^^^^
+
+warning: method `open_ai_window` is never used
+    --> crates\wiparse-gui\src\serial_tool\ai_chat\host.rs:1309:19
+     |
+  46 | impl SerialToolPanel {
+     | -------------------- method in this implementation
+...
+1309 |     pub(crate) fn open_ai_window(&mut self) {
+     |                   ^^^^^^^^^^^^^^
+
+warning: function `tokens_for_panel` is never used
+   --> crates\wiparse-gui\src\theme.rs:297:8
+    |
+297 | pub fn tokens_for_panel(light_pref: bool, _scope_workbench: bool) -> Tokens {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `secondary_button` is never used
+   --> crates\wiparse-gui\src\theme.rs:329:8
+    |
+329 | pub fn secondary_button(ui: &mut egui::Ui, t: &Tokens, label: impl Into<String>) -> egui::Response {
+    |        ^^^^^^^^^^^^^^^^
+
+warning: function `ghost_button` is never used
+   --> crates\wiparse-gui\src\theme.rs:346:8
+    |
+346 | pub fn ghost_button(ui: &mut egui::Ui, t: &Tokens, label: impl Into<String>) -> egui::Response {
+    |        ^^^^^^^^^^^^
+
+warning: function `field_label` is never used
+   --> crates\wiparse-gui\src\theme.rs:716:8
+    |
+716 | pub fn field_label(ui: &mut egui::Ui, t: &Tokens, label: &str, label_w: f32, row_h: f32) {
+    |        ^^^^^^^^^^^
+
+warning: function `caption` is never used
+   --> crates\wiparse-gui\src\theme.rs:727:8
+    |
+727 | pub fn caption(ui: &mut egui::Ui, t: &Tokens, text: &str) {
+    |        ^^^^^^^
+
+warning: function `mono_body` is never used
+   --> crates\wiparse-gui\src\theme.rs:735:8
+    |
+735 | pub fn mono_body(text: impl Into<String>, t: &Tokens) -> RichText {
+    |        ^^^^^^^^^
+
+warning: function `add_singleline` is never used
+   --> crates\wiparse-gui\src\theme.rs:764:8
+    |
+764 | pub fn add_singleline(
+    |        ^^^^^^^^^^^^^^
+
+warning: variant `Progress` is never constructed
+  --> crates\wiparse-gui\src\update\mod.rs:41:5
+   |
+39 | enum UpdateMsg {
+   |      --------- variant in this enum
+40 |     Checked(Result<UpdateAvailability, String>),
+41 |     Progress { received: u64, total: u64 },
+   |     ^^^^^^^^
+
+warning: method `set_config` is never used
+  --> crates\wiparse-gui\src\update\mod.rs:59:12
+   |
+45 | impl UpdateController {
+   | --------------------- method in this implementation
+...
+59 |     pub fn set_config(&mut self, cfg: UpdateConfig) {
+   |            ^^^^^^^^^^
+
+warning: function `layout_and_map_drafts` is never used
+    --> crates\wiparse-gui\src\data_analysis.rs:2888:4
+     |
+2888 | fn layout_and_map_drafts(series: &mut [SeriesDraft]) {
+     |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `map_drafts_inplace` is never used
+    --> crates\wiparse-gui\src\data_analysis.rs:2925:4
+     |
+2925 | fn map_drafts_inplace(series: &mut [SeriesDraft]) {
+     |    ^^^^^^^^^^^^^^^^^^
+
+warning: method `clear` is never used
+  --> crates\wiparse-gui\src\data_analysis\history.rs:90:12
+   |
+81 | impl Points {
+   | ----------- method in this implementation
+...
+90 |     pub fn clear(&mut self) {
+   |            ^^^^^
+
+warning: function `ensure_cache_dir` is never used
+  --> crates\wiparse-gui\src\data_extract_cache.rs:60:8
+   |
+60 | pub fn ensure_cache_dir() -> std::io::Result<PathBuf> {
+   |        ^^^^^^^^^^^^^^^^
+
+warning: function `save_wida` is never used
+   --> crates\wiparse-gui\src\data_extract_cache.rs:128:8
+    |
+128 | pub fn save_wida(path: &Path, payload: &WidaPayload) -> Result<(), String> {
+    |        ^^^^^^^^^
+
+warning: function `save_wida_with_progress` is never used
+   --> crates\wiparse-gui\src\data_extract_cache.rs:132:8
+    |
+132 | pub fn save_wida_with_progress<F>(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `channel` is never read
+  --> crates\wiparse-gui\src\market_jobs.rs:39:9
+   |
+33 | pub struct CatalogRow {
+   |            ---------- field in this struct
+...
+39 |     pub channel: String,
+   |         ^^^^^^^
+   |
+   = note: `CatalogRow` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `entry` is never read
+   --> crates\wiparse-gui\src\test_tool.rs:125:5
+    |
+116 | struct PluginInfo {
+    |        ---------- field in this struct
+...
+125 |     entry: String,
+    |     ^^^^^
+    |
+    = note: `PluginInfo` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: method `status_tone` is never used
+   --> crates\wiparse-gui\src\test_tool.rs:504:12
+    |
+264 | impl TestToolPanel {
+    | ------------------ method in this implementation
+...
+504 |     pub fn status_tone(&self) -> crate::theme::StatusTone {
+    |            ^^^^^^^^^^^
+
+warning: method `report_waves` is never used
+    --> crates\wiparse-gui\src\waveform_analysis.rs:1998:8
+     |
+ 378 | impl WaveformAnalysisPanel {
+     | -------------------------- method in this implementation
+...
+1998 |     fn report_waves(&self, lanes: &[ProtocolReportLane]) -> Vec<ProtocolReportWave> {
+     |        ^^^^^^^^^^^^
+
+warning: function `thin_columns` is never used
+    --> crates\wiparse-gui\src\waveform_analysis.rs:5528:4
+     |
+5528 | fn thin_columns(columns: &[[f64; 4]], max_cols: usize) -> Vec<[f64; 4]> {
+     |    ^^^^^^^^^^^^
+
+warning: function `wave_overview_columns` is never used
+    --> crates\wiparse-gui\src\waveform_analysis.rs:5557:4
+     |
+5557 | fn wave_overview_columns(wave: &LoadedWave) -> Vec<[f64; 4]> {
+     |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `detail_windows` is never used
+    --> crates\wiparse-gui\src\waveform_analysis.rs:5568:4
+     |
+5568 | fn detail_windows(lanes: &[ProtocolReportLane]) -> Vec<(f64, f64)> {
+     |    ^^^^^^^^^^^^^^
+
+warning: unused return value of `Ui::button` that must be used
+   --> crates\wiparse-gui\src\theme.rs:839:78
+    |
+839 |                     egui::Layout::left_to_right(egui::Align::Center), |ui| { ui.button("button"); });
+    |                                                                              ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: You should check if the user clicked this with `if ui.button(…).clicked() { … } 
+    = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+839 |                     egui::Layout::left_to_right(egui::Align::Center), |ui| { let _ = ui.button("button"); });
+    |                                                                              +++++++
+
+warning: calls to `std::mem::drop` with a reference instead of an owned value does nothing
+    --> crates\wiparse-gui\src\test_tool.rs:3441:13
+     |
+3441 |             drop(job);
+     |             ^^^^^---^
+     |                  |
+     |                  argument has type `&mut RunningJob`
+     |
+     = note: `#[warn(dropping_references)]` on by default
+help: use `let _ = ...` to ignore the expression or result
+     |
+3441 -             drop(job);
+3441 +             let _ = job;
+     |
+
+warning: linker stdout: 正在创建库 D:\windlink\windlink\WiParse-R\target\debug\deps\wiparse_gui-7eac5e33b084ea9d.lib 和对象 D:\windlink\windlink\WiParse-R\target\debug\deps\wiparse_gui-7eac5e33b084ea9d.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `wiparse-gui` (bin "wiparse-gui" test) generated 96 warnings (run `cargo fix --bin "wiparse-gui" -p wiparse-gui --tests` to apply 23 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.57s
+     Running unittests src\main.rs (target\debug\deps\wiparse_gui-7eac5e33b084ea9d.exe)
+
+running 590 tests
+test ai::agent::tests::bounded_workers_report_busy_and_recover_after_completion ... ignored, intentionally saturates process-wide worker pool; run in isolation
+test ai::agent::tests::calculator_review_ignores_unrelated_binding_but_not_own_source_change ... ok
+test ai::agent::read_batch::tests::read_batch_pairs_every_id_in_order_without_model_roundtrip ... ok
+test ai::agent::read_batch::tests::invalid_member_rejects_entire_batch_before_dispatch ... ok
+test ai::agent::remediation_tests::background_run_completion_survives_ai_timeout_and_project_change_without_leaking_evidence ... ok
+test ai::agent::remediation_tests::unrelated_tool_changes_do_not_cancel_source_bound_work ... ok
+test ai::agent::report_view::tests::changing_report_clears_old_conversation_without_crossing_sources ... ok
+test ai::agent::tests::capture_routing_checks_the_capability_the_user_requested ... ok
+test ai::agent::tests::cancellation_and_host_commit_have_a_single_order ... ok
+test ai::agent::tests::changed_test_workspace_blocks_prepared_device_dispatch ... ok
+test ai::agent::tests::device_approval_is_required_and_rechecked_at_dispatch ... ok
+test ai::agent::tests::concurrent_sessions_cannot_share_or_reuse_device_confirmation ... ok
+test ai::agent::remediation_tests::cancelling_during_an_internal_poll_retains_original_dispatch_and_provider_change_clears_prompt_history ... ok
+test ai::agent::remediation_tests::historical_evidence_obeys_current_read_and_cross_tool_permissions ... ok
+test ai::agent::tests::dispatched_request_timeout_is_unknown_and_never_requeued ... ok
+test ai::agent::remediation_tests::bounded_results_keep_quality_units_and_continuation ... ok
+test ai::agent::tests::expired_confirmed_request_is_not_dispatched_or_reused ... ok
+test ai::agent::report_view::tests::report_review_stays_blocked_and_close_cancels_staged_request ... ok
+test ai::agent::tests::late_receipt_from_old_task_stays_out_of_current_workflow ... ok
+test ai::agent::tests::pending_approval_expires_without_dispatch_and_cannot_be_reused ... ok
+test ai::agent::tests::host_serial_transition_retires_old_model_history_and_workflow_evidence ... ok
+test ai::agent::tests::incompatible_recovery_preserves_draft_and_existing_task ... ok
+test ai::agent::tests::only_owned_test_identity_can_be_stopped ... ok
+test ai::agent::remediation_tests::evidence_survives_followups_and_cancelled_actions_are_audited ... ok
+test ai::agent::tests::reviewed_calculation_task_refuses_device_and_file_calls ... ok
+test ai::agent::tests::catalog_pages_preserve_arrays_and_oversize_results_hide_unsafe_cursors ... ok
+test ai::agent::tests::edited_recovery_draft_starts_new_task_and_releases_pending_selection ... ok
+test ai::agent::tests::queue_ack_is_not_evidence_and_internal_completion_keeps_origin ... ok
+test ai::agent::tests::reviewed_outbound_is_cancelled_when_engineering_source_changes ... ok
+test ai::agent::tests::revoking_read_or_cross_tool_permission_blocks_prepared_request ... ok
+test ai::agent::tests::recovery_requires_the_host_dispatched_scan_receipt ... ok
+test ai::agent::tests::stale_source_cross_tool_and_forged_internal_requests_are_rejected ... ok
+test ai::agent::tests::test_workspace_change_cancels_pending_device_approval ... ok
+test ai::agent::tests::shared_evidence_recall_is_local_and_revoked_on_scope_change ... ok
+test ai::agent::tests::testing_lock_change_retires_model_context_and_observations ... ok
+test ai::agent::tests::evidence_payload_is_bounded_and_partial_is_explicit ... ok
+test ai::agent::tests::report_followup_preserves_task_until_source_or_permissions_change ... ok
+test ai::agent::tests::reviewed_standalone_engineering_request_omits_old_context ... ok
+test ai::agent::tests::reviewed_data_view_has_no_raw_samples_history_or_tools ... ok
+test ai::agent::tests::reviewed_calculation_task_snapshots_current_receipts_and_invalidates_on_context_change ... ok
+test ai::agent::tests::report_pages_survive_host_and_evidence_history_without_gaps ... ok
+test ai::agent::remediation_tests::truncated_but_valid_action_is_never_executed ... ok
+test ai::agent::remediation_tests::missing_input_with_open_goals_stops_in_native_and_json_modes ... ok
+test ai::agent::workflow_test::injected_report_cannot_execute_unconfirmed_engineering_device_action ... ok
+test ai::broker::tests::confirmation_binds_each_action_and_context_component ... ok
+test ai::agent::workflow_test::mock_provider_uses_local_evidence_then_finishes_without_uploading_raw_log ... ok
+test ai::execution::tests::adapter_matrix_structured_request_preserves_contract_and_explicit_paging ... ok
+test ai::execution::tests::immediate_and_worker_replies_have_the_same_lifecycle ... ok
+test ai::broker::tests::simultaneous_enqueue_is_bounded_and_never_silently_drops_a_request ... ok
+test ai::execution::tests::skill_frame_paging_preserves_pages_and_rejects_source_change ... ok
+test ai::execution::tests::skill_report_paging_preserves_lines_and_rejects_repeated_cursor ... ok
+test ai::agent::remediation_tests::shared_native_pair_returns_both_receipts_in_the_next_provider_request ... ok
+test ai::agent::tests::reviewed_workspace_uses_only_captured_ui_state_and_no_tools ... ok
+test ai::agent::tests::reviewed_calculator_only_uses_captured_snapshot_without_history_or_tools ... ok
+test ai::artifact::bundle_regression::portable_bundle_tracks_attachment_replacement_and_rename ... ok
+test ai::journal::tests::old_test_execution_skill_version_requires_new_task ... ok
+test ai::journal::tests::accepted_serial_stop_with_unconfirmed_release_still_requires_readback ... ok
+test ai::journal::tests::job_receipt_without_session_closes_only_its_own_command ... ok
+test ai::agent::workflow_test::mock_engineering_session_reads_adapter_matrix_and_runs_recipe ... ok
+test ai::journal::tests::failed_driver_receipt_closes_job_but_requires_readback_after_restart ... ok
+test ai::journal::tests::reopened_task_retains_goal_and_receipt_without_command_parameters ... ok
+test ai::execution::tests::skill_frame_paging_never_reports_complete_at_page_limit ... ok
+test ai::journal::tests::recovery_does_not_reuse_log_snapshot_from_an_older_or_unknown_epoch ... ok
+test ai::journal::tests::new_task_can_check_prior_writes_without_restoring_the_original_chat ... ok
+test ai::tests::ai_key_editor_preserves_replaces_and_clears_encrypted_secret ... ok
+test ai::journal::tests::unknown_serial_action_survives_restart_without_blocking_other_ports ... ok
+test ai::journal::tests::replay_and_archived_receipt_survive_reopen ... ok
+test ai::tests::resizable_window_exposes_eight_unnamed_edge_drag_nodes ... ok
+test ai::agent::tests::task_chat_renders_at_narrow_widths ... ok
+test ai::artifact::bundle_regression::archived_series_can_be_exported_without_a_live_dataset ... ok
+test ai::journal::tests::repeated_resume_preserves_unknown_writes_until_branch_readback ... ok
+test app::agent_host::broker_integration_tests::broker_rejects_expired_cancelled_and_changed_approvals_before_dispatch ... ok
+test app::agent_host::test_owner_guard_tests::test_control_requires_exact_task_and_current_run ... ok
+test app::tests::calculator_visibility_does_not_force_startup_tab ... ok
+test ai::tests::ai_conversation_transport_errors_and_connection_probe_keep_history_separate ... ok
+test app::agent_host::broker_integration_tests::broker_rejects_forged_project_source_and_control_before_review ... ok
+test app::tests::main_navigation_exposes_labels_to_accessibility ... ok
+test backend::events::tests::enforces_subscriber_limit ... ok
+test backend::events::tests::replays_events_after_requested_sequence ... ok
+test ai::agent::workflow_test::selected_report_skill_reads_demo_markdown_pages_before_completion ... ok
+test calculator::agent_tests::agent_uses_the_existing_numeric_engines ... ok
+test calculator::agent_tests::calculator_publishes_only_committed_changes_and_invalidates_permits ... ok
+test calculator::agent_tests::full_api_snapshot_tracks_changes_beyond_summary_excerpt ... ok
+test calculator::tests::bandpass_schematic_nodes_are_finite_and_ordered ... ok
+test calculator::tests::calculator_grid_uses_wider_cards_at_minimum_window_width ... ok
+test calculator::tests::calculator_input_columns_never_exceed_available_width ... ok
+test calculator::tests::computes_lc_resonance ... ok
+test calculator::tests::computes_logarithmic_decrement_q ... ok
+test calculator::tests::computes_valid_bandpass ... ok
+test calculator::tests::converts_rc_units_and_computes_response ... ok
+test calculator::tests::converts_supported_units ... ok
+test calculator::tests::crc_presets_match_standard_check_values ... ok
+test calculator::tests::input_grid_uses_available_half_column_width ... ok
+test calculator::tests::parse_number_accepts_hex_literals ... ok
+test calculator::tests::parses_flexible_hex_data ... ok
+test calculator::tests::q_exact_and_approx_behave_across_damping_ranges ... ok
+test calculator::tests::q_formula_text_contains_exact_and_approx_terms ... ok
+test backend::events::tests::reports_gap_when_requested_history_was_evicted ... ok
+test calculator::tests::rejects_invalid_bandpass ... ok
+test calculator::tests::rejects_invalid_custom_crc_parameters ... ok
+test calculator::tests::rc_settling_percentages_match_standard_values ... ok
+test calculator::tests::rc_step_response_handles_initial_final_and_negative_voltages ... ok
+test calculator::tests::rejects_invalid_lc_inputs ... ok
+test calculator::tests::rejects_invalid_q_inputs ... ok
+test calculator::tests::rejects_invalid_rc_inputs ... ok
+test calculator::tests::resonance_curve_clamps_low_frequency_and_includes_f0 ... ok
+test calculator::tests::resonance_curve_uses_linear_plus_minus_200_khz_bounds ... ok
+test calculator::tests::resonance_curve_is_finite_and_peaks_near_f0 ... ok
+test converter::tests::expression_constants_logs_and_nested_functions ... ok
+test converter::tests::expression_precedence_unary_power_and_scientific_notation ... ok
+test converter::tests::expression_reports_math_and_syntax_errors ... ok
+test converter::tests::radix_conversion_handles_common_arbitrary_and_negative_values ... ok
+test converter::tests::trig_and_inverse_trig_respect_angle_mode ... ok
+test converter::tests::utf8_bytes_roundtrip_ascii_and_chinese ... ok
+test data_analysis::agent_statistics_tests::all_points_are_reduced_once_and_missing_values_are_explicit ... ok
+test app::agent_host::broker_integration_tests::concurrent_expired_broker_requests_each_complete_once_without_dispatch ... ok
+test data_analysis::agent_statistics_tests::incremental_statistics_reject_replaced_sources ... ok
+test data_analysis::ai_dataset_flow_tests::live_cursor_update_invalidates_old_source_permit ... ok
+test app::agent_host::broker_integration_tests::demo_session_replacement_invalidates_pending_instrument_approval ... ok
+test ai::agent::workflow_test::selected_qi_skill_reads_decoded_isf_frames_before_completion ... ok
+test data_analysis::agent_statistics_tests::incremental_statistics_reject_middle_edit_and_equal_length_clone_replacement ... ok
+test app::tests::settings_keyboard_mode_keeps_menu_open_and_escape_closes_it ... ok
+test ai::report::tests::report_sidebar_fits_narrow_and_wide_viewports_in_both_themes ... ok
+test data_analysis::ai_dataset_flow_tests::threshold_change_invalidates_source_permit_but_unchanged_values_do_not ... ok
+test data_analysis::ai_extract::tests::current_file_without_time_produces_counts_and_keeps_gaps ... ok
+test ai::agent::tests::approval_card_controls_work_at_narrow_widths_and_scaled_ui_without_hardware ... ok
+test ai::artifact::tests::portable_report_contains_real_series_and_rejects_paths ... ok
+test data_analysis::history::identity_tests::changed_unsealed_tail_is_rejected_even_at_same_length ... ok
+test data_analysis::history::identity_tests::equal_sized_replacement_is_not_the_original_block ... ok
+test data_analysis::history::identity_tests::imported_prefix_and_live_blocks_remain_ordered_across_snapshot_and_checkpoint ... ok
+test data_analysis::ai_dataset_flow_tests::absent_requested_field_cannot_be_marked_complete_by_provenance_count ... ok
+test ai::tests::ai_reply_markdown_is_readable_at_narrow_and_wide_sizes_without_network ... ok
+test app::agent_host::broker_integration_tests::expired_broker_request_does_not_block_next_demo_action ... ok
+test data_analysis::ai_dataset_flow_tests::actual_local_rows_not_model_summary_are_imported_with_physical_units ... ok
+test data_analysis::history::identity_tests::shared_live_tail_stays_stable_across_append_and_seal ... ok
+test data_analysis::live_history_tests::full_recent_and_manual_views_with_sparse_data ... ok
+test data_analysis::history::identity_tests::original_block_is_accepted_after_new_tail_is_appended ... ok
+test data_analysis::history::identity_tests::original_tail_remains_valid_after_becoming_a_sealed_block ... ok
+test data_analysis::live_history_tests::serial_generation_and_fifo_gaps_begin_separate_sessions ... ok
+test data_analysis::remediation_snapshot_tests::empty_curves_are_not_complete_measurements ... ok
+test data_analysis::ai_dataset_flow_tests::sparse_sources_count_actual_series_and_overflow_keeps_previous_view ... ok
+test data_analysis::remediation_snapshot_tests::cancelled_rebuild_is_quarantined_and_keeps_current_data ... ok
+test data_analysis::remediation_snapshot_tests::quarantined_cache_does_not_start_another_writer ... ok
+test data_analysis::remediation_snapshot_tests::old_checkpoint_error_does_not_modify_new_session ... ok
+test data_analysis::remediation_snapshot_tests::same_session_changed_series_quarantines_old_job ... ok
+test data_analysis::remediation_snapshot_tests::stale_worker_result_cannot_clear_new_view ... ok
+test data_analysis::reviewed_data::tests::frozen_curve_pages_are_bound_to_one_snapshot_and_append_is_excluded ... ok
+test data_analysis::reviewed_data::tests::separate_curves_keep_independent_windows_and_no_clock_claim ... ok
+test data_analysis::reviewed_data::tests::source_replacement_invalidates_and_loading_blocks_capture ... ok
+test data_analysis::reviewed_data::tests::large_unsealed_tail_is_shared_without_reducing_coverage ... ok
+test data_analysis::remediation_snapshot_tests::live_append_reallocation_does_not_change_snapshot_cutoff ... ok
+test data_analysis::ai_dataset_flow_tests::programmatic_import_invalidates_prior_source_permit ... ok
+test data_analysis::tests::file_and_live_extract_identical_rows_without_a_marker ... ok
+test data_analysis::tests::kind_mapping_smoke ... ok
+test data_analysis::tests::publication_changes_invalidate_permits_and_unchanged_publication_does_not ... ok
+test data_analysis::tests::published_catalog_pages_keep_the_same_immutable_boundary ... ok
+test data_analysis::history::identity_tests::large_unsealed_clone_shares_storage_and_preserves_fixed_cutoff ... ok
+test data_analysis::tests::review_snapshot_excludes_external_data_and_old_permit_expires ... ok
+test data_analysis::tests::first_match_only_per_frame ... ok
+test data_analysis::tests::rejects_mid_token_filter ... ok
+test instrument_control::agent_capability_regressions::mismatched_kind_and_nonexistent_channels_never_enter_device_queue ... ok
+test data_analysis::tests::scientific_number ... ok
+test data_analysis::tests::separate_data_panel_instances_have_distinct_source_identity ... ok
+test data_analysis::tests::requires_whitespace_after_filter ... ok
+test instrument_control::agent_commands::tests::readback_confirmation_requires_valid_observation_and_measurement ... ok
+test data_analysis::tests::split_and_extract_basic ... ok
+test instrument_control::agent_capture_regression::ai_capture_waits_for_actual_demo_screenshot_completion ... ok
+test data_analysis::ai_extract::tests::extraction_status_and_source_bound_dataset ... ok
+test instrument_control::ai_job_history_tests::demo_screenshot_passes_the_real_image_decoder ... ok
+test instrument_control::ai_job_history_tests::completion_query_survives_test_notification_drain_and_stays_bounded ... ok
+test instrument_control::layout_audit::lost_session_cleanup_does_not_remove_other_instruments ... ok
+test data_analysis::tests::file_catalog_is_paged_independently_of_plot_rules_and_survives_reparse ... ok
+test instrument_control::layout_audit::usb_hotplug_releases_old_session_and_scan_preserves_healthy_session ... ok
+test instrument_control::agent_commands::tests::reconnect_with_a_new_device_id_does_not_resubmit_a_scope_single ... ok
+test instrument_control::secure_output::tests::cancelled_before_write_does_not_create_an_artifact ... ok
+test instrument_control::agent_commands::tests::completed_failed_and_lost_demo_receipts_keep_distinct_audit_states ... ok
+test data_analysis::ai_dataset_flow_tests::loading_file_keeps_its_worker_and_ai_plot ... ok
+test ai::agent::workflow_test::selected_log_skill_uses_real_file_and_host_before_completing_plan ... ok
+test instrument_control::secure_output::tests::preserves_native_bytes_and_rejects_path_like_extensions ... ok
+test instrument_control::summary_publication_tests::agent_receipt_requires_current_session_identity ... ok
+test instrument_control::agent_commands::tests::restart_keeps_unknown_writes_and_old_receipts_cannot_clear_new_dispatches ... ok
+test data_analysis::ai_dataset_flow_tests::serial_timeline_plots_four_named_fields_and_reports_absent_values ... ok
+test instrument_control::summary_publication_tests::inventory_invalidation_cannot_be_undone_by_restoring_same_values ... ok
+test instrument_control::summary_publication_tests::internal_busy_and_selection_changes_invalidate_inventory ... ok
+test instrument_control::summary_publication_tests::instrument_receipt_invalidates_prior_source_permit ... FAILED
+test instrument_control::summary_publication_tests::inventory_is_published_on_demand_and_only_changed_values_invalidate ... ok
+test instrument_control::summary_publication_tests::published_instrument_summary_changes_only_on_commit ... ok
+test instrument_control::waveform_pipeline::tests::waveform_source_disconnected_result_does_not_resurrect_preview ... ok
+test instrument_control::waveform_pipeline::tests::waveform_source_million_point_ui_handoff_benchmark ... ignored, performance fixture: run explicitly with --ignored --nocapture
+test ai::tests::ai_window_layout_and_provider_switch_never_send_requests ... ok
+test instrument_control::waveform_pipeline::tests::waveform_source_malformed_data_can_be_saved_natively_and_reports_parse_error ... ok
+test instrument_control::waveform_pipeline::tests::cancelled_ai_source_does_not_begin_processing_or_save ... ok
+test instrument_control::secure_output::tests::exclusive_creation_keeps_existing_evidence_and_holds_directory_identity ... ok
+test instrument_control::agent_commands::tests::concurrent_same_operation_has_one_owner_and_old_receipts_cannot_release_it ... ok
+test instrument_control::layout_audit::source_setpoints_require_apply_and_do_not_enable_output ... ok
+test instrument_control::waveform_pipeline::tests::waveform_source_processing_is_bounded_and_does_not_block_instrument_commands ... ok
+test instrument_control::waveform_pipeline::tests::waveform_source_save_releases_other_channels_and_keeps_only_preview_samples ... ok
+test instrument_control::waveform_pipeline::tests::waveform_source_save_completion_and_errors_release_admission_gate ... ok
+test instrument_control::waveform_pipeline::tests::secure_multichannel_csv_reports_derivation_and_rejects_partial_conversion ... ok
+Junction created for C:\Users\ROYZHA~1\AppData\Local\Temp\.tmpMYH9KF\projects\project-1 <<===>> C:\Users\ROYZHA~1\AppData\Local\Temp\.tmpRaLJVm
+test data_analysis::ai_dataset_flow_tests::live_destination_and_malformed_rows_preserve_previous_curves ... ok
+test instrument_control::secure_output::tests::project_reparse_point_cannot_redirect_automatic_evidence ... ok
+test instrument_control::workbench::design::geometry_tests::parameter_editors_share_columns_and_actions_form_equal_rows ... ok
+test instrument_control::workbench::channels::tests::all_supported_channel_cards_are_aligned_without_selection_or_commands ... ok
+test instrument_control::workbench::channels::tests::source_dashboard_exposes_acquisition_export_and_maintenance_without_tabs ... ok
+test instrument_control::workbench::scope_layout::tests::compact_header_switch_and_common_trigger_keep_their_command_targets ... ok
+test instrument_control::workbench::tests::a_device_failure_does_not_contaminate_other_devices ... ok
+test instrument_control::workbench::tests::clearing_one_instrument_preserves_other_instrument_history ... ok
+test instrument_control::workbench::flat::workspace_geometry_tests::task_anchor_scrolls_forms_without_moving_results_or_sending_commands ... ok
+test instrument_control::workbench::tests::capture_readouts_are_complete_sorted_and_single_line ... ok
+test instrument_control::workbench::flat::workspace_geometry_tests::short_workspaces_do_not_expand_beyond_the_visible_height ... ok
+test instrument_control::workbench::tests::normal_mode_overview_is_available_without_simulated_devices ... ok
+test instrument_control::workbench::tests::dmm_function_change_does_not_display_an_old_voltage_as_resistance ... ok
+test log_tab::ai_navigation_tests::navigation_search_jump_preserves_capture_and_rejects_stale_or_missing_rows ... ok
+test instrument_control::workbench::channels::tests::source_channels_share_half_width_beside_trend ... ok
+test log_tab::ai_scope_tests::selected_text_for_local_processing_is_not_truncated_to_a_prompt_budget ... ok
+test log_tab::tests::apply_filter_does_not_open_results_panel_until_list_all ... ok
+test log_tab::tests::apply_filter_resets_current_hit_when_query_changes ... ok
+test log_tab::tests::apply_filter_keeps_current_hit_when_query_unchanged ... ok
+test log_tab::tests::clear_display_drops_selection_and_find_cursor ... ok
+test instrument_control::workbench::flat::workspace_geometry_tests::results_remain_beside_forms_and_rendering_never_sends_commands ... ok
+test log_tab::tests::debounce_clears_timer_when_draft_matches_applied ... ok
+test log_tab::tests::document_cursor_reports_line_and_column ... ok
+test log_tab::tests::document_find_in_lines_wraps_without_joining_the_file ... ok
+test log_tab::tests::document_find_wraps_and_tracks_unicode_characters ... ok
+test log_tab::tests::document_replace_all_supports_case_insensitive_matches ... ok
+test log_tab::tests::file_tab_opens_in_view_mode_by_default ... ok
+test log_tab::tests::find_jump_wraps_across_hits ... ok
+test log_tab::tests::live_append_does_not_reopen_closed_search_panel ... ok
+test log_tab::tests::live_front_eviction_shifts_selection_and_targets ... ok
+test instrument_control::workbench::tests::pending_numeric_edit_is_not_committed_into_a_different_channel ... ok
+test log_tab::tests::pending_file_preserves_committed_search_intent ... ok
+test log_tab::tests::search_prefill_requires_a_nonempty_current_selection ... ok
+test log_tab::tests::split_heights_never_exceed_available_space ... ok
+test log_tab::tests::stale_scan_result_is_discarded_and_closed_panel_stays_closed ... ok
+test log_tab::tests::tabs_have_independent_scroll_state_ids ... ok
+test instrument_control::workbench::tests::source_channel_cards_apply_setpoints_without_selecting_a_channel ... ok
+test log_tab::tests::paused_pane_keeps_filter_and_caret_context_while_live_api_advances ... ok
+test log_view::tests::click_below_last_line_is_outside_line_block ... ok
+test log_view::tests::copy_selection_and_current_line_use_caret_ranges ... ok
+test log_view::tests::double_click_word_range_covers_tokens ... ok
+test log_view::tests::frozen_column_is_anchored_to_viewport_coordinates ... ok
+test log_tab::tests::editing_commit_invalidates_guarded_source_snapshot ... ok
+test log_view::tests::highlight_ranges_merge_overlapping_matches ... ok
+test log_view::tests::jump_horizontal_offset_keeps_match_in_view ... ok
+test log_view::tests::line_editor_split_and_join_keep_caret ... ok
+test log_view::tests::line_editor_split_rescans_max_chars ... ok
+test ai::agent::workflow_test::charging_skill_requires_log_events_and_sourced_waveform ... ok
+test log_view::tests::jump_offset_changes_only_vertical_position ... ok
+test instrument_control::waveform_pipeline::tests::waveform_source_pipeline_shares_all_channels_and_publishes_cached_metrics ... ok
+test log_view::tests::line_editor_preserves_windows_newlines ... ok
+test log_view::tests::search_result_selection_copies_exact_visible_characters ... ok
+test log_view::live_review_tests::upward_wheel_freezes_history_through_fifo_rollover_until_tail_button ... ok
+test log_view::tests::search_row_at_pos_includes_last_row_edge ... ok
+test log_view::tests::selection_columns_are_partial_at_both_ends ... ok
+test log_view::tests::timestamp_prefix_is_split_at_a_character_boundary ... ok
+test log_view::tests::visible_rows_are_bounded_and_include_overscan ... ok
+test plot::scope_columns::tests::analog_peak_is_drawn_at_sample_time_not_bucket_fraction ... ok
+test plot::scope_columns::tests::analog_sine_stays_one_polyline_without_ibeams ... ok
+test plot::scope_columns::tests::plot_bounds_clamp_empty_inverted_and_nan ... ok
+test plot::scope_columns::tests::dc_ramp_polyline_is_connected_not_dots ... ok
+test plot::scope_columns::tests::reversing_square_stays_one_polyline_without_ibeams ... ok
+test plot::scope_columns::tests::shallow_ramp_has_no_interior_ticks ... ok
+test plot::text_label::tests::chip_lane_sits_above_waveform_top ... ok
+test plot::text_label::theme_tests::chip_label_is_readable_on_both_actual_plot_canvases ... ok
+test serial_tool::ai_chat::agent_workflow_tests::capability_question_needs_no_log_scan_or_artificial_tool_call ... ok
+test serial_tool::ai_chat::agent_workflow_tests::continuation_requires_matching_scope_skills_and_control_cap ... ok
+test serial_tool::ai_chat::agent_workflow_tests::budget_summary_accepts_segmented_text_from_a_tool_free_provider ... ok
+test serial_tool::ai_chat::agent_workflow_tests::cancelled_native_and_json_replies_cannot_pollute_new_task ... ok
+test serial_tool::ai_chat::agent_workflow_tests::native_adapter_rejects_unknown_actions_and_requires_explicit_final_references ... ok
+test serial_tool::ai_chat::agent_workflow_tests::locked_test_control_catalog_exposes_only_owned_test_operations ... ok
+test instrument_control::workbench::scope_layout::tests::scope_cards_are_compact_and_preview_keeps_display_proportions ... ok
+test serial_tool::ai_chat::agent_workflow_tests::budget_boundary_preserves_evidence_and_never_dispatches_a_summary_action ... ok
+test serial_tool::ai_chat::agent_workflow_tests::delayed_native_and_json_control_calls_do_not_regain_revoked_grant ... ok
+test serial_tool::ai_chat::agent_workflow_tests::reviewed_serial_snapshot_survives_append_but_expires_on_clear ... ok
+test serial_tool::ai_chat::agent_workflow_tests::open_serial_goals_wait_for_real_input_without_scanning_or_repair ... ok
+test instrument_control::workbench::tests::dongle_i2c_buttons_apply_the_visible_endpoint_before_the_transaction ... ok
+test serial_tool::ai_chat::agent_workflow_tests::selected_scope_authorizes_reads_but_not_device_actions ... ok
+test serial_tool::ai_chat::alerts::long_line_regressions::numeric_and_keyword_alerts_at_long_line_tail_are_evaluated_before_excerpting ... ok
+test serial_tool::ai_chat::agent_workflow_tests::source_change_cancels_staged_outbound_request_before_review ... FAILED
+test serial_tool::ai_chat::agent_workflow_tests::followup_reuses_task_evidence_in_the_next_model_request ... ok
+test serial_tool::ai_chat::agent_workflow_tests::unadvertised_native_call_is_rejected_then_recovers_without_dispatch ... ok
+test instrument_control::workbench::channels::tests::every_channel_card_routes_apply_measure_output_and_protection_to_its_own_channel ... ok
+test log_tab::tests::live_toolbar_navigation_wraps_inside_available_width ... ok
+test serial_tool::ai_chat::library::tests::local_tools_reject_paths_and_malformed_continuations ... ok
+test serial_tool::ai_chat::library::tests::log_scope_consent_and_manual_only_are_checked_before_dispatch ... ok
+test serial_tool::ai_chat::library::tests::rejected_local_preview_preserves_manual_task_and_queue_state ... ok
+test serial_tool::ai_chat::live_eval::promptfoo_live_serial_session ... ignored, explicit paid model evaluation through tools/agent-eval
+test serial_tool::ai_chat::monitor_review::tests::math_rejects_division_by_zero_and_nonfinite_results ... ok
+test serial_tool::ai_chat::monitor_review::tests::search_uses_frozen_rows_and_reports_bounded_coverage ... ok
+test serial_tool::ai_chat::platform::reviewed_stop_handoff_tests::queued_stop_revocation_prevents_claim_and_closes_durable_intent ... ok
+test instrument_control::workbench::flat::workspace_geometry_tests::unified_device_pages_keep_header_tabs_and_export_previews ... ok
+test serial_tool::ai_chat::platform_tests::automatic_reply_does_not_enter_a_replacement_watch_on_same_port ... ok
+test serial_tool::ai_chat::platform_tests::broker_control_guard_rejects_scope_change_without_device_change ... ok
+test serial_tool::ai_chat::platform_tests::broker_guard_rejects_project_switch_even_if_device_is_unchanged ... ok
+test serial_tool::ai_chat::platform_tests::control_failure_text_distinguishes_declined_from_unknown_outcomes ... ok
+test serial_tool::ai_chat::platform_tests::delayed_automatic_model_reply_is_discarded_after_source_switch ... ok
+test serial_tool::ai_chat::platform_tests::failed_read_receipt_does_not_release_later_queued_device_action ... ok
+test serial_tool::ai_chat::platform_tests::late_automatic_broker_reply_cannot_cross_source_switch_or_consume_queue ... ok
+test serial_tool::ai_chat::platform_tests::ai_tool_loop_waits_for_completed_job_then_uses_actual_result ... ok
+test serial_tool::ai_chat::platform_tests::late_platform_reply_cannot_enter_replacement_task ... ok
+test serial_tool::ai_chat::platform_tests::local_alerts_keep_running_when_ai_is_paused_or_service_changes ... ok
+test serial_tool::ai_chat::platform_tests::local_numeric_alerts_are_immediate_bounded_and_never_product_verdicts ... ok
+test serial_tool::ai_chat::platform_tests::platform_registry_rejects_raw_commands_arbitrary_files_and_extra_fields ... ok
+test serial_tool::ai_chat::platform_tests::queued_controls_are_fenced_and_cancelled_before_dispatch ... ok
+test serial_tool::ai_chat::platform_tests::reviewed_automatic_device_action_is_rejected_before_dispatch ... ok
+test serial_tool::ai_chat::platform_tests::revoked_automatic_model_request_never_regains_control_after_reenable ... ok
+test serial_tool::ai_chat::agent_workflow_tests::native_timeline_then_standard_markdown_finishes_one_task_and_exposes_real_chart ... ok
+test ai::agent::workflow_test::selected_wave_skill_measures_wfm_before_completing_plan ... FAILED
+test serial_tool::ai_chat::platform_tests::revoked_dispatched_control_ignores_late_success_and_requires_readback ... ok
+test serial_tool::ai_chat::platform_tests::mock_serial_session_reads_adapter_matrix_through_real_broker_and_runs_recipe ... ok
+test serial_tool::ai_chat::platform_tests::serial_report_skill_reads_demo_markdown_through_broker_and_finishes ... FAILED
+test serial_tool::ai_chat::platform_tests::test_control_permission_does_not_unlock_instrument_control ... ok
+test serial_tool::ai_chat::platform_tests::serial_wave_skill_measures_wfm_through_api_bridge_and_finishes ... ok
+test serial_tool::ai_chat::platform_tests::three_cloud_failures_pause_only_ai_and_keep_local_alerts ... ok
+test serial_tool::ai_chat::protocol::recovery_tests::retry_matches_transport_and_preserves_json_execution ... ok
+test serial_tool::ai_chat::protocol::recovery_tests::explanations_and_displayed_calls_are_distinct ... ok
+test serial_tool::ai_chat::queue_tests::busy_send_button_really_enqueues_through_the_host_ui ... ok
+test serial_tool::ai_chat::queue_tests::closing_chat_permanently_revokes_queued_control_grants ... ok
+test serial_tool::ai_chat::platform_tests::serial_qi_skill_reads_decoded_isf_through_broker_and_finishes ... ok
+test serial_tool::ai_chat::queue_tests::failed_queued_start_preserves_both_message_and_current_draft ... ok
+test serial_tool::ai_chat::queue_tests::edited_serial_recovery_starts_new_task_and_releases_pending_selection ... ok
+test serial_tool::ai_chat::queue_tests::incompatible_recovery_keeps_serial_draft_and_recovery ... ok
+test serial_tool::ai_chat::queue_tests::changed_source_pauses_queue_without_sending_or_losing_draft ... ok
+test serial_tool::ai_chat::queue_tests::older_queued_messages_never_gain_new_device_permission_and_queue_is_bounded ... ok
+test serial_tool::ai_chat::queue_tests::messages_submitted_during_analysis_run_fifo_and_accumulate_reported_usage ... ok
+test serial_tool::ai_chat::queue_tests::queued_library_request_is_paused_when_directory_changes ... ok
+test data_analysis::live_history_tests::eight_series_preserve_early_spikes_across_checkpoint_and_resume ... ok
+test serial_tool::ai_chat::queue_tests::full_queue_feedback_is_visible_and_keeps_draft_without_failing_active_task ... ok
+test serial_tool::ai_chat::queue_tests::revocation_invalidates_deferred_control_even_after_reenable ... ok
+test serial_tool::ai_chat::queue_tests::queued_question_waits_for_operator_clarification ... ok
+test serial_tool::ai_chat::queue_tests::queued_test_control_does_not_grant_device_control_and_revocation_is_permanent ... ok
+test serial_tool::ai_chat::responsiveness_tests::authorized_serial_stop_rejects_unconfirmed_log_instructions ... ok
+test serial_tool::ai_chat::responsiveness_tests::revoked_task_control_is_not_restored_by_reenabling_the_switch ... ok
+test serial_tool::ai_chat::responsiveness_tests::one_second_interval_is_valid_and_an_active_watch_can_be_reconfigured ... ok
+test serial_tool::ai_chat::responsiveness_tests::serial_start_tool_waits_for_actual_connection_before_returning_success ... ok
+test serial_tool::ai_chat::responsiveness_tests::serial_tools_require_permission_and_reject_other_ports_and_payloads ... ok
+test serial_tool::ai_chat::responsiveness_tests::slow_ai_requests_do_not_overlap_or_queue_missed_ticks ... ok
+test serial_tool::ai_chat::responsiveness_tests::untrusted_log_instruction_does_not_grant_serial_control ... ok
+test serial_tool::ai_chat::run::budget_tests::only_distinct_successful_reads_extend_the_budget ... ok
+test serial_tool::ai_chat::run::budget_tests::recovery_only_accepts_the_original_host_scan_and_complete_final_page ... ok
+test serial_tool::ai_chat::run::budget_tests::rejected_dispatches_stop_without_spending_successful_read_allowance ... ok
+test serial_tool::ai_chat::run::owned_test_followup_tests::recognizes_explicit_run_control_without_capturing_new_tasks ... ok
+test serial_tool::ai_chat::responsiveness_tests::serial_stop_result_drives_the_next_instrument_tool_without_a_stale_binding ... ok
+test serial_tool::ai_chat::responsiveness_tests::specifically_confirmed_serial_stop_uses_the_host_path_once ... ok
+test serial_tool::ai_chat::tests::automatic_confirmed_control_also_requires_a_durable_intent ... ok
+test serial_tool::ai_chat::tests::ai_start_waits_for_actual_tcp_open_and_watch_captures_new_data ... ok
+test serial_tool::ai_chat::tests::automatic_control_approval_expires_when_monitor_instance_is_replaced ... ok
+test serial_tool::ai_chat::tests::automatic_rejection_does_not_consume_manual_evidence_id ... ok
+test serial_tool::ai_chat::tests::background_error_preserves_manual_run_and_history ... ok
+test serial_tool::ai_chat::tests::background_failure_preserves_manual_status_and_marks_background_entry ... ok
+test serial_tool::ai_chat::tests::automation_permissions_test_lock_and_offline_sources_are_enforced ... ok
+test serial_tool::ai_chat::tests::cancelling_automatic_control_preserves_manual_task_and_local_alerts ... ok
+test serial_tool::ai_chat::tests::cancelling_replaced_watch_approval_preserves_new_watch ... ok
+test serial_tool::ai_chat::tests::changing_serial_scope_retires_monitor_authority ... ok
+test serial_tool::ai_chat::tests::confirmed_platform_permit_is_exact_and_one_use ... ok
+test serial_tool::ai_chat::agent_workflow_tests::one_user_request_acquires_evidence_repairs_stalling_and_finishes_without_confirmation ... ok
+test serial_tool::ai_chat::tests::cancelling_a_dispatched_control_preserves_an_unknown_outcome ... ok
+test serial_tool::ai_chat::platform_tests::serial_charging_skill_uses_log_events_and_sourced_waveform ... ok
+test serial_tool::ai_chat::tests::confirmed_stop_of_inactive_serial_port_is_not_reported_as_dispatched ... ok
+test serial_tool::ai_chat::tests::control_approval_is_bound_to_source_skill_task_permission_and_deadline ... ok
+test serial_tool::ai_chat::tests::detached_chat_and_host_placeholder_share_monitor_invalidation ... ok
+test serial_tool::ai_chat::tests::disconnected_completion_is_unknown_and_cannot_impersonate_another_session ... ok
+test serial_tool::ai_chat::tests::failed_intent_journal_prevents_broker_enqueue ... ok
+test serial_tool::ai_chat::tests::failed_intent_journal_blocks_serial_dispatch ... ok
+test serial_tool::ai_chat::tests::monitor_context_changes_retire_lease_without_invalidating_unchanged_context ... ok
+test serial_tool::ai_chat::tests::failed_monitor_request_restores_checkpoint_without_losing_new_samples ... ok
+test serial_tool::ai_chat::tests::monitor_reply_requires_a_real_final_result_before_commit ... ok
+test serial_tool::ai_chat::tests::monitor_review_permit_cannot_survive_overlapping_update ... ok
+test serial_tool::ai_chat::tests::host_source_transition_retires_old_evidence_and_native_context ... ok
+test serial_tool::ai_chat::tests::invalid_queued_tool_stops_batch_before_later_device_action ... ok
+test serial_tool::ai_chat::tests::monitor_lease_retires_on_watch_creation_and_control_revocation ... ok
+test serial_tool::ai_chat::tests::monitor_transaction_survives_tool_round_and_restores_at_most_once ... ok
+test serial_tool::ai_chat::tests::monitoring_changes_require_confirmation_but_not_a_device_grant ... ok
+test serial_tool::ai_chat::tests::observed_serial_error_invalidates_prior_session_approval ... ok
+test serial_tool::ai_chat::tests::pending_connection_does_not_report_confirmed_after_transport_error ... ok
+test serial_tool::ai_chat::tests::protocol_rejects_unknown_arguments_and_conflicting_actions ... ok
+test serial_tool::ai_chat::tests::primary_stop_signals_worker_and_retires_reviewed_session ... ok
+test serial_tool::ai_chat::tests::project_switch_stops_monitoring_and_resets_permission ... ok
+test serial_tool::ai_chat::tests::queued_serial_state_change_invalidates_monitor_reply_and_tool_sources_before_drain ... ok
+test serial_tool::ai_chat::tests::replaced_watch_never_inherits_old_inflight_statistics_on_rejection ... ok
+test serial_tool::ai_chat::tests::reviewed_automatic_call_rejects_unprotected_tool_before_dispatch ... ok
+test serial_tool::ai_chat::tests::queued_model_control_waits_for_its_own_confirmation ... ok
+test serial_tool::ai_chat::tests::reviewed_monitor_cannot_prepare_request_after_authorization_revoked ... ok
+test serial_tool::ai_chat::tests::reviewed_monitor_window_is_frozen_and_exposes_coverage ... ok
+test serial_tool::ai_chat::tests::reviewed_automatic_monitor_stops_before_creating_unprotected_request ... FAILED
+test serial_tool::ai_chat::tests::reviewed_monitor_preparation_rejects_stale_authority_and_unleased_tool_results ... ok
+test serial_tool::ai_chat::tests::reviewed_monitor_read_only_request_and_continuation_use_frozen_sample ... ok
+test serial_tool::ai_chat::tests::revocation_records_unexecuted_approval_and_pauses_queue ... ok
+test serial_tool::ai_chat::tests::serial_completion_survives_closed_log_receiver_and_carries_session_command ... ok
+test serial_tool::ai_chat::tests::reviewed_standalone_question_contains_no_log_and_has_source_permit ... ok
+test serial_tool::ai_chat::tests::revoking_automatic_pending_control_restores_watch_and_keeps_local_alerts ... ok
+test serial_tool::ai_chat::tests::serial_control_permit_rejects_changed_scope_even_with_same_device ... ok
+test serial_tool::ai_chat::tests::serial_error_event_blocks_review_until_host_publishes_error_state ... ok
+test serial_tool::ai_chat::agent_workflow_tests::plan_read_batch_recall_and_completion_check_finish_without_user_orchestration ... ok
+test serial_tool::ai_chat::tests::serial_worker_unwind_blocks_review_until_stopped_is_published ... ok
+test serial_tool::ai_chat::tests::shared_test_ownership_blocks_controls_before_next_ui_sync ... ok
+test serial_tool::ai_chat::tests::snapshots_are_bounded_and_clear_changes_source_identity ... ok
+test serial_tool::ai_chat::tests::serial_confirmation_cannot_follow_a_session_or_authorization_change ... ok
+test serial_tool::ai_chat::tests::stale_manual_review_does_not_block_independent_local_preview ... ok
+test serial_tool::ai_chat::tests::stale_monitor_action_drops_old_checkpoint_without_replaying_it ... ok
+test serial_tool::ai_chat::tests::stale_dispatched_control_stops_remaining_actions_and_pauses_queue ... FAILED
+test serial_tool::ai_chat::tests::source_switch_keeps_unknown_device_receipt_visible_but_out_of_new_context ... ok
+test serial_tool::ai_chat::tests::unexpected_serial_event_channel_loss_fails_closed ... ok
+test serial_tool::ai_chat::tests::shared_ai_transport_decodes_reply_and_records_actual_stop_result ... ok
+test serial_tool::ai_chat::view::confirmation_text_tests::numeric_limits_are_readable_and_empty_state_is_explicit ... ok
+test serial_tool::ai_chat::agent_workflow_tests::repeated_native_stalls_switch_this_task_to_json_and_keep_scan_result ... ok
+test serial_tool::ai_chat::tests::stale_watch_cleanup_never_discards_another_watch_transaction ... ok
+test serial_tool::ai_chat::view_tests::ai_divider_drag_changes_panel_width ... ok
+test serial_tool::ai_chat::tests::stale_requests_cancel_before_result_and_late_permission_cannot_upgrade_request ... ok
+test serial_tool::ai_chat::library::tests::charging_fixture_scan_preserves_source_and_full_coverage ... ok
+test serial_tool::ai_chat::view_tests::analyse_and_monitor_views_keep_their_own_results_and_suggestions_only_fill_draft ... ok
+test serial_tool::ai_chat::view_tests::data_scope_never_falls_back_to_recent_logs_for_empty_selection ... ok
+test serial_tool::ai_chat::library::tests::current_disk_scope_ignores_other_tabs_and_directory_and_scans_past_100_lines ... ok
+test serial_tool::ai_chat::view_tests::serial_control_checkbox_is_keyboard_operable_after_pointer_selection ... ok
+test serial_tool::ai_chat::library::tests::default_current_and_explicit_range_scan_all_retained_rows_without_raw_upload ... ok
+test serial_tool::ai_chat::library::tests::local_preview_is_read_only_and_does_not_require_an_ai_provider ... ok
+test serial_tool::ai_chat::view_tests::serial_skill_and_control_are_reachable_using_only_keyboard ... ok
+test serial_tool::dispatch_gate::tests::altered_command_consumes_approval_and_expired_confirmation_fails ... ok
+test serial_tool::dispatch_gate::tests::changed_service_configuration_revokes_worker_claim_even_after_restore ... ok
+test serial_tool::ai_chat::view_tests::source_change_clears_old_context_and_control_authorization ... FAILED
+test serial_tool::ai_chat::library::tests::local_preview_keeps_manual_task_budget_and_evidence_intact ... ok
+test serial_tool::dispatch_gate::tests::changed_source_revokes_confirmation_and_queued_command ... ok
+test serial_tool::ai_chat::view_tests::serial_skills_menu_keyboard_reaches_and_toggles_skill ... ok
+test serial_tool::dispatch_gate::tests::claimed_operation_loses_authority_and_cannot_be_replayed ... ok
+test serial_tool::dispatch_gate::tests::claimed_cancel_and_late_success_remain_unknown ... ok
+test serial_tool::dispatch_gate::tests::reviewed_stop_claim_checks_both_sources_before_setting_flag ... ok
+test serial_tool::dispatch_gate::tests::reviewed_stop_claim_sets_flag_only_once_with_current_sources ... ok
+test serial_tool::dispatch_gate::tests::queued_confirmation_expiry_prevents_worker_claim ... ok
+test serial_tool::tests::active_tab_scrolls_into_the_visible_lane ... ok
+test serial_tool::tests::live_capture_empty_detects_bom_only_and_memory_lines ... ok
+test serial_tool::tests::live_timestamp_uses_canonical_millisecond_separator ... ok
+test serial_tool::tests::existing_log_file_is_renamed ... ok
+test serial_tool::tests::log_lines_get_resolves_leased_port_instead_of_tab_zero ... ok
+test serial_tool::tests::log_name_validation_rejects_windows_reserved_characters ... ok
+test serial_tool::tests::mouse_wheel_tab_switching_stops_at_ends ... ok
+test serial_tool::tests::open_file_identity_accepts_equivalent_windows_paths ... ok
+test serial_tool::tests::rename_when_empty_moves_file_when_nonempty_keeps_old ... ok
+test test_report::ai_read::attachment_tests::attachment_must_be_a_rendered_link ... ok
+test serial_tool::ai_chat::view_tests::local_library_popup_keeps_preview_accessible_inside_small_windows ... ok
+test test_report::ai_read::attachment_tests::linked_adapter_matrix_feeds_recipe_and_shares_paging_source_version ... FAILED
+test test_report::ai_read::attachment_tests::linked_attachment_requires_its_own_cursor_and_detects_replacement ... FAILED
+test test_report::ai_read::large_parent::late_link_is_resolved_while_code_is_excluded ... ok
+test serial_tool::ai_chat::tests::ai_local_log_tool_scans_full_files_and_sends_only_one_bounded_summary ... ok
+test test_report::ai_read::paging::table_checks::phase_filtered_difference_retains_counts_across_pages ... ok
+test serial_tool::ai_chat::view_tests::chat_typography_and_activity_match_a_narrow_conversation_not_a_report ... ok
+test test_report::ai_read::paging::tests::report_and_attachment_cursors_are_not_interchangeable ... ok
+test test_report::ai_read::paging::tests::demo_report_cursor_pages_preserve_all_original_rows ... ok
+test test_report::ai_read::reviewed_preview::tests::file_backed_preview_is_never_authorized_by_its_in_process_lease ... ok
+test test_report::ai_read::reviewed_preview::tests::pages_preserve_utf8_fragments_and_never_claim_file_or_image_coverage ... ok
+test test_report::ai_read::tests::read_rejects_outside_project_and_unknown_index_id ... FAILED
+test test_report::ai_read::tests::report_long_line_fragments_roundtrip_unicode ... ok
+test serial_tool::ai_chat::timeline_view::tests::real_plot_and_quality_text_fit_narrow_light_and_dark_panes ... ok
+test test_report::ai_read::tests::report_pages_preserve_original_lines_and_cancel ... ok
+test test_report::agent_report_regressions::full_report_search_covers_beyond_preview_and_keeps_distant_match ... ok
+test test_report::inline_images::tests::report_inline_images_prefer_explicit_images_and_keep_security_jail ... ok
+test test_report::inline_images::tests::report_inline_images_upgrade_legacy_links_without_changing_wave_or_code ... ok
+test test_report::ai_read::paging::tests::cursor_pages_reach_the_tail_of_a_32_mib_line_and_reject_replacement ... ok
+test test_report::mermaid::tests::disconnected_render_worker_does_not_leave_permanent_spinner ... ok
+test serial_tool::ai_chat::queue_tests::queued_composer_keeps_tabs_buttons_and_input_visible_in_both_themes ... ok
+test test_report::mermaid::tests::saturated_renderer_stays_pending_and_resumes_after_slots_release ... ignored, intentionally saturates process-wide renderer slots; run in isolation
+test test_report::mermaid::tests::tall_diagram_reserves_its_height_near_end_of_chat_viewport ... ok
+test test_report::tests::changing_report_selection_invalidates_shared_source_permit ... ok
+test serial_tool::sidebar::tests::actions_fit_narrow_cards_and_preserve_enabled_state ... ok
+test test_report::tests::file_ref_from_backtick_windows_path ... ok
+test test_report::tests::file_ref_ignores_plain_words ... ok
+test test_report::tests::data_preview_back_button_returns_to_markdown ... ok
+test test_report::tests::isf_opens_as_wave ... ok
+test test_report::tests::markdown_destinations_and_escaped_table_cells ... ok
+test test_report::tests::markdown_stays_in_report ... ok
+test test_report::tests::md_absolute_wave_under_artifacts ... ok
+test test_report::tests::md_image_cannot_escape_artifacts ... ok
+test test_report::tests::md_image_from_reports_can_reach_sibling_shots ... ok
+test test_report::tests::md_image_same_dir_still_works ... ok
+test test_report::tests::png_never_jumps_to_wave ... ok
+test test_report::tests::prepared_report_commits_failure_as_a_coherent_state ... ok
+test test_report::tests::prepared_report_rejects_selection_aba_and_project_changes ... ok
+test test_report::tests::preview_replacement_invalidates_permit_and_selection_clears_old_preview ... ok
+test test_report::tests::preview_search_does_not_claim_complete_file_coverage ... ok
+test test_report::tests::replacing_preview_at_same_path_changes_agent_binding ... ok
+test test_report::tests::generated_report_renders_across_window_sizes ... ok
+test test_report::tests::report_browser_only_shows_markdown_and_selects_runs_with_one_click ... ok
+test test_report::tests::report_summary_fields_invalidate_permit_and_project_switch_drops_old_preview ... ok
+test test_report::tests::result_stamp_drops_year ... ok
+test test_report::tests::same_minute_runs_show_seconds ... ok
+test test_report::tests::same_second_runs_show_index ... ok
+test test_report::tests::short_label_strips_prefix_and_stamp ... ok
+test test_report::tests::stale_index_never_replaces_current_project_or_selection ... ok
+test test_report::tests::test_display_uses_plugin_report_name_not_stamp_or_title ... ok
+test test_report::tests::txt_follows_output_group ... ok
+test test_report::tests::unchanged_index_preserves_version_but_changed_index_invalidates_prepared_open ... ok
+test test_report::tests::wave_and_image_open_commit_their_own_selection_and_preview ... ok
+test test_report::tests::report_group_json_is_displayed_as_text_and_images_as_images ... ok
+test test_report::inline_images::tests::report_inline_images_long_reports_do_not_decode_every_screenshot_at_once ... ok
+test test_tool::layout_regressions::runner_sections_and_parameter_controls_never_overlap ... ok
+test test_report::tests::wrapped_body_and_table_links_follow_exact_target_without_ctrl ... ok
+test test_tool::line_trigger_editor::tests::line_trigger_editor_preserves_aliases_extensions_and_envelope ... ok
+test test_report::inline_images::tests::report_inline_images_render_real_texture_and_click_does_not_navigate ... ok
+test test_tool::line_trigger_editor::tests::line_trigger_editor_validates_drafts_and_slug_collisions ... ok
+test test_tool::line_trigger_editor::tests::line_trigger_editor_string_example_and_advanced_click ... ok
+test test_tool::line_trigger_editor::tests::line_trigger_editor_pointer_add_type_reorder_delete_roundtrip ... ok
+test test_tool::summary_publication_tests::published_testing_summary_changes_only_on_commit ... ok
+test test_tool::summary_publication_tests::test_start_attempt_invalidates_monitor_source_without_waiting_for_tick ... ok
+test test_tool::visual_snapshot::cmsis_dap_runner_renders_without_header_case_collision ... ok
+test test_tool::summary_publication_tests::workspace_review_is_ui_only_and_invalidates_on_publication ... ok
+test test_report::mermaid::tests::chat_diagram_updates_and_failure_keeps_last_valid_texture ... ok
+test test_report::ai_read::paging::table_checks::entire_large_table_including_last_record_is_checked ... ok
+test test_tool::workspace::agent_draft_regressions::control_reply_requires_both_original_run_identities ... ok
+test test_tool::workspace::agent_draft_regressions::distinct_apply_cancellation_blocks_validated_draft ... ok
+test test_tool::workspace::agent_draft_regressions::validated_draft_cannot_apply_after_cancellation ... ok
+test test_tool::visual_snapshot::serial_simple_complete_form_uses_compact_rows_in_host_layout ... ok
+test test_tool::workspace::agent_draft_regressions::validated_draft_cannot_apply_after_revision_change ... ok
+test test_tool::workspace::actual_item_count_is_not_capacity ... ok
+test test_tool::workspace::chrome::tests::fpga_chrome_pause_resume_slot_and_dirty_execution_gate ... ok
+test test_tool::workspace::form_layout::tests::real_rule_editor_creates_and_switches_types_with_pointer_events ... ignored, requires the current real plugin UI fixture
+test test_tool::workspace::form_layout::tests::rule_summary_uses_business_type_and_bounds_without_raw_discriminator ... ok
+test test_tool::workspace::form_layout::tests::wildcard_metadata_and_paint_preserve_invalid_and_absent_values ... ok
+test test_tool::workspace::fpga_plugin_workspace_visual_verification ... ignored, requires generated FPGA simulation workspace fixture
+test test_tool::workspace::matrix_retains_historical_verdict_but_discloses_changed_configuration ... ok
+test test_tool::workspace::portable_hub_paths_are_absolute_before_runner_changes_working_directory ... ok
+test test_tool::workspace::project_matrix::draft_capacity_duplicate_id_and_late_result_are_rejected ... ok
+test test_tool::workspace::project_matrix::drafts_are_immediate_survive_reload_and_failures_then_save_or_discard ... ok
+test test_tool::workspace::project_matrix::external_workspace_write_invalidates_binding_and_blocks_preflight_until_refresh ... ok
+test test_tool::workspace::chrome::tests::fpga_chrome_pointer_checkbox_and_editor_are_independent ... ok
+test serial_tool::ai_chat::tests::serial_ai_pane_renders_responsively_with_markdown_and_no_split_controls ... ok
+test test_tool::workspace::project_matrix::stale_config_reply_does_not_overwrite_new_editor_contents ... ok
+test test_tool::workspace::project_matrix::repository_drives_unrun_subset_stale_and_shared_results ... ok
+test serial_tool::sidebar::tests::serial_sidebar_expanded_recording_controls_stay_inside_cards ... ok
+test test_tool::workspace::project_matrix::workspace_publication_changes_for_each_edit_even_while_already_dirty ... ok
+test test_tool::workspace::project_matrix::matrix_row_pointer_selects_details_without_changing_execution_selection ... ok
+test test_tool::workspace::tests::typed_defaults_references_and_sensitive_preview ... ok
+test test_tool::workspace::workspace_typed_sections_and_variant_changes_preserve_common_fields ... ok
+test theme::contrast_tests::light_input_outline_and_colored_labels_remain_visible ... ok
+test theme::contrast_tests::semantic_text_and_ctas_have_readable_contrast ... ok
+test theme::tests::equal_widths_fill_the_row ... ok
+test theme::tests::inset_children_do_not_rewind_reserved_rows ... ok
+test theme::tests::sidebar_bounds_fit_small_windows_and_reserve_main_content ... ok
+test theme::tests::sidebar_drag_remembers_independent_widths_and_double_click_resets ... ok
+test ui_audit::compact_page_style_previews ... ignored, visual capture on request
+test ui_audit::light_and_sidebar_style_gallery ... ignored, style gallery on request
+test theme::contrast_tests::form_controls_share_both_edges_at_narrow_widths ... ok
+test test_tool::line_trigger_editor::tests::line_trigger_editor_visual_widths_themes_languages ... ok
+test waveform_analysis::protocol_view::tests::dense_ping_does_not_consume_the_data_overlay_sampling_budget ... ok
+test waveform_analysis::protocol_view::tests::hex_filter_reads_entire_frame_but_detail_preview_does_not_reinterpret_truncated_payload ... ok
+test waveform_analysis::protocol_view::tests::native_scp_reference_capture_shows_60_data_frames_without_ping ... ignored, Set WIPARSE_SCP_CAPTURE to the reference Normal.isf capture
+test test_tool::visual_snapshot::serial_trigger_host_form_keeps_legacy_station_and_fits_narrow_widths ... ok
+test waveform_analysis::protocol_view::tests::scp_ping_is_not_data_but_other_protocol_ping_and_reset_remain_visible ... ok
+test waveform_analysis::tests::changed_decode_input_discards_inflight_results ... ok
+test waveform_analysis::tests::channel_ground_stays_at_offset_when_scale_changes ... ok
+test waveform_analysis::tests::clearing_time_cursor_requests_protocol_redecode ... ok
+test test_report::mermaid::tests::offline_mermaid_diagrams_and_limits ... ok
+test waveform_analysis::tests::ctrl_wheel_zoom_never_passes_collapsed_bounds_to_plot ... ok
+test waveform_analysis::tests::cursor_change_invalidates_guarded_source_snapshot ... ok
+test waveform_analysis::tests::cursor_measure_does_not_gate_ddsss ... ok
+test waveform_analysis::tests::ddsss_bit_colors_are_unique ... ok
+test waveform_analysis::tests::decimate_series_keeps_the_peak ... ok
+test waveform_analysis::tests::decode_overlay_sampling_bounds_large_repaints_and_keeps_selection ... ok
+test waveform_analysis::tests::default_voltage_fit_floor_is_unit_aware_and_keeps_large_signals ... ok
+test waveform_analysis::tests::detail_columns_keep_a_narrow_pulse ... ok
+test waveform_analysis::tests::detail_columns_keep_frame_edges_when_frames_span_the_record ... ok
+test waveform_analysis::tests::disconnected_wave_loader_clears_pending_without_claiming_complete ... ok
+test waveform_analysis::tests::gnd_screen_y_matches_plot_zero_inside_view ... ok
+test waveform_analysis::tests::gnd_screen_y_pins_to_edge_when_off_view ... ok
+test waveform_analysis::tests::protocol_notes_explain_the_frame ... ok
+test waveform_analysis::tests::regular_and_reviewed_protocol_queries_use_same_byte_filter_and_payload_flag ... ok
+test waveform_analysis::tests::removed_channels_are_remapped_or_cleared ... ok
+test waveform_analysis::tests::report_includes_each_configured_lane ... ok
+test waveform_analysis::tests::reviewed_protocol_ignores_unrelated_shared_changes_but_expires_on_cursor_change ... ok
+test waveform_analysis::tests::reviewed_protocol_pages_exclude_ping_and_disclose_partial_results ... ok
+test waveform_analysis::tests::reviewed_wave_snapshot_is_immutable_and_expires_when_channels_change ... ok
+test waveform_analysis::tests::settings_for_decode_prefers_typed_baud ... ok
+test waveform_analysis::tests::stale_final_measurement_does_not_overwrite_replaced_channel ... ok
+test waveform_analysis::tests::y_cursor_zero_matches_channel_ground ... ok
+test waveform_analysis::tests::y_readout_uses_hovered_channel_map_not_plot_axis ... ok
+test waveform_protocol_html::tests::protocol_html_file_replaces_the_previous_one ... ok
+test waveform_protocol_html::tests::report_lists_every_lane_and_escapes_text ... ok
+test ui_audit::serial_and_wave_workbench_previews ... ok
+test waveform_analysis::protocol_view::tests::native_table_virtualizes_ping_filtered_rows_and_click_preserves_decoder_index ... ok
+test serial_tool::ai_chat::view_tests::assistant_and_monitor_dashboard_export_aligned_source_frames ... ok
+test waveform_analysis::tests::compact_waveform_layout_fills_bottom_and_reserves_only_rendered_toolbar_rows ... ok
+test serial_tool::ai_chat::view_tests::short_and_narrow_panes_keep_composer_visible_and_outside_conversation ... ok
+test test_tool::workspace::tests::background_ipc_and_api_keep_stop_independent ... ok
+test data_analysis::ai_extract::tests::million_row_spike_matches_full_curve_report_and_source ... ok
+test instrument_control::workbench::tests::disconnected_instruments_render_in_both_themes_without_connecting ... ok
+test test_report::ai_read::paging::tests::sequential_cursor_reads_cover_every_row_of_a_large_attachment ... ok
+test test_tool::workspace::tests::hub_workspace_virtualized_layout_and_dirty_state ... ok
+test test_tool::layout_regressions::every_local_plugin_header_stays_above_case_and_parameters ... ok
+test serial_tool::ai_chat::view_tests::local_library_settings_entry_preserves_composer_on_narrow_and_short_panes ... ok
+test test_tool::workspace::chrome::tests::fpga_chrome_counts_widths_themes_and_languages ... ok
+test ui_audit::main_pages_render_in_both_languages_themes_and_display_scales ... ok
+test instrument_control::layout_audit::connected_demo_workspaces_and_overview_render_at_small_sizes ... ok
+
+failures:
+
+---- instrument_control::summary_publication_tests::instrument_receipt_invalidates_prior_source_permit stdout ----
+
+thread 'instrument_control::summary_publication_tests::instrument_receipt_invalidates_prior_source_permit' (31368) panicked at crates\wiparse-gui\src\instrument_control.rs:7671:3:
+assertion `left == right` failed
+  left: Null
+ right: 5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- serial_tool::ai_chat::agent_workflow_tests::source_change_cancels_staged_outbound_request_before_review stdout ----
+
+thread 'serial_tool::ai_chat::agent_workflow_tests::source_change_cancels_staged_outbound_request_before_review' (33784) panicked at crates\wiparse-gui\src\serial_tool\ai_chat\agent_workflow_tests.rs:60:5:
+来源或任务已变化，外发请求未发送 / Source or task changed; request not sent
+
+---- ai::agent::workflow_test::selected_wave_skill_measures_wfm_before_completing_plan stdout ----
+
+thread 'ai::agent::workflow_test::selected_wave_skill_measures_wfm_before_completing_plan' (27940) panicked at crates\wiparse-gui\src\ai\agent.rs:2692:103:
+连接失败或超时：检查网络、代理、TLS 和服务器地址。 / Network or timeout error.
+
+---- serial_tool::ai_chat::platform_tests::serial_report_skill_reads_demo_markdown_through_broker_and_finishes stdout ----
+
+thread 'serial_tool::ai_chat::platform_tests::serial_report_skill_reads_demo_markdown_through_broker_and_finishes' (31504) panicked at crates\wiparse-gui\src\serial_tool\ai_chat\platform_tests.rs:293:116:
+called `Option::unwrap()` on a `None` value
+
+---- serial_tool::ai_chat::tests::reviewed_automatic_monitor_stops_before_creating_unprotected_request stdout ----
+
+thread 'serial_tool::ai_chat::tests::reviewed_automatic_monitor_stops_before_creating_unprotected_request' (3052) panicked at crates\wiparse-gui\src\serial_tool\ai_chat\tests.rs:1285:58:
+called `Result::unwrap()` on an `Err` value: "请先配置并启用 AI 服务 / Configure and enable the AI service first"
+
+---- serial_tool::ai_chat::tests::stale_dispatched_control_stops_remaining_actions_and_pauses_queue stdout ----
+
+thread 'serial_tool::ai_chat::tests::stale_dispatched_control_stops_remaining_actions_and_pauses_queue' (31956) panicked at crates\wiparse-gui\src\serial_tool\ai_chat\tests.rs:122:5:
+assertion failed: chat.queue_paused
+
+---- serial_tool::ai_chat::view_tests::source_change_clears_old_context_and_control_authorization stdout ----
+
+thread 'serial_tool::ai_chat::view_tests::source_change_clears_old_context_and_control_authorization' (13972) panicked at crates\wiparse-gui\src\serial_tool\ai_chat\view_tests.rs:202:5:
+assertion failed: !p.ai_chat.entries.iter().any(|e| e.text.contains("old source analysis"))
+
+---- test_report::ai_read::attachment_tests::linked_adapter_matrix_feeds_recipe_and_shares_paging_source_version stdout ----
+
+thread 'test_report::ai_read::attachment_tests::linked_adapter_matrix_feeds_recipe_and_shares_paging_source_version' (17024) panicked at crates\wiparse-gui\src\test_report\ai_read.rs:226:107:
+called `Option::unwrap()` on a `None` value
+
+---- test_report::ai_read::attachment_tests::linked_attachment_requires_its_own_cursor_and_detects_replacement stdout ----
+
+thread 'test_report::ai_read::attachment_tests::linked_attachment_requires_its_own_cursor_and_detects_replacement' (30968) panicked at crates\wiparse-gui\src\test_report\ai_read.rs:253:23:
+called `Option::unwrap()` on a `None` value
+
+---- test_report::ai_read::tests::read_rejects_outside_project_and_unknown_index_id stdout ----
+
+thread 'test_report::ai_read::tests::read_rejects_outside_project_and_unknown_index_id' (25396) panicked at crates\wiparse-gui\src\test_report\ai_read.rs:205:83:
+called `Option::unwrap()` on a `None` value
+
+
+failures:
+    ai::agent::workflow_test::selected_wave_skill_measures_wfm_before_completing_plan
+    instrument_control::summary_publication_tests::instrument_receipt_invalidates_prior_source_permit
+    serial_tool::ai_chat::agent_workflow_tests::source_change_cancels_staged_outbound_request_before_review
+    serial_tool::ai_chat::platform_tests::serial_report_skill_reads_demo_markdown_through_broker_and_finishes
+    serial_tool::ai_chat::tests::reviewed_automatic_monitor_stops_before_creating_unprotected_request
+    serial_tool::ai_chat::tests::stale_dispatched_control_stops_remaining_actions_and_pauses_queue
+    serial_tool::ai_chat::view_tests::source_change_clears_old_context_and_control_authorization
+    test_report::ai_read::attachment_tests::linked_adapter_matrix_feeds_recipe_and_shares_paging_source_version
+    test_report::ai_read::attachment_tests::linked_attachment_requires_its_own_cursor_and_detects_replacement
+    test_report::ai_read::tests::read_rejects_outside_project_and_unknown_index_id
+
+test result: FAILED. 571 passed; 10 failed; 9 ignored; 0 measured; 0 filtered out; finished in 21.58s
+
+error: test failed, to rerun pass `-p wiparse-gui --bin wiparse-gui`

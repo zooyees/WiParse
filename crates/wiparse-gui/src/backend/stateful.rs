@@ -13,6 +13,7 @@ const API_FRAME_BUDGET: Duration = Duration::from_millis(4);
 
 pub fn drain_api_requests(bridge: &ApiBridge, mut host: UiHost<'_>) -> bool {
     let mut persist = false;
+    let mut processed = false;
     let started = Instant::now();
     for _ in 0..MAX_API_REQUESTS_PER_FRAME {
         if started.elapsed() >= API_FRAME_BUDGET {
@@ -21,6 +22,11 @@ pub fn drain_api_requests(bridge: &ApiBridge, mut host: UiHost<'_>) -> bool {
         let Some(req) = bridge.try_recv() else {
             break;
         };
+        processed=true;
+        // Make all prior UI-thread changes visible before another queued API
+        // request can inspect a published cross-page summary.
+        host.instruments.publish_ai_summary();
+        host.test_tool.publish_ai_summary();
         if let Some(guard)=&req.ai_guard {
             if guard.cancelled.load(std::sync::atomic::Ordering::Acquire)
                 || guard.project!=host.test_tool.current_project_id()
@@ -40,12 +46,22 @@ pub fn drain_api_requests(bridge: &ApiBridge, mut host: UiHost<'_>) -> bool {
             continue;
         }
         if req.ai_guard.is_some() && req.method == "instrument.command" {
+            let update=host.instruments.begin_source_update();
+            host.instruments.invalidate_agent_inventory();
             let result = host.instruments.agent_command(&host.test_tool.data_root_path(), &req.params);
+            host.instruments.publish_ai_summary();host.test_tool.publish_ai_summary();drop(update);
             let _ = req.reply.try_send(result);
             continue;
         }
+        let changes_source=(req.method.starts_with("instrument.") && !matches!(req.method.as_str(),"instrument.list"|"instrument.overview"|"instrument.job.get"))
+            || req.method.starts_with("ui.instrument.") || req.method.starts_with("ui.test_tool.");
+        let update=changes_source.then(||host.instruments.begin_source_update());
+        let workspace_update=changes_source.then(||host.test_tool.begin_source_update());
         persist |= handle(bridge, &mut host, req);
+        if update.is_some(){host.instruments.publish_ai_summary();host.test_tool.publish_ai_summary();}
+        drop(workspace_update);drop(update);
     }
+    if processed {host.instruments.publish_ai_summary();host.test_tool.publish_ai_summary();}
     let (port, baud) = host.serial.current_port_baud();
     bridge.set_monitoring(host.serial.is_monitoring(), port, Some(baud));
     bridge.set_instrument_count(host.instruments.device_count());
@@ -65,7 +81,7 @@ pub(crate) fn handle(bridge: &ApiBridge, host: &mut UiHost<'_>, req: PendingRequ
         let value=match method.as_str(){
             "engineering.inspect"=>{
                 let tool=req.params["tool"].as_str().unwrap_or("");
-                let data=match tool{"waveform"=>host.waveform.ai_summary(),"data_analysis"=>host.data_analysis.ai_summary(),"test_report"=>host.test_report.ai_summary(),"test_tool"=>host.test_tool.agent_run_status(),"calculator"=>host.calculator.ai_summary(),_=>host.instruments.ai_summary()};
+                let data=match tool{"waveform"=>host.waveform.ai_summary(),"data_analysis"=>host.data_analysis.ai_summary(),"test_report"=>host.test_report.ai_summary(),"test_tool"=>host.test_tool.agent_run_status(),"calculator"=>host.calculator.ai_summary(),_=>host.instruments.published_ai_summary().clone()};
                 json!({"ok":true,"data":{"tool":tool,"project":host.test_tool.current_project_id(),"captured_unix_ms":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(),"context":data}})
             },
             "engineering.wave.frames"=>host.waveform.agent_frames(&req.params),
@@ -81,6 +97,7 @@ pub(crate) fn handle(bridge: &ApiBridge, host: &mut UiHost<'_>, req: PendingRequ
         let _=req.reply.try_send(InvokeReply{ok:value["ok"]==true,cmd:method,data:value["data"].clone(),error:value["error"].as_str().map(str::to_owned)});return false;
     }
     if (req.method.starts_with("ui.test_tool.config.") || req.method.starts_with("ui.test_tool.project.") || req.method == "ui.test_tool.result.get") || matches!(req.method.as_str(),"ui.test_tool.matrix.get"|"ui.test_tool.preflight.state"|"ui.test_tool.run.control") { host.test_tool.api_workspace(req);return false; }
+    let guarded=req.ai_guard.is_some();
     let PendingRequest {
         method,
         params,
@@ -89,6 +106,10 @@ pub(crate) fn handle(bridge: &ApiBridge, host: &mut UiHost<'_>, req: PendingRequ
         ai_guard: _,
     } = req;
     let lang = *host.lang;
+    if (method.starts_with("instrument.") && !matches!(method.as_str(),"instrument.list"|"instrument.overview"|"instrument.job.get"))
+        || method.starts_with("ui.instrument.") {
+        host.instruments.invalidate_agent_inventory();
+    }
     let (result, persist) = if let Some(pair) = ui::handle(host, &method, &params) {
         pair
     } else {
@@ -179,13 +200,13 @@ pub(crate) fn handle(bridge: &ApiBridge, host: &mut UiHost<'_>, req: PendingRequ
                 Err(e) => err(&method, &e),
             },
             "instrument.scan" => host.instruments.api_scan(&params),
-            "instrument.list" => ok(&method, host.instruments.api_list(lang, &params)),
-            "instrument.overview" => ok(&method, host.instruments.api_overview(lang)),
+            "instrument.list" => ok(&method, if guarded {host.instruments.agent_inventory(lang,&params,false)} else {host.instruments.api_list(lang, &params)}),
+            "instrument.overview" => ok(&method, if guarded {host.instruments.agent_inventory(lang,&params,true)} else {host.instruments.api_overview(lang)}),
             "instrument.connect" => host.instruments.api_connect(&params, lang),
             "instrument.connect_all" => host.instruments.api_connect_all(lang),
             "instrument.disconnect" => host.instruments.api_disconnect(&params),
             "parse.line"|"parse.metrics"|"convert.radix" => super::dispatch::invoke(bridge,&method,params.clone()),
-            "instrument.job.get" => host.instruments.api_job_get(&params),
+            "instrument.job.get" => if guarded {host.instruments.agent_job_get(&params)} else {host.instruments.api_job_get(&params)},
             "instrument.command" => host.instruments.api_command(&params),
             "instrument.measure" => host.instruments.api_measure(&params),
             "instrument.capture" => host.instruments.api_capture(&params),

@@ -347,11 +347,13 @@ impl Query {
         {
             return Err("包含/排除关键词各最多8个，每项1–64字节".into());
         }
+        if self.numeric.len() > crate::extract::MAX_SERIES {
+            return Err(format!("LOG.NUMERIC_FIELD_COUNT: requested {}; maximum {}", self.numeric.len(), crate::extract::MAX_SERIES));
+        }
         if self.first_line == 0
             || self.last_line.is_some_and(|n| n < self.first_line)
             || self.context > 2
             || self.samples > 8
-            || self.numeric.len() > 4
         {
             return Err("日志行范围、上下文或统计项超出上限".into());
         }
@@ -370,7 +372,7 @@ impl Query {
             {
                 return Err("数值字段名称/限值无效或重复".into());
             }
-            crate::extract::Selector::compile(&rule.pattern, false, self.case_sensitive)?;
+            crate::extract::Selector::compile(&rule.pattern, false, self.case_sensitive).map_err(|e|format!("LOG.INVALID_FIELD_SELECTOR [{}]: {e}",rule.name))?;
         }
         Ok(())
     }
@@ -429,6 +431,8 @@ struct Group {
 }
 
 pub struct Scan {
+    source_hash: Sha256,
+    source_digests: Vec<(String, String)>,
     sources: Vec<Source>,
     query: Query,
     pattern: Option<Regex>,
@@ -493,7 +497,7 @@ impl Scan {
             .collect::<Result<_, _>>()?;
         let event_extractor=query.events.clone().map(events::Extractor::new).transpose()?;
         let timeline_extractor=query.timeline.clone().map(timeline::Extractor::new).transpose()?;
-        Ok(Self{structure:query.discover.then(structure::Discovery::new),sources,event_extractor,timeline_extractor,pattern,numeric,numbers:(0..query.numeric.len()).map(|_|Numbers::default()).collect(),keywords:vec![0;query.contains.len()],query,
+        Ok(Self{source_hash:Sha256::new(),source_digests:Vec::new(),structure:query.discover.then(structure::Discovery::new),sources,event_extractor,timeline_extractor,pattern,numeric,numbers:(0..query.numeric.len()).map(|_|Numbers::default()).collect(),keywords:vec![0;query.contains.len()],query,
    source:0,offset:0,row:1,pending:vec![],oversize:false,before:VecDeque::new(),bytes:0,lines:0,in_range:0,matched:0,oversized:0,invalid_utf8:0,nul_lines:0,partial_tails:0,growing_sources:HashSet::new(),diagnostics:HashSet::new(),failed:0,errors:inventory.issues,inventory_incomplete:inventory.incomplete,groups:BTreeMap::new(),groups_omitted:0,examples:vec![],
    normal_time:Regex::new(r"^(?:\[\d{2}:\d{2}:\d{2}(?:\.\d+)?\]\s*|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?\s*)").unwrap(),
    normal_number:Regex::new(r"\b(?:0[xX][0-9a-fA-F]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b").unwrap()})
@@ -517,6 +521,8 @@ impl Scan {
         }
     }
     fn next_source(&mut self) {
+        let digest=std::mem::replace(&mut self.source_hash,Sha256::new()).finalize();
+        self.source_digests.push((self.sources[self.source].id.clone(),format!("{digest:x}")));
         if let Some(events)=&mut self.event_extractor{events.reset_source();}
         self.source += 1;
         self.offset = 0;
@@ -558,6 +564,8 @@ impl Scan {
                     cancelled(cancel)?;
                     let line = &lines[self.offset as usize];
                     let length = line.len();
+                    self.source_hash.update(line.as_bytes());
+                    self.source_hash.update(b"\n");
                     self.pending
                         .extend_from_slice(&line.as_bytes()[..length.min(MAX_LINE)]);
                     self.oversize = length > MAX_LINE;
@@ -641,6 +649,7 @@ impl Scan {
                     .map_or(available, |i| i + 1);
                 let newline = buffer[length - 1] == b'\n';
                 let content = &buffer[..length];
+                self.source_hash.update(content);
                 let keep = (MAX_LINE.saturating_sub(self.pending.len())).min(content.len());
                 self.pending.extend_from_slice(&content[..keep]);
                 self.oversize |= keep < content.len();
@@ -802,7 +811,7 @@ impl Scan {
                         line: row,
                         text: crate::engineering_agent::match_excerpt(&text,
                             self.pattern.as_ref().and_then(|p|p.find(&text)).map(|m|m.as_str())
-                            .or_else(||self.numeric.iter().find_map(|p|match p {crate::extract::Selector::Capture(re)=>re.find(&text).map(|m|m.as_str()),_=>None}))
+                            .or_else(||self.numeric.iter().find_map(|p|match p {crate::extract::Selector::Capture(re,_)=>re.find(&text).map(|m|m.as_str()),_=>None}))
                             .or_else(||self.query.contains.iter().zip(&hits).find(|(_,hit)|**hit).map(|(s,_)|s.as_str())).unwrap_or(""),240),
                         before: self.before.iter().cloned().collect(),
                         after: vec![],
@@ -830,8 +839,12 @@ impl Scan {
    "numeric_matched_lines":self.query.numeric.iter().zip(&self.numbers).map(|(rule,numbers)|json!({"field":rule.name,"pattern":rule.pattern,"min_limit":rule.min,"max_limit":rule.max,"statistics":numbers})).collect::<Vec<_>>(),
    "grouping":"timestamp removed; numbers replaced; first 240 UTF-8 bytes; counts are exact only for tracked prefixes, not semantic equivalence",
    "grouping_complete":self.groups_omitted==0,"untracked_group_lines":self.groups_omitted,
-   "top_tracked_groups":groups.into_iter().take(8).map(|(template,stats)|json!({"template":template,"statistics":stats})).collect::<Vec<_>>(),"examples":self.examples,"examples_are_bounded_first_and_latest":true,"errors":self.errors,"unsaved_edits_included":false,"raw_files_uploaded":false});
+   "top_tracked_groups":groups.into_iter().take(8).map(|(template,stats)|json!({"template":template,"statistics":stats})).collect::<Vec<_>>(),"examples":self.examples,"examples_are_bounded_first_and_latest":true,"example_scope":"First/latest matching rows only. Scan coverage describes the input, not example coverage. For exact transition counts use events.active_pattern and events.inactive_pattern; reason_pattern captures neighboring codes.","errors":self.errors,"unsaved_edits_included":false,"raw_files_uploaded":false});
         if let Some(discovery)=&self.structure{value["structure"]=discovery.report();}
+        if value["coverage"]["complete"] == true && self.source_digests.len() == self.sources.len() && self.sources.len() <= 16 {
+            value["source_snapshot"] = json!({"algorithm":"sha256","sources":self.source_digests.iter().zip(&self.sources)
+                .map(|((id,digest),source)| json!({"id":id,"sha256":digest,"bytes":source.bytes,"memory":source.memory.is_some(),"first_row":source.first_row})).collect::<Vec<_>>()});
+        }
         if let Some(timeline)=&self.timeline_extractor{value["timeline_analysis"]=timeline.report();}
         if let Some(events)=&self.event_extractor{value["state_transition_analysis"]=events.report();}
         let mut omitted = 0;
@@ -894,6 +907,17 @@ impl Scan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn numeric_scan_capacity_matches_the_native_schema_and_plotter() {
+        let fields: Vec<_> = (0..crate::extract::MAX_SERIES).map(|i| json!({"name":format!("v{i}"),"pattern":format!("key:v{i}")})).collect();
+        let mut q:Query=serde_json::from_value(json!({"numeric":fields})).unwrap();
+        let tools=crate::ai::tools::host_functions(vec!["log.analyze"]);
+        let schema=&tools.iter().find(|t|t.name=="wiparse_log_analyze").unwrap().parameters;
+        assert_eq!(schema["properties"]["numeric"]["maxItems"], q.numeric.len());
+        q.validate().unwrap();
+        q.numeric.push(q.numeric[0].clone());
+        assert!(q.validate().unwrap_err().contains("requested 9"));
+    }
     struct Fixture(PathBuf);
     impl Fixture {
         fn new() -> Self {
@@ -926,6 +950,19 @@ mod tests {
             }
         }
         panic!("scan did not complete");
+    }
+    #[test]
+    fn complete_snapshot_hash_covers_exact_file_and_partial_has_no_snapshot() {
+        let fixture=Fixture::new();
+        let data=b"first\nsecond\n";
+        fs::write(fixture.0.join("capture.log"),data).unwrap();
+        let mut scan=Scan::new(fixture.inventory(),Query::default()).unwrap();
+        scan.run_chunk(2,Duration::from_secs(2),&AtomicBool::new(false)).unwrap();
+        assert!(scan.report()["source_snapshot"].is_null());
+        finish(&mut scan,2);
+        let report=scan.report();
+        assert_eq!(report["coverage"]["complete"],true);
+        assert_eq!(report["source_snapshot"]["sources"][0]["sha256"],format!("{:x}",Sha256::digest(data)));
     }
     #[test]
     fn full_directory_filters_numeric_thresholds_and_exact_source_rows() {

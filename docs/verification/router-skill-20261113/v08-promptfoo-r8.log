@@ -1,0 +1,35 @@
+deepseek decompose ran 
+deepseek followup ran 
+Cache is disabled.
+Starting evaluation eval-pk2-2026-11-15T06:35:06
+Running 2 test cases (up to 1 at a time)...
+
+[90m┌────────────────────────────────────────────────────────────[39m[90m┬────────────────────────────────────────────────────────────┐[39m
+[90m│[39m[1m[34m scenario                                                   [39m[22m[90m│[39m[1m[34m [deepseek] {{scenario}}                                    [39m[22m[90m│[39m
+[90m├────────────────────────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────────────────┤[39m
+[90m│[39m decompose                                                  [90m│[39m [FAIL]                                                     [90m│[39m
+[90m│[39m                                                            [90m│[39m {"availability":"ran","case":"decompose","model":"deepsee… [90m│[39m
+[90m├────────────────────────────────────────────────────────────[39m[90m┼────────────────────────────────────────────────────────────┤[39m
+[90m│[39m followup                                                   [90m│[39m [PASS]                                                     [90m│[39m
+[90m│[39m                                                            [90m│[39m {"availability":"ran","case":"followup","model":"deepseek… [90m│[39m
+[90m│[39m                                                            [90m│[39m 结论：power_state 1→0 共 **2 次**，对应 cause              [90m│[39m
+[90m│[39m                                                            [90m│[39m 代号：**UV**、**THERMAL**\n\n### 来源与覆盖\n-             [90m│[39m
+[90m│[39m                                                            [90m│[39m 唯一来源：`charging-fixture.log`（id                       [90m│[39m
+[90m│[39m                                                            [90m│[39m `d074ca51747860b7d0c1b1a981c50...                          [90m│[39m
+[90m└────────────────────────────────────────────────────────────[39m[90m┴────────────────────────────────────────────────────────────┘[39m
+✓ Eval complete (ID: eval-pk2-2026-11-15T06:35:06)
+
+» View results: promptfoo view
+» Share with your team: https://promptfoo.app
+» Feedback: https://promptfoo.dev/feedback
+
+Total Tokens: 51,945
+  Provider: 51,945 (50,368 prompt, 1,577 completion, 27,776 cached)
+
+Results:
+  ✓ 1 passed (50.00%)
+  ✗ 1 failed (50.00%)
+  0 errors (0%)
+Duration: 0s (concurrency: 1)
+
+Writing output to D:\windlink\windlink\WiParse-R\docs\verification\router-skill-20261113\promptfoo-candidate-r8\promptfoo-results.json

@@ -13,7 +13,7 @@ pub(super) fn data_count(kind: BusKind, result: &BusDecodeResult) -> usize {
         .filter(|f| is_data_frame(kind, f))
         .count()
 }
-fn matches_query(frame: &BusFrame, query: &str) -> bool {
+pub(super) fn matches_query(frame: &BusFrame, query: &str) -> bool {
     if query.is_empty() || frame.summary.to_lowercase().contains(query) {
         return true;
     }

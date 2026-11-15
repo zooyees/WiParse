@@ -1,0 +1,495 @@
+    Blocking waiting for file lock on build directory
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\D:\windlink\windlink\WiParse-R\target\debug\incremental\wiparse_core-17l3x4lsixbyu\s-ho6c48vjxr-1m5l2pg-working`
+
+warning: unused import: `std::collections::HashMap`
+   --> crates\wiparse-core\src\log_analysis\events.rs:201:9
+    |
+201 |     use std::collections::HashMap;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates\wiparse-core\src\protocol\decode.rs:891:17
+    |
+891 |             let mut fields = vec![field("pattern", name, "", Some(format!("0x{header:02X}")))];
+    |                 ----^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `scope_screen_point_count`, `tek_screen_point_count`, `keysight_screen_point_count`, `prepare_keysight_screen_waveform`, and `apply_tek_visible_data_window` are never used
+    --> crates\wiparse-core\src\instrument\drivers.rs:1361:8
+     |
+ 882 | impl InstrumentDevice {
+     | --------------------- methods in this implementation
+...
+1361 |     fn scope_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1399 |     fn tek_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^
+...
+1406 |     fn keysight_screen_point_count(&mut self, channel: u8) -> Result<usize, InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1449 |     fn prepare_keysight_screen_waveform(&mut self, channel: u8) -> Result<(), InstrumentError> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2018 |     fn apply_tek_visible_data_window(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `parse_keysight_preamble_points` is never used
+    --> crates\wiparse-core\src\instrument\drivers.rs:3167:4
+     |
+3167 | fn parse_keysight_preamble_points(pre: &str) -> Option<usize> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `open_tcp_uart_from_info` is never used
+   --> crates\wiparse-core\src\serial.rs:624:4
+    |
+624 | fn open_tcp_uart_from_info(info: &PortInfo, baud: u32) -> Result<SerialSession, SerialError> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: linker stdout: 正在创建库 D:\windlink\windlink\WiParse-R\target\debug\deps\wiparse_core-14f8bc2fd4f73bd0.lib 和对象 D:\windlink\windlink\WiParse-R\target\debug\deps\wiparse_core-14f8bc2fd4f73bd0.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `wiparse-core` (lib test) generated 7 warnings (run `cargo fix --lib -p wiparse-core --tests` to apply 2 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.80s
+     Running unittests src\lib.rs (target\debug\deps\wiparse_core-14f8bc2fd4f73bd0.exe)
+
+running 421 tests
+test ai::skills::tests::contract_text_rejects_blank_and_oversized_fields ... ok
+test ai::skills::tests::conceptual_prefix_does_not_discard_a_followup_analysis_request ... ok
+test ai::skills::tests::contrast_limits_negation_without_weakening_joint_exclusions ... ok
+test ai::skills::tests::domain_exclusions_do_not_suppress_unrelated_reads ... ok
+test ai::skills::tests::later_explicit_exclusion_is_not_hidden_by_an_earlier_mention ... ok
+test ai::skills::tests::excluded_control_skills_do_not_suppress_report_analysis ... ok
+test ai::skills::tests::routes_common_serial_and_charging_phrases ... ok
+test ai::context::tests::modes_and_history_are_unambiguous ... ok
+test ai::skills::tests::unknown_source_never_qualifies_for_automatic_routing ... ok
+test ai::skills::tests::scope_source_is_an_authorized_capture_capability_with_observed_completion ... ok
+test ai::skills::tests::explicit_assessment_preserves_every_selection_and_order ... ok
+test ai::skills::tests::cross_domain_candidates_remain_suggestions_without_inventing_a_selection ... ok
+test ai::skills::tests::test_execution_skill_includes_owned_run_controls ... ok
+test ai::skills::tests::registry_rejects_unknown_and_duplicate_selection ... ok
+test ai::source_lease::tests::concurrent_multi_source_commits_use_stable_lock_order ... ok
+test ai::source_lease::tests::current_permit_commits_and_failed_commit_is_not_accepted ... ok
+test ai::skills::tests::router_handles_domains_combinations_missing_context_and_explicit_priority ... ok
+test ai::source_lease::tests::concurrent_pair_publication_and_dispatch_share_lock_order ... ok
+test ai::source_lease::tests::duplicate_source_generations_are_deduplicated_but_mismatches_fail ... ok
+test ai::source_lease::tests::exhausted_lease_preserves_mutation_but_refuses_new_permits ... ok
+test ai::source_lease::tests::multiple_sources_require_every_current_generation ... ok
+test ai::source_lease::tests::mutation_invalidates_even_when_data_changes_back ... ok
+test ai::source_lease::tests::nonlocking_update_blocks_old_and_new_permits_until_every_guard_drops ... ok
+test ai::source_lease::tests::prepared_commit_invalidates_all_previous_permits ... ok
+test ai::source_lease::tests::prepared_result_is_rejected_after_intervening_mutation ... ok
+test ai::source_lease::tests::panicking_update_permanently_blocks_permits ... ok
+test ai::source_lease::tests::concurrent_update_completion_cannot_reauthorize_old_permit ... ok
+test ai::source_lease::tests::dispatch_cannot_commit_during_source_mutation ... ok
+test ai::telemetry::tests::metrics_exclude_content_and_unknown_usage_is_not_zero ... ok
+test ai::source_lease::tests::triple_mutation_and_dispatch_share_order_and_invalidate_all ... ok
+test ai::streaming::tests::native_tool_fragments_are_assembled_and_truncated_calls_rejected ... ok
+test ai::tests::ai_endpoint_normalization_and_config_migration ... ok
+test ai::tests::ai_partial_stream_and_responses_preserve_generated_text ... ok
+test ai::tests::ai_opt_in_input_and_concurrency_limits_are_shared ... ok
+test ai::tests::derived_review_source_retains_original_generation ... ok
+test ai::tests::ai_credentials_roundtrip_without_plaintext_config ... ok
+test ai::cancellation_regressions::https_cancel_interrupts_a_stalled_handshake_and_releases_the_slot ... ok
+test ai::tests::ai_connection_probe_is_short_nonstreaming_and_does_not_mutate_settings ... ok
+test ai::tests::outbound_revocation_and_dispatch_commit_are_mutually_exclusive ... ok
+test ai::tests::output_budget_accepts_extended_maximum_and_preserves_explicit_existing_values ... ok
+test ai::tests::ai_qwen_stream_ignores_reasoning_and_preserves_unicode_usage ... ok
+test ai::tests::ai_responses_transport_uses_separate_contract ... ok
+test ai::tests::ai_conversation_preserves_roles_in_both_protocols_and_bounds_input ... ok
+test ai::tests::ai_provider_requests_match_deepseek_and_qwen_contracts ... ok
+test ai::tests::native_tools_and_explicit_json_compatibility_use_distinct_wire_contracts ... ok
+test ai::tests::ai_errors_never_echo_server_secrets_and_redirects_are_not_followed ... ok
+test ai::tests::reviewed_source_refuses_to_build_request_after_aba_update ... ok
+test ai::tests::reviewed_submission_rejects_configuration_aba_since_capture ... ok
+test ai::tools::tests::incomplete_tool_rounds_and_duplicate_ids_are_rejected ... ok
+test ai::tools::tests::native_catalog_deduplicates_overlapping_host_and_page_methods ... ok
+test ai::tools::tests::native_transcript_pairs_actual_ids_and_preserves_reasoning ... ok
+test ai::usage::tests::absent_or_failed_responses_never_claim_zero_cost ... ok
+test ai::usage::tests::deepseek_qwen_and_responses_usage_are_normalized_without_double_counting_cache ... ok
+test ai::workflow::completion_regressions::a_replaced_source_invalidates_old_acceptance ... ok
+test ai::workflow::completion_regressions::binds_operation_to_observed_channels_and_retains_its_certificate ... ok
+test ai::workflow::completion_regressions::charging_recipe_uses_observed_transitions_and_coverage ... ok
+test ai::workflow::completion_regressions::partial_and_violating_scans_cannot_support_table_pass ... ok
+test ai::workflow::completion_regressions::pwm_recipe_distinguishes_unverified_deskew_from_observed_comparison ... ok
+test ai::workflow::completion_regressions::recipe_coverage_and_adapter_counts_do_not_invent_missing_information ... ok
+test ai::workflow::completion_regressions::unavailable_reports_and_language_variants ... ok
+test ai::workflow::dataset_completion_tests::plotted_dataset_is_curve_evidence_but_failed_import_is_not ... ok
+test ai::tests::ai_rejects_incomplete_or_oversized_responses ... ok
+test ai::workflow::engineering_fit_tests::continuation_and_revision_preserve_scope_and_refresh_claims ... ok
+test ai::workflow::engineering_fit_tests::dependencies_drive_next_steps_and_reject_invalid_plans_atomically ... ok
+test ai::workflow::engineering_fit_tests::incomplete_deliverables_and_alignment_require_evidence ... ok
+test ai::workflow::engineering_fit_tests::revised_target_retains_unrelated_pending_work ... ok
+test ai::tests::legacy_review_without_source_permit_is_blocked_before_connect ... ok
+test ai::tests::captured_review_snapshot_rejects_update_before_dispatch ... ok
+test ai::tests::guarded_review_does_not_send_after_source_mutation ... ok
+test ai::workflow::plot::tests::no_sample_and_unextracted_are_distinct_and_field_selectors_are_reconciled ... ok
+test ai::workflow::engineering_fit_tests::scoped_amendments_preserve_unrelated_deliverables ... ok
+test ai::workflow::presentation_goals::explicit_page_requires_confirmed_presentation ... ok
+test ai::workflow::task_contract_tests::archived_evidence_is_readable_but_cannot_certify_a_new_output ... ok
+test ai::workflow::task_contract_tests::declared_artifact_cannot_be_downgraded_to_analysis ... ok
+test ai::workflow::task_contract_tests::frame_location_requires_an_index_and_an_ordered_capture_interval ... ok
+test ai::workflow::task_contract_tests::queued_instrument_job_requires_a_completed_receipt_in_either_host_envelope ... ok
+test ai::workflow::task_contract_tests::waveform_source_requires_the_completed_job_not_just_acceptance ... ok
+test ai::tests::reviewed_monitor_rejects_config_aba_before_dispatch_even_with_valid_sources ... ok
+test ai::tests::reviewed_rejection_makes_no_tcp_connection ... ok
+test ai::workflow::tests::cycle_duration_requires_confirmed_endpoints_and_nonnegative_duration ... ok
+test ai::workflow::tests::completion_requires_real_successful_evidence_of_the_right_kind ... ok
+test ai::workflow::tests::each_selected_report_requires_its_own_complete_chain ... ok
+test ai::workflow::tests::exact_event_count_is_a_calculation_only_after_a_complete_unambiguous_scan ... ok
+test ai::workflow::tests::exact_log_aggregate_binds_only_one_complete_source ... ok
+test ai::workflow::tests::each_builtin_and_combination_creates_valid_task_steps ... ok
+test ai::workflow::tests::known_confirmation_loops_are_distinct_from_useful_final_text ... ok
+test ai::workflow::tests::host_source_transition_retires_evidence_without_deleting_history ... ok
+test ai::workflow::tests::missing_success_flag_does_not_satisfy_requested_deliverable ... ok
+test ai::workflow::tests::protocol_completion_requires_explicit_full_untruncated_decode ... ok
+test ai::workflow::tests::page_transition_retires_dependent_evidence_but_keeps_independent_log ... ok
+test ai::tests::reviewed_request_does_not_reuse_approval_after_config_changes_back ... ok
+test ai::workflow::presentation_goals::evidence_pages_are_lossless_after_workflow_clone ... ok
+test ai::workflow::tests::qi_skill_cannot_complete_from_uart_decoder_evidence ... ok
+test ai::workflow::tests::protocol_pages_accept_equivalent_default_filter_parameters ... ok
+test ai::workflow::tests::qi_skill_requires_all_pages_from_same_decoding ... ok
+test ai::workflow::tests::restart_from_old_checkpoint_requires_fresh_source_and_does_not_restore_report_as_current ... ok
+test ai::workflow::tests::restored_calculation_requires_input_revalidation ... ok
+test ai::workflow::plot::tests::reported_curves_are_bound_to_actual_fields_and_current_task ... ok
+test ai::workflow::tests::serial_operation_is_not_completed_by_an_unconfirmed_stop_request ... ok
+test ai::workflow::tests::report_and_attachment_evidence_cannot_complete_each_others_pages ... ok
+test ai::workflow::tests::table_pass_requires_explicit_valid_limits ... ok
+test ai::workflow::tests::unresolved_goals_cannot_disappear_and_blockers_need_a_reason ... ok
+test ai::workflow::tests::test_wait_requires_matching_completed_run_for_operation_evidence ... ok
+test automation::analysis::tests::burst_idle_is_not_frequency ... ok
+test automation::analysis::tests::invalid_empty_and_units_rejected ... ok
+test automation::analysis::tests::millivolts_normalize_and_quality_survives ... ok
+test automation::analysis::tests::deadtime_bidirectional_overlap_and_provenance ... ok
+test automation::contracts::tests::guard_band_and_fail_survive_execution_error ... ok
+test automation::contracts::tests::missing_or_bad_data_cannot_pass ... ok
+test automation::capture_window::window_tests::mapped_window_flags_missing_sequence_and_rejects_foreign_reference ... ok
+test automation::stream::tests::large_ticks_session_and_loss_are_visible ... ok
+test automation::time::tests::discontinuity_and_residual_gate ... ok
+test automation::time::tests::exact_large_ticks_no_extrapolation_or_session_reuse ... ok
+test ai::workflow::tests::timeline_and_presentation_prove_their_respective_steps ... ok
+test bridge::ownership::tests::cross_process_child ... ok
+test bridge::tests::demo_bridge_spi ... ok
+test brief::tests::ept_and_csum_alerts ... ok
+test brief::tests::handshake_phase_and_compact_snapshot ... ok
+test brief::tests::jitter_ascii_is_other_not_qi ... ok
+test ai::workflow::tests::evidence_survives_short_transcript_windows_and_expiry_is_explicit ... ok
+test bus_decode::ddsss::tests::auto_picks_seqa_vs_seqd ... ok
+test bus_decode::ddsss::tests::chip_errors_are_marked_while_bits_still_decode ... ok
+test bus_decode::ddsss::tests::chip_windows_span_two_fop_cycles_and_nest_in_bits ... ok
+test bridge::ownership::tests::named_locks_conflict_per_device_and_unknown_locks_all ... ok
+test bus_decode::ddsss::tests::decodes_ce_at_85khz ... ok
+test bus_decode::ddsss::tests::decodes_ce_packet_seqa ... ok
+test ai::workflow::tests::report_coverage_survives_raw_eviction_but_not_source_change ... ok
+test bus_decode::ddsss::tests::envelope_and_diff_follow_amplitude_steps ... ok
+test ai::workflow::tests::replaced_attachment_invalidates_evicted_page_receipts_and_citations ... ok
+test ai::workflow::engineering_fit_tests::bounded_evidence_index_keeps_the_same_newest_complete_entries ... ok
+test bus_decode::ddsss::tests::decodes_shallow_modulation ... ok
+test ai::tests::guarded_review_cannot_send_during_update_or_after_cancellation ... ok
+test ai::tests::combined_review_rejects_either_changed_source_before_dispatch ... ok
+test bus_decode::ddsss::tests::lfsr_seqa_matches_table2 ... ok
+test bus_decode::ddsss::tests::lfsr_seqb_matches_table2 ... ok
+test bus_decode::ddsss::tests::inverted_polarity_still_decodes_ce ... ok
+test ai::streaming::tests::publishes_content_before_eof_without_reasoning_or_arguments ... ok
+test bus_decode::ddsss::tests::table2_optional_chips ... ok
+test bus_decode::ddsss::tests::table4_thresholds ... ok
+test bus_decode::digital::tests::cmos_levels_for_3v3 ... ok
+test bus_decode::digital::tests::full_swing_produces_one_fall_and_one_rise ... ok
+test bus_decode::ddsss::tests::seqa_idle_peaks_every_62_cycles ... ok
+test bus_decode::digital::tests::manual_threshold_decodes_one_volt_logic ... ok
+test bus_decode::digital::tests::midband_ringing_does_not_create_edges ... ok
+test bus_decode::digital::tests::millivolt_unit_scale_still_uses_volts_vs_gnd ... ok
+test bus_decode::digital::tests::millivolt_jitter_around_ground_is_not_logic ... ok
+test bus_decode::fields::tests::source_capability_pdo_is_five_volts_three_amps ... ok
+test bus_decode::fields::tests::ufcs_output_capability_uses_ten_millivolt_steps ... ok
+test bus_decode::i2c::tests::capture_ending_before_ack_is_flagged ... ok
+test bus_decode::ddsss::tests::keeps_parity_error_frame_with_good_checksum ... ok
+test bus_decode::i2c::tests::decodes_16bit_register_address ... ok
+test bus_decode::ddsss::tests::odd_phase_offset_still_locks ... ok
+test bus_decode::i2c::tests::incomplete_register_is_flagged ... ok
+test bus_decode::i2c::tests::decodes_start_addr_reg8_data_stop ... ok
+test bus_decode::i2c::tests::general_call_and_ten_bit_address ... ok
+test bus_decode::i2c::tests::nak_then_stop ... ok
+test bus_decode::i2c::tests::millivolt_analog_jitter_is_not_i2c ... ok
+test bus_decode::i2c::tests::midband_sda_ringing_is_not_start_stop ... ok
+test bus_decode::i2c::tests::start_inferred_when_capture_begins_after_start_bit ... ok
+test bus_decode::i2c::tests::start_is_sda_fall_not_scl_rise ... ok
+test bus_decode::i2c::tests::swapped_scl_sda_still_decodes ... ok
+test bus_decode::i2c::tests::ten_bit_read_after_sr_does_not_eat_data_as_address ... ok
+test bus_decode::i2c::tests::write_then_repeated_start_read ... ok
+test bus_decode::i2s::tests::capture_ending_mid_sample_reports_framing ... ok
+test bus_decode::i2s::tests::left_justified_does_not_skip_msb ... ok
+test bus_decode::i2s::tests::philips_skips_first_clock_and_labels_left ... ok
+test bus_decode::scp::tests::assembles_complete_command_with_crc ... ok
+test bus_decode::i2s::tests::short_philips_slot_does_not_consume_next_channel ... ok
+test bus_decode::ddsss::tests::keeps_checksum_error_frame_and_following_packet ... ok
+test bus_decode::scp::tests::output_step_one_is_hundred_millivolts ... ok
+test bus_decode::scp::tests::real_normal_capture_regression ... ignored, Set WIPARSE_SCP_CAPTURE to the external Normal.isf capture
+test bus_decode::scp::tests::recognizes_reset_pulse ... ok
+test bus_decode::scp::tests::rejects_invalid_ui ... ok
+test bus_decode::scp::tests::physical_parity_and_crc_errors_are_reported ... ok
+test bus_decode::scp::tests::scp_crc_uses_0x39_polynomial ... ok
+test bus_decode::scp::tests::translates_read_request_and_voltage_write ... ok
+test bus_decode::spi::tests::active_cs_at_negative_capture_start_is_respected ... ok
+test bus_decode::spi::tests::dual_packs_two_bits_per_clock ... ok
+test bus_decode::scp::tests::ping_clock_survives_quantized_separator_and_decodes_every_byte ... ok
+test bus_decode::spi::tests::four_wire_mode0_full_duplex ... ok
+test bus_decode::spi::tests::lsb_first_reverses_bit_order ... ok
+test bus_decode::spi::tests::missing_lane_samples_are_not_valid_data ... ok
+test bus_decode::spi::tests::mode2_samples_falling_edge ... ok
+test bus_decode::spi::tests::partial_sixteen_bit_word_retains_both_bytes ... ok
+test bus_decode::spi::tests::quad_packs_four_bits_per_clock ... ok
+test bus_decode::spi::tests::two_wire_mosi_only ... ok
+test bus_decode::tests::decode_bus_ddsss_ce ... ok
+test bus_decode::tests::gate_trace_limits_samples ... ok
+test bus_decode::uart::tests::break_does_not_hide_following_data ... ok
+test bus_decode::uart::tests::decodes_all_zero_and_all_one_bytes ... ok
+test bus_decode::uart::tests::decodes_synthetic_uart ... ok
+test bus_decode::uart::tests::even_parity_flags_wrong_bit ... ok
+test ai::workflow::paging_tests::large_unicode_evidence_roundtrips_without_gaps ... ok
+test bus_decode::uart::tests::even_parity_ok ... ok
+test bus_decode::uart::tests::midband_ringing_does_not_create_start_bits ... ok
+test bus_decode::uart::tests::nul_byte_is_not_a_break ... ok
+test bus_decode::uart::tests::skips_data_edges_inside_frame ... ok
+test bus_decode::uart::tests::truncated_zero_byte_does_not_manufacture_break ... ok
+test bus_decode::uart::tests::two_stop_setting_does_not_skip_8n1_next_byte ... ok
+test bus_decode::ufcs::tests::decodes_control_packet_and_crc ... ok
+test bus_decode::ufcs::tests::incomplete_payload_is_framing_error ... ok
+test bus_decode::usb_pd::tests::crc32_matches_standard_check_vector ... ok
+test bus_decode::ufcs::tests::marks_bad_crc ... ok
+test bus_decode::usb_pd::tests::decodes_goodcrc ... ok
+test bus_decode::ufcs::tests::data_with_sop_in_payload_at_all_bauds ... ok
+test bus_decode::usb_pd::tests::detects_crc_error ... ok
+test bus_decode::usb_pd::tests::ordered_sets_and_fixed_source_capabilities ... ok
+test charge_state::tests::idle_when_current_low ... ok
+test config::tests::deep_merge_nested ... ok
+test bus_decode::usb_pd::tests::truncated_packet_is_not_accepted ... ok
+test bus_decode::usb_pd::tests::unchunked_extended_payload_including_maximum_length ... ok
+test config::tests::default_loads ... ok
+test config::tests::migrates_legacy_waveform_panel_flag ... ok
+test config::tests::migrates_tektronix_panel_to_instrument_control ... ok
+test config::tests::missing_calculator_field_defaults_visible ... ok
+test config::tests::explicit_calculator_false_survives_roundtrip ... ok
+test bus_decode::ddsss::tests::decodes_multiple_qi_packets ... ok
+test dongle::tests::demo_i2c_and_uart ... ok
+test dongle::tests::parses_dongle_urls ... ok
+test engineering_agent::numeric_boundary_regressions::maximum_integer_offsets_cannot_reach_host_pagination_arithmetic ... ok
+test engineering_agent::tests::catalogs_are_scoped_and_local_compute_needs_no_private_data ... ok
+
+running 1 test
+test engineering_agent::tests::plain_markdown_and_one_typed_call_are_supported ... ok
+test dongle::tests::applying_i2c_endpoint_preserves_uart_and_identical_settings_keep_both_links ... ok
+test engineering_agent::tests::unknown_tools_and_parameters_cannot_be_smuggled_into_calls ... ok
+test engineering_agent::tests::waveform_source_accepts_only_a_device_target ... ok
+test engineering_agent::validation_tests::multichannel_decoders_require_a_complete_map_before_mutation ... ok
+test engineering_agent::validation_tests::numeric_calculation_inputs_have_explicit_units_and_no_defaults ... ok
+test engineering_wave::quality_regressions::engineering_wave_resource_baseline ... ignored, manual synthetic resource baseline
+test engineering_wave::quality_regressions::constant_signal_has_no_invented_frequency ... ok
+test engineering_wave::quality_regressions::synchronous_deadtime_is_quantized_and_wrong_timebase_is_rejected ... ok
+test engineering_wave::tests::empty_and_unsynchronized_are_errors ... ok
+test engineering_wave::tests::mismatched_sample_and_time_axis_cannot_claim_complete_measurement ... ok
+test engineering_agent::excerpt_tests::distant_unicode_matches_are_kept ... ok
+test engineering_wave::tests::pwm_period_width_and_cancellation ... ok
+test db::tests::session_roundtrip ... ok
+test bridge::ownership::tests::cross_process_child ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 420 filtered out; finished in 0.01s
+
+test ai::tests::reviewed_monitor_dispatch_rejects_any_changed_task_watch_or_sample ... ok
+test bridge::ownership::tests::named_lock_is_cooperative_between_processes ... ok
+test instrument::drivers::tests::detects_common_profiles ... ok
+test instrument::drivers::tests::detects_tek_scope_families ... ok
+test instrument::drivers::tests::estimates_common_dc_source_channels ... ok
+test instrument::drivers::tests::humanizes_scope_readings_without_scientific_notation ... ok
+test instrument::drivers::tests::keysight_preamble_parses_points_and_scale ... ok
+test instrument::drivers::tests::normalize_wave_unit_maps_current_probe_tokens ... ok
+test instrument::drivers::tests::reads_source_measurements ... ok
+test instrument::drivers::tests::source_safety_check_prevents_write ... ok
+test instrument::drivers::tests::tek_hardcopy_strips_ieee_and_accepts_bare_png ... ok
+test extract::tests::detected_rules_reproduce_observed_values ... ok
+test instrument::drivers::tests::demo_connect_opens_scope_and_source ... ok
+test instrument::drivers::tests::tek_measure_falls_back_to_meas1 ... ok
+test instrument::drivers::tests::tek_refine_source_window_expands_coarse_screen_span ... ok
+test instrument::drivers::tests::tek_screen_window_maps_delay_and_position ... ok
+test instrument::drivers::tests::tek_time_window_to_indices_uses_xzero_pt_off ... ok
+test instrument::drivers::tests::tek_source_window_without_zoom_cmds_stays_finite ... ok
+test instrument::drivers::tests::tek_waveview_zoom_narrows_source_window ... ok
+test instrument::recording::tests::buffer_is_bounded ... ok
+test instrument::recording::tests::csv_quotes_fields ... ok
+test instrument::tests::demo_transport_identifies_and_measures ... ok
+test instrument::tests::empty_identification_is_not_a_connected_instrument ... ok
+test instrument::tests::parses_identity_and_mock_query ... ok
+test instrument::tests::rejects_bad_float ... ok
+test extract::tests::named_nested_and_delimited_values_are_unambiguous ... ok
+test extract::tests::file_catalog_includes_dense_records_and_sparse_late_telemetry ... ok
+test log::filter::tests::empty_or_segments_do_not_turn_into_match_all ... ok
+test log::filter::tests::match_hits_include_every_occurrence_on_a_line ... ok
+test log::filter::tests::or_patterns_and_case_sensitivity_match_expected_rows ... ok
+test log::live::tests::append_reports_front_eviction_and_refreshes_max_width ... ok
+test log::file::tests::file_store_reads_lines ... ok
+test log::live::tests::live_abs_page_empty_at_head ... ok
+test log::live::tests::live_abs_page_skips_gap_when_cursor_was_evicted ... ok
+test log::live::tests::live_abs_page_keeps_cursor_after_fifo ... ok
+test instrument::drivers::tests::tek_wfm_source_validator_accepts_001_and_003 ... ok
+test log_analysis::events::tests::arbitrary_format_pagination_keeps_exact_counts_and_ambiguous_states_visible ... ok
+test log::file::tests::file_store_splits_mixed_and_lone_cr_line_endings ... ok
+test log::file::tests::dropping_file_store_allows_rewrite ... ok
+test log_analysis::events::tests::state_never_crosses_file_boundary ... ok
+test bus_decode::scp::tests::all_bytes_and_mixed_voltage_senders_decode_from_waveform ... ok
+test bus_decode::ddsss::tests::decodes_rich_packets_with_chip_and_checksum_errors ... ok
+test log::live::tests::width_index_tracks_multiple_rollovers_unicode_and_clear ... ok
+test log_analysis::tests::bomless_utf16_like_input_is_not_reported_as_clean_utf8_text ... ok
+test log_analysis::tests::byte_chunks_resume_in_middle_of_utf8_and_do_not_recount_lines ... ok
+test log_analysis::tests::complete_snapshot_hash_covers_exact_file_and_partial_has_no_snapshot ... ok
+test log_analysis::events::tests::generic_state_rules_count_events_not_alarm_lines_and_keep_entities_separate ... ok
+test bus_decode::ddsss::tests::export_example_ddsss_vctx ... ok
+test log_analysis::tests::changed_sources_and_cancellation_are_explicit ... ok
+test log_analysis::tests::full_directory_filters_numeric_thresholds_and_exact_source_rows ... ok
+test log_analysis::tests::invalid_regex_and_unregistered_sources_are_rejected ... ok
+test log_analysis::tests::growing_log_uses_initial_range_without_treating_partial_tail_as_a_measurement ... ok
+test extract::tests::catalog_flags_only_real_overflow ... ok
+test log_analysis::tests::oversized_and_invalid_utf8_never_claim_complete ... ok
+test log_analysis::tests::regex_and_ranges_and_selected_ids_are_respected ... ok
+test log_analysis::tests::row_scope_never_leaks_outside_context_into_evidence ... ok
+test log_analysis::tests::grouping_memory_overflow_is_disclosed_without_losing_match_counts ... ok
+test bus_decode::ddsss::tests::export_example_ddsss_vctx_errors ... ok
+test log_analysis::tests::retained_live_snapshot_scans_every_row_resumes_and_preserves_absolute_line_numbers ... ok
+test log_analysis::tests::full_file_analysis_finds_evidence_outside_recent_display_and_bounds_output ... ok
+test log_analysis::timeline::tests::timestamp_diagnostics_distinguish_selection_parse_and_numeric_fields ... ok
+test log_analysis::timeline::tests::cycle_uses_actual_timestamps_units_and_only_same_line_power ... ok
+test marketplace::install_path::tests::rejects_path_escape_version ... ok
+test marketplace::tests::deny_publisher ... ok
+test marketplace::tests::loopback_http_is_allowed_without_env ... ok
+test log_analysis::timeline::tests::clock_midnight_and_invalid_capture_or_units_are_explicit ... ok
+test marketplace::tests::meta_validation_and_hash ... ok
+test mdns_browse::tests::compressed_srv_and_ptr_still_publish_ipv4 ... ok
+test metrics::tests::parses_demo_frame ... ok
+test log_analysis::timeline::tests::capacity_and_selector_errors_identify_the_actual_argument ... ok
+test platform_api::agent_access_tests::ai_waveform_catalog_uses_canonical_session_example ... ok
+test paths::tests::unique_file_path_appends_suffix ... ok
+test probe::tests::demo_probe_halt_and_mem ... ok
+test platform_api::agent_access_tests::pagination_and_credential_redaction ... ok
+test marketplace::trust::file_tests::verify_temp_file ... ok
+test project::tests::format_run_stamp_pretty ... ok
+test project::tests::index_does_not_use_plugin_marketing_name ... ok
+test log_analysis::tests::numeric_scan_capacity_matches_the_native_schema_and_plotter ... ok
+test project::tests::ensure_project_does_not_wipe_legacy_string_tests ... ok
+test project::tests::index_discovers_testcase_dir_missing_from_json ... ok
+test project::tests::latest_report_ignores_newer_json_in_report_group ... ok
+test platform_api::agent_access_tests::catalogue_routes_every_published_method_with_derived_effect ... ok
+test project::tests::index_uses_report_name_and_plugin_id ... ok
+test project::tests::markdown_navigation_accepts_legacy_groups_and_excludes_evidence ... ok
+test bus_decode::uart::tests::offline_budget_exceeds_display_budget_and_is_restored ... ok
+test project::tests::index_keeps_two_stamps_as_results ... ok
+test project::tests::list_projects_includes_dir_without_json ... ok
+test project::tests::sanitize_test_id_from_report_name ... ok
+test project::tests::remove_test_keeps_other_ids ... ok
+test project::tests::index_skips_empty_wave_group ... ok
+test protocol::decode::tests::decode_ask_ept ... ok
+test protocol::decode::tests::decode_ask_ce_signed ... ok
+test project::tests::list_projects_keeps_legacy_after_create ... ok
+test protocol::decode::tests::decode_fsk_3f_inv_assembles_b1_low_six_bits_with_b2 ... ok
+test protocol::decode::tests::decode_fsk_3f_sdsr_uses_low_nibbles ... ok
+test project::tests::test_case_label_prefers_report_name_over_stamp ... ok
+test project::tests::test_ref_follows_report_name_not_plugin_title ... ok
+test protocol::decode::tests::decode_fsk_3f_uses_payload_b0_as_selector ... ok
+test protocol::decode::tests::decode_fsk_modecap_power_modes ... ok
+test protocol::decode::tests::decode_fsk_null_zeros_is_not_headerless_3f ... ok
+test protocol::decode::tests::decode_fsk_plap_2_coil_coefficient ... ok
+test protocol::decode::tests::decode_headerless_fsk_3f_payload ... ok
+test project::tests::sanitize_and_jail ... ok
+test protocol::defs::tests::ask_ept_registered ... ok
+test protocol::defs::tests::payload_len_table ... ok
+test protocol::line::tests::parse_ask_ept ... ok
+test scope::binary::tests::extract_png_strips_ieee_header ... ok
+test scope::binary::tests::ieee_block ... ok
+test scope::binary::tests::ieee_header_ignores_hash_inside_png ... ok
+test scope::binary::tests::ladder ... ok
+test scope::binary::tests::png_complete_detects_iend ... ok
+test scope::visa::hotplug_tests::disconnect_mid_binary_block_aborts_without_retrying_or_returning_partial_data ... ok
+test scope::visa::hotplug_tests::optional_timeout_and_unsupported_attribute_do_not_latch_disconnect ... ok
+test serial::serial_windows::tests::com_name_helpers ... ok
+test scope::visa::hotplug_tests::partial_hotplug_errors_are_not_success_and_close_handle ... ok
+test serial::serial_windows::tests::mi_and_uart_filter ... ok
+test serial::serial_winusb::tests::parse_winusb_uart_device_ok ... ok
+test scope::visa::hotplug_tests::partial_timeout_keeps_bytes_without_invalidating_session ... ok
+test serial::serial_winusb::win::tests::instance_paths_include_winusb_suffix ... ok
+test serial::serial_winusb::win::tests::parse_mi_from_instance_id ... ok
+test serial::serial_winusb::win::tests::pdo_paths_prefix_globalroot ... ok
+test serial::tests::compact_label_strips_long_product ... ok
+test serial::tests::parse_tcp_uart_device_ok ... ok
+test serial::tests::wiparse_usb_vid_pid_and_product ... ok
+test serial::tests::display_label_prefers_explicit ... ok
+test serial::tests::overlay_tags_sibling_com_from_registry ... ok
+test testrun::tests::abort_timeout_fails_empty_plan ... ok
+test testrun::tests::capture_save_blocks_until_notify ... ok
+test testrun::tests::parse_scope_stop_string_and_null ... ok
+test testrun::tests::raw_hex_requires_flag ... ok
+test testrun::tests::unknown_macro_fails ... ok
+test testrun::tests::wait_header_hex ... ok
+test testrun::tests::instrument_command_parses_string_unit ... ok
+test testrun::tests::macro_send ... ok
+test testrun::tests::wait_packet_uses_counts_not_notables ... ok
+test testrun::tests::wait_pt_then_pass ... ok
+test testrun::tests::wait_packet_rising_ignores_existing ... ok
+test testrun::tests::waveform_source_blocks ... ok
+test update::version::tests::semver_order ... ok
+test update::tests::evaluate_finds_newer_package ... ok
+test usb::tests::classifies_known_vid_pid ... ok
+test usb::tests::parses_resource_urls ... ok
+test wave::tests::wave_shape ... ok
+test testrun::tests::wait_line_rising ... ok
+test wave_display::tests::empty_time_buckets_hold_last_value ... ok
+test wave_display::tests::adjacent_columns_share_bucket_edges ... ok
+test wave_display::tests::flat_plateau_columns_are_flat ... ok
+test wave_display::tests::assume_monotonic_matches_scanned_time_buckets ... ok
+test wave_display::tests::high_freq_bucket_keeps_interior_peak ... ok
+test wave_display::tests::interior_peak_keeps_actual_sample_time ... ok
+test wave_display::tests::ramp_columns_are_monotonic_endpoints ... ok
+test wave_display::tests::short_trace_overview_is_vector_not_dots ... ok
+test wave_display::tests::spp_hysteresis_stays_vector_until_leave ... ok
+test wave_display::tests::square_wave_columns_have_spans ... ok
+test wave_display::tests::viewport_uniform_when_few_samples ... ok
+test waveform_file::tests::estimate_duty_cycle_rejects_flat_trace ... ok
+test waveform_file::tests::host_metrics_omit_voltage_when_y_unit_is_not_volts ... ok
+test waveform_file::tests::host_metrics_publish_measured_square_wave_and_omit_unmeasured ... ok
+test waveform_file::tests::join_and_load_multi_channel_isf ... ok
+test waveform_file::tests::load_csv_current_channel_unit ... ok
+test bus_decode::i2c::tests::stops_at_512_payload_bytes ... ok
+test wave_display::tests::viewport_envelope_when_dense ... ok
+test waveform_file::tests::load_rigol_style_csv ... ok
+test waveform_file::tests::load_generated_tek_4ch_wfm ... ok
+test waveform_file::tests::load_simple_xy_csv ... ok
+test waveform_file::tests::load_downloaded_tek_wfm_samples ... ok
+test waveform_file::tests::load_tek_isf_applies_pt_off ... ok
+test waveform_file::tests::load_tek_isf_current_probe_yunit_a ... ok
+test waveform_file::tests::load_tek_isf_ri_bytes ... ok
+test waveform_file::tests::load_wiparse_csv_roundtrip ... ok
+test waveform_file::tests::spreadsheet_csv_roundtrip ... ok
+test log_analysis::timeline::tests::bounded_series_discloses_gaps_and_keeps_full_scan_statistics ... ok
+test log_analysis::structure::tests::schema_and_enum_memory_are_bounded ... ok
+test waveform_file::tests::instrument_source_path_accepts_wfm001_and_wfm003 ... ok
+test waveform_file::tests::save_converts_csv_trace_to_isf ... ok
+test waveform_file::tests::wfm_export_load_roundtrip ... ok
+test log_analysis::structure::tests::discovers_units_states_and_valid_extraction_without_product_vocabulary ... ok
+test serial::serial_winusb::tests::winusb_uart_lists_when_dongle_present ... ok
+test log_analysis::structure::tests::spaced_keys_and_generated_selectors_keep_short_field_boundaries ... ok
+test log_analysis::tests::duplicate_sources_are_not_counted_twice_and_response_is_bounded ... ok
+test waveform_file::tests::load_rigol_wfm_4ch_folder ... ok
+test rigol_wfm::tests::load_rigol_4ch_samples ... ok
+test ai::tests::native_review_can_be_cancelled_without_opening_connection ... ok
+test ai::tests::reviewed_request_invalidates_changed_config_before_connect ... ok
+test ai::tests::reviewed_request_rejects_before_connect_and_sends_exact_approved_body ... ok
+test ai::tests::ai_cancel_and_deadline_release_worker_capacity ... ok
+
+test result: ok. 419 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 5.66s
+

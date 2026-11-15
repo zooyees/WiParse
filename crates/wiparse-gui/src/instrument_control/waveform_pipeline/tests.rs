@@ -19,6 +19,8 @@ fn source_event(channels: u8, points: usize) -> Event {
             auto_dir: None,
             auto_filename: None,
             overwrite: false,
+            cancel: None,
+            secure_destination: None,
         },
         parts(channels, points),
         &tx,
@@ -26,6 +28,27 @@ fn source_event(channels: u8, points: usize) -> Event {
     rx.try_iter()
         .find(|event| matches!(event, Event::WaveformSource { .. }))
         .unwrap()
+}
+
+#[test]
+fn cancelled_ai_source_does_not_begin_processing_or_save() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let flag = Arc::new(AtomicBool::new(true));
+    let (tx, rx) = unbounded();
+    process_source(SourceRequest { id: 1, job_id: Some(9), auto_dir: None,
+        auto_filename: None, overwrite: false, cancel: Some(flag.clone()), secure_destination: None }, parts(1, 64), &tx);
+    assert!(matches!(rx.recv().unwrap(), Event::Error { message, .. } if message.contains("CANCELLED")));
+
+    let mut panel = panel();
+    panel.handle_event(&egui::Context::default(), source_event(1, 64));
+    let mut pending = panel.pending_waveform_save.take().unwrap();
+    pending.cancel = Some(flag.clone());
+    let dir = temp_dir();
+    save_source(pending, SaveSelection::Auto { dir: dir.clone(), filename: Some("cancelled.isf".into()), overwrite: false }, &tx);
+    assert!(matches!(rx.recv().unwrap(), Event::WaveformSaved { result: Err(_), .. }));
+    assert!(!dir.join("cancelled.isf").exists());
+    flag.store(false, Ordering::Release);
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 fn panel() -> InstrumentControlPanel {
@@ -47,6 +70,45 @@ fn temp_dir() -> PathBuf {
     ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+#[cfg(windows)]
+#[test]
+fn secure_multichannel_csv_reports_derivation_and_rejects_partial_conversion() {
+    let traces = match source_event(2, 64) {
+        Event::WaveformSource { traces, .. } => traces,
+        _ => unreachable!(),
+    };
+    let raw = |index: usize| wiparse_core::waveform_file::waveform_to_wiparse_csv(&traces[index]);
+    for partial in [false, true] {
+        let (tx, rx) = unbounded();
+        let second = if partial { b"not a waveform".to_vec() } else { raw(1) };
+        process_source(SourceRequest { id: 1, job_id: Some(9), auto_dir: None,
+            auto_filename: None, overwrite: false, cancel: None, secure_destination: None },
+            vec![(1, raw(0), "CH1.csv".into()), (2, second, "CH2.csv".into())], &tx);
+        let event = rx.try_iter().find(|e| matches!(e, Event::WaveformSource { .. })).unwrap();
+        let mut panel = panel();
+        panel.handle_event(&egui::Context::default(), event);
+        let pending = panel.pending_waveform_save.take().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let destination = secure_output::Destination::prepare(root.path(), "project-1").unwrap();
+        let (save_tx, save_rx) = unbounded();
+        save_source(pending, SaveSelection::Secure { destination }, &save_tx);
+        match save_rx.recv().unwrap() {
+            Event::WaveformSaved { result, source_representation, source_channels, project_relative, .. } => {
+                assert_eq!(source_representation, "derived_csv");
+                assert_eq!(source_channels, vec![1, 2]);
+                if partial {
+                    assert!(result.unwrap_err().contains("INCOMPLETE_CHANNELS"));
+                    assert!(project_relative.is_none());
+                } else {
+                    assert_eq!(result.unwrap().unwrap()[0].extension().unwrap(), "csv");
+                    assert!(project_relative.unwrap().starts_with("ai-evidence"));
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
 }
 
 #[test]
@@ -116,6 +178,8 @@ fn waveform_source_pipeline_shares_all_channels_and_publishes_cached_metrics() {
             auto_dir: None,
             auto_filename: None,
             overwrite: false,
+            cancel: None,
+            secure_destination: None,
         },
         csv_parts,
         &tx,
@@ -207,6 +271,10 @@ fn waveform_source_save_completion_and_errors_release_admission_gate() {
             bytes: 0,
             metrics: serde_json::json!({}),
             update_save_dir: true,
+            project_relative: None,
+            source_parse_error: None,
+            source_representation: "native_single".into(),
+            source_channels: vec![1],
         },
     );
     assert_eq!(panel.waveform_source_job, None);
@@ -275,6 +343,8 @@ fn waveform_source_malformed_data_can_be_saved_natively_and_reports_parse_error(
             auto_dir: None,
             auto_filename: None,
             overwrite: false,
+            cancel: None,
+            secure_destination: None,
         },
         vec![(1, original.clone(), "bad.isf".into())],
         &tx,
